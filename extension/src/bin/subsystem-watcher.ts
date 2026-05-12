@@ -62,7 +62,7 @@ async function main() {
       }
 
       try {
-        fileSize = fs.statSync(microversePath).size;
+        fileSize = (await fs.promises.stat(microversePath)).size;
       } catch {
         fileSize = 0;
       }

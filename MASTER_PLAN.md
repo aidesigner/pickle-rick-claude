@@ -7,6 +7,7 @@ This repo-root file exists so legacy acceptance commands that still target `MAST
 ## Status snapshot
 
 - Finding #21 Closed by the R-PTG closer; shipped in `v1.74.0`.
+- Finding #22 Closed by the R-PHC closer; deployed parity rechecked at `v1.74.0`.
 - Finding #14 Open in the canonical ledger at `prds/MASTER_PLAN.md`.
 - Finding #15 Open in the canonical ledger at `prds/MASTER_PLAN.md`.
 - Finding #17 Open in the canonical ledger at `prds/MASTER_PLAN.md`.
