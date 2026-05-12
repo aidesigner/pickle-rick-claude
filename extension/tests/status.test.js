@@ -147,6 +147,156 @@ test('showStatus: does not throw with valid sessions map and state.json', () => 
     });
 });
 
+test('pickle-status continued to remediation: shows recoverable pickle summary from activity', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(path.join(sessionDir, 'pipeline-status.json'), JSON.stringify({
+            status: 'completed',
+            current_phase: null,
+            completed_phases: 3,
+            skipped_phases: 0,
+            total_phases: 4,
+            updated_at: new Date().toISOString(),
+        }));
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                step: 'completed',
+                iteration: 3,
+                max_iterations: 10,
+                current_ticket: 'TICKET-RECOVERABLE',
+                original_prompt: 'Recover after pickle fail',
+                activity: [
+                    {
+                        event: 'recoverable_phase_failure',
+                        ts: new Date().toISOString(),
+                        phase: 'pickle',
+                        exit_code: 1,
+                        fatal: false,
+                        decision: 'continue',
+                    },
+                ],
+            })
+        );
+
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            assert.match(
+                output,
+                /Phase pickle exited with code 1 — pipeline continued to remediation/,
+                `Expected continued-to-remediation summary, got: ${output}`
+            );
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
+test('pickle-status recap: counts actual phase_completed events in output', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+        const ts = new Date().toISOString();
+
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(path.join(sessionDir, 'pipeline-status.json'), JSON.stringify({
+            status: 'completed',
+            current_phase: null,
+            completed_phases: 0,
+            skipped_phases: 0,
+            total_phases: 4,
+            updated_at: ts,
+        }));
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                step: 'completed',
+                iteration: 4,
+                max_iterations: 10,
+                current_ticket: 'TICKET-RECAP',
+                original_prompt: 'Summarize completed phases',
+                activity: [
+                    { event: 'phase_completed', ts, phase: 'pickle' },
+                    { event: 'phase_completed', ts, phase: 'citadel' },
+                    { event: 'phase_completed', ts, phase: 'anatomy-park' },
+                ],
+            })
+        );
+
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            assert.match(
+                output,
+                /Pipeline recap: 3\/4 phases completed/,
+                `Expected phase recap sourced from phase_completed events, got: ${output}`
+            );
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
+test('pickle-status recoverable count: shows total recoverable_phase_failure events', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+        const ts = new Date().toISOString();
+
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(path.join(sessionDir, 'pipeline-status.json'), JSON.stringify({
+            status: 'failed',
+            current_phase: null,
+            completed_phases: 0,
+            skipped_phases: 0,
+            total_phases: 4,
+            updated_at: ts,
+        }));
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                step: 'completed',
+                iteration: 4,
+                max_iterations: 10,
+                current_ticket: 'TICKET-FAILURES',
+                original_prompt: 'Count recoverable failures',
+                activity: [
+                    { event: 'recoverable_phase_failure', ts, phase: 'pickle', exit_code: 1, fatal: false, decision: 'continue' },
+                    { event: 'recoverable_phase_failure', ts, phase: 'anatomy-park', exit_code: 1, fatal: false, decision: 'continue' },
+                ],
+            })
+        );
+
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            assert.match(
+                output,
+                /Recoverable phase failures: 2/,
+                `Expected recoverable failure count in output, got: ${output}`
+            );
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
 test('showStatus: renders resolved worker_test_gate_timeout_ms from settings', () => {
     withExtensionDir((tmpDir) => {
         const sessionDir = fs.realpathSync(

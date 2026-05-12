@@ -26,6 +26,53 @@ function formatTask(raw) {
     const task = raw || '';
     return task.length > 80 ? task.slice(0, 80) + '…' : task;
 }
+function readPipelineStatus(sessionPath) {
+    const statusPath = path.join(sessionPath, 'pipeline-status.json');
+    try {
+        const raw = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+        return raw && typeof raw === 'object' ? raw : null;
+    }
+    catch {
+        return null;
+    }
+}
+function countPhaseCompletedEvents(state) {
+    if (!Array.isArray(state.activity))
+        return 0;
+    return state.activity.filter((entry) => entry?.event === 'phase_completed').length;
+}
+function getRecoverablePhaseFailures(state) {
+    if (!Array.isArray(state.activity))
+        return [];
+    return state.activity.flatMap((entry) => {
+        if (entry?.event !== 'recoverable_phase_failure'
+            || typeof entry.phase !== 'string'
+            || typeof entry.exit_code !== 'number') {
+            return [];
+        }
+        return [{ phase: entry.phase, exitCode: entry.exit_code }];
+    });
+}
+function hasPipelineArtifacts(sessionPath, state) {
+    return fs.existsSync(path.join(sessionPath, 'pipeline.json'))
+        || fs.existsSync(path.join(sessionPath, 'pipeline-status.json'))
+        || (Array.isArray(state.activity) && state.activity.length > 0);
+}
+function renderPipelineRecap(sessionPath, state) {
+    if (!hasPipelineArtifacts(sessionPath, state))
+        return;
+    const pipelineStatus = readPipelineStatus(sessionPath);
+    const phasesCompleted = countPhaseCompletedEvents(state);
+    const recoverableFailures = getRecoverablePhaseFailures(state);
+    const totalPhases = Number(pipelineStatus?.total_phases) || 0;
+    if (recoverableFailures.length > 0) {
+        const latestFailure = recoverableFailures[recoverableFailures.length - 1];
+        console.log(`Phase ${latestFailure.phase} exited with code ${latestFailure.exitCode} — pipeline continued to remediation`);
+    }
+    console.log(`Pipeline recap: ${phasesCompleted}/${totalPhases} phases completed`);
+    console.log(`Recoverable phase failures: ${recoverableFailures.length}`);
+    console.log('');
+}
 function renderTickets(sessionPath) {
     const tickets = collectTickets(sessionPath);
     if (tickets.length === 0)
@@ -110,6 +157,7 @@ export function showStatus(cwd) {
         fields['Consecutive no_progress'] = `${count}/3${isLlm ? ' [LLM bypass active]' : ''}`;
     }
     printMinimalPanel('Pickle Rick — Session Status', fields, isActive ? 'GREEN' : 'RED', '🥒');
+    renderPipelineRecap(sessionPath, state);
     renderTickets(sessionPath);
     renderScopeDrift(sessionPath);
 }

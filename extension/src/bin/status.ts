@@ -8,6 +8,15 @@ import { readMicroverseState } from '../services/microverse-state.js';
 
 const sm = new StateManager();
 
+interface PipelineStatusSnapshot {
+  status?: 'running' | 'completed' | 'failed' | 'cancelled' | string;
+  current_phase?: string | null;
+  completed_phases?: number;
+  skipped_phases?: number;
+  total_phases?: number;
+  updated_at?: string;
+}
+
 export function computeConsecutiveNoProgress(mvState: MicroverseSessionState): number {
   const recent = (mvState.failure_history ?? []).slice(-3);
   return Math.min(recent.filter(f => f.failure_class === 'no_progress').length, 3);
@@ -30,6 +39,59 @@ function formatIteration(state: State): string {
 function formatTask(raw: string | undefined): string {
   const task = raw || '';
   return task.length > 80 ? task.slice(0, 80) + '…' : task;
+}
+
+function readPipelineStatus(sessionPath: string): PipelineStatusSnapshot | null {
+  const statusPath = path.join(sessionPath, 'pipeline-status.json');
+  try {
+    const raw = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+    return raw && typeof raw === 'object' ? raw as PipelineStatusSnapshot : null;
+  } catch {
+    return null;
+  }
+}
+
+function countPhaseCompletedEvents(state: State): number {
+  if (!Array.isArray(state.activity)) return 0;
+  return state.activity.filter((entry) => entry?.event === 'phase_completed').length;
+}
+
+function getRecoverablePhaseFailures(state: State): Array<{ phase: string; exitCode: number }> {
+  if (!Array.isArray(state.activity)) return [];
+  return state.activity.flatMap((entry) => {
+    if (
+      entry?.event !== 'recoverable_phase_failure'
+      || typeof entry.phase !== 'string'
+      || typeof entry.exit_code !== 'number'
+    ) {
+      return [];
+    }
+    return [{ phase: entry.phase, exitCode: entry.exit_code }];
+  });
+}
+
+function hasPipelineArtifacts(sessionPath: string, state: State): boolean {
+  return fs.existsSync(path.join(sessionPath, 'pipeline.json'))
+    || fs.existsSync(path.join(sessionPath, 'pipeline-status.json'))
+    || (Array.isArray(state.activity) && state.activity.length > 0);
+}
+
+function renderPipelineRecap(sessionPath: string, state: State): void {
+  if (!hasPipelineArtifacts(sessionPath, state)) return;
+
+  const pipelineStatus = readPipelineStatus(sessionPath);
+  const phasesCompleted = countPhaseCompletedEvents(state);
+  const recoverableFailures = getRecoverablePhaseFailures(state);
+  const totalPhases = Number(pipelineStatus?.total_phases) || 0;
+
+  if (recoverableFailures.length > 0) {
+    const latestFailure = recoverableFailures[recoverableFailures.length - 1];
+    console.log(`Phase ${latestFailure.phase} exited with code ${latestFailure.exitCode} — pipeline continued to remediation`);
+  }
+
+  console.log(`Pipeline recap: ${phasesCompleted}/${totalPhases} phases completed`);
+  console.log(`Recoverable phase failures: ${recoverableFailures.length}`);
+  console.log('');
 }
 
 function renderTickets(sessionPath: string): void {
@@ -123,6 +185,7 @@ export function showStatus(cwd: string): void {
 
   printMinimalPanel('Pickle Rick — Session Status', fields, isActive ? 'GREEN' : 'RED', '🥒');
 
+  renderPipelineRecap(sessionPath, state);
   renderTickets(sessionPath);
   renderScopeDrift(sessionPath);
 }
