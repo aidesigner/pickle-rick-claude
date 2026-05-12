@@ -1975,6 +1975,80 @@ async function handleManagerErrorOutcome(ctx) {
     ctx.log('Subprocess error. Exiting loop.');
     return 'error';
 }
+function markWorkerSubsystemStalled(state, sessionDir) {
+    const convergenceFile = state.convergence_file;
+    if (!convergenceFile)
+        return;
+    const convergencePath = path.join(sessionDir, convergenceFile);
+    const raw = readRecoverableJsonObject(convergencePath);
+    if (!raw)
+        return;
+    const subsystems = Array.isArray(raw.subsystems)
+        ? raw.subsystems.filter((value) => typeof value === 'string' && value.trim().length > 0)
+        : [];
+    if (subsystems.length === 0)
+        return;
+    const currentSubsystem = typeof state.current_subsystem === 'string' && state.current_subsystem.trim().length > 0
+        ? state.current_subsystem
+        : (() => {
+            const currentIndex = Number.isInteger(raw.current_index) ? Number(raw.current_index) : 0;
+            return subsystems[currentIndex] ?? null;
+        })();
+    if (!currentSubsystem || !subsystems.includes(currentSubsystem))
+        return;
+    const stallCounts = raw.stall_counts && typeof raw.stall_counts === 'object' && !Array.isArray(raw.stall_counts)
+        ? { ...raw.stall_counts }
+        : {};
+    const nextCount = Number.isFinite(Number(stallCounts[currentSubsystem]))
+        ? Number(stallCounts[currentSubsystem]) + 1
+        : 1;
+    stallCounts[currentSubsystem] = nextCount;
+    const currentIndex = subsystems.indexOf(currentSubsystem);
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % subsystems.length : 0;
+    writeStateFile(convergencePath, {
+        ...raw,
+        current_index: nextIndex,
+        stall_counts: stallCounts,
+    });
+}
+async function handleWorkerSubprocessError(state, ctx, _outcome, _stallClassification) {
+    const trackedState = state;
+    const nextCount = Number(trackedState.consecutive_subprocess_errors ?? 0) + 1;
+    replaceMicroverseState(state, {
+        ...state,
+        consecutive_subprocess_errors: nextCount,
+    });
+    writeMicroverseState(ctx.sessionDir, state);
+    if (nextCount >= Defaults.WORKER_CONSECUTIVE_ERROR_CAP) {
+        ctx.log(`Worker subprocess error cap reached (${nextCount}/${Defaults.WORKER_CONSECUTIVE_ERROR_CAP}) - exiting loop`);
+        return 'error';
+    }
+    markWorkerSubsystemStalled(state, ctx.sessionDir);
+    ctx.log(`Worker iteration ${ctx.iteration} errored - advancing rotation ` +
+        `(count ${nextCount}/${Defaults.WORKER_CONSECUTIVE_ERROR_CAP})`);
+    return 'continue';
+}
+async function handleIterationErrorOrStop(state, ctx, outcome, exitResult, stallClassification) {
+    if (exitResult.type === 'timeout' && outcome.completion !== 'error') {
+        ctx.log('Worker timeout. Exiting loop.');
+        return 'error';
+    }
+    if (stallClassification?.category === 'external_blocker') {
+        ctx.log('External blocker classified — halting loop.');
+        return 'error';
+    }
+    if (outcome.completion === 'error' && state.convergence_mode === 'worker') {
+        return handleWorkerSubprocessError(state, ctx, outcome, stallClassification);
+    }
+    if (outcome.completion === 'error') {
+        return handleManagerErrorOutcome(ctx);
+    }
+    if (outcome.completion === 'inactive') {
+        ctx.log('Session deactivated. Exiting loop.');
+        return 'stopped';
+    }
+    return null;
+}
 export async function handleIterationOutcome(state, baseline, ctx, outcome) {
     const iterLogFile = path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`);
     const exitResult = classifyIterationExit(outcome.completion, iterLogFile, {
@@ -2001,21 +2075,9 @@ export async function handleIterationOutcome(state, baseline, ctx, outcome) {
         return rateLimitExit;
     if (exitResult.type === 'success')
         ctx.consecutiveRateLimits = 0;
-    if (exitResult.type === 'timeout' && outcome.completion !== 'error') {
-        ctx.log('Worker timeout. Exiting loop.');
-        return 'error';
-    }
-    if (stallClassification?.category === 'external_blocker') {
-        ctx.log('External blocker classified — halting loop.');
-        return 'error';
-    }
-    if (outcome.completion === 'error') {
-        return handleManagerErrorOutcome(ctx);
-    }
-    if (outcome.completion === 'inactive') {
-        ctx.log('Session deactivated. Exiting loop.');
-        return 'stopped';
-    }
+    const errorOrStopExit = await handleIterationErrorOrStop(state, ctx, outcome, exitResult, stallClassification);
+    if (errorOrStopExit)
+        return errorOrStopExit;
     if (state.convergence_mode === 'worker')
         return await handleWorkerMode(state, ctx) ?? 'continue';
     return await handleMetricMode(state, baseline, ctx, iterLogFile);

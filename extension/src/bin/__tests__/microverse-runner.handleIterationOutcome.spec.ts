@@ -40,6 +40,8 @@ function makeMicroverseState(): MicroverseSessionState {
     failure_history: [],
     approach_exhaustion_fired: false,
     convergence_mode: 'worker',
+    convergence_file: 'anatomy-park.json',
+    current_subsystem: 'alpha',
   };
 }
 
@@ -106,13 +108,45 @@ test('R-APMW-1: spec imports without runtime error', () => {
   strictEqual(typeof _deps.collectTickets, 'function');
 });
 
-test("R-APMW-1: handleIterationOutcome returns 'error' on worker codex timeout with no tickets", async () => {
+async function writeWorkerConvergenceLedger(sessionDir: string): Promise<void> {
+  await fs.promises.writeFile(path.join(sessionDir, 'anatomy-park.json'), JSON.stringify({
+    subsystems: ['alpha', 'beta'],
+    current_index: 0,
+    stall_counts: { alpha: 0, beta: 0 },
+  }, null, 2));
+}
+
+function readMicroverse(sessionDir: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(path.join(sessionDir, 'microverse.json'), 'utf-8')) as Record<string, unknown>;
+}
+
+function readConvergenceLedger(sessionDir: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(path.join(sessionDir, 'anatomy-park.json'), 'utf-8')) as Record<string, unknown>;
+}
+
+async function runWorkerErrorScenario(opts?: {
+  consecutiveErrors?: number;
+  convergenceMode?: MicroverseSessionState['convergence_mode'];
+}): Promise<{
+  result: Awaited<ReturnType<typeof handleIterationOutcome>>;
+  logs: string[];
+  microverseState: Record<string, unknown>;
+  convergenceLedger: Record<string, unknown>;
+}> {
   const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rapmw1-session-'));
   const workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rapmw1-work-'));
   const runnerState = makeRunnerState(sessionDir, workingDir);
   const statePath = path.join(sessionDir, 'state.json');
+  const logs: string[] = [];
+  const microverseState = {
+    ...makeMicroverseState(),
+    convergence_mode: opts?.convergenceMode ?? 'worker',
+    consecutive_subprocess_errors: opts?.consecutiveErrors ?? 0,
+  };
   // eslint-disable-next-line pickle/no-raw-state-write -- initial creation: no existing state to lock against
   stateManager.forceWrite(statePath, runnerState);
+  await fs.promises.writeFile(path.join(sessionDir, 'microverse.json'), JSON.stringify(microverseState, null, 2));
+  await writeWorkerConvergenceLedger(sessionDir);
 
   const originalCollectTickets = _deps.collectTickets;
   const originalGetHeadSha = _deps.getHeadSha;
@@ -123,14 +157,21 @@ test("R-APMW-1: handleIterationOutcome returns 'error' on worker codex timeout w
     _deps.getHeadSha = () => 'deadbeef';
     _deps.sleep = async () => {};
 
+    const ctx = makeContext(sessionDir, statePath, runnerState);
+    ctx.log = (msg) => { logs.push(msg); };
     const result = await handleIterationOutcome(
-      makeMicroverseState(),
+      microverseState as MicroverseSessionState,
       makeBaseline(),
-      makeContext(sessionDir, statePath, runnerState),
+      ctx,
       makeOutcome(),
     );
 
-    strictEqual(result, 'error');
+    return {
+      result,
+      logs,
+      microverseState: readMicroverse(sessionDir),
+      convergenceLedger: readConvergenceLedger(sessionDir),
+    };
   } finally {
     _deps.collectTickets = originalCollectTickets;
     _deps.getHeadSha = originalGetHeadSha;
@@ -138,4 +179,39 @@ test("R-APMW-1: handleIterationOutcome returns 'error' on worker codex timeout w
     fs.rmSync(sessionDir, { recursive: true, force: true });
     fs.rmSync(workingDir, { recursive: true, force: true });
   }
+}
+
+/* baseline retired by R-APMW-2 */
+test("R-APMW-1: handleIterationOutcome returns 'continue' on worker codex timeout with no tickets", async () => {
+  const scenario = await runWorkerErrorScenario();
+  strictEqual(scenario.result, 'continue');
+});
+
+test("R-APMW-2: first worker subprocess error returns 'continue'", async () => {
+  const scenario = await runWorkerErrorScenario({ consecutiveErrors: 0 });
+  strictEqual(scenario.result, 'continue');
+  strictEqual(scenario.microverseState.consecutive_subprocess_errors, 1);
+  strictEqual((scenario.convergenceLedger.stall_counts as Record<string, number>).alpha, 1);
+  strictEqual(scenario.convergenceLedger.current_index, 1);
+});
+
+test("R-APMW-2: second worker subprocess error returns 'continue'", async () => {
+  const scenario = await runWorkerErrorScenario({ consecutiveErrors: 1 });
+  strictEqual(scenario.result, 'continue');
+  strictEqual(scenario.microverseState.consecutive_subprocess_errors, 2);
+  strictEqual((scenario.convergenceLedger.stall_counts as Record<string, number>).alpha, 1);
+  strictEqual(scenario.convergenceLedger.current_index, 1);
+});
+
+test("R-APMW-2: third worker subprocess error returns 'error' (cap)", async () => {
+  const scenario = await runWorkerErrorScenario({ consecutiveErrors: 2 });
+  strictEqual(scenario.result, 'error');
+  strictEqual(scenario.microverseState.consecutive_subprocess_errors, 3);
+  strictEqual(scenario.logs.some((line) => line.includes('cap reached')), true);
+});
+
+test('R-APMW-2: manager mode unchanged on subprocess error', async () => {
+  const scenario = await runWorkerErrorScenario({ convergenceMode: 'metric' });
+  strictEqual(scenario.result, 'error');
+  strictEqual(scenario.microverseState.consecutive_subprocess_errors, 0);
 });
