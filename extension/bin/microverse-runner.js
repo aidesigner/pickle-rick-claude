@@ -2,6 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
+import { pathToFileURL } from 'node:url';
 import { Defaults } from '../types/index.js';
 import { resolveBackend, resolveWorkerBackendFromStateFile, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, findLastAcceptedEntry, } from '../services/microverse-state.js';
@@ -677,6 +678,40 @@ export const _deps = {
     sleep: sleep,
     collectTickets: collectTickets,
 };
+function buildLastSubprocessError(iteration, outcome) {
+    return {
+        iteration,
+        timestamp: new Date().toISOString(),
+        completion: outcome.completion,
+        timedOut: outcome.timedOut === true,
+        exitCode: outcome.exitCode,
+        wallSeconds: outcome.wallSeconds,
+        ...(outcome.stallReason ? { stallReason: outcome.stallReason } : {}),
+    };
+}
+function recordRunnerSubprocessErrorState(ctx, outcome) {
+    const lastError = buildLastSubprocessError(ctx.iteration, outcome);
+    sm.update(ctx.statePath, rawState => {
+        const state = rawState;
+        state.last_error = lastError;
+        state.last_subprocess_error = lastError;
+    });
+}
+export async function applyTestBackendOverrideFromEnv() {
+    const overridePath = process.env.PICKLE_TEST_BACKEND_PATH?.trim();
+    if (!overridePath)
+        return false;
+    const resolvedPath = path.resolve(overridePath);
+    const overrideModule = await import(pathToFileURL(resolvedPath).href);
+    const candidate = typeof overrideModule.runIteration === 'function'
+        ? overrideModule.runIteration
+        : overrideModule.default;
+    if (typeof candidate !== 'function') {
+        throw new Error(`PICKLE_TEST_BACKEND_PATH module must export a runIteration function: ${resolvedPath}`);
+    }
+    _deps.runIteration = candidate;
+    return true;
+}
 const RECOVERY_TEMPLATES = {
     tool_failure: 'Metric tool failed. Check tool prerequisites, env vars, and dependencies before retrying.',
     approach_exhaustion: 'Multiple approaches failed. Reset strategy: re-read the PRD, identify untried angles, consider simplifying scope.',
@@ -2011,7 +2046,8 @@ function markWorkerSubsystemStalled(state, sessionDir) {
         stall_counts: stallCounts,
     });
 }
-async function handleWorkerSubprocessError(state, ctx, _outcome, _stallClassification) {
+async function handleWorkerSubprocessError(state, ctx, outcome, _stallClassification) {
+    recordRunnerSubprocessErrorState(ctx, outcome);
     const nextCount = Number(state.consecutive_subprocess_errors ?? 0) + 1;
     replaceMicroverseState(state, {
         ...state,
@@ -2048,6 +2084,40 @@ async function handleIterationErrorOrStop(state, ctx, outcome, exitResult, stall
     }
     return null;
 }
+/**
+ * State machine for per-iteration outcome handling.
+ *
+ *   outcome
+ *     |
+ *     v
+ *   classifyIterationExit(...)
+ *     |
+ *     +-- success --------------------------------------------------------+
+ *     |                                                                   |
+ *     |   reset consecutive_subprocess_errors to 0                        |
+ *     |     |                                                             |
+ *     |     +-- worker converged --> return 'success'                     |
+ *     |     |                                                             |
+ *     |     +-- otherwise --------> return 'continue'                     |
+ *     |                                                                   |
+ *     +-- error ----------------------------------------------------------+
+ *     |                                                                   |
+ *     |   convergence_mode === 'worker'                                   |
+ *     |     |                                                             |
+ *     |     +--> handleWorkerSubprocessError(...)                         |
+ *     |            |                                                      |
+ *     |            +-- count < Defaults.WORKER_CONSECUTIVE_ERROR_CAP ---> |
+ *     |            |      return 'continue'                               |
+ *     |            |                                                      |
+ *     |            +-- count >= Defaults.WORKER_CONSECUTIVE_ERROR_CAP --> |
+ *     |                   return 'error'                                  |
+ *     |                                                                   |
+ *     |   convergence_mode !== 'worker'                                   |
+ *     |     |                                                             |
+ *     |     +--> handleManagerErrorOutcome(...) --> return 'continue'|'error'
+ *     |                                                                   |
+ *     +-- inactive -------------------------------------------------> return 'stopped'
+ */
 export async function handleIterationOutcome(state, baseline, ctx, outcome) {
     const iterLogFile = path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`);
     const exitResult = classifyIterationExit(outcome.completion, iterLogFile, {
@@ -2276,6 +2346,7 @@ export async function main(sessionDir) {
         }
         throw err;
     }
+    await applyTestBackendOverrideFromEnv();
     const { currentMv, ctx, log } = initializeMicroverseRun(sessionDir);
     const outcome = await runMicroversePhases(currentMv, ctx, log);
     finalizeMicroverseRun(sessionDir, ctx, outcome, log);

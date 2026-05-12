@@ -2,6 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
+import { pathToFileURL } from 'node:url';
 import { State, Defaults, MicroverseExitReason } from '../types/index.js';
 import type { ActivityEventType, Backend, IterationExitType, MicroverseSessionState, MicroverseHistoryEntry, ViolationLedger, FailureClass, GateResult, StallClassification, StallRecoveryAction, JudgeResult, Violation } from '../types/index.js';
 import {
@@ -977,6 +978,68 @@ export const _deps = {
   sleep: sleep as typeof sleep,
   collectTickets: collectTickets as typeof collectTickets,
 };
+
+type TestRunIterationOverride = typeof runIteration;
+
+function buildLastSubprocessError(
+  iteration: number,
+  outcome: IterationRunOutcome,
+): {
+  iteration: number;
+  timestamp: string;
+  completion: IterationRunOutcome['completion'];
+  timedOut: boolean;
+  exitCode: number | null;
+  wallSeconds: number;
+  stallReason?: IterationRunOutcome['stallReason'];
+} {
+  return {
+    iteration,
+    timestamp: new Date().toISOString(),
+    completion: outcome.completion,
+    timedOut: outcome.timedOut === true,
+    exitCode: outcome.exitCode,
+    wallSeconds: outcome.wallSeconds,
+    ...(outcome.stallReason ? { stallReason: outcome.stallReason } : {}),
+  };
+}
+
+function recordRunnerSubprocessErrorState(
+  ctx: RunContext,
+  outcome: IterationRunOutcome,
+): void {
+  const lastError = buildLastSubprocessError(ctx.iteration, outcome);
+  sm.update(ctx.statePath, rawState => {
+    const state = rawState as State & {
+      last_error?: typeof lastError;
+      last_subprocess_error?: typeof lastError;
+    };
+    state.last_error = lastError;
+    state.last_subprocess_error = lastError;
+  });
+}
+
+export async function applyTestBackendOverrideFromEnv(): Promise<boolean> {
+  const overridePath = process.env.PICKLE_TEST_BACKEND_PATH?.trim();
+  if (!overridePath) return false;
+
+  const resolvedPath = path.resolve(overridePath);
+  const overrideModule = await import(pathToFileURL(resolvedPath).href) as {
+    default?: unknown;
+    runIteration?: unknown;
+  };
+  const candidate = typeof overrideModule.runIteration === 'function'
+    ? overrideModule.runIteration
+    : overrideModule.default;
+  if (typeof candidate !== 'function') {
+    throw new Error(
+      `PICKLE_TEST_BACKEND_PATH module must export a runIteration function: ${resolvedPath}`,
+    );
+  }
+
+  _deps.runIteration = candidate as TestRunIterationOverride;
+  return true;
+}
 
 const RECOVERY_TEMPLATES: Record<FailureClass, string> = {
   tool_failure: 'Metric tool failed. Check tool prerequisites, env vars, and dependencies before retrying.',
@@ -2621,9 +2684,10 @@ function markWorkerSubsystemStalled(state: MicroverseState, sessionDir: string):
 async function handleWorkerSubprocessError(
   state: MicroverseState,
   ctx: RunContext,
-  _outcome: IterationRunOutcome,
+  outcome: IterationRunOutcome,
   _stallClassification: StallClassification | null,
 ): Promise<ExitReason | 'continue'> {
+  recordRunnerSubprocessErrorState(ctx, outcome);
   const nextCount = Number(state.consecutive_subprocess_errors ?? 0) + 1;
   replaceMicroverseState(state, {
     ...state,
@@ -2966,6 +3030,7 @@ export async function main(sessionDir: string): Promise<void> {
     }
     throw err;
   }
+  await applyTestBackendOverrideFromEnv();
   const { currentMv, ctx, log } = initializeMicroverseRun(sessionDir);
   const outcome = await runMicroversePhases(currentMv, ctx, log);
   finalizeMicroverseRun(sessionDir, ctx, outcome, log);

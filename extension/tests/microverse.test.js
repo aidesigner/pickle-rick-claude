@@ -19,7 +19,6 @@ import {
     readMicroverseState,
     resolveStallLimit,
 } from '../services/microverse-state.js';
-import { runRemediatorForIteration } from '../bin/microverse-runner.js';
 
 function createTempGitRepo() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-microverse-'));
@@ -529,7 +528,7 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, measureLlmMetric, extractScore, parseLlmJudgeOutput, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths, executeMainLoop, executeGapAnalysis, measureAndClassifyIteration, classifyStall, handleNoCommitStall } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, extractScore, parseLlmJudgeOutput, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths, executeMainLoop, executeGapAnalysis, measureAndClassifyIteration, classifyStall, handleNoCommitStall, runRemediatorForIteration, applyTestBackendOverrideFromEnv } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { writeStateFile } from '../services/pickle-utils.js';
@@ -706,6 +705,21 @@ test('pass-model.default: microverse runner leaves model empty when current pass
         fs.rmSync(session.dir, { recursive: true, force: true });
         fs.rmSync(workingDir, { recursive: true, force: true });
         fs.rmSync(extensionRoot, { recursive: true, force: true });
+    }
+});
+
+test('R-APMW-8: production path unaffected when env var unset', async () => {
+    const originalRunIteration = _deps.runIteration;
+    const previousOverride = process.env.PICKLE_TEST_BACKEND_PATH;
+    delete process.env.PICKLE_TEST_BACKEND_PATH;
+    try {
+        const applied = await applyTestBackendOverrideFromEnv();
+        assert.equal(applied, false);
+        assert.equal(_deps.runIteration, originalRunIteration);
+    } finally {
+        _deps.runIteration = originalRunIteration;
+        if (previousOverride === undefined) delete process.env.PICKLE_TEST_BACKEND_PATH;
+        else process.env.PICKLE_TEST_BACKEND_PATH = previousOverride;
     }
 });
 
