@@ -8,7 +8,7 @@ import { Defaults } from '../types/index.js';
 import { resolveBackend, resolveWorkerBackendFromStateFile, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, findLastAcceptedEntry, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
-import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
+import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, displayMacNotification, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
@@ -672,6 +672,7 @@ export function measureMetric(validation, timeoutSeconds, cwd) {
 export const _deps = {
     execFileSync: execFileSync,
     spawnSync: spawnSync,
+    displayMacNotification: displayMacNotification,
     runIteration: runIteration,
     runWorkerManagedIteration: handleWorkerManagedIteration,
     getHeadSha: getHeadSha,
@@ -727,15 +728,8 @@ function notifyOperatorOnTerminalError(state, ctx, outcome) {
     catch {
         // Notification is best-effort and must not change loop-exit behavior.
     }
-    if (process.platform !== 'darwin')
-        return;
     try {
-        _deps.spawnSync('osascript', [
-            '-e',
-            'display notification "Pickle Rick session exited on subprocess-error cap" with title "Pickle Rick"',
-        ], {
-            stdio: 'ignore',
-        });
+        _deps.displayMacNotification('Pickle Rick', 'Pickle Rick session exited on subprocess-error cap');
     }
     catch {
         // Desktop notification is best-effort and must not change loop-exit behavior.

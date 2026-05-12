@@ -140,6 +140,8 @@ function stubSpawnSync(): ReturnType<typeof _deps.spawnSync> {
 interface ScenarioResult {
   result: Awaited<ReturnType<typeof handleIterationOutcome>>;
   logPath: string;
+  notificationCalls: number;
+  rawSpawnCalls: number;
 }
 
 async function runWorkerErrorScenario(opts: {
@@ -168,6 +170,9 @@ async function runWorkerErrorScenario(opts: {
   const originalGetHeadSha = _deps.getHeadSha;
   const originalSleep = _deps.sleep;
   const originalSpawnSync = _deps.spawnSync;
+  const originalDisplayMacNotification = _deps.displayMacNotification;
+  let notificationCalls = 0;
+  let rawSpawnCalls = 0;
 
   try {
     if (opts.notifyEnv === undefined) delete process.env.PICKLE_NOTIFY_ON_ERROR;
@@ -182,7 +187,13 @@ async function runWorkerErrorScenario(opts: {
     _deps.collectTickets = () => [];
     _deps.getHeadSha = () => 'deadbeef';
     _deps.sleep = async () => {};
-    _deps.spawnSync = (() => stubSpawnSync()) as typeof _deps.spawnSync;
+    _deps.spawnSync = (() => {
+      rawSpawnCalls++;
+      return stubSpawnSync();
+    }) as typeof _deps.spawnSync;
+    _deps.displayMacNotification = (() => {
+      notificationCalls++;
+    }) as typeof _deps.displayMacNotification;
 
     const result = await handleIterationOutcome(
       microverseState as MicroverseSessionState,
@@ -194,12 +205,15 @@ async function runWorkerErrorScenario(opts: {
     return {
       result,
       logPath,
+      notificationCalls,
+      rawSpawnCalls,
     };
   } finally {
     _deps.collectTickets = originalCollectTickets;
     _deps.getHeadSha = originalGetHeadSha;
     _deps.sleep = originalSleep;
     _deps.spawnSync = originalSpawnSync;
+    _deps.displayMacNotification = originalDisplayMacNotification;
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
     if (previousNotify === undefined) delete process.env.PICKLE_NOTIFY_ON_ERROR;
@@ -217,6 +231,7 @@ test('R-APMW-9: PICKLE_NOTIFY_ON_ERROR unset -> no notification', async () => {
   });
   strictEqual(scenario.result, 'error');
   strictEqual(await pathExists(scenario.logPath), false);
+  strictEqual(scenario.notificationCalls, 0);
 });
 
 test('R-APMW-9: PICKLE_NOTIFY_ON_ERROR=1 -> one NDJSON line appended', async () => {
@@ -235,6 +250,9 @@ test('R-APMW-9: PICKLE_NOTIFY_ON_ERROR=1 -> one NDJSON line appended', async () 
   const originalGetHeadSha = _deps.getHeadSha;
   const originalSleep = _deps.sleep;
   const originalSpawnSync = _deps.spawnSync;
+  const originalDisplayMacNotification = _deps.displayMacNotification;
+  let notificationCalls = 0;
+  let rawSpawnCalls = 0;
 
   try {
     process.env.HOME = fakeHome;
@@ -247,7 +265,13 @@ test('R-APMW-9: PICKLE_NOTIFY_ON_ERROR=1 -> one NDJSON line appended', async () 
     _deps.collectTickets = () => [];
     _deps.getHeadSha = () => 'deadbeef';
     _deps.sleep = async () => {};
-    _deps.spawnSync = (() => stubSpawnSync()) as typeof _deps.spawnSync;
+    _deps.spawnSync = (() => {
+      rawSpawnCalls++;
+      return stubSpawnSync();
+    }) as typeof _deps.spawnSync;
+    _deps.displayMacNotification = (() => {
+      notificationCalls++;
+    }) as typeof _deps.displayMacNotification;
 
     const result = await handleIterationOutcome(
       microverseState as MicroverseSessionState,
@@ -267,11 +291,14 @@ test('R-APMW-9: PICKLE_NOTIFY_ON_ERROR=1 -> one NDJSON line appended', async () 
     strictEqual(record.timedOut, true);
     strictEqual(record.stallReason, null);
     ok(typeof record.ts === 'string' && String(record.ts).length > 0);
+    strictEqual(notificationCalls, 1);
+    strictEqual(rawSpawnCalls, 0);
   } finally {
     _deps.collectTickets = originalCollectTickets;
     _deps.getHeadSha = originalGetHeadSha;
     _deps.sleep = originalSleep;
     _deps.spawnSync = originalSpawnSync;
+    _deps.displayMacNotification = originalDisplayMacNotification;
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
     if (previousNotify === undefined) delete process.env.PICKLE_NOTIFY_ON_ERROR;
@@ -289,6 +316,8 @@ test('R-APMW-9: notifier never throws', async () => {
     breakNotificationDir: true,
   });
   strictEqual(scenario.result, 'error');
+  strictEqual(scenario.notificationCalls, 1);
+  strictEqual(scenario.rawSpawnCalls, 0);
 });
 
 test('R-APMW-9: only fires on cap-exhaustion path', async () => {
@@ -298,4 +327,6 @@ test('R-APMW-9: only fires on cap-exhaustion path', async () => {
   });
   strictEqual(scenario.result, 'continue');
   strictEqual(await pathExists(scenario.logPath), false);
+  strictEqual(scenario.notificationCalls, 0);
+  strictEqual(scenario.rawSpawnCalls, 0);
 });

@@ -39,6 +39,7 @@ import {
   formatLocalDateKey,
   printMinimalPanel,
   safeErrorMessage,
+  displayMacNotification,
   ensureMonitorWindow,
   collectTickets,
 } from '../services/pickle-utils.js';
@@ -973,6 +974,7 @@ export function measureMetric(
 export const _deps = {
   execFileSync: execFileSync as typeof execFileSync,
   spawnSync: spawnSync as typeof spawnSync,
+  displayMacNotification: displayMacNotification as typeof displayMacNotification,
   runIteration: runIteration as typeof runIteration,
   runWorkerManagedIteration: handleWorkerManagedIteration as typeof handleWorkerManagedIteration,
   getHeadSha: getHeadSha as typeof getHeadSha,
@@ -1050,15 +1052,11 @@ function notifyOperatorOnTerminalError(
     // Notification is best-effort and must not change loop-exit behavior.
   }
 
-  if (process.platform !== 'darwin') return;
-
   try {
-    _deps.spawnSync('osascript', [
-      '-e',
-      'display notification "Pickle Rick session exited on subprocess-error cap" with title "Pickle Rick"',
-    ], {
-      stdio: 'ignore',
-    });
+    _deps.displayMacNotification(
+      'Pickle Rick',
+      'Pickle Rick session exited on subprocess-error cap',
+    );
   } catch {
     // Desktop notification is best-effort and must not change loop-exit behavior.
   }
