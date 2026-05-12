@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import type { Backend, State } from '../types/index.js';
-import { BACKENDS, PipelineRunnerExitCode, isMicroverseFailureExit, type MicroverseExitReason } from '../types/index.js';
+import { BACKENDS, MICROVERSE_FATAL_REASONS, PipelineRunnerExitCode, type MicroverseFatalReason } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import {
@@ -1364,9 +1364,44 @@ function findingMeetsThreshold(finding: CitadelFinding, threshold: CitadelSeveri
   return SEVERITY_RANK[finding.severity] <= SEVERITY_RANK[threshold];
 }
 
-function shouldHaltAfterPhase(phase: PhaseName, exitCode: number, runtime: PipelineRuntime): boolean {
+const MICROVERSE_FATAL_REASON_SET = new Set<string>(MICROVERSE_FATAL_REASONS);
+
+function countCommitsSince(startCommit: string, workingDir: string): number {
+  const output = execFileSync('git', ['rev-list', '--count', `${startCommit}..HEAD`], {
+    cwd: workingDir,
+    encoding: 'utf-8',
+  }).trim();
+  const count = Number.parseInt(output, 10);
+  if (!Number.isInteger(count) || count < 0) {
+    throw new Error(`Invalid git rev-list --count output: ${output}`);
+  }
+  return count;
+}
+
+function isMicroverseFatalReason(reason: unknown): reason is MicroverseFatalReason {
+  return typeof reason === 'string' && MICROVERSE_FATAL_REASON_SET.has(reason);
+}
+
+export function isFatalPhaseFailure(phase: PhaseName, runtime: PipelineRuntime): boolean {
+  try {
+    const runnerState = sm.read(runtime.statePath);
+    if (phase === 'pickle') {
+      const startCommit = runnerState.start_commit?.trim();
+      if (!startCommit) return true;
+      return countCommitsSince(startCommit, runtime.workingDir) === 0;
+    }
+    if (phase === 'anatomy-park' || phase === 'szechuan-sauce') {
+      return isMicroverseFatalReason(runnerState.exit_reason);
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+export function shouldHaltAfterPhase(phase: PhaseName, exitCode: number, runtime: PipelineRuntime): boolean {
   if (exitCode === 0) return false;
-  if (phase !== 'citadel') return true;
+  if (phase !== 'citadel') return isFatalPhaseFailure(phase, runtime);
   const report = readCitadelReport(runtime.sessionDir);
   if (!report) return true;
   const threshold: CitadelSeverity = runtime.config.citadel_strict ? 'High' : 'Critical';
@@ -1815,17 +1850,17 @@ function logPhaseHaltReason(
   }
   try {
     const runnerState = sm.read(runtime.statePath);
-    const exitReason = runnerState.exit_reason as MicroverseExitReason | null | undefined;
-    if (exitReason && isMicroverseFailureExit(exitReason)) {
-      log(`Phase ${rawPhase}: microverse exited with ${exitReason} — pipeline aborting (no finalize-gate)`);
-      return 'abort';
-    } else if (exitReason === 'judge_timeout') {
+    const exitReason = runnerState.exit_reason;
+    if (exitReason === 'judge_timeout') {
       log(`Phase ${rawPhase}: microverse exited with judge_timeout — running finalize-gate anyway (transient measurement timeout, recoverable per R-PRJT-2)`);
       return 'run-finalize-gate';
-    } else {
-      log(haltMsg);
+    }
+    if (isMicroverseFatalReason(exitReason)) {
+      log(`Phase ${rawPhase}: microverse exited with ${exitReason} — pipeline aborting (no finalize-gate)`);
       return 'abort';
     }
+    log(haltMsg);
+    return 'abort';
   } catch {
     log(haltMsg);
     return 'abort';

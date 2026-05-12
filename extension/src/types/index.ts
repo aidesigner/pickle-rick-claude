@@ -704,6 +704,14 @@ export type MicroverseExitReason =
   | 'rate_limit_exhausted' | 'approach_exhaustion' | 'no_progress'
   | 'judge_unreachable' | 'judge_timeout' | 'baseline_unmeasurable' | 'judge_cli_missing';
 
+export const MICROVERSE_FATAL_REASONS = [
+  'judge_cli_missing',
+  'session_state_corrupted',
+  'baseline_unmeasurable_unrecoverable',
+] as const;
+
+export type MicroverseFatalReason = typeof MICROVERSE_FATAL_REASONS[number];
+
 const MICROVERSE_FAILURE_REASONS = new Set<MicroverseExitReason>([
   'error', 'rate_limit_exhausted', 'judge_unreachable',
   'baseline_unmeasurable', 'judge_cli_missing',

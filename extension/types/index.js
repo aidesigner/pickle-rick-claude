@@ -248,6 +248,11 @@ export var PipelineRunnerExitCode;
     PipelineRunnerExitCode[PipelineRunnerExitCode["AuditFailure"] = 2] = "AuditFailure";
     PipelineRunnerExitCode[PipelineRunnerExitCode["PhaseIncomplete"] = 3] = "PhaseIncomplete";
 })(PipelineRunnerExitCode || (PipelineRunnerExitCode = {}));
+export const MICROVERSE_FATAL_REASONS = [
+    'judge_cli_missing',
+    'session_state_corrupted',
+    'baseline_unmeasurable_unrecoverable',
+];
 const MICROVERSE_FAILURE_REASONS = new Set([
     'error', 'rate_limit_exhausted', 'judge_unreachable',
     'baseline_unmeasurable', 'judge_cli_missing',
