@@ -66,7 +66,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'tool_retry_circuit_open',
         'iteration_start', 'iteration_end', 'wasted_iter',
         'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
-        'judge_unreachable', 'judge_timeout', 'baseline_unmeasurable', 'judge_cli_missing',
+        'judge_unreachable', 'judge_timeout', 'baseline_attempt_timeout', 'baseline_unmeasurable', 'judge_cli_missing',
         'multi_repo_warning', 'meeseeks_model_select',
         'pending_tickets_on_completion',
         'manager_false_epic_completed', 'manager_persistent_hallucination',
@@ -174,7 +174,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'manager_idle_backoff_engaged',
         'manager_idle_backoff_released',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 128);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

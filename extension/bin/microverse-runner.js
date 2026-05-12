@@ -1144,7 +1144,7 @@ export function probeJudgeCliAvailability(cwd) {
         return { kind, message };
     }
 }
-export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = []) {
+export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = [], attemptTimeoutActivity) {
     const probe = probeJudgeCliAvailability(cwd);
     if (probe.kind === 'missing') {
         return {
@@ -1159,7 +1159,9 @@ export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, jud
     let lastError = null;
     let exhaustedFailureKind = probe.kind === 'failed' ? 'failed' : 'timeout';
     for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
+        const startedAt = Date.now();
         const result = measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend, priorViolations);
+        const elapsedMs = Math.max(0, Date.now() - startedAt);
         if (result.metric) {
             return { metric: result.metric, attempts: attempt + 1 };
         }
@@ -1178,6 +1180,24 @@ export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, jud
         }
         else if (result.failureKind === 'timeout' && exhaustedFailureKind !== 'failed') {
             exhaustedFailureKind = 'timeout';
+            if (attemptTimeoutActivity) {
+                try {
+                    _deps.logActivity({
+                        event: 'baseline_attempt_timeout',
+                        source: 'pickle',
+                        session: attemptTimeoutActivity.session,
+                        iteration: attemptTimeoutActivity.iteration,
+                        gate_payload: {
+                            attempt: attempt + 1,
+                            elapsed_ms: elapsedMs,
+                            classifier: 'timeout',
+                        },
+                    });
+                }
+                catch {
+                    // Best-effort telemetry; timeout retries must continue even if logging fails.
+                }
+            }
         }
         if (attempt < backoffsMs.length) {
             await _deps.sleep(backoffsMs[attempt]);
@@ -1503,7 +1523,7 @@ export function ensureRunnerStateActive(statePath) {
 async function measureLlmBaseline(state, ctx, backend) {
     if (state.key_metric.type !== 'llm')
         return null;
-    const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend);
+    const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend, [], { session: path.basename(ctx.sessionDir), iteration: ctx.iteration });
     if (measured.metric)
         return measured.metric;
     const baselineFailureKind = measured.exitReason === 'judge_timeout' ? measured.exhaustedFailureKind : measured.exitReason;

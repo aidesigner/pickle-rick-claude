@@ -525,6 +525,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'worker_spawn_backend_override',
     'subtool_backend_override',
     'worker_partial_lifecycle_exit',
+    'baseline_attempt_timeout',
     'cap_check_skipped_stale_cache',
     'pipeline_auto_resumed',
     'bundle_bootstrap_exemption_applied',

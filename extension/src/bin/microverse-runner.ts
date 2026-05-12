@@ -1614,6 +1614,7 @@ export async function measureLlmMetricWithBackoff(
   judgeContextPath?: string,
   backend: Backend = 'claude',
   priorViolations: ViolationLedger[] = [],
+  attemptTimeoutActivity?: { session: string; iteration: number },
 ): Promise<JudgeMeasurementResult> {
   const probe = probeJudgeCliAvailability(cwd);
   if (probe.kind === 'missing') {
@@ -1630,6 +1631,7 @@ export async function measureLlmMetricWithBackoff(
   let lastError: string | null = null;
   let exhaustedFailureKind: JudgeMeasurementExhaustedFailureKind = probe.kind === 'failed' ? 'failed' : 'timeout';
   for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
+    const startedAt = Date.now();
     const result = measureLlmMetricAttempt(
       goal,
       timeoutSeconds,
@@ -1641,6 +1643,7 @@ export async function measureLlmMetricWithBackoff(
       backend,
       priorViolations,
     );
+    const elapsedMs = Math.max(0, Date.now() - startedAt);
     if (result.metric) {
       return { metric: result.metric, attempts: attempt + 1 };
     }
@@ -1658,6 +1661,23 @@ export async function measureLlmMetricWithBackoff(
       exhaustedFailureKind = 'failed';
     } else if (result.failureKind === 'timeout' && exhaustedFailureKind !== 'failed') {
       exhaustedFailureKind = 'timeout';
+      if (attemptTimeoutActivity) {
+        try {
+          _deps.logActivity({
+            event: 'baseline_attempt_timeout',
+            source: 'pickle',
+            session: attemptTimeoutActivity.session,
+            iteration: attemptTimeoutActivity.iteration,
+            gate_payload: {
+              attempt: attempt + 1,
+              elapsed_ms: elapsedMs,
+              classifier: 'timeout',
+            },
+          });
+        } catch {
+          // Best-effort telemetry; timeout retries must continue even if logging fails.
+        }
+      }
     }
     if (attempt < backoffsMs.length) {
       await _deps.sleep(backoffsMs[attempt]);
@@ -2063,6 +2083,8 @@ async function measureLlmBaseline(
     state.prd_path,
     state.judge_context_path,
     backend,
+    [],
+    { session: path.basename(ctx.sessionDir), iteration: ctx.iteration },
   );
   if (measured.metric) return measured.metric;
   const baselineFailureKind: 'judge_cli_missing' | JudgeMeasurementExhaustedFailureKind =
