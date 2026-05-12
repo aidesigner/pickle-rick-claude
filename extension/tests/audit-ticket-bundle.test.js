@@ -7,7 +7,8 @@
  *   ATB-02 — path under "## Files to modify" not in git → path-drift finding
  *   ATB-03 — path under "## Files to modify" present in git → no finding
  *   ATB-04 — path with (forward-created) annotation in "## Files to modify" → no finding
- *   ATB-05 — extractForwardCreatePaths only captures paths in the create section
+ *   ATB-05 — path with canonical `(created|introduced) by ticket <hash>` annotation in "## Files to modify" → no finding
+ *   ATB-06 — extractForwardCreatePaths only captures paths in the create section
  */
 
 import { test } from 'node:test';
@@ -110,7 +111,45 @@ test('ATB-04: path with (forward-created) annotation in ## Files to modify produ
   );
 });
 
-test('ATB-05: extractForwardCreatePaths captures only paths in ## Files to create section', () => {
+test('ATB-05: canonical created-by-ticket path annotation in ## Files to modify produces no finding', () => {
+  const body = `
+## Implementation Details
+
+### Files to modify
+
+- \`extension/src/bin/new-thing.ts\` (created by ticket 5c75a9eb)
+`;
+  const gitFiles = new Set(); // empty
+  const ticket = makeTicket('aabbccdd', body);
+  const findings = checkPathDrift(ticket, gitFiles);
+  const pathDrift = findings.filter((f) => f.defect_class === 'path-drift');
+  assert.deepStrictEqual(
+    pathDrift,
+    [],
+    `Expected no path-drift for canonical forward-ref path, got: ${JSON.stringify(pathDrift)}`,
+  );
+});
+
+test('ATB-05: canonical introduced-by-ticket path annotation in ## Files to modify produces no finding', () => {
+  const body = `
+## Implementation Details
+
+### Files to modify
+
+- \`extension/src/bin/new-thing.ts\` (introduced by ticket aabbccdd)
+`;
+  const gitFiles = new Set(); // empty
+  const ticket = makeTicket('aabbccdd', body);
+  const findings = checkPathDrift(ticket, gitFiles);
+  const pathDrift = findings.filter((f) => f.defect_class === 'path-drift');
+  assert.deepStrictEqual(
+    pathDrift,
+    [],
+    `Expected no path-drift for introduced-by-ticket forward-ref path, got: ${JSON.stringify(pathDrift)}`,
+  );
+});
+
+test('ATB-06: extractForwardCreatePaths captures only paths in ## Files to create section', () => {
   const body = `
 ## Files to create
 

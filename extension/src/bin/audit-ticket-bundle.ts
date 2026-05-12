@@ -8,7 +8,7 @@ const TICKET_HASH_RE = /^[0-9a-f]{8}$/;
 const SHA_TOKEN_RE = /\b[0-9a-f]{7,40}\b/g;
 const VERSION_TOKEN_RE = /\bv?(\d+\.\d+\.\d+)\b/g;
 const PATH_BACKTICK_RE = /`([^`\n]+)`/g;
-const FORWARD_CREATED_RE = /\(forward-created\)/;
+const FORWARD_REF_TICKET_RE = '[A-Za-z0-9]{6,12}';
 const PATH_LIKELY_RE =
   /^(?:extension|src|tests|prds|scripts|services|hooks|bin|types|\.claude)\//;
 const PATH_HAS_EXT_RE = /\/[^\s/]+\.[a-zA-Z][a-zA-Z0-9]+$/;
@@ -318,6 +318,18 @@ function lineContext(text: string, token: string): string {
   return text.slice(start, end === -1 ? text.length : end);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasForwardRefPathAnnotation(context: string, token: string): boolean {
+  const escapedToken = escapeRegExp(token);
+  const re = new RegExp(
+    `\\\`${escapedToken}\\\` \\((?:forward-created|(?:created|introduced) by ticket ${FORWARD_REF_TICKET_RE})\\)`
+  );
+  return re.test(context);
+}
+
 // Paths under "## Files to create" headings are forward-create-OK — they don't exist at HEAD by design.
 export function extractForwardCreatePaths(body: string): Set<string> {
   const lines = body.split('\n');
@@ -346,14 +358,14 @@ export function checkPathDrift(t: ParsedTicket, gitFiles: Set<string>): Finding[
     if (gitFiles.has(tok)) continue;
     if (forwardCreatePaths.has(tok)) continue;
     const ctx = lineContext(t.body, tok);
-    if (FORWARD_CREATED_RE.test(ctx)) continue;
+    if (hasForwardRefPathAnnotation(ctx, tok)) continue;
     findings.push({
       ticket_id: t.id,
       ticket_path: t.relPath,
       defect_class: 'path-drift',
       severity: 'fatal',
       evidence: `cited path \`${tok}\` not found in git ls-files`,
-      remediation_hint: 'verify path or annotate `(forward-created)` per R-RTRC-7',
+      remediation_hint: 'verify path or annotate per R-RTRC-7 (`(forward-created)` or `(created|introduced) by ticket <hash>`)',
     });
   }
   return findings;

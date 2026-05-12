@@ -108,7 +108,7 @@ const ALL_SEVERITY_FIXTURE = {
       defect_class: 'path-drift',
       severity: 'fatal',
       evidence: 'cited path `extension/src/missing.ts` not found in git ls-files',
-      remediation_hint: 'verify path or annotate `(forward-created)` per R-RTRC-7',
+      remediation_hint: 'verify path or annotate per R-RTRC-7 (`(forward-created)` or `(created|introduced) by ticket <hash>`)',
     },
     {
       ticket_id: '11223344',
