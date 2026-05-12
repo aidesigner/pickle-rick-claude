@@ -1528,14 +1528,15 @@ async function measureLlmBaseline(state, ctx, backend) {
     const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend, [], { session: path.basename(ctx.sessionDir), iteration: ctx.iteration });
     if (measured.metric)
         return measured.metric;
-    const baselineFailureKind = measured.exitReason === 'judge_timeout' ? measured.exhaustedFailureKind : measured.exitReason;
     let measuredFailureExitReason;
-    switch (baselineFailureKind) {
+    switch (measured.exitReason) {
         case 'judge_cli_missing':
             measuredFailureExitReason = 'judge_cli_missing';
             break;
-        case 'timeout':
-            measuredFailureExitReason = 'judge_timeout';
+        case 'judge_timeout':
+            measuredFailureExitReason = measured.exhaustedFailureKind === 'timeout'
+                ? 'judge_timeout'
+                : 'failed';
             break;
         default:
             measuredFailureExitReason = 'failed';
