@@ -1969,6 +1969,9 @@ async function handleWorkerMode(state, ctx) {
         minIterations: ctx.currentRunnerState.min_iterations,
     });
     replaceMicroverseState(state, workerResult.currentMv);
+    if (syncCurrentWorkerSubsystem(state, ctx.sessionDir)) {
+        writeMicroverseState(ctx.sessionDir, state);
+    }
     ctx.postIterSha = _deps.getHeadSha(ctx.workingDir);
     const lastAction = workerResult.currentMv.convergence?.history
         ?.findLast((entry) => entry.iteration === ctx.iteration)

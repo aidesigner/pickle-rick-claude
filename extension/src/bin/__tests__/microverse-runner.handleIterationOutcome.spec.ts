@@ -305,6 +305,64 @@ test('R-APMW-4: success outcome resets counter to 0', async () => {
   }
 });
 
+test('R-APMW-6: success outcome syncs current_subsystem after worker rotation', async () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rapmw6-session-'));
+  const workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rapmw6-work-'));
+  const runnerState = makeRunnerState(sessionDir, workingDir);
+  const statePath = path.join(sessionDir, 'state.json');
+  const microverseState = {
+    ...makeMicroverseState(),
+    current_subsystem: 'alpha',
+  };
+
+  // eslint-disable-next-line pickle/no-raw-state-write -- initial creation: no existing state to lock against
+  stateManager.forceWrite(statePath, runnerState);
+  await fs.promises.writeFile(path.join(sessionDir, 'microverse.json'), JSON.stringify(microverseState, null, 2));
+  await writeWorkerConvergenceLedger(sessionDir);
+
+  const originalCollectTickets = _deps.collectTickets;
+  const originalGetHeadSha = _deps.getHeadSha;
+  const originalSleep = _deps.sleep;
+  const originalRunWorkerManagedIteration = _deps.runWorkerManagedIteration;
+
+  try {
+    _deps.collectTickets = () => [];
+    _deps.getHeadSha = () => 'deadbeef';
+    _deps.sleep = async () => {};
+    _deps.runWorkerManagedIteration = async ({ currentMv, sessionDir: workerSessionDir }) => {
+      await fs.promises.writeFile(path.join(workerSessionDir, 'anatomy-park.json'), JSON.stringify({
+        subsystems: ['alpha', 'beta'],
+        current_index: 1,
+        stall_counts: { alpha: 0, beta: 0 },
+      }, null, 2));
+      return {
+        currentMv,
+        converged: false,
+        reason: 'rotated to beta',
+      };
+    };
+
+    const ctx = makeContext(sessionDir, statePath, runnerState);
+    const result = await handleIterationOutcome(
+      microverseState as MicroverseSessionState,
+      makeBaseline(),
+      ctx,
+      makeOutcome({ completion: 'task_completed', timedOut: false, exitCode: 0, wallSeconds: 30 }),
+    );
+
+    strictEqual(result, 'continue');
+    strictEqual(readMicroverse(sessionDir).current_subsystem, 'beta');
+    strictEqual(microverseState.current_subsystem, 'beta');
+  } finally {
+    _deps.collectTickets = originalCollectTickets;
+    _deps.getHeadSha = originalGetHeadSha;
+    _deps.sleep = originalSleep;
+    _deps.runWorkerManagedIteration = originalRunWorkerManagedIteration;
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    fs.rmSync(workingDir, { recursive: true, force: true });
+  }
+});
+
 test('R-APMW-5: state.last_error populated on subprocess error', async () => {
   const scenario = await runWorkerErrorScenario({ consecutiveErrors: 0 });
   const lastError = scenario.runnerState.last_error as Record<string, unknown>;
