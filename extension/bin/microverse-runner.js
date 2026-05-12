@@ -2012,8 +2012,7 @@ function markWorkerSubsystemStalled(state, sessionDir) {
     });
 }
 async function handleWorkerSubprocessError(state, ctx, _outcome, _stallClassification) {
-    const trackedState = state;
-    const nextCount = Number(trackedState.consecutive_subprocess_errors ?? 0) + 1;
+    const nextCount = Number(state.consecutive_subprocess_errors ?? 0) + 1;
     replaceMicroverseState(state, {
         ...state,
         consecutive_subprocess_errors: nextCount,
@@ -2073,8 +2072,13 @@ export async function handleIterationOutcome(state, baseline, ctx, outcome) {
     const rateLimitExit = await handleRateLimitExit(state, ctx, exitResult);
     if (rateLimitExit)
         return rateLimitExit;
-    if (exitResult.type === 'success')
+    if (exitResult.type === 'success') {
         ctx.consecutiveRateLimits = 0;
+        if ((state.consecutive_subprocess_errors ?? 0) !== 0) {
+            state.consecutive_subprocess_errors = 0;
+            writeMicroverseState(ctx.sessionDir, state);
+        }
+    }
     const errorOrStopExit = await handleIterationErrorOrStop(state, ctx, outcome, exitResult, stallClassification);
     if (errorOrStopExit)
         return errorOrStopExit;

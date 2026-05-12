@@ -827,6 +827,7 @@ export interface MicroverseSessionState {
   iteration_regressions?: number;
   gate_regression_threshold_warning_emitted?: boolean;
   consecutive_amnesiac_exits?: number;
+  consecutive_subprocess_errors?: number;
   violation_ledger?: ViolationLedger[];
   current_subsystem?: string;
 }

@@ -39,6 +39,11 @@ test('createMicroverseState initializes iteration_regressions to 0 and flag to f
   assert.equal(state.gate_regression_threshold_warning_emitted, false);
 });
 
+test('R-APMW-4: new state defaults consecutive_subprocess_errors to 0', () => {
+  const state = createMicroverseState(BASE_OPTS);
+  assert.equal(state.consecutive_subprocess_errors, 0);
+});
+
 test('readMicroverseState defaults iteration_regressions to 0 and flag to false on legacy file', () => {
   const dir = makeTempDir();
   try {
@@ -71,6 +76,36 @@ test('readMicroverseState defaults iteration_regressions to 0 and flag to false 
   }
 });
 
+test('R-APMW-4: legacy state.json (missing field) reads as 0', () => {
+  const dir = makeTempDir();
+  try {
+    const legacy = {
+      status: 'iterating',
+      prd_path: '/tmp/test.md',
+      key_metric: {
+        description: 'coverage',
+        validation: 'echo 80',
+        type: 'command',
+        timeout_seconds: 30,
+        tolerance: 1,
+        direction: 'higher',
+      },
+      convergence: { stall_limit: 3, stall_counter: 0, history: [] },
+      gap_analysis_path: '',
+      failed_approaches: [],
+      baseline_score: 0,
+      failure_history: [],
+      approach_exhaustion_fired: false,
+    };
+    fs.writeFileSync(path.join(dir, 'microverse.json'), JSON.stringify(legacy));
+    const state = readMicroverseState(dir);
+    assert.notEqual(state, null);
+    assert.equal(state.consecutive_subprocess_errors, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true });
+  }
+});
+
 test('writeMicroverseState preserves modified iteration_regressions across round-trip', () => {
   const dir = makeTempDir();
   try {
@@ -82,6 +117,20 @@ test('writeMicroverseState preserves modified iteration_regressions across round
     assert.notEqual(read, null);
     assert.equal(read.iteration_regressions, 5);
     assert.equal(read.gate_regression_threshold_warning_emitted, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true });
+  }
+});
+
+test('R-APMW-4: state round-trip preserves field', () => {
+  const dir = makeTempDir();
+  try {
+    const state = createMicroverseState(BASE_OPTS);
+    state.consecutive_subprocess_errors = 2;
+    writeMicroverseState(dir, state);
+    const read = readMicroverseState(dir);
+    assert.notEqual(read, null);
+    assert.equal(read.consecutive_subprocess_errors, 2);
   } finally {
     fs.rmSync(dir, { recursive: true });
   }

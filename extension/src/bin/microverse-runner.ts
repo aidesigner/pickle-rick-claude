@@ -2579,10 +2579,6 @@ async function handleManagerErrorOutcome(ctx: RunContext): Promise<ExitReason | 
   return 'error';
 }
 
-type WorkerErrorTrackedState = MicroverseState & {
-  consecutive_subprocess_errors?: number;
-};
-
 function markWorkerSubsystemStalled(state: MicroverseState, sessionDir: string): void {
   const convergenceFile = state.convergence_file;
   if (!convergenceFile) return;
@@ -2628,12 +2624,11 @@ async function handleWorkerSubprocessError(
   _outcome: IterationRunOutcome,
   _stallClassification: StallClassification | null,
 ): Promise<ExitReason | 'continue'> {
-  const trackedState = state as WorkerErrorTrackedState;
-  const nextCount = Number(trackedState.consecutive_subprocess_errors ?? 0) + 1;
+  const nextCount = Number(state.consecutive_subprocess_errors ?? 0) + 1;
   replaceMicroverseState(state, {
     ...state,
     consecutive_subprocess_errors: nextCount,
-  } as WorkerErrorTrackedState);
+  });
   writeMicroverseState(ctx.sessionDir, state);
 
   if (nextCount >= Defaults.WORKER_CONSECUTIVE_ERROR_CAP) {
@@ -2706,7 +2701,13 @@ export async function handleIterationOutcome(
 
   const rateLimitExit = await handleRateLimitExit(state, ctx, exitResult);
   if (rateLimitExit) return rateLimitExit;
-  if (exitResult.type === 'success') ctx.consecutiveRateLimits = 0;
+  if (exitResult.type === 'success') {
+    ctx.consecutiveRateLimits = 0;
+    if ((state.consecutive_subprocess_errors ?? 0) !== 0) {
+      state.consecutive_subprocess_errors = 0;
+      writeMicroverseState(ctx.sessionDir, state);
+    }
+  }
   const errorOrStopExit = await handleIterationErrorOrStop(state, ctx, outcome, exitResult, stallClassification);
   if (errorOrStopExit) return errorOrStopExit;
   if (state.convergence_mode === 'worker') return await handleWorkerMode(state, ctx) ?? 'continue';

@@ -109,6 +109,7 @@ export function assertMicroverseStateShape(parsed, commandTemplate) {
     assertOptionalFiniteNumber(parsed, 'convergence_target');
     assertOptionalFiniteNumber(parsed, 'iteration_regressions');
     assertOptionalFiniteNumber(parsed, 'consecutive_amnesiac_exits');
+    assertOptionalFiniteNumber(parsed, 'consecutive_subprocess_errors');
     assertOptionalBoolean(parsed, 'gate_regression_threshold_warning_emitted');
     if (parsed.allowed_paths !== undefined)
         requireStringArray(parsed.allowed_paths, 'allowed_paths');
@@ -217,6 +218,7 @@ export function createMicroverseState(opts) {
         approach_exhaustion_fired: false,
         iteration_regressions: 0,
         gate_regression_threshold_warning_emitted: false,
+        consecutive_subprocess_errors: 0,
         violation_ledger: [],
     };
     return withOptionalMicroverseStateFields(state, opts);
@@ -365,6 +367,7 @@ export function readMicroverseState(sessionDir) {
         parsed.approach_exhaustion_fired ??= false;
         parsed.iteration_regressions ??= 0;
         parsed.gate_regression_threshold_warning_emitted ??= false;
+        parsed.consecutive_subprocess_errors ??= 0;
         parsed.violation_ledger ??= [];
         return assertMicroverseStateShape(parsed, readCommandTemplate(sessionDir));
     }

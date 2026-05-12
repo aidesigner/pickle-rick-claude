@@ -42,6 +42,7 @@ function makeMicroverseState(): MicroverseSessionState {
     convergence_mode: 'worker',
     convergence_file: 'anatomy-park.json',
     current_subsystem: 'alpha',
+    consecutive_subprocess_errors: 0,
   };
 }
 
@@ -94,12 +95,13 @@ function makeBaseline(): MetricSnapshot {
   return { raw: '0', score: 0 };
 }
 
-function makeOutcome(): IterationRunOutcomeInput {
+function makeOutcome(overrides: Partial<IterationRunOutcomeInput> = {}): IterationRunOutcomeInput {
   return {
     completion: 'error',
     timedOut: true,
     exitCode: null,
     wallSeconds: 14_400,
+    ...overrides,
   };
 }
 
@@ -214,4 +216,55 @@ test('R-APMW-2: manager mode unchanged on subprocess error', async () => {
   const scenario = await runWorkerErrorScenario({ convergenceMode: 'metric' });
   strictEqual(scenario.result, 'error');
   strictEqual(scenario.microverseState.consecutive_subprocess_errors, 0);
+});
+
+test('R-APMW-4: success outcome resets counter to 0', async () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rapmw4-session-'));
+  const workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rapmw4-work-'));
+  const runnerState = makeRunnerState(sessionDir, workingDir);
+  const statePath = path.join(sessionDir, 'state.json');
+  const microverseState = {
+    ...makeMicroverseState(),
+    consecutive_subprocess_errors: 2,
+  };
+
+  // eslint-disable-next-line pickle/no-raw-state-write -- initial creation: no existing state to lock against
+  stateManager.forceWrite(statePath, runnerState);
+  await fs.promises.writeFile(path.join(sessionDir, 'microverse.json'), JSON.stringify(microverseState, null, 2));
+  await writeWorkerConvergenceLedger(sessionDir);
+
+  const originalCollectTickets = _deps.collectTickets;
+  const originalGetHeadSha = _deps.getHeadSha;
+  const originalSleep = _deps.sleep;
+  const originalRunWorkerManagedIteration = _deps.runWorkerManagedIteration;
+
+  try {
+    _deps.collectTickets = () => [];
+    _deps.getHeadSha = () => 'deadbeef';
+    _deps.sleep = async () => {};
+    _deps.runWorkerManagedIteration = async ({ currentMv }) => ({
+      currentMv,
+      converged: false,
+      reason: 'test-success',
+    });
+
+    const ctx = makeContext(sessionDir, statePath, runnerState);
+    const result = await handleIterationOutcome(
+      microverseState as MicroverseSessionState,
+      makeBaseline(),
+      ctx,
+      makeOutcome({ completion: 'task_completed', timedOut: false, exitCode: 0, wallSeconds: 30 }),
+    );
+
+    strictEqual(result, 'continue');
+    strictEqual(readMicroverse(sessionDir).consecutive_subprocess_errors, 0);
+    strictEqual(microverseState.consecutive_subprocess_errors, 0);
+  } finally {
+    _deps.collectTickets = originalCollectTickets;
+    _deps.getHeadSha = originalGetHeadSha;
+    _deps.sleep = originalSleep;
+    _deps.runWorkerManagedIteration = originalRunWorkerManagedIteration;
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    fs.rmSync(workingDir, { recursive: true, force: true });
+  }
 });
