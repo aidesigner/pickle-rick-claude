@@ -2288,7 +2288,7 @@ test('LLM iteration: measureLlmMetric result feeds into comparison pipeline', ()
     }
 });
 
-test('LLM baseline failure exits baseline_unmeasurable instead of defaulting to 0', async () => {
+test('LLM baseline ETIMEDOUT exits judge_timeout instead of defaulting to 0', async () => {
     const origExec = _deps.execFileSync;
     const origSleep = _deps.sleep;
     const origRunIteration = _deps.runIteration;
@@ -2325,10 +2325,10 @@ test('LLM baseline failure exits baseline_unmeasurable instead of defaulting to 
     try {
         await assert.rejects(
             executeGapAnalysis(readMicroverseState(sessionDir), ctx),
-            (err) => err?.name === 'MicroverseExitError' && err?.exitReason === 'baseline_unmeasurable',
+            (err) => err?.name === 'MicroverseExitError' && err?.exitReason === 'judge_timeout',
         );
         const persisted = readMicroverseState(sessionDir);
-        assert.equal(persisted.exit_reason, 'baseline_unmeasurable');
+        assert.equal(persisted.exit_reason, 'judge_timeout');
         assert.equal(persisted.status, 'stopped');
         assert.deepEqual(sleeps, [10_000, 30_000, 60_000]);
     } finally {

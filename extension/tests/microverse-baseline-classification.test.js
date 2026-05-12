@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   _deps,
   executeGapAnalysis,
+  measureAndClassifyIteration,
 } from '../bin/microverse-runner.js';
 import { readMicroverseState } from '../services/microverse-state.js';
 import { isMicroverseFailureExit } from '../types/index.js';
@@ -200,5 +201,61 @@ describe('microverse-baseline-classification', () => {
     assert.equal(persisted.exit_reason, 'baseline_unmeasurable_unrecoverable');
     assert.equal(persisted.status, 'stopped');
     assert.equal(isMicroverseFailureExit(persisted.exit_reason), true);
+  });
+
+  test('iteration ETIMEDOUT attempts emit baseline_attempt_timeout telemetry per attempt', async () => {
+    const original = {
+      execFileSync: _deps.execFileSync,
+      sleep: _deps.sleep,
+      logActivity: _deps.logActivity,
+    };
+    const workingDir = createTempGitRepo();
+    const session = createSessionDir(workingDir);
+    const ctx = makeContext(session.dir, session.runnerState, workingDir);
+    const events = [];
+
+    _deps.sleep = async () => {};
+    _deps.execFileSync = (_cmd, args) => {
+      if (Array.isArray(args) && args[0] === '--version') return 'Claude Code 2.1.126';
+      throw makeEtimedoutError();
+    };
+    _deps.logActivity = (event) => {
+      events.push({ ts: new Date().toISOString(), ...event });
+    };
+
+    try {
+      const state = readMicroverseState(session.dir);
+      state.status = 'iterating';
+      state.baseline_score = 40;
+      state.key_metric = {
+        description: 'judge quality gate',
+        validation: 'improve code quality',
+        type: 'llm',
+        timeout_seconds: 60,
+        tolerance: 0,
+        judge_model: 'claude-sonnet-4-6',
+      };
+      state.convergence = { stall_limit: 3, stall_counter: 0, history: [] };
+
+      const result = await measureAndClassifyIteration(state, { raw: '40', score: 40 }, ctx);
+      assert.deepEqual(result, { kind: 'failed', exitReason: 'judge_timeout' });
+
+      const timeoutEvents = events.filter((event) => event.event === 'baseline_attempt_timeout');
+      assert.equal(timeoutEvents.length, 4, 'iteration retries should emit four timeout events');
+      timeoutEvents.forEach((event, index) => {
+        assert.equal(event.session, path.basename(session.dir));
+        assert.equal(event.iteration, ctx.iteration);
+        assert.equal(event.gate_payload.attempt, index + 1);
+        assert.equal(event.gate_payload.classifier, 'timeout');
+        assert.equal(Number.isInteger(event.gate_payload.elapsed_ms), true);
+        assert.equal(event.gate_payload.elapsed_ms >= 0, true);
+      });
+    } finally {
+      _deps.execFileSync = original.execFileSync;
+      _deps.sleep = original.sleep;
+      _deps.logActivity = original.logActivity;
+      fs.rmSync(session.dir, { recursive: true, force: true });
+      fs.rmSync(workingDir, { recursive: true, force: true });
+    }
   });
 });

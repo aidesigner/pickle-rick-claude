@@ -1709,7 +1709,7 @@ async function measureLlmIteration(state, ctx, backend) {
     if (state.key_metric.type !== 'llm') {
         throw new Error('measureLlmIteration requires llm metric');
     }
-    const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend, state.violation_ledger ?? []);
+    const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend, state.violation_ledger ?? [], { session: path.basename(ctx.sessionDir), iteration: ctx.iteration });
     if (measured.metric)
         return { kind: 'ok', metric: measured.metric };
     const exitReason = measured.exitReason;

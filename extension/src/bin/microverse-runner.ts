@@ -2318,6 +2318,7 @@ async function measureLlmIteration(
     state.judge_context_path,
     backend,
     state.violation_ledger ?? [],
+    { session: path.basename(ctx.sessionDir), iteration: ctx.iteration },
   );
   if (measured.metric) return { kind: 'ok', metric: measured.metric };
   const exitReason = measured.exitReason;
