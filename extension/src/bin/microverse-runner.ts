@@ -69,10 +69,11 @@ type IterationRunOutcome = Awaited<ReturnType<typeof runIteration>>;
 type ClassifiedIterationExit = ReturnType<typeof classifyIterationExit>;
 export type MetricSnapshot = { raw: string; score: number };
 type JudgeFailureExitReason = Extract<ExitReason, 'judge_timeout' | 'judge_cli_missing'>;
+type JudgeMeasurementFailureExitReason = Extract<ExitReason, 'judge_timeout' | 'judge_cli_missing' | 'baseline_unmeasurable_unrecoverable'>;
 export type IterationClassification =
   | { kind: 'improved'; metric: MetricSnapshot }
   | { kind: 'regressed'; rollback: true }
-  | { kind: 'failed'; exitReason: JudgeFailureExitReason }
+  | { kind: 'failed'; exitReason: JudgeMeasurementFailureExitReason }
   | { kind: 'unchanged' };
 export type NoCommitExitClassification = 'clean_pass' | 'stall' | 'amnesiac';
 
@@ -1992,7 +1993,7 @@ export function loadFailureClassificationFlag(extensionRoot: string): boolean {
 
 export function mapBaselineMeasureExitReason(
   exitReason: string,
-): Extract<ExitReason, 'judge_cli_missing' | 'judge_timeout' | 'baseline_unmeasurable_unrecoverable'> {
+): JudgeMeasurementFailureExitReason {
   switch (exitReason) {
     case 'judge_cli_missing':
     case 'cli_missing':
@@ -2003,6 +2004,20 @@ export function mapBaselineMeasureExitReason(
     default:
       return 'baseline_unmeasurable_unrecoverable';
   }
+}
+
+function mapJudgeMeasurementFailure(
+  measured: JudgeMeasurementResult,
+): JudgeMeasurementFailureExitReason {
+  if (!('exitReason' in measured)) {
+    throw new Error('mapJudgeMeasurementFailure requires a failed judge measurement');
+  }
+  if (measured.exitReason === 'judge_cli_missing') {
+    return 'judge_cli_missing';
+  }
+  return measured.exhaustedFailureKind === 'timeout'
+    ? 'judge_timeout'
+    : 'baseline_unmeasurable_unrecoverable';
 }
 
 function resetStoppedMicroverseState(state: MicroverseState, sessionDir: string, log: (msg: string) => void): void {
@@ -2085,21 +2100,7 @@ async function measureLlmBaseline(
     { session: path.basename(ctx.sessionDir), iteration: ctx.iteration },
   );
   if (measured.metric) return measured.metric;
-  let measuredFailureExitReason: JudgeFailureExitReason | 'failed';
-  switch (measured.exitReason) {
-    case 'judge_cli_missing':
-      measuredFailureExitReason = 'judge_cli_missing';
-      break;
-    case 'judge_timeout':
-      measuredFailureExitReason = measured.exhaustedFailureKind === 'timeout'
-        ? 'judge_timeout'
-        : 'failed';
-      break;
-    default:
-      measuredFailureExitReason = 'failed';
-      break;
-  }
-  const exitReason: ExitReason = mapBaselineMeasureExitReason(measuredFailureExitReason);
+  const exitReason: ExitReason = mapJudgeMeasurementFailure(measured);
   const activityEvent: ActivityEventType = exitReason === 'baseline_unmeasurable_unrecoverable'
     ? 'baseline_unmeasurable'
     : exitReason;
@@ -2304,7 +2305,7 @@ async function measureLlmIteration(
   state: MicroverseState,
   ctx: RunContext,
   backend: Backend,
-): Promise<{ kind: 'ok'; metric: MetricSnapshot } | { kind: 'failed'; exitReason: JudgeFailureExitReason }> {
+): Promise<{ kind: 'ok'; metric: MetricSnapshot } | { kind: 'failed'; exitReason: JudgeMeasurementFailureExitReason }> {
   if (state.key_metric.type !== 'llm') {
     throw new Error('measureLlmIteration requires llm metric');
   }
@@ -2321,11 +2322,11 @@ async function measureLlmIteration(
     { session: path.basename(ctx.sessionDir), iteration: ctx.iteration },
   );
   if (measured.metric) return { kind: 'ok', metric: measured.metric };
-  const exitReason = measured.exitReason;
+  const exitReason = mapJudgeMeasurementFailure(measured);
   const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
   ctx.log(`ERROR: Metric measurement failed (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
   logActivity({
-    event: exitReason,
+    event: exitReason === 'baseline_unmeasurable_unrecoverable' ? 'baseline_unmeasurable' : exitReason,
     source: 'pickle',
     session: path.basename(ctx.sessionDir),
     iteration: ctx.iteration,

@@ -1458,6 +1458,17 @@ export function mapBaselineMeasureExitReason(exitReason) {
             return 'baseline_unmeasurable_unrecoverable';
     }
 }
+function mapJudgeMeasurementFailure(measured) {
+    if (!('exitReason' in measured)) {
+        throw new Error('mapJudgeMeasurementFailure requires a failed judge measurement');
+    }
+    if (measured.exitReason === 'judge_cli_missing') {
+        return 'judge_cli_missing';
+    }
+    return measured.exhaustedFailureKind === 'timeout'
+        ? 'judge_timeout'
+        : 'baseline_unmeasurable_unrecoverable';
+}
 function resetStoppedMicroverseState(state, sessionDir, log) {
     if (state.status !== 'stopped')
         return;
@@ -1528,21 +1539,7 @@ async function measureLlmBaseline(state, ctx, backend) {
     const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend, [], { session: path.basename(ctx.sessionDir), iteration: ctx.iteration });
     if (measured.metric)
         return measured.metric;
-    let measuredFailureExitReason;
-    switch (measured.exitReason) {
-        case 'judge_cli_missing':
-            measuredFailureExitReason = 'judge_cli_missing';
-            break;
-        case 'judge_timeout':
-            measuredFailureExitReason = measured.exhaustedFailureKind === 'timeout'
-                ? 'judge_timeout'
-                : 'failed';
-            break;
-        default:
-            measuredFailureExitReason = 'failed';
-            break;
-    }
-    const exitReason = mapBaselineMeasureExitReason(measuredFailureExitReason);
+    const exitReason = mapJudgeMeasurementFailure(measured);
     const activityEvent = exitReason === 'baseline_unmeasurable_unrecoverable'
         ? 'baseline_unmeasurable'
         : exitReason;
@@ -1713,11 +1710,11 @@ async function measureLlmIteration(state, ctx, backend) {
     const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend, state.violation_ledger ?? [], { session: path.basename(ctx.sessionDir), iteration: ctx.iteration });
     if (measured.metric)
         return { kind: 'ok', metric: measured.metric };
-    const exitReason = measured.exitReason;
+    const exitReason = mapJudgeMeasurementFailure(measured);
     const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
     ctx.log(`ERROR: Metric measurement failed (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
     logActivity({
-        event: exitReason,
+        event: exitReason === 'baseline_unmeasurable_unrecoverable' ? 'baseline_unmeasurable' : exitReason,
         source: 'pickle',
         session: path.basename(ctx.sessionDir),
         iteration: ctx.iteration,

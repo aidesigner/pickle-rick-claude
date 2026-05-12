@@ -258,4 +258,43 @@ describe('microverse-baseline-classification', () => {
       fs.rmSync(workingDir, { recursive: true, force: true });
     }
   });
+
+  test('iteration unsupported-model failures stay fatal instead of degrading to judge_timeout', async () => {
+    const original = {
+      execFileSync: _deps.execFileSync,
+      sleep: _deps.sleep,
+    };
+    const workingDir = createTempGitRepo();
+    const session = createSessionDir(workingDir);
+    const ctx = makeContext(session.dir, session.runnerState, workingDir);
+
+    _deps.sleep = async () => {};
+    _deps.execFileSync = (_cmd, args) => {
+      if (Array.isArray(args) && args[0] === '--version') return 'Claude Code 2.1.126';
+      throw makeUnsupportedModelError();
+    };
+
+    try {
+      const state = readMicroverseState(session.dir);
+      state.status = 'iterating';
+      state.baseline_score = 40;
+      state.key_metric = {
+        description: 'judge quality gate',
+        validation: 'improve code quality',
+        type: 'llm',
+        timeout_seconds: 60,
+        tolerance: 0,
+        judge_model: 'claude-sonnet-4-6',
+      };
+      state.convergence = { stall_limit: 3, stall_counter: 0, history: [] };
+
+      const result = await measureAndClassifyIteration(state, { raw: '40', score: 40 }, ctx);
+      assert.deepEqual(result, { kind: 'failed', exitReason: 'baseline_unmeasurable_unrecoverable' });
+    } finally {
+      _deps.execFileSync = original.execFileSync;
+      _deps.sleep = original.sleep;
+      fs.rmSync(session.dir, { recursive: true, force: true });
+      fs.rmSync(workingDir, { recursive: true, force: true });
+    }
+  });
 });
