@@ -410,6 +410,9 @@ export interface PathVerificationWarning {
   path: string;
 }
 
+const PATH_FORWARD_REF_ANNOTATION_RE =
+  /^ \((?:forward-created|(?:created|introduced) by ticket [A-Za-z0-9]{6,12})\)(?:\b|$|[\s,.;:])/;
+
 // Parses analyst output for backtick file paths, checks each via git ls-files,
 // and emits path_not_verified breadcrumbs for unclaimed non-existent paths.
 // Forward-reference annotations ((forward-created), (created by ticket ...), (introduced by ticket ...))
@@ -425,7 +428,7 @@ export function checkAnalystOutputPaths(
   while ((match = backtickPathRe.exec(content)) !== null) {
     const citedPath = match[1];
     const afterMatch = content.slice(match.index + match[0].length);
-    if (/^ \((forward-created|created by ticket|introduced by ticket)\b/.test(afterMatch)) {
+    if (PATH_FORWARD_REF_ANNOTATION_RE.test(afterMatch)) {
       continue;
     }
     const result = spawnSync('git', ['ls-files', citedPath], {

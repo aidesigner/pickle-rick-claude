@@ -57,3 +57,18 @@ test('AC-TAQ-01-3: (forward-created) annotation suppresses path_not_verified war
   const w = warnings.find(x => x.path === 'extension/src/totally-nonexistent-xyz-9cdf481a.ts');
   assert.ok(!w, 'expected no path_not_verified warning when (forward-created) annotation is present');
 });
+
+test('AC-TAQ-01-3: canonical created-by-ticket annotation suppresses path_not_verified warning', () => {
+  const fixture = '`extension/src/totally-nonexistent-xyz-9cdf481a.ts` (created by ticket abcd1234) see sibling ticket.';
+  const warnings = checkAnalystOutputPaths(fixture, PROJECT_ROOT);
+  const w = warnings.find(x => x.path === 'extension/src/totally-nonexistent-xyz-9cdf481a.ts');
+  assert.ok(!w, 'expected no path_not_verified warning when canonical created-by-ticket annotation is present');
+});
+
+test('AC-TAQ-01-3: malformed created-by-ticket hash does not suppress path_not_verified warning', () => {
+  const fixture = '`extension/src/totally-nonexistent-xyz-9cdf481a.ts` (created by ticket abc) malformed sibling ticket.';
+  const warnings = checkAnalystOutputPaths(fixture, PROJECT_ROOT);
+  const w = warnings.find(x => x.path === 'extension/src/totally-nonexistent-xyz-9cdf481a.ts');
+  assert.ok(w, 'expected malformed created-by-ticket annotation to preserve path_not_verified warning');
+  assert.strictEqual(w.type, 'path_not_verified');
+});

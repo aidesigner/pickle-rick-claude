@@ -254,6 +254,7 @@ export function emitStaleAnchorWarnings(warnings) {
         process.stderr.write(`[pickle-rick] stale-anchor ${citation.raw} (PRD line ${citation.sourceLine}): ${warning.detail}\n`);
     }
 }
+const PATH_FORWARD_REF_ANNOTATION_RE = /^ \((?:forward-created|(?:created|introduced) by ticket [A-Za-z0-9]{6,12})\)(?:\b|$|[\s,.;:])/;
 // Parses analyst output for backtick file paths, checks each via git ls-files,
 // and emits path_not_verified breadcrumbs for unclaimed non-existent paths.
 // Forward-reference annotations ((forward-created), (created by ticket ...), (introduced by ticket ...))
@@ -265,7 +266,7 @@ export function checkAnalystOutputPaths(content, workingDir) {
     while ((match = backtickPathRe.exec(content)) !== null) {
         const citedPath = match[1];
         const afterMatch = content.slice(match.index + match[0].length);
-        if (/^ \((forward-created|created by ticket|introduced by ticket)\b/.test(afterMatch)) {
+        if (PATH_FORWARD_REF_ANNOTATION_RE.test(afterMatch)) {
             continue;
         }
         const result = spawnSync('git', ['ls-files', citedPath], {
@@ -1212,6 +1213,11 @@ function uniqueReferences(refs) {
         return true;
     });
 }
+/*
+TRAP DOOR: R-SAOV-7 forward-create annotation acceptance
+Symbol audit accepts forward-create annotations matching the path schema for events + helpers.
+New bundle wrappers MUST be reviewable for false-positive enum-value backticks on trigger-phrase lines.
+*/
 // enum-value heuristic:
 // Trigger-phrase lines are still the entrypoint for activity-event auditing.
 // When the same line also advertises enum/state prose, quoted snake_case values
