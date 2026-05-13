@@ -4,11 +4,8 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { detectManagerMaxTurnsExit, classifyCompletion } from '../../bin/mux-runner.js';
-
-const __filename = fileURLToPath(import.meta.url);
 
 function makeResultLog(dir, fields) {
   const logFile = path.join(dir, 'iteration.log');
@@ -18,59 +15,15 @@ function makeResultLog(dir, fields) {
 }
 
 function baseOutcome(overrides = {}) {
-  return { completion: 'continue', timedOut: false, exitCode: 0, wallSeconds: 10, ...overrides };
+  return { completion: 'error', timedOut: false, exitCode: 0, wallSeconds: 10, ...overrides };
 }
 
-test('detectManagerMaxTurnsExit: clean exit num_turns=50 maxTurns=400 → false (not at budget)', () => {
+test('detectManagerMaxTurnsExit: clean claude end_turn result returns true', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
   try {
-    const logFile = makeResultLog(dir, { num_turns: 50 });
-    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile, 400);
-    assert.equal(result, false, 'should be false: worker finished naturally under the turn budget');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('detectManagerMaxTurnsExit: clean exit num_turns=400 maxTurns=400 → true (at budget)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
-  try {
-    const logFile = makeResultLog(dir, { num_turns: 400 });
-    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile, 400);
-    assert.equal(result, true, 'should be true: turn count equals budget');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('detectManagerMaxTurnsExit: clean exit num_turns=401 maxTurns=400 → true (over budget)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
-  try {
-    const logFile = makeResultLog(dir, { num_turns: 401 });
-    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile, 400);
-    assert.equal(result, true, 'should be true: turn count exceeds budget');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('detectManagerMaxTurnsExit: no num_turns field → false (conservative)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
-  try {
-    const logFile = makeResultLog(dir, {}); // no num_turns
-    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile, 400);
-    assert.equal(result, false, 'should be false: cannot confirm max-turns without turn count');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('detectManagerMaxTurnsExit: maxTurns=null → false (no budget, conservative)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
-  try {
-    const logFile = makeResultLog(dir, { num_turns: 400 });
-    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile, null);
-    assert.equal(result, false, 'should be false: null maxTurns means unknown budget');
+    const logFile = makeResultLog(dir, {});
+    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile);
+    assert.equal(result, true, 'should be true: clean end_turn completion with exit code 0 matches the signature');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -79,8 +32,8 @@ test('detectManagerMaxTurnsExit: maxTurns=null → false (no budget, conservativ
 test('detectManagerMaxTurnsExit: timedOut=true → false', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
   try {
-    const logFile = makeResultLog(dir, { num_turns: 400 });
-    const result = detectManagerMaxTurnsExit(baseOutcome({ timedOut: true, exitCode: null }), logFile, 400);
+    const logFile = makeResultLog(dir, {});
+    const result = detectManagerMaxTurnsExit(baseOutcome({ timedOut: true, exitCode: null }), logFile);
     assert.equal(result, false, 'timedOut outcome should not classify as max-turns');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -90,9 +43,70 @@ test('detectManagerMaxTurnsExit: timedOut=true → false', () => {
 test('detectManagerMaxTurnsExit: non-zero exit code → false', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
   try {
-    const logFile = makeResultLog(dir, { num_turns: 400 });
-    const result = detectManagerMaxTurnsExit(baseOutcome({ exitCode: 1 }), logFile, 400);
+    const logFile = makeResultLog(dir, {});
+    const result = detectManagerMaxTurnsExit(baseOutcome({ exitCode: 1 }), logFile);
     assert.equal(result, false, 'non-zero exit should not classify as max-turns');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('detectManagerMaxTurnsExit: is_error=true → false', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
+  try {
+    const logFile = makeResultLog(dir, { is_error: true });
+    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile);
+    assert.equal(result, false, 'is_error=true should not classify as max-turns');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('detectManagerMaxTurnsExit: missing log file → false', () => {
+  const result = detectManagerMaxTurnsExit(baseOutcome(), path.join(os.tmpdir(), 'missing-max-turns-log.jsonl'));
+  assert.equal(result, false, 'missing logs should fail closed');
+});
+
+test('detectManagerMaxTurnsExit: completion=continue → false', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
+  try {
+    const logFile = makeResultLog(dir, {});
+    const result = detectManagerMaxTurnsExit(baseOutcome({ completion: 'continue' }), logFile);
+    assert.equal(result, false, 'helper only classifies the error-branch shape');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('detectManagerMaxTurnsExit: last result event wins even if earlier event does not match', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
+  try {
+    const logFile = path.join(dir, 'iteration.log');
+    fs.writeFileSync(logFile, [
+      JSON.stringify({ type: 'result', stop_reason: 'tool_use', terminal_reason: 'completed', is_error: false }),
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'continuing' }] } }),
+      JSON.stringify({ type: 'result', stop_reason: 'end_turn', terminal_reason: 'completed', is_error: false }),
+      '',
+    ].join('\n'));
+    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile);
+    assert.equal(result, true, 'the detector should inspect the last result event');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('detectManagerMaxTurnsExit: last result stop_reason mismatch → false', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
+  try {
+    const logFile = path.join(dir, 'iteration.log');
+    fs.writeFileSync(logFile, [
+      JSON.stringify({ type: 'result', stop_reason: 'end_turn', terminal_reason: 'completed', is_error: false }),
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'continuing' }] } }),
+      JSON.stringify({ type: 'result', stop_reason: 'tool_use', terminal_reason: 'completed', is_error: false }),
+      '',
+    ].join('\n'));
+    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile);
+    assert.equal(result, false, 'the last result event must match the end_turn signature');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
