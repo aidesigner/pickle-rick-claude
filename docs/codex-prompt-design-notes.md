@@ -64,6 +64,25 @@ Some pipelines (citadel + hardening bundle) are codex-required because they exer
 - `max_iterations: 0` is valid in mux-runner (v1.59.x, commit `8105845`) — treated as "unlimited sentinel". Backward-compatible.
 - Fractional numeric CLI flags now error (v1.59.x, commit `aba7369`) — was silent truncation via `parseInt`, now `Number.isInteger` rejects. Users round to whole numbers.
 
+## 9. Iteration-completion reclassifier — detectManagerMaxTurnsExit (R-ICDM-1)
+
+`mux-runner.ts` contains a claude-only reclassification path (line ~1721) that converts `completion: 'continue'` → `completion: 'error'` when `detectManagerMaxTurnsExit(...)` returns `true`. The helper is named for max-turns detection.
+
+### Which call sites use this helper and why
+
+| Site | File | Purpose | Semantics correct? |
+|---|---|---|---|
+| `~line 1412` | `mux-runner.ts:classifyManagerRelaunchExit` | Determine whether a manager's clean exit was caused by hitting the turn cap, to decide if the manager should be relaunched. | Intended use. Clean exit at `num_turns >= maxTurns` is a legitimate "relaunch" signal. |
+| `~line 1721` | `mux-runner.ts:runIteration` reclassifier | Convert `continue` → `error` when claude finishes cleanly at the turn budget (to drive the relaunch path). | Correct post-R-ICDM-1. Pre-fix: the helper checked only `end_turn + completed + is_error=false`, which matches **every** cleanly-finished claude iteration, causing false reclassification. |
+
+### Pre-fix bug (R-ICDM incident)
+
+The line-1721 site was added to handle "claude hit the manager turn cap and exited cleanly, but with no promise token because the template forbids them." Without the `num_turns >= maxTurns` check, the helper returned `true` for every clean claude exit. Combined with `anatomy-park.md` and `szechuan-sauce.md` instructing workers to NOT emit promise tokens, every clean anatomy-park / szechuan-sauce iteration on claude backend was misclassified as `error`. Session `2026-05-13-e58dcc1d` hit this on iteration 1 (gap-analysis phase), tearing down the loop immediately.
+
+### Post-fix contract
+
+`detectManagerMaxTurnsExit(outcome, logFile, maxTurns: number | null)` now additionally requires `num_turns >= maxTurns`. `null` maxTurns → conservative `false`. Callers pass the real settings-derived budget. Templates emit `<promise>TASK_COMPLETED</promise>` at iteration end so the classifier can mark a clean boundary regardless of the reclassifier.
+
 ---
 
 ## Appendix: validation evidence — codex backend production-grade as of v1.59.1

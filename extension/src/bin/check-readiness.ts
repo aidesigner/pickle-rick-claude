@@ -252,7 +252,7 @@ export function extractForwardRefAnnotations(content: string): { valid: Set<stri
   const malformed: ForwardRefAnnotation[] = [];
   const re = new RegExp(FORWARD_REF_ANNOTATION_RE.source, FORWARD_REF_ANNOTATION_RE.flags);
   for (const match of content.matchAll(re)) {
-    const [raw, token, separator, annotationBody, canonicalBody, verbRaw, hashRaw, requirementAlias] = match;
+    const [raw, token, separator, annotationBody, _canonicalBody, verbRaw, hashRaw, requirementAlias] = match;
     const hash = hashRaw?.trim();
     const requirementCode = requirementAlias?.trim().replace(/^created by\s+/, '');
     const verbTyped =

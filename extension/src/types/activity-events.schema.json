@@ -413,6 +413,20 @@
         "source": { "type": "string" }
       }
     },
+    "iteration_classified_at_max_turns": {
+      "type": "object",
+      "required": ["event", "ts", "session", "iteration_num", "num_turns", "max_turns", "wall_seconds"],
+      "properties": {
+        "event": { "type": "string", "const": "iteration_classified_at_max_turns" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "iteration_num": { "type": "integer", "minimum": 0 },
+        "num_turns": { "type": "integer", "minimum": 0 },
+        "max_turns": { "type": "integer", "minimum": 0 },
+        "wall_seconds": { "type": "number", "minimum": 0 },
+        "source": { "type": "string" }
+      }
+    },
     "manager_idle_backoff_engaged": {
       "type": "object",
       "required": ["event", "ts", "session", "ticket", "consecutive_wait_turns", "last_worker_pid"],
@@ -643,6 +657,7 @@
     { "$ref": "#/definitions/recoverable_phase_failure" },
     { "$ref": "#/definitions/time_cap_disabled_default" },
     { "$ref": "#/definitions/manager_max_turns_relaunch" },
+    { "$ref": "#/definitions/iteration_classified_at_max_turns" },
     { "$ref": "#/definitions/manager_idle_backoff_engaged" },
     { "$ref": "#/definitions/manager_idle_backoff_released" },
     { "$ref": "#/definitions/standup_session_dropped" },

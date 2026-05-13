@@ -484,7 +484,7 @@ For everything not covered by overrides — loading context, reading the handoff
 **Staging rule**: Use `git add -u` (tracked files only), never `git add -A` or `git add .`. If the fix creates a new file (test file or CLAUDE.md), stage it explicitly by name.
 
 Do NOT call `update-state.js` — the microverse-runner manages all state transitions.
-Do NOT output any promise tokens — the microverse-runner manages the loop.
+At the end of each iteration, emit `<promise` + `>TASK_COMPLETED</promise>` on its own line so the runner classifier marks a clean iteration boundary. The runner still owns the loop — this token only marks "this iteration finished its work" so the classifier can distinguish from a truncated exit.
 
 ---
 

@@ -231,6 +231,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'subprocess_error',
     'time_cap_disabled_default',
     'manager_max_turns_relaunch',
+    'iteration_classified_at_max_turns',
     'bundle_bootstrap_exemption_applied',
     'signal_received',
     'manager_idle_backoff_engaged',

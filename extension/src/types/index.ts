@@ -525,6 +525,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'subprocess_error',
   'time_cap_disabled_default',
   'manager_max_turns_relaunch',
+  'iteration_classified_at_max_turns',
   'bundle_bootstrap_exemption_applied',
   'signal_received',
   'manager_idle_backoff_engaged',
@@ -661,6 +662,10 @@ export interface ActivityEvent {
   decision?: 'continue' | 'abort';
   attempts?: number;
   fall_through_to_finalize_gate?: boolean;
+  iteration_num?: number;
+  num_turns?: number;
+  max_turns?: number;
+  wall_seconds?: number;
 }
 
 // ---------------------------------------------------------------------------

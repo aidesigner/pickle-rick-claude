@@ -613,13 +613,17 @@ test('processCompletionBranch: claude backend + error + pending → relaunch act
     try {
         await withDataRoot(session.dataRoot, async () => {
             const iterLogFile = path.join(session.sessionDir, 'tmux_iteration_4.log');
+            // R-ICDM-1: classifyManagerRelaunchExit now requires `num_turns >= maxTurns`
+            // to classify as `claude_max_turns`. Simulate a real max-turns exit with
+            // num_turns at the budget the ctx will pass.
             fs.writeFileSync(iterLogFile, [
                 '{"type":"assistant","content":"work"}',
-                '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false}',
+                '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false,"num_turns":400}',
             ].join('\n'));
             const { ctx } = makeBranchCtx(session, {
                 iterLogFile,
                 outcome: { completion: 'error', timedOut: false, exitCode: 0, wallSeconds: 12 },
+                maxTurns: 400,
             });
             const action = await processCompletionBranch(
                 JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),

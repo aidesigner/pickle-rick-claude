@@ -268,6 +268,19 @@ const EVENT_CASES = [
     drop: 'last_ticket_seen',
   },
   {
+    type: 'iteration_classified_at_max_turns',
+    valid: {
+      event: 'iteration_classified_at_max_turns',
+      ts: TS,
+      session: 'session-1',
+      iteration_num: 3,
+      num_turns: 400,
+      max_turns: 400,
+      wall_seconds: 742.5,
+    },
+    drop: 'wall_seconds',
+  },
+  {
     type: 'pipeline_judge_timeout_recovery_attempted',
     valid: {
       event: 'pipeline_judge_timeout_recovery_attempted',
@@ -548,6 +561,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'recoverable_phase_failure',
     'time_cap_disabled_default',
     'manager_max_turns_relaunch',
+    'iteration_classified_at_max_turns',
     'manager_idle_backoff_engaged',
     'manager_idle_backoff_released',
     'standup_session_dropped',

@@ -939,9 +939,7 @@ function resolveWorkerBackendBase(sessionRoot) {
     try {
         preloaded = sm.read(statePath);
     }
-    catch {
-        preloaded = null;
-    }
+    catch { /* use null fallback */ }
     const resolved = resolveWorkerBackendFromStateFile(statePath);
     return {
         backend: resolved.backend,

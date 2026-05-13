@@ -1156,45 +1156,70 @@ export function detectRateLimitInText(logFile) {
     catch { /* file missing */ }
     return false;
 }
-export function detectManagerMaxTurnsExit(outcome, logFile) {
-    if (outcome.timedOut || outcome.exitCode !== 0) {
-        return false;
-    }
+function readLastResultEventFromLog(logFile) {
     let content;
     try {
         content = fs.readFileSync(logFile, 'utf-8');
     }
     catch {
-        return false;
+        return null;
     }
     const lines = content.split(/\r?\n/);
     for (let i = lines.length - 1; i >= 0; i -= 1) {
         const line = lines[i]?.trim();
-        if (!line)
-            continue;
-        if (!line.startsWith('{'))
+        if (!line || !line.startsWith('{'))
             continue;
         let parsed;
         try {
             parsed = JSON.parse(line);
         }
         catch {
-            return false;
+            return null;
         }
         if (!parsed || typeof parsed !== 'object')
             continue;
-        const event = parsed;
-        if (event.type !== 'result')
-            continue;
-        return event.stop_reason === 'end_turn'
-            && event.terminal_reason === 'completed'
-            && event.is_error === false;
+        const ev = parsed;
+        if (ev.type === 'result')
+            return ev;
     }
-    return false;
+    return null;
 }
-export function classifyManagerRelaunchExit(state, outcome, logFile) {
+export function detectManagerMaxTurnsExit(outcome, logFile, maxTurns) {
+    if (outcome.timedOut || outcome.exitCode !== 0) {
+        return false;
+    }
+    const event = readLastResultEventFromLog(logFile);
+    if (!event)
+        return false;
+    if (event.stop_reason !== 'end_turn')
+        return false;
+    if (event.terminal_reason !== 'completed')
+        return false;
+    if (event.is_error !== false)
+        return false;
+    const turns = (event.num_turns ?? event.turn_count ?? null);
+    if (turns === null || maxTurns === null)
+        return false;
+    return turns >= maxTurns;
+}
+function emitMaxTurnsClassifiedEvent(sessionDir, iterationNum, logFile, maxTurns, wallSeconds) {
+    const resultEvent = readLastResultEventFromLog(logFile);
+    const numTurns = (typeof resultEvent?.num_turns === 'number' ? resultEvent.num_turns
+        : typeof resultEvent?.turn_count === 'number' ? resultEvent.turn_count
+            : maxTurns) ?? 0;
+    logActivity({
+        event: 'iteration_classified_at_max_turns',
+        source: 'pickle',
+        session: path.basename(sessionDir),
+        iteration_num: iterationNum,
+        num_turns: numTurns,
+        max_turns: maxTurns ?? 0,
+        wall_seconds: wallSeconds,
+    });
+}
+export function classifyManagerRelaunchExit(state, outcome, logFile, maxTurns) {
     const backend = resolveBackend(state);
-    if (backend === 'claude' && outcome && detectManagerMaxTurnsExit(outcome, logFile)) {
+    if (backend === 'claude' && outcome && detectManagerMaxTurnsExit(outcome, logFile, maxTurns)) {
         return 'claude_max_turns';
     }
     if (backend === 'codex' && outcome?.timedOut === true) {
@@ -1505,13 +1530,14 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
                 wallSeconds: (Date.now() - start) / 1000,
                 stallReason,
             };
+            const isMaxTurnsExit = backend === 'claude'
+                && completion === 'continue'
+                && detectManagerMaxTurnsExit(normalizedOutcome, logFile, maxTurns);
+            if (isMaxTurnsExit)
+                emitMaxTurnsClassifiedEvent(sessionDir, iterationNum, logFile, maxTurns, normalizedOutcome.wallSeconds);
             resolve({
                 ...normalizedOutcome,
-                completion: backend === 'claude'
-                    && completion === 'continue'
-                    && detectManagerMaxTurnsExit(normalizedOutcome, logFile)
-                    ? 'error'
-                    : completion,
+                completion: isMaxTurnsExit ? 'error' : completion,
             });
         });
         proc.on('error', (err) => {
@@ -2245,6 +2271,7 @@ function readPostIterationState(state, ctx) {
         return state;
     }
 }
+// eslint-disable-next-line complexity -- legacy completion branch retained behavior-preserving; pre-existing violation
 export async function processCompletionBranch(state, result, ctx) {
     if (result === 'task_completed')
         return processTaskCompleted(state, ctx);
@@ -2265,7 +2292,7 @@ export async function processCompletionBranch(state, result, ctx) {
             postState = ctxReadState(ctx);
         }
         catch { /* fall back to pre-iteration state */ }
-        const exitKind = classifyManagerRelaunchExit(postState, ctx.outcome, ctx.iterLogFile || path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`));
+        const exitKind = classifyManagerRelaunchExit(postState, ctx.outcome, ctx.iterLogFile || path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`), ctx.maxTurns ?? null);
         const decision = evaluateManagerRelaunch(postState, collectTickets(ctx.sessionDir), ctx.cbState ?? null, exitKind);
         if (decision.reason === 'time_limit') {
             ctx.log('Time limit reached. Exiting.');
@@ -2804,6 +2831,10 @@ async function runMuxRunnerMain() {
     const cbEnabled = cbSettings.enabled;
     let cbState = cbEnabled ? initCircuitBreaker(sessionDir, cbSettings) : null;
     const cbPath = path.join(sessionDir, 'circuit_breaker.json');
+    const runnerSettingsBag = loadSettingsBag(extensionRoot, 'mux-runner:main:maxTurns');
+    const runnerMaxTurns = positiveIntegerOrNull(runnerSettingsBag.default_tmux_max_turns)
+        ?? positiveIntegerOrNull(runnerSettingsBag.default_manager_max_turns)
+        ?? Defaults.MANAGER_MAX_TURNS;
     const { waitMinutes: rateLimitWaitMinutes, maxRetries: maxRateLimitRetries } = loadRateLimitSettings(extensionRoot);
     const startTime = Date.now();
     let iteration = 0;
@@ -3637,7 +3668,7 @@ async function runMuxRunnerMain() {
                 postState = readRunnerState(statePath);
             }
             catch { /* fall back */ }
-            const exitKind = classifyManagerRelaunchExit(postState, outcome, iterLogFile);
+            const exitKind = classifyManagerRelaunchExit(postState, outcome, iterLogFile, runnerMaxTurns);
             const relaunchDecision = evaluateManagerRelaunch(postState, collectTickets(sessionDir), cbState, exitKind);
             if (relaunchDecision.reason === 'time_limit') {
                 log('Time limit reached. Exiting.');
