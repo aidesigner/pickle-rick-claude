@@ -8,6 +8,7 @@ import {
   _deps,
   measureLlmMetricWithBackoff,
 } from '../bin/microverse-runner.js';
+import { ACTIVITY_EVENT_SCHEMA_SECTION } from '../bin/spawn-refinement-team.js';
 import { VALID_ACTIVITY_EVENTS } from '../types/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -83,4 +84,22 @@ test('VALID_ACTIVITY_EVENTS includes baseline_attempt_timeout', () => {
     true,
     'baseline_attempt_timeout must be registered in VALID_ACTIVITY_EVENTS',
   );
+});
+
+test('spawn-refinement-team documents baseline_attempt_timeout schema fields', () => {
+  const rowMatch = ACTIVITY_EVENT_SCHEMA_SECTION.match(
+    /\|\s*`baseline_attempt_timeout`\s*\|\s*([^|]+)\|/,
+  );
+  assert.ok(
+    rowMatch,
+    'ACTIVITY_EVENT_SCHEMA_SECTION must include baseline_attempt_timeout',
+  );
+  const row = rowMatch[1];
+  for (const field of ['session', 'gate_payload.attempt', 'gate_payload.elapsed_ms', 'gate_payload.classifier']) {
+    assert.match(
+      row,
+      new RegExp(String.raw`\`${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\``),
+      `baseline_attempt_timeout row missing required field ${field}`,
+    );
+  }
 });

@@ -153,6 +153,7 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 |-------|-------------------|-----------------|
 | \`worker_spawn_backend_resolved\` | \`backend\`, \`source\`, \`pid\` | spawn-morty, spawn-refinement-team, microverse-runner, mux-runner |
 | \`worker_partial_lifecycle_exit\` | \`ticket\`, \`gate_payload.artifacts_missing\`, \`gate_payload.session_log_size\` | spawn-morty worker exit path |
+| \`baseline_attempt_timeout\` | \`session\`, \`gate_payload.attempt\`, \`gate_payload.elapsed_ms\`, \`gate_payload.classifier\` | microverse-runner LLM timeout retry loop |
 | \`pipeline_auto_resumed\` | \`gate_payload.retry_index\`, \`gate_payload.ticket_id\`, \`gate_payload.session_done_count_at_retry\` | mux-runner auto-resume path |
 | \`bundle_bootstrap_exemption_applied\` | \`gate_payload.skip_readiness_reason\`, \`gate_payload.skip_ticket_audit_reason\` | mux-runner bootstrap-mode path |
 | \`ticket_audit_bypassed\` | \`reason\` | audit-ticket-bundle.js, readiness gate |
