@@ -14,9 +14,11 @@ scope: |
   prds/MASTER_PLAN.md Open Findings list).
 
 composes:
-  # ===== Tier A — claude-backend reliability (HCC-COORD-1 order-critical bundle) =====
-  - prds/p1-claude-iteration-classifier-detectmaxturns-misuse.md       # R-ICDM-1..7 (Finding #28, P1) — BLOCKS every claude-backend microverse
-  - prds/p1-mux-runner-no-claude-manager-relaunch-on-max-turns.md      # R-MMTR-1..7 (Finding #19, P1) — sibling, same helper
+  # ===== Tier A — claude-backend reliability =====
+  # R-ICDM (Finding #28, P1) SHIPPED 2026-05-13 in commit c23ab353 — closes the
+  # iteration-classifier site; HCC-COORD-1 signature freeze precondition met.
+  # `prds/p1-claude-iteration-classifier-detectmaxturns-misuse.md` retained for history.
+  - prds/p1-mux-runner-no-claude-manager-relaunch-on-max-turns.md      # R-MMTR-1..7 (Finding #19, P1) — wires R-ICDM-1 helper at manager-relaunch site
   # ===== Tier B — microverse exit-reason family (same-file bundle) =====
   - prds/p1-microverse-baseline-llm-exhaustion-collapses-transient-into-fatal.md   # R-MBLE-1..7 (Finding #26, P1)
   - prds/p1-pipeline-runner-aborts-on-judge-timeout-no-finalize-gate.md             # R-PRJT-1..7 (Finding #16, P1)
@@ -45,13 +47,12 @@ The cluster of bugs is not random. **The microverse-runner.ts subprocess-error h
 
 ## Bundle order (mandatory)
 
-The HCC-COORD-1 dependency graph: **R-ICDM-1 (helper repair) lands first**, then everything else. R-ICDM-1 fixes `detectManagerMaxTurnsExit` by adding the missing `num_turns >= maxTurns` predicate. Until it lands:
+**R-ICDM-1 (helper repair) shipped 2026-05-13 in commit c23ab353** — the HCC-COORD-1 signature freeze precondition is now met. `detectManagerMaxTurnsExit(outcome, logFile, maxTurns)` now correctly returns `num_turns >= maxTurns`, not the bare success-shape signature.
 
-- R-MMTR-3 (wiring) would ship against a still-broken predicate
-- R-MGAR-3 (gap-analysis manager-relaunch) would inherit the same broken predicate
-- All three reclassify clean claude exits as `error`
-
-After R-ICDM-1 + R-MMTR-2 land, R-MGAR-3, R-MBLE-1, R-PRJT-1 can ship in parallel (same file, but independent code paths).
+Remaining order:
+- **R-MMTR-3** can now wire the (fixed) helper at the manager-relaunch site safely.
+- **R-MGAR-3** (gap-analysis manager-relaunch) inherits the fixed predicate via R-MMTR-2's `evaluateManagerRelaunch` wrapper.
+- R-MBLE-1, R-PRJT-1, R-MGAR-1..2 can ship in parallel (same file, independent code paths).
 
 R-APMW completion is independent of the HCC-COORD-1 family — can ship anywhere in the bundle.
 
@@ -63,7 +64,7 @@ R-CCNW (citadel conformance wiring) is independent.
 
 ## Acceptance criteria (bundle-level, on top of per-PRD ACs)
 
-- **AC-BUNDLE-01** (HCC-COORD-1 freeze): the deployed `detectManagerMaxTurnsExit` after this bundle MUST return `true` ONLY when `num_turns >= maxTurns`; the success-shape check alone is insufficient. Regression test asserts both: (a) `{stop_reason:'end_turn', terminal_reason:'completed', is_error:false, num_turns:50, maxTurns:100}` → `false` (success, not max-turns); (b) same shape with `num_turns:100, maxTurns:100` → `true`.
+- **AC-BUNDLE-01** (HCC-COORD-1 freeze): SHIPPED in c23ab353 — `detectManagerMaxTurnsExit` returns `true` ONLY when `num_turns >= maxTurns`. Regression test at `extension/tests/integration/mux-runner-claude-iteration-classifier.test.js` (9/9 green) asserts: (a) over-budget → true, (b) num_turns null → false (conservative), (c) maxTurns null → false, (d) timedOut → false, (e) non-zero exit → false, plus codex prompt-echo discrimination preserved.
 - **AC-BUNDLE-02** (claude-backend microverse runs end-to-end): a smoke session `microverse-runner --backend claude` on a fixture project completes iter 1 without `error` reclassification, completes the metric measurement, and continues to iter 2.
 - **AC-BUNDLE-03** (gap-analysis recovers ETIMEDOUT): 3×ETIMEDOUT at gap-analysis stage triggers 3 retries before propagating failure (R-MGAR-2).
 - **AC-BUNDLE-04** (R-APMW closure): all 9 R-APMW tickets present in HEAD with their trap doors enforced by `audit-trap-door-enforcement.sh`.
