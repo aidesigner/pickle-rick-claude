@@ -13,6 +13,12 @@ import { spawnSync } from 'node:child_process';
 // only the seed file. The HANG_SCRIPT sleeps 60s so any value < 60_000 still
 // validates the timeout-bound contract — bumping just absorbs scheduler jitter.
 const HANG_TIMEOUT_MS = 5_000;
+// Outer subprocess wall-clock cap. Was `HANG_TIMEOUT_MS + 7_500` (12.5s); under
+// peak full-suite concurrency the Node ESM cold-start plus two spawnSync calls
+// (rg then grep) for a non-hang scenario could itself exceed 12.5s, killing the
+// child before computeOneHop returned and surfacing as `status: null !== 0`.
+// 25s remains well below CI suite timeouts but covers worst-case spawn latency.
+const RUNNER_SPAWN_TIMEOUT_MS = 25_000;
 
 const FAIL_SCRIPT = (code) => `#!/bin/sh
 exit ${code}
@@ -64,7 +70,7 @@ process.stdout.write(JSON.stringify({ result, warnings }));
                 ...process.env,
                 PATH: shimDir,
             },
-            timeout: HANG_TIMEOUT_MS + 7_500,
+            timeout: RUNNER_SPAWN_TIMEOUT_MS,
         });
 
         assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -92,7 +98,11 @@ function warningCategoryCount(warnings, category) {
 }
 
 function assertFinishedWithin(elapsed, label) {
-    assert.ok(elapsed < HANG_TIMEOUT_MS + 5_000, `${label} took ${elapsed}ms`);
+    // Ceiling = HANG_TIMEOUT_MS + scheduler-jitter slack (10s under full-suite
+    // concurrency). The contract this test enforces is that elapsed << 60s
+    // (the HANG_SCRIPT sleep) — any value well under the 60s sleep proves the
+    // timeout fired and the fallback ran.
+    assert.ok(elapsed < HANG_TIMEOUT_MS + 10_000, `${label} took ${elapsed}ms`);
 }
 
 function runInRepo(scripts) {

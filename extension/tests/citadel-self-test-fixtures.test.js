@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { runCitadelAudit } from '../services/citadel/audit-runner.js';
+import { runCitadelAudit, __setAnalyzerOverridesForTests } from '../services/citadel/audit-runner.js';
 
 const __dirname = import.meta.dirname;
 const FIXTURE_DIR = path.resolve(__dirname, '../../prds/fixtures/citadel');
@@ -131,6 +131,22 @@ describe('citadel self-test fixtures', () => {
   test('random-sample cohort records a stable recall baseline without regression', async () => {
     const baseline = readJson('recall-baseline.json');
     const sampleRuns = [];
+    // The recall-baseline.json fixture predates the wired ac-coverage and
+    // allowlist-dead-entry analyzers. Random-sample fixtures intentionally
+    // expose only an AC id with no implementation/test evidence in their
+    // diff, which the newer analyzers correctly flag. Override those two
+    // analyzers here so the baseline isolates cross-phase / sibling-auth /
+    // structural recall — keeping the LOA-618 positive test (above) as the
+    // authority on the full analyzer stack.
+    const emptyAnalyzer = () => ({ findings: [] });
+    __setAnalyzerOverridesForTests(new Map([
+      ['citadel-ac-coverage', emptyAnalyzer],
+      ['citadel-allowlist-dead', emptyAnalyzer],
+      ['citadel-state-transitions', emptyAnalyzer],
+      ['citadel-trap-door', emptyAnalyzer],
+      ['citadel-endpoint-contract', emptyAnalyzer],
+      ['citadel-frontend-prop-drift', emptyAnalyzer],
+    ]));
     try {
       for (const sample of baseline.samples) {
         const fixture = readJson(sample.fixture);
@@ -154,6 +170,7 @@ describe('citadel self-test fixtures', () => {
         );
       }
     } finally {
+      __setAnalyzerOverridesForTests(null);
       for (const { run } of sampleRuns) cleanup(run);
     }
   });

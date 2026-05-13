@@ -170,16 +170,16 @@ test('R-APMW-6: output every 60s for 5 cycles then silence - fires at OUTPUT_STA
 });
 test('R-APMW-6: output every 10s for 4h - wall-clock guard fires', async () => {
     const scenario = await runScenario('wall-clock', {
-        MAX_ITERATION_SECONDS: 0.35,
-        OUTPUT_STALL_SECONDS: 1,
+        MAX_ITERATION_SECONDS: 1.2,
+        OUTPUT_STALL_SECONDS: 5,
     });
     try {
         assert.equal(scenario.outcome.completion, 'error');
         assert.equal(scenario.outcome.timedOut, true);
         assert.equal(scenario.outcome.stallReason, 'wall_clock');
         assert.equal(scenario.outcome.exitCode, null);
-        assert.match(fs.readFileSync(scenario.markerFile, 'utf-8'), /emit:progress/);
-        assert.match(fs.readFileSync(scenario.signalFile, 'utf-8'), /SIGTERM/);
+        assert.match(await fs.promises.readFile(scenario.markerFile, 'utf-8'), /emit:progress/);
+        assert.match(await fs.promises.readFile(scenario.signalFile, 'utf-8'), /SIGTERM/);
     }
     finally {
         fs.rmSync(scenario.sessionDir, { recursive: true, force: true });
@@ -188,8 +188,8 @@ test('R-APMW-6: output every 10s for 4h - wall-clock guard fires', async () => {
 test('R-APMW-6: normal subprocess clears both timers on success', async () => {
     const timeoutCountBefore = process.getActiveResourcesInfo().filter((entry) => entry === 'Timeout').length;
     const scenario = await runScenario('success', {
-        MAX_ITERATION_SECONDS: 0.5,
-        OUTPUT_STALL_SECONDS: 1,
+        MAX_ITERATION_SECONDS: 3,
+        OUTPUT_STALL_SECONDS: 5,
     });
     try {
         assert.equal(scenario.outcome.completion, 'continue');
@@ -199,7 +199,7 @@ test('R-APMW-6: normal subprocess clears both timers on success', async () => {
         await new Promise((resolve) => setTimeout(resolve, 5));
         const timeoutCountAfter = process.getActiveResourcesInfo().filter((entry) => entry === 'Timeout').length;
         assert.ok(timeoutCountAfter <= timeoutCountBefore + 1);
-        assert.equal(fs.existsSync(scenario.signalFile), false);
+        await assert.rejects(fs.promises.access(scenario.signalFile), { code: 'ENOENT' });
     }
     finally {
         fs.rmSync(scenario.sessionDir, { recursive: true, force: true });

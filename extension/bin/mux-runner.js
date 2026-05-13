@@ -2272,9 +2272,22 @@ export async function processCompletionBranch(state, result, ctx) {
             finalizeTerminalState(ctx.statePath, { step: 'completed', runnerIteration: ctx.iteration, exitReason: 'limit' });
             return { kind: 'break', reason: 'limit' };
         }
-        if (decision.shouldRelaunch && decision.exitKind !== 'other_error') {
+        // Genuine subprocess crash (non-zero exit, not a timeout) tears down rather
+        // than relaunches: the worker process crashed for a deterministic reason
+        // and relaunching would burn the cap on the same crash. Timeouts and
+        // missing-outcome cases (generic subprocess error) DO relaunch when
+        // tickets remain and we're below the cap.
+        const isGenuineCrash = decision.exitKind === 'other_error' &&
+            ctx.outcome !== undefined &&
+            ctx.outcome.timedOut !== true &&
+            typeof ctx.outcome.exitCode === 'number' &&
+            ctx.outcome.exitCode !== 0;
+        if (decision.shouldRelaunch && !isGenuineCrash) {
             const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
-            ctx.log(`${relaunchBackend} manager subprocess exited via ${decision.exitKind} with ${decision.pendingCount} ticket(s) still pending — ` +
+            const detail = decision.exitKind === 'other_error'
+                ? 'errored'
+                : `exited via ${decision.exitKind}`;
+            ctx.log(`${relaunchBackend} manager subprocess ${detail} with ${decision.pendingCount} ticket(s) still pending — ` +
                 `relaunching (count ${decision.nextRelaunchCount}/${decision.cap}).`);
             recordManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
             // Relaunch IS progress — reset stall counter. Do NOT deactivate.
@@ -3628,9 +3641,17 @@ async function runMuxRunnerMain() {
                 exitReason = 'limit';
                 break;
             }
-            if (relaunchDecision.shouldRelaunch && relaunchDecision.exitKind !== 'other_error') {
+            const isGenuineCrash = relaunchDecision.exitKind === 'other_error' &&
+                outcome !== undefined &&
+                outcome.timedOut !== true &&
+                typeof outcome.exitCode === 'number' &&
+                outcome.exitCode !== 0;
+            if (relaunchDecision.shouldRelaunch && !isGenuineCrash) {
                 const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
-                log(`${relaunchBackend} manager subprocess exited via ${relaunchDecision.exitKind} with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
+                const detail = relaunchDecision.exitKind === 'other_error'
+                    ? 'errored'
+                    : `exited via ${relaunchDecision.exitKind}`;
+                log(`${relaunchBackend} manager subprocess ${detail} with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
                     `relaunching (count ${relaunchDecision.nextRelaunchCount}/${relaunchDecision.cap}).`);
                 recordManagerRelaunch(statePath, sessionDir, relaunchDecision, iteration, log);
                 // Relaunch IS progress for outer-loop stall detection — reset stall.

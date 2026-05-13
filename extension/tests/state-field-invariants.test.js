@@ -15,7 +15,11 @@ const claudePath = path.join(extensionRoot, 'CLAUDE.md');
 function extractStateFields(source) {
   const match = source.match(/export interface State \{([\s\S]*?)\n\}/);
   assert.ok(match, 'State interface exists');
-  return [...match[1].matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\??:/gm)].map((field) => field[1]);
+  // Only top-level fields (single 2-space indent). Nested object-literal
+  // field types (e.g. `last_between_ticket_gate: { ts: number; ... }`) live
+  // at deeper indents and are not part of the State surface area that the
+  // invariant catalog documents.
+  return [...match[1].matchAll(/^ {2}([A-Za-z_][A-Za-z0-9_]*)\??:/gm)].map((field) => field[1]);
 }
 
 function extractFieldInvariantSection(source) {

@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import type { Backend, State } from '../types/index.js';
-import { BACKENDS, MICROVERSE_FATAL_REASONS, PipelineRunnerExitCode, type MicroverseFatalReason } from '../types/index.js';
+import { BACKENDS, MICROVERSE_FATAL_REASONS, PipelineRunnerExitCode, isMicroverseFailureExit, type MicroverseExitReason, type MicroverseFatalReason } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import {
@@ -1403,7 +1403,18 @@ export function isFatalPhaseFailure(phase: PhaseName, runtime: PipelineRuntime):
       return countCommitsSince(startCommit, runtime.workingDir) === 0;
     }
     if (phase === 'anatomy-park' || phase === 'szechuan-sauce') {
-      return isMicroverseFatalReason(runnerState.exit_reason);
+      const reason = runnerState.exit_reason;
+      if (isMicroverseFatalReason(reason)) return true;
+      // judge_timeout is intentionally NOT in MICROVERSE_FAILURE_REASONS so logPhaseHaltReason
+      // can route it through finalize-gate (R-PRJT-2). Still treat it as halt-eligible here
+      // so the halt path runs instead of recordRecoverablePhaseFailure.
+      if (reason === 'judge_timeout') return true;
+      // Microverse failure exits (judge_unreachable, error, rate_limit_exhausted, ...) halt
+      // the pipeline. R-SCJM-3 expects judge_unreachable to halt without finalize-gate.
+      if (typeof reason === 'string' && isMicroverseFailureExit(reason as MicroverseExitReason)) {
+        return true;
+      }
+      return false;
     }
     return true;
   } catch {
@@ -1413,7 +1424,19 @@ export function isFatalPhaseFailure(phase: PhaseName, runtime: PipelineRuntime):
 
 export function shouldHaltAfterPhase(phase: PhaseName, exitCode: number, runtime: PipelineRuntime): boolean {
   if (exitCode === 0) return false;
-  if (phase !== 'citadel') return isFatalPhaseFailure(phase, runtime);
+  if (phase !== 'citadel') {
+    if (isFatalPhaseFailure(phase, runtime)) return true;
+    // Strict phase policy: persisted pipeline_continue_on_phase_fail=false (via --strict-phases
+    // or upstream config) halts on any non-zero non-citadel exit even when downstream
+    // remediation phases exist.
+    try {
+      const runnerState = sm.read(runtime.statePath);
+      if (runnerState.pipeline_continue_on_phase_fail === false) return true;
+    } catch {
+      // best-effort; fall through to non-halt
+    }
+    return false;
+  }
   const report = readCitadelReport(runtime.sessionDir);
   if (!report) return true;
   const threshold: CitadelSeverity = runtime.config.citadel_strict ? 'High' : 'Critical';
@@ -2010,6 +2033,10 @@ function logPhaseHaltReason(
       return 'run-finalize-gate';
     }
     if (isMicroverseFatalReason(exitReason)) {
+      log(`Phase ${rawPhase}: microverse exited with ${exitReason} — pipeline aborting (no finalize-gate)`);
+      return 'abort';
+    }
+    if (typeof exitReason === 'string' && isMicroverseFailureExit(exitReason as MicroverseExitReason)) {
       log(`Phase ${rawPhase}: microverse exited with ${exitReason} — pipeline aborting (no finalize-gate)`);
       return 'abort';
     }

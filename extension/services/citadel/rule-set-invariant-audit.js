@@ -262,7 +262,7 @@ function slug(value) {
         .replace(/^-|-$/g, '')
         .slice(0, 80) || 'unknown';
 }
-const ENFORCE_HAS_REF_RE = /[\w./*-]+\.(?:test\.js|sh)\b/;
+const ENFORCE_HAS_REF_RE = /[\w./*-]+\.(?:test\.js|spec\.js|sh)\b/;
 export function parseTrapDoorDeclarations(content) {
     const section = extractTrapDoorsSection(content);
     const findings = [];

@@ -81,6 +81,10 @@ function validateTicketFrontmatterPatch(patch) {
 function applyStatusAndUpdatedFields(content, ticketId, nextStatus, today) {
     let statusReplaced = false;
     let nextContent = content;
+    const hasFrontmatter = extractFrontmatter(nextContent) !== null;
+    if (!hasFrontmatter) {
+        console.warn(`Warning: ticket ${ticketId} has no valid YAML frontmatter — status replacement may be imprecise`);
+    }
     if (nextStatus !== null && /^status:.*$/m.test(nextContent)) {
         nextContent = nextContent.replace(/^status:.*$/m, `status: "${nextStatus}"`);
         statusReplaced = true;
@@ -88,11 +92,8 @@ function applyStatusAndUpdatedFields(content, ticketId, nextStatus, today) {
     if (/^updated:.*$/m.test(nextContent)) {
         nextContent = nextContent.replace(/^updated:.*$/m, `updated: "${today}"`);
     }
-    else if (extractFrontmatter(nextContent)) {
+    else if (hasFrontmatter) {
         nextContent = nextContent.replace(/\n---(\r?\n?)$/, `\nupdated: "${today}"\n---$1`);
-    }
-    else {
-        console.warn(`Warning: ticket ${ticketId} has no valid YAML frontmatter — status replacement may be imprecise`);
     }
     return { content: nextContent, statusReplaced };
 }

@@ -19,5 +19,7 @@
   "approach_exhaustion_fired": false,
   "iteration_regressions": 0,
   "gate_regression_threshold_warning_emitted": false,
+  "consecutive_subprocess_errors": 0,
+  "violation_ledger": [],
   "convergence_target": 0
 }

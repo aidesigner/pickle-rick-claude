@@ -398,7 +398,9 @@ export class StateManager {
         else if (state.schema_version >= 3) {
             const missingPipelineContinueOnPhaseFail = typeof state.pipeline_continue_on_phase_fail !== 'boolean';
             normalizeV3StateDefaults(state);
-            if (missingPipelineContinueOnPhaseFail || migrateLegacyManagerRelaunchCount(state) || migrateLegacySignalExitReason(state)) {
+            const didMigrateRelaunch = migrateLegacyManagerRelaunchCount(state);
+            const didMigrateSignal = migrateLegacySignalExitReason(state);
+            if (missingPipelineContinueOnPhaseFail || didMigrateRelaunch || didMigrateSignal) {
                 try {
                     writeMigrationStateFile(statePath, state);
                 }

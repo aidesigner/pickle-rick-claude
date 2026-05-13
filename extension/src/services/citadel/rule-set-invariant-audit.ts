@@ -378,7 +378,7 @@ export interface TrapDoorDeclarationResult {
   findings: CitadelFinding[];
 }
 
-const ENFORCE_HAS_REF_RE = /[\w./*-]+\.(?:test\.js|sh)\b/;
+const ENFORCE_HAS_REF_RE = /[\w./*-]+\.(?:test\.js|spec\.js|sh)\b/;
 
 export function parseTrapDoorDeclarations(content: string): TrapDoorDeclarationResult {
   const section = extractTrapDoorsSection(content);

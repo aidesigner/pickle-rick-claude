@@ -128,8 +128,15 @@ function writeCitadelHighFixture(repo, sessionDir) {
   git(['add', 'prd.md'], repo);
   git(['commit', '-q', '-m', 'add prd'], repo);
   const base = git(['rev-parse', 'HEAD'], repo);
-  fs.writeFileSync(path.join(repo, 'services', 'a.ts'), 'export const a = 11;\n');
-  git(['add', 'services/a.ts'], repo);
+  // Provide implementation + test evidence so ac-coverage doesn't raise a Critical finding.
+  // The fanout-without-justification on AC-FF-05 still yields the High finding the test asserts on.
+  fs.writeFileSync(path.join(repo, 'services', 'a.ts'),
+    '// AC-FF-05 implementation: comparison_retry_enabled flag check\n' +
+    'export const a = 11;\n');
+  fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'tests', 'ac-ff-05.test.ts'),
+    '// AC-FF-05 test\nexport const test = true;\n');
+  git(['add', 'services/a.ts', 'tests/ac-ff-05.test.ts'], repo);
   git(['commit', '-q', '-m', 'change implementation'], repo);
   fs.writeFileSync(path.join(sessionDir, 'prd_refined.md'), refinedManifestRows());
   return { prdPath: 'prd.md', startCommit: base };

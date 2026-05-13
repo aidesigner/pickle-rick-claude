@@ -328,7 +328,10 @@ function findActiveSession() {
     return null;
 }
 function auditLogPath() {
-    return path.join(getExtensionRoot(), 'deploy-audit.log');
+    const installRoot = process.env.PICKLE_INSTALL_ROOT && process.env.PICKLE_INSTALL_ROOT.trim() !== ''
+        ? process.env.PICKLE_INSTALL_ROOT
+        : path.join(os.homedir(), '.claude', 'pickle-rick');
+    return path.join(installRoot, 'deploy-audit.log');
 }
 function appendDowngradeAudit(srcVersion, depVersion, options, sessionId) {
     const filePath = auditLogPath();

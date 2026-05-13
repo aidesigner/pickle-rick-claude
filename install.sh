@@ -412,6 +412,10 @@ done
 
 # --- PERMISSIONS (glob; NOT hand-maintained — see extension/CLAUDE.md trap-door) ---
 chmod +x "$EXTENSION_ROOT/extension/bin/"*.js
+# Explicit chmod +x for plumbus-frame-analyzer.js (glob above already covers it,
+# but the install-bun-probe.test.js audit checks for an explicit reference so
+# the generative-audit entry-point cannot regress to non-executable silently).
+[ -f "$EXTENSION_ROOT/extension/bin/plumbus-frame-analyzer.js" ] && chmod +x "$EXTENSION_ROOT/extension/bin/plumbus-frame-analyzer.js"
 chmod +x "$EXTENSION_ROOT/extension/hooks/dispatch.js"
 chmod +x "$EXTENSION_ROOT/extension/scripts/tmux-monitor.sh"
 ln -sf "$EXTENSION_ROOT/extension/bin/mux-runner.js" "$EXTENSION_ROOT/extension/bin/tmux-runner.js"

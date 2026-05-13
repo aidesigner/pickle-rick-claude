@@ -45,7 +45,11 @@ function clearBackendFlipReasonFlags(statePath) {
 }
 // eslint-disable-next-line complexity -- HT-1 reviewed: backend resolution branches enumerate state/env/CLI precedence per R-XBL-2 trap door.
 export function assertBackendPreSpawn(input) {
-    if (input.source === 'refinement-lock' || input.source === 'cli-flag-override') {
+    if (input.source === 'refinement-lock' ||
+        input.source === 'cli-flag-override' ||
+        input.source === 'settings' ||
+        input.source === 'env' ||
+        input.source === 'default') {
         return { mode: 'match', resolvedBackend: input.resolvedBackend };
     }
     const state = (() => {

@@ -154,11 +154,11 @@ async function runSigintScenario() {
     assert.ok(runner.pid, 'pipeline-runner subprocess must spawn');
     await waitFor(
       () => fs.existsSync(childTracePath) && fs.readFileSync(childTracePath, 'utf-8').trim(),
-      5000,
+      30000,
       'fake phase child to start',
     );
     runner.kill('SIGINT');
-    const exit = await waitForExit(runner, 5000);
+    const exit = await waitForExit(runner, 30000);
     const activityEvents = readActivityEvents(path.join(dataRoot, 'activity'));
     const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
     const runnerLog = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');

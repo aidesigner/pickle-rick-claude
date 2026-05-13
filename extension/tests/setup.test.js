@@ -453,27 +453,34 @@ test('setup: --resume rejects codex teams conflict from recovered tmp state', ()
     const statePath = path.join(sessionPath, 'state.json');
     const workingDir = process.cwd();
 
+    const commonState = {
+        session_dir: sessionPath,
+        working_dir: workingDir,
+        step: 'implement',
+        original_prompt: 'resume conflict test',
+        started_at: '2026-05-12T00:00:00.000Z',
+        max_iterations: 50,
+        max_time_minutes: 0,
+        worker_timeout_seconds: 1200,
+        start_time_epoch: 1778600000,
+        history: [],
+        completion_promise: null,
+    };
     fs.writeFileSync(statePath, JSON.stringify({
+        ...commonState,
         schema_version: 1,
         active: false,
         backend: 'claude',
         teams_mode: false,
-        session_dir: sessionPath,
-        working_dir: workingDir,
         iteration: 1,
-        step: 'implement',
-        original_prompt: 'resume conflict test',
     }, null, 2));
     fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify({
+        ...commonState,
         schema_version: 1,
         active: false,
         backend: 'codex',
         teams_mode: true,
-        session_dir: sessionPath,
-        working_dir: workingDir,
         iteration: 2,
-        step: 'implement',
-        original_prompt: 'resume conflict test',
     }, null, 2));
 
     try {

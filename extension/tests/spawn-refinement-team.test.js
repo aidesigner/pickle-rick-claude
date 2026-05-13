@@ -569,18 +569,33 @@ test('spawn-refinement-team: recovers orphan tmp state before reading timeout an
         const prd = path.join(tmp, 'prd.md');
         fs.writeFileSync(prd, '# PRD\nContent');
         const statePath = path.join(tmp, 'state.json');
+        // Snapshots must satisfy isRecoverableStateSnapshotCandidate so that
+        // the orphan tmp can be promoted before the manifest is read.
+        const baseFields = {
+            working_dir: tmp,
+            session_dir: tmp,
+            step: 'research',
+            max_iterations: 10,
+            max_time_minutes: 60,
+            start_time_epoch: Math.floor(Date.now() / 1000),
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            original_prompt: 'refine',
+            schema_version: 1,
+        };
         fs.writeFileSync(statePath, JSON.stringify({
+            ...baseFields,
             worker_timeout_seconds: 300,
             backend: 'claude',
             iteration: 1,
-            schema_version: 1,
             active: true,
         }));
         fs.writeFileSync(`${statePath}.tmp.424242`, JSON.stringify({
+            ...baseFields,
             worker_timeout_seconds: 45,
             backend: 'codex',
             iteration: 2,
-            schema_version: 1,
             active: true,
         }));
         const fakeBin = makeTmpDir('fake-bin-');

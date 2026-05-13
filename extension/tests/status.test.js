@@ -406,15 +406,26 @@ test('showStatus: prefers the crash-recovered orphan tmp snapshot over stale bas
             path.join(tmpDir, 'current_sessions.json'),
             JSON.stringify({ [fakeCwd]: sessionDir })
         );
+        // Snapshots must satisfy isRecoverableStateSnapshotCandidate.
+        const baseFields = {
+            working_dir: fakeCwd,
+            session_dir: sessionDir,
+            max_iterations: 9,
+            max_time_minutes: 60,
+            worker_timeout_seconds: 120,
+            start_time_epoch: Math.floor(Date.now() / 1000),
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            schema_version: 1,
+        };
         fs.writeFileSync(
             statePath,
             JSON.stringify({
+                ...baseFields,
                 active: true,
-                working_dir: fakeCwd,
-                session_dir: sessionDir,
                 step: 'implement',
                 iteration: 1,
-                max_iterations: 9,
                 current_ticket: 'T-BASE',
                 original_prompt: 'Base state should lose to recovered tmp',
             })
@@ -422,12 +433,10 @@ test('showStatus: prefers the crash-recovered orphan tmp snapshot over stale bas
         fs.writeFileSync(
             `${statePath}.tmp.999999`,
             JSON.stringify({
+                ...baseFields,
                 active: false,
-                working_dir: fakeCwd,
-                session_dir: sessionDir,
                 step: 'verify',
                 iteration: 7,
-                max_iterations: 9,
                 current_ticket: 'T-RECOVERED',
                 original_prompt: 'Recovered state should drive status output',
             })

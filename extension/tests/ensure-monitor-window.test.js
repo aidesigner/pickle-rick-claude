@@ -869,13 +869,26 @@ test('inferMonitorMode: recovers orphan tmp state before reading command_templat
     const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mode-')));
     try {
         const statePath = path.join(tmpRoot, 'state.json');
+        const baseFields = {
+            working_dir: tmpRoot,
+            original_prompt: 'orphan tmp recovery',
+            started_at: '2026-05-12T00:00:00.000Z',
+            session_dir: tmpRoot,
+            step: 'implement',
+            max_iterations: 50,
+            max_time_minutes: 0,
+            worker_timeout_seconds: 1200,
+            start_time_epoch: 1778600000,
+            history: [],
+            completion_promise: null,
+        };
         fs.writeFileSync(
             statePath,
-            JSON.stringify({ command_template: 'pickle.md', iteration: 1, schema_version: 1 }),
+            JSON.stringify({ ...baseFields, command_template: 'pickle.md', iteration: 1, schema_version: 1 }),
         );
         fs.writeFileSync(
             `${statePath}.tmp.99999999`,
-            JSON.stringify({ command_template: 'meeseeks.md', iteration: 2, schema_version: 1 }),
+            JSON.stringify({ ...baseFields, command_template: 'meeseeks.md', iteration: 2, schema_version: 1 }),
         );
 
         assert.equal(inferMonitorMode(tmpRoot), 'meeseeks');

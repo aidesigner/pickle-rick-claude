@@ -2888,7 +2888,10 @@ test('microverse forensic shutdown stamps signal exit_reason without clearing st
         safeDeactivate(statePath);
         const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
         assert.equal(persisted.active, false);
-        assert.equal(persisted.exit_reason, 'signal');
+        // Legacy bare 'signal' is migrated to 'signal:SIGINT' on read; the
+        // subsequent safeDeactivate triggers that read, so the persisted value
+        // reflects the migrated form.
+        assert.equal(persisted.exit_reason, 'signal:SIGINT');
         // Forensic invariants — step + current_ticket survive.
         assert.equal(persisted.step, 'implement');
         assert.equal(persisted.current_ticket, 'M-3');

@@ -26,11 +26,13 @@ function makeRepo() {
   git(repoRoot, ['config', 'user.email', 'test@example.com']);
   git(repoRoot, ['config', 'user.name', 'Test User']);
   writeFile(repoRoot, 'prd.md', '# PRD\n\n## Acceptance Criteria\n\n**AC-TEST-01**: Stable.\n');
-  writeFile(repoRoot, 'src/index.ts', 'export const before = true;\n');
+  writeFile(repoRoot, 'src/index.ts', '// AC-TEST-01\nexport const before = true;\n');
+  writeFile(repoRoot, 'tests/index.test.ts', '// AC-TEST-01\nimport { describe } from "node:test";\n');
   git(repoRoot, ['add', '.']);
   git(repoRoot, ['commit', '-qm', 'base']);
   const base = git(repoRoot, ['rev-parse', 'HEAD']);
-  writeFile(repoRoot, 'src/index.ts', 'export const after = true;\n');
+  writeFile(repoRoot, 'src/index.ts', '// AC-TEST-01\nexport const after = true;\n');
+  writeFile(repoRoot, 'tests/index.test.ts', '// AC-TEST-01 covered\nimport { describe } from "node:test";\n');
   git(repoRoot, ['add', '.']);
   git(repoRoot, ['commit', '-qm', 'head']);
   return { repoRoot, base };

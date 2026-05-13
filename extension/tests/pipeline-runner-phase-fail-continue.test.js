@@ -43,12 +43,17 @@ function makeRepo({ createFollowupCommit = false } = {}) {
   git(['config', 'user.email', 'test@example.com'], repo);
   git(['config', 'user.name', 'Test User'], repo);
   git(['config', 'commit.gpgsign', 'false'], repo);
-  fs.writeFileSync(path.join(repo, 'service.ts'), 'export const value = 1;\n');
+  // discoverSubsystems enumerates directories with source files; seed under services/
+  // so anatomy-park / szechuan-sauce phases find a real subsystem rather than skipping.
+  fs.mkdirSync(path.join(repo, 'services'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'services', 'a.ts'), 'export const a = 1;\n');
+  fs.writeFileSync(path.join(repo, 'services', 'b.ts'), 'export const b = 2;\n');
+  fs.writeFileSync(path.join(repo, 'services', 'c.ts'), 'export const c = 3;\n');
   git(['add', '.'], repo);
   git(['commit', '-q', '-m', 'seed'], repo);
   const startCommit = git(['rev-parse', 'HEAD'], repo);
   if (createFollowupCommit) {
-    fs.writeFileSync(path.join(repo, 'service.ts'), 'export const value = 2;\n');
+    fs.writeFileSync(path.join(repo, 'services', 'a.ts'), 'export const a = 11;\n');
     git(['add', '.'], repo);
     git(['commit', '-q', '-m', 'followup'], repo);
   }

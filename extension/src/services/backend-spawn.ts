@@ -104,7 +104,13 @@ export function assertBackendPreSpawn(input: {
   resolvedBackend: Backend;
   source: BackendResolutionSource;
 }): BackendPreSpawnAssertion {
-  if (input.source === 'refinement-lock' || input.source === 'cli-flag-override') {
+  if (
+    input.source === 'refinement-lock' ||
+    input.source === 'cli-flag-override' ||
+    input.source === 'settings' ||
+    input.source === 'env' ||
+    input.source === 'default'
+  ) {
     return { mode: 'match', resolvedBackend: input.resolvedBackend };
   }
 

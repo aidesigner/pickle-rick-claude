@@ -15,7 +15,7 @@ import {
   resolveWorkerTestGateTimeoutMs,
 } from '../services/pickle-utils.js';
 import { spawn, spawnSync } from 'child_process';
-import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, type Backend, type BackendResolutionSource, type LastToolErrorState, type PickleSettings, type State } from '../types/index.js';
+import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS, type Backend, type BackendResolutionSource, type LastToolErrorState, type PickleSettings, type State } from '../types/index.js';
 import { isRecord } from '../lib/is-record.js';
 import { getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
 import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile } from '../services/backend-spawn.js';
@@ -1116,11 +1116,36 @@ type BackendResolution = {
   source: BackendResolutionSource;
 };
 
+function deriveBaseSource(
+  resolvedSource: 'worker_backend' | 'backend' | 'env_lock',
+  state: State | { backend?: unknown } | null,
+): BackendResolutionSource {
+  if (resolvedSource === 'env_lock') return 'refinement-lock';
+  if (resolvedSource === 'worker_backend') return 'state';
+  // resolvedSource === 'backend': state.backend was used if valid; otherwise env/default
+  const raw = state ? (state as { backend?: unknown }).backend : undefined;
+  if (typeof raw === 'string' && (BACKENDS as readonly string[]).includes(raw)) {
+    return 'state';
+  }
+  const env = process.env.PICKLE_BACKEND;
+  if (typeof env === 'string' && (BACKENDS as readonly string[]).includes(env)) {
+    return 'env';
+  }
+  return 'default';
+}
+
 function resolveWorkerBackendBase(sessionRoot: string): BackendResolution {
-  const resolved = resolveWorkerBackendFromStateFile(path.join(sessionRoot, 'state.json'));
+  const statePath = path.join(sessionRoot, 'state.json');
+  let preloaded: State | null = null;
+  try {
+    preloaded = sm.read(statePath) as State | null;
+  } catch {
+    preloaded = null;
+  }
+  const resolved = resolveWorkerBackendFromStateFile(statePath);
   return {
     backend: resolved.backend,
-    source: resolved.source === 'env_lock' ? 'refinement-lock' : 'state',
+    source: deriveBaseSource(resolved.source, preloaded),
   };
 }
 
@@ -1138,7 +1163,7 @@ function resolveWorkerBackendBaseFromState(state: State | null): BackendResoluti
   const resolved = resolveWorkerBackendFromState(state);
   return {
     backend: resolved.backend,
-    source: resolved.source === 'env_lock' ? 'refinement-lock' : 'state',
+    source: deriveBaseSource(resolved.source, state),
   };
 }
 

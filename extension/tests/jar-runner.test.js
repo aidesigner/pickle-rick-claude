@@ -649,15 +649,25 @@ test('jar-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
         const sessionDir = path.join(tmpRoot, 'sessions', taskId);
         fs.mkdirSync(sessionDir, { recursive: true });
         const statePath = path.join(sessionDir, 'state.json');
-        fs.writeFileSync(statePath, JSON.stringify({
+        // Snapshots must satisfy isRecoverableStateSnapshotCandidate.
+        const baseFields = {
             schema_version: 1,
-            active: false,
             backend: 'claude',
             working_dir: tmpRoot,
             session_dir: sessionDir,
             step: 'implement',
-            iteration: 1,
             max_iterations: 10,
+            max_time_minutes: 60,
+            worker_timeout_seconds: 120,
+            start_time_epoch: Math.floor(Date.now() / 1000),
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+        };
+        fs.writeFileSync(statePath, JSON.stringify({
+            ...baseFields,
+            active: false,
+            iteration: 1,
             current_ticket: 'T-BASE',
             original_prompt: 'Base jar task state',
         }, null, 2));
@@ -692,14 +702,9 @@ test('jar-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
 
         const orphanTmpPath = `${statePath}.tmp.99999999`;
         fs.writeFileSync(orphanTmpPath, JSON.stringify({
-            schema_version: 1,
+            ...baseFields,
             active: true,
-            backend: 'claude',
-            working_dir: tmpRoot,
-            session_dir: sessionDir,
-            step: 'implement',
             iteration: 7,
-            max_iterations: 10,
             current_ticket: 'T-RECOVERED',
             original_prompt: 'Recovered jar task state',
         }, null, 2));
@@ -752,6 +757,8 @@ test('jar-runner: recovers a newer orphan tmp state before bootstrapping a jarre
         const statePath = path.join(sessionDir, 'state.json');
         fs.writeFileSync(statePath, '{broken json');
         const orphanTmpPath = `${statePath}.tmp.99999999`;
+        // Snapshot must satisfy isRecoverableStateSnapshotCandidate so the
+        // corrupt-base recovery path will promote it.
         fs.writeFileSync(orphanTmpPath, JSON.stringify({
             schema_version: 1,
             active: false,
@@ -761,7 +768,12 @@ test('jar-runner: recovers a newer orphan tmp state before bootstrapping a jarre
             step: 'implement',
             iteration: 7,
             max_iterations: 10,
-            worker_timeout_seconds: 1,
+            max_time_minutes: 60,
+            worker_timeout_seconds: 10,
+            start_time_epoch: Math.floor(Date.now() / 1000),
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
             current_ticket: 'T-RECOVERED',
             original_prompt: 'Recovered jar task state',
         }, null, 2));

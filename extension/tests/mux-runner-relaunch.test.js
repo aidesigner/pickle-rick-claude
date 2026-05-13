@@ -32,10 +32,14 @@ function buildSession(tmpRoot) {
         working_dir: tmpRoot,
         step: 'implement',
         iteration: 1,
-        max_iterations: 1,
-        max_time_minutes: 720,
+        max_iterations: 100,
+        max_time_minutes: 1,
         worker_timeout_seconds: 1200,
-        start_time_epoch: Math.floor(Date.now() / 1000),
+        // Far enough in the past that the wall-clock guard fires on the first
+        // loop pass, producing a clean exit_reason='limit' exit (code 0) so
+        // this test exercises the relaunch-ownership-before-monitor invariant
+        // without colliding with the iteration_cap_exhausted exit (code 3).
+        start_time_epoch: Math.floor(Date.now() / 1000) - 7200,
         completion_promise: null,
         original_prompt: 'relaunch ordering test',
         current_ticket: null,

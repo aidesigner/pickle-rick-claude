@@ -71,19 +71,36 @@ test('addToJar: recovers orphan tmp state before writing jar metadata', () => {
         fs.mkdirSync(liveRepo, { recursive: true });
 
         const statePath = path.join(dir, 'state.json');
+        // Both snapshots must satisfy isRecoverableStateSnapshotCandidate
+        // (state-manager.ts) — partial snapshots are rejected during
+        // orphan-tmp promotion.
+        const baseFields = {
+            session_dir: dir,
+            step: 'implement',
+            max_iterations: 10,
+            max_time_minutes: 60,
+            worker_timeout_seconds: 120,
+            start_time_epoch: Math.floor(Date.now() / 1000),
+            backend: 'claude',
+            original_prompt: 'test',
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            schema_version: 1,
+        };
         fs.writeFileSync(statePath, JSON.stringify({
+            ...baseFields,
             active: true,
             working_dir: staleRepo,
             iteration: 1,
-            schema_version: 1,
         }));
         fs.writeFileSync(
             `${statePath}.tmp.99999999`,
             JSON.stringify({
+                ...baseFields,
                 active: true,
                 working_dir: liveRepo,
                 iteration: 2,
-                schema_version: 1,
             }),
         );
         fs.writeFileSync(path.join(dir, 'prd.md'), '# Recovered PRD');

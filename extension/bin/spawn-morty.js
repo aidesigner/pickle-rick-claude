@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, resolveWorkerTestGateTimeoutMs, } from '../services/pickle-utils.js';
 import { spawn, spawnSync } from 'child_process';
-import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
+import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS } from '../types/index.js';
 import { isRecord } from '../lib/is-record.js';
 import { getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
 import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile } from '../services/backend-spawn.js';
@@ -917,11 +917,35 @@ function readTicketInfo(ticketFilePath) {
         return null;
     }
 }
+function deriveBaseSource(resolvedSource, state) {
+    if (resolvedSource === 'env_lock')
+        return 'refinement-lock';
+    if (resolvedSource === 'worker_backend')
+        return 'state';
+    // resolvedSource === 'backend': state.backend was used if valid; otherwise env/default
+    const raw = state ? state.backend : undefined;
+    if (typeof raw === 'string' && BACKENDS.includes(raw)) {
+        return 'state';
+    }
+    const env = process.env.PICKLE_BACKEND;
+    if (typeof env === 'string' && BACKENDS.includes(env)) {
+        return 'env';
+    }
+    return 'default';
+}
 function resolveWorkerBackendBase(sessionRoot) {
-    const resolved = resolveWorkerBackendFromStateFile(path.join(sessionRoot, 'state.json'));
+    const statePath = path.join(sessionRoot, 'state.json');
+    let preloaded = null;
+    try {
+        preloaded = sm.read(statePath);
+    }
+    catch {
+        preloaded = null;
+    }
+    const resolved = resolveWorkerBackendFromStateFile(statePath);
     return {
         backend: resolved.backend,
-        source: resolved.source === 'env_lock' ? 'refinement-lock' : 'state',
+        source: deriveBaseSource(resolved.source, preloaded),
     };
 }
 /**
@@ -938,7 +962,7 @@ function resolveWorkerBackendBaseFromState(state) {
     const resolved = resolveWorkerBackendFromState(state);
     return {
         backend: resolved.backend,
-        source: resolved.source === 'env_lock' ? 'refinement-lock' : 'state',
+        source: deriveBaseSource(resolved.source, state),
     };
 }
 function applyHeuristicBackendRouting(sessionBackend, ticketInfo) {

@@ -93,11 +93,13 @@ function collectTouchedTrapDoorEntries(claudeContent, diff) {
 }
 
 function findEntryStart(lines, index) {
-  for (let i = index; i >= 0; i -= 1) {
-    if (lines[i].startsWith('- ')) {
+  for (let i = Math.min(index, lines.length - 1); i >= 0; i -= 1) {
+    const line = lines[i];
+    if (typeof line !== 'string') continue;
+    if (line.startsWith('- ')) {
       return i;
     }
-    if (lines[i].startsWith('## ')) {
+    if (line.startsWith('## ')) {
       return -1;
     }
   }

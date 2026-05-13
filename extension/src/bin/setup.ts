@@ -821,6 +821,20 @@ function resumeSession(config: SetupArgs): SessionResult {
   }
   if (preState) validateResumeCompatibility(preState, config);
 
+  // Claim the session map entry under the live setup PID BEFORE the locked
+  // sm.update read can re-trigger recovery. Otherwise a stale dead-mapped-pid
+  // from a previous launcher (e.g. the original setup that created this
+  // session) trips paused-orphan demotion inside `recoverStaleActiveFlag` and
+  // silently flips active=false back, defeating resume. The cross-repo
+  // validateResumeCompatibility above must die FIRST, so we claim the map
+  // only after that check passes.
+  try {
+    const setupPaths = buildSetupPaths();
+    updateSessionMap(setupPaths.sessionsMap, process.cwd(), fullSessionPath);
+  } catch {
+    /* map update is best-effort; resume must still proceed */
+  }
+
   let state: State;
   const resumeBackend = config.explicitFlags.has('backend') ? config.backend : preState?.backend;
   const codexVersionSeen = resolveCodexVersionForSetup(resumeBackend);

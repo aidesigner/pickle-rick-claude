@@ -2,7 +2,7 @@
   {
     "subsystem": "bin",
     "has_claude_md": true,
-    "last_modified_iso": "2026-05-11T17:01:31Z",
+    "last_modified_iso": "2026-05-13T12:47:45Z",
     "file_count": 50,
     "drift_class": "INCOMPLETE"
   },
@@ -30,7 +30,7 @@
   {
     "subsystem": "types",
     "has_claude_md": true,
-    "last_modified_iso": "2026-05-09T20:44:27Z",
+    "last_modified_iso": "2026-05-12T23:18:47Z",
     "file_count": 7,
     "drift_class": "INCOMPLETE"
   }

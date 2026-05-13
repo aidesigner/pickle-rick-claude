@@ -7,17 +7,13 @@
       "diamond": "diamond_synth",
       "covered_states": [
         {
-          "cell": { "artifact_synth": "unset", "outcome": "fail" },
-          "matchingEdges": ["diamond_synth->retry_synth"]
+          "cell": { "artifact_synth": "done" },
+          "matchingEdges": ["diamond_synth->done"]
         }
       ],
       "stuck_states": [
         {
-          "cell": { "artifact_synth": "unset", "outcome": "success" },
-          "matchingEdges": []
-        },
-        {
-          "cell": { "artifact_synth": "unset", "outcome": "unset" },
+          "cell": { "artifact_synth": "unset" },
           "matchingEdges": []
         }
       ]

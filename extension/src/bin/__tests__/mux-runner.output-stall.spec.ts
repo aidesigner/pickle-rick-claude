@@ -191,8 +191,8 @@ test('R-APMW-6: output every 60s for 5 cycles then silence - fires at OUTPUT_STA
 
 test('R-APMW-6: output every 10s for 4h - wall-clock guard fires', async () => {
   const scenario = await runScenario('wall-clock', {
-    MAX_ITERATION_SECONDS: 0.35,
-    OUTPUT_STALL_SECONDS: 1,
+    MAX_ITERATION_SECONDS: 1.2,
+    OUTPUT_STALL_SECONDS: 5,
   });
 
   try {
@@ -210,8 +210,8 @@ test('R-APMW-6: output every 10s for 4h - wall-clock guard fires', async () => {
 test('R-APMW-6: normal subprocess clears both timers on success', async () => {
   const timeoutCountBefore = process.getActiveResourcesInfo().filter((entry) => entry === 'Timeout').length;
   const scenario = await runScenario('success', {
-    MAX_ITERATION_SECONDS: 0.5,
-    OUTPUT_STALL_SECONDS: 1,
+    MAX_ITERATION_SECONDS: 3,
+    OUTPUT_STALL_SECONDS: 5,
   });
 
   try {
