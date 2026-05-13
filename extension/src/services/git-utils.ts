@@ -103,7 +103,9 @@ function applyStatusAndUpdatedFields(
 
 function applyCompletionCommitField(content: string, patch: TicketFrontmatterPatch): string {
   if (patch.completion_commit === undefined) return content;
-  return setFrontmatterField(content, 'completion_commit', patch.completion_commit);
+  const updated = setFrontmatterField(content, 'completion_commit', patch.completion_commit);
+  if (patch.completion_commit !== null) return updated;
+  return setFrontmatterField(updated, 'completion_commit_inferred', null);
 }
 
 export function updateTicketFrontmatter(
