@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXTENSION_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$EXTENSION_ROOT/.." && pwd)"
 CLAUDE_PATH="${CLAUDE_PATH_OVERRIDE:-$EXTENSION_ROOT/CLAUDE.md}"
+SOURCE_CLAUDE_PATH="$EXTENSION_ROOT/src/bin/CLAUDE.md"
 
 if [ ! -f "$CLAUDE_PATH" ]; then
   echo "[skipped: extension/CLAUDE.md not found]" >&2
@@ -134,6 +135,92 @@ if (failures > 0) {
 }
 
 console.log(`audit-trap-door-enforcement: ${enforceFiles.size} ENFORCE reference(s) verified`);
+NODE
+then
+  audit_exit_code=1
+fi
+
+if ! node - "$SOURCE_CLAUDE_PATH" "$REPO_ROOT" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+
+const [,, sourceClaudePath, repoRoot] = process.argv;
+
+if (!fs.existsSync(sourceClaudePath)) {
+  process.stderr.write(`R-MMTR-5 source trap-door file not found: ${sourceClaudePath}\n`);
+  process.exit(1);
+}
+
+const text = fs.readFileSync(sourceClaudePath, 'utf8');
+const lines = text.split('\n');
+const entry = lines.find((line) => line.includes('(R-MMTR-3 claude max-turns relaunch)'));
+
+if (!entry) {
+  process.stderr.write('R-MMTR-5 trap-door entry not found in extension/src/bin/CLAUDE.md\n');
+  process.exit(1);
+}
+
+const labels = ['INVARIANT', 'BREAKS', 'ENFORCE'];
+for (const label of labels) {
+  const nextLabelPattern = labels
+    .filter((candidate) => candidate !== label)
+    .map((candidate) => `${candidate}:`)
+    .join('|');
+  const match = entry.match(
+    new RegExp(`${label}:([\\s\\S]*?)(?=\\s(?:${nextLabelPattern})|$)`)
+  );
+
+  if (!match || match[1].trim().length === 0) {
+    process.stderr.write(`R-MMTR-5 trap-door entry is missing populated ${label} content\n`);
+    process.exit(1);
+  }
+}
+
+const requiredSnippets = [
+  'mux-runner.ts:3696-3730',
+  'evaluateManagerRelaunch',
+  'evaluateCodexManagerRelaunch',
+  'Defaults.CLAUDE_MANAGER_RELAUNCH_CAP',
+  'CLAUDE_MANAGER_RELAUNCH_CAP=20',
+];
+
+for (const snippet of requiredSnippets) {
+  if (!entry.includes(snippet)) {
+    process.stderr.write(`R-MMTR-5 trap-door entry missing required snippet: ${snippet}\n`);
+    process.exit(1);
+  }
+}
+
+const matches = [...entry.matchAll(/\b((?:extension\/)?tests\/[A-Za-z0-9_./-]+\.test\.js)\b/g)];
+const expected = [
+  'extension/tests/mux-runner-claude-max-turns-relaunch.test.js',
+  'extension/tests/manager-relaunch.test.js',
+];
+
+for (const rel of expected) {
+  if (!matches.some((match) => match[1] === rel)) {
+    process.stderr.write(`R-MMTR-5 trap-door ENFORCE is missing expected test: ${rel}\n`);
+    process.exit(1);
+  }
+
+  const absPath = path.join(repoRoot, rel);
+  if (!fs.existsSync(absPath)) {
+    process.stderr.write(`R-MMTR-5 trap-door ENFORCE target missing: ${rel}\n`);
+    process.exit(1);
+  }
+
+  const fileContent = fs.readFileSync(absPath, 'utf8');
+  const firstMeaningful = fileContent.split(/\r?\n/).find(
+    (line) => !line.startsWith('#!') && line.trim() !== ''
+  ) ?? '';
+
+  if (!/^\/\/\s*@tier:\s*(fast|integration|expensive|contract)\s*$/.test(firstMeaningful)) {
+    process.stderr.write(`R-MMTR-5 trap-door ENFORCE target missing valid @tier: ${rel}\n`);
+    process.exit(1);
+  }
+}
+
+console.log('audit-trap-door-enforcement: R-MMTR-5 source trap-door verified');
 NODE
 then
   audit_exit_code=1
