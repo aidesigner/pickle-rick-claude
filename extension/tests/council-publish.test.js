@@ -828,13 +828,15 @@ test('composeBody: empty trapDoors renders _None catalogued._', () => {
 // The test injects `ghTimeoutMs: 2000` and a mock that holds the event loop
 // open for 60s. Node must SIGTERM the child on timeout and surface the error
 // through the existing failure classification path.
-// NOTE: 5000ms > subprocess-spawn latency under parallel-test load (was 500ms
-// → 2000ms; under full-suite concurrency the Node-based gh mock cold-start
-// across 4 sequential gh calls per branch (auth, list, comment) could exceed
-// 2000ms, causing successful branches to spuriously classify as `failed`
-// instead of `posted`). Still << the 60s mock hang, so the hang-detection
-// path fires as intended on the deliberately-hung branch.
-const HUNG_GH_TIMEOUT_MS = 5_000;
+// NOTE: 15_000ms > subprocess-spawn latency under parallel-test load (was
+// 500ms → 2000ms → 5000ms). Under full-suite concurrency (3300+ tests, 200+
+// suites) the Node-based gh mock cold-start across 6 sequential gh calls per
+// branch sweep (auth, list×2, comment×2) can exceed 5000ms, causing successful
+// branches to spuriously classify as `failed` instead of `posted`. The mock
+// `__hang__` sentinel sleeps 60s so any value << 60_000 still validates the
+// hang-detection path — the bump just absorbs scheduler jitter for the
+// non-hung calls that must complete promptly.
+const HUNG_GH_TIMEOUT_MS = 15_000;
 
 test('publishCouncilStack: hung `gh pr list` is aborted by timeout, classified as failed', async () => {
     const mock = makeGhMock({
@@ -853,7 +855,7 @@ test('publishCouncilStack: hung `gh pr list` is aborted by timeout, classified a
             const elapsedMs = Date.now() - startedAt;
             // Publisher must return promptly after timeout fires — well under
             // the 60s mock hang window. Generous ceiling covers CI jitter.
-            assert.ok(elapsedMs < 30_000, `elapsed ${elapsedMs}ms should be < 30s; timeout did not fire`);
+            assert.ok(elapsedMs < 50_000, `elapsed ${elapsedMs}ms should be < 50s; timeout did not fire`);
 
             const one = report.results.find(r => r.branch === 'feat/one');
             assert.equal(one.outcome, 'failed', 'hung pr list must classify as failed, not skipped_no_pr');
@@ -883,7 +885,7 @@ test('publishCouncilStack: hung `gh pr comment` is aborted by timeout, classifie
                 ghTimeoutMs: HUNG_GH_TIMEOUT_MS,
             });
             const elapsedMs = Date.now() - startedAt;
-            assert.ok(elapsedMs < 30_000, `elapsed ${elapsedMs}ms should be < 30s; timeout did not fire`);
+            assert.ok(elapsedMs < 50_000, `elapsed ${elapsedMs}ms should be < 50s; timeout did not fire`);
 
             // Exactly one failed, exactly one posted — timeout does not abort the sweep.
             assert.equal(report.failed, 1);
@@ -911,7 +913,7 @@ test('publishCouncilStack: hung `gh auth status` is aborted, falls back to skipp
                 ghTimeoutMs: HUNG_GH_TIMEOUT_MS,
             });
             const elapsedMs = Date.now() - startedAt;
-            assert.ok(elapsedMs < 30_000, `elapsed ${elapsedMs}ms should be < 30s; auth timeout did not fire`);
+            assert.ok(elapsedMs < 50_000, `elapsed ${elapsedMs}ms should be < 50s; auth timeout did not fire`);
 
             // Hung auth is indistinguishable from failed auth: both routes produce
             // skipped_no_gh for every branch (no pr list/comment is ever issued).

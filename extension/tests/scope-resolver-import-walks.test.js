@@ -6,13 +6,16 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-// 750ms → 2500ms → 5000ms: under heavy full-suite concurrency (3340 tests, 222
-// suites), the SUT's findImportersTimeoutMs needs enough wall-clock to actually
-// fire the SIGKILL on a hanging shim and execute the grep fallback. 2500ms was
-// occasionally tight enough that the fallback ran but the SUT still returned
-// only the seed file. The HANG_SCRIPT sleeps 60s so any value < 60_000 still
-// validates the timeout-bound contract — bumping just absorbs scheduler jitter.
-const HANG_TIMEOUT_MS = 5_000;
+// 750ms → 2500ms → 5000ms → 15_000ms: under heavy full-suite concurrency (3340
+// tests, 222 suites), the SUT's findImportersTimeoutMs needs enough wall-clock
+// to (a) fire SIGKILL on a hanging shim and execute the grep fallback, AND
+// (b) NOT accidentally fire on a fast-exiting shim whose spawn was delayed by
+// scheduler pressure (this manifested as `_runRgImportWalk` writing "rg
+// timeout" instead of "rg fail" when FAIL_SCRIPT(2) cold-started slowly enough
+// for the parent's 5s timeout to expire mid-spawn). The HANG_SCRIPT sleeps 60s
+// so any value < 60_000 still validates the timeout-bound contract — bumping
+// just absorbs scheduler jitter on both ends.
+const HANG_TIMEOUT_MS = 15_000;
 // Outer subprocess wall-clock cap. Was `HANG_TIMEOUT_MS + 7_500` (12.5s); under
 // peak full-suite concurrency the Node ESM cold-start plus two spawnSync calls
 // (rg then grep) for a non-hang scenario could itself exceed 12.5s, killing the
