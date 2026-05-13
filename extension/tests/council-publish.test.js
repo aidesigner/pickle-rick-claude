@@ -73,57 +73,92 @@ async function withSession(fn, { stack, summary, directiveJson, skipStack } = {}
 }
 
 /**
- * Writes a bash script that mocks the `gh` CLI. Behavior is driven by a JSON
- * control file — each invocation appends its argv to a log and returns stdout
- * / exit code based on a per-subcommand scenario.
+ * Writes a POSIX-shell script that mocks the `gh` CLI. Behavior is driven by
+ * per-subcommand scenario files written to disk (one file per dispatch table
+ * entry). Sticking to /bin/sh + grep/awk/printf keeps cold-start overhead in
+ * the single-digit-millisecond range — Node-based mocks were observed to take
+ * 2-5s to start under full-suite concurrency, blowing past `ghTimeoutMs`
+ * settings and causing successful branches to spuriously classify as `failed`.
  */
 function makeGhMock(scenario) {
     const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-gh-')));
-    const scenarioPath = path.join(dir, 'scenario.json');
     const callLog = path.join(dir, 'calls.log');
     const stateFile = path.join(dir, 'state.json');
-    fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
-    fs.writeFileSync(stateFile, JSON.stringify({ prCommentCalls: 0 }));
+    fs.writeFileSync(stateFile, '0\n');
+
+    // Auth behavior: 'ok' | 'fail' | 'hang'.
+    fs.writeFileSync(path.join(dir, 'auth'), `${scenario.auth || 'ok'}\n`);
+
+    // pr list behavior: one file per branch name, containing the stdout to
+    // emit (or one of __hang__ / __error__ sentinels). Missing file → empty
+    // stdout, exit 0.
+    const prListDir = path.join(dir, 'pr-list');
+    fs.mkdirSync(prListDir);
+    for (const [branch, value] of Object.entries(scenario.prList || {})) {
+        // Branch names contain `/`; use base64 to make them filesystem-safe.
+        const key = Buffer.from(branch, 'utf-8').toString('base64').replace(/[/=+]/g, '_');
+        fs.writeFileSync(path.join(prListDir, key), String(value));
+    }
+
+    // pr comment behavior: serialize hangOnCall and failOnCall as files with
+    // space-separated call indices.
+    const prComment = scenario.prComment || {};
+    fs.writeFileSync(path.join(dir, 'pr-comment-hang'), ((prComment.hangOnCall || []).join(' ') + '\n'));
+    fs.writeFileSync(path.join(dir, 'pr-comment-fail'), ((prComment.failOnCall || []).join(' ') + '\n'));
+
     const ghPath = path.join(dir, 'gh');
-    const script = `#!/usr/bin/env node
-const fs = require('fs');
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(callLog)}, JSON.stringify(args) + '\\n');
-const scenario = JSON.parse(fs.readFileSync(${JSON.stringify(scenarioPath)}, 'utf-8'));
-const state = JSON.parse(fs.readFileSync(${JSON.stringify(stateFile)}, 'utf-8'));
+    // POSIX-shell mock. `printf '%s\\n' "$@"` for logging; `awk` for atomic
+    // counter increment; `grep -wq` for membership checks.
+    const script = `#!/bin/sh
+DIR=${JSON.stringify(dir)}
+{ printf '['; sep=''; for a in "$@"; do printf '%s%s' "$sep" "$(printf '%s' "$a" | sed 's/"/\\\\"/g; s/^/"/; s/$/"/')"; sep=','; done; printf ']\\n'; } >> "$DIR/calls.log"
 
-function writeState() { fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify(state)); }
+# Hang sentinel: sleep 60s so parent execFileSync timeout aborts first.
+_hang() { /bin/sleep 60; exit 0; }
 
-// __hang__ sentinel: keep the event loop alive long enough that execFileSync's
-// timeout fires first. The parent sends SIGTERM; Node's default handler exits.
-function hang() { setTimeout(() => process.exit(0), 60_000); }
-if (args[0] === 'auth' && args[1] === 'status') {
-  if (scenario.auth === 'hang') return hang();
-  process.exit(scenario.auth === 'fail' ? 1 : 0);
-}
-if (args[0] === 'pr' && args[1] === 'list') {
-  const headIdx = args.indexOf('--head');
-  const branch = headIdx >= 0 ? args[headIdx + 1] : '';
-  const mapping = scenario.prList || {};
-  if (mapping[branch] === undefined) { process.stdout.write(''); process.exit(0); }
-  if (mapping[branch] === '__error__') { process.stderr.write('simulated list error'); process.exit(1); }
-  if (mapping[branch] === '__hang__') return hang();
-  process.stdout.write(String(mapping[branch]) + '\\n');
-  process.exit(0);
-}
-if (args[0] === 'pr' && args[1] === 'comment') {
-  state.prCommentCalls = (state.prCommentCalls || 0) + 1;
-  writeState();
-  const rule = scenario.prComment || {};
-  if (rule.hangOnCall && rule.hangOnCall.includes(state.prCommentCalls)) return hang();
-  if (rule.failOnCall && rule.failOnCall.includes(state.prCommentCalls)) {
-    process.stderr.write('simulated comment error');
-    process.exit(1);
-  }
-  process.exit(0);
-}
-process.stderr.write('unexpected gh call: ' + args.join(' ') + '\\n');
-process.exit(2);
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+    mode=$(cat "$DIR/auth")
+    case "$mode" in
+        hang) _hang ;;
+        fail) exit 1 ;;
+        *) exit 0 ;;
+    esac
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+    # Walk argv looking for --head <branch>.
+    branch=""
+    shift; shift
+    while [ $# -gt 0 ]; do
+        if [ "$1" = "--head" ]; then branch=$2; shift; shift; continue; fi
+        shift
+    done
+    if [ -z "$branch" ]; then printf ''; exit 0; fi
+    key=$(printf '%s' "$branch" | base64 | tr -d '\\n' | tr '/=+' '___')
+    f="$DIR/pr-list/$key"
+    if [ ! -e "$f" ]; then printf ''; exit 0; fi
+    val=$(cat "$f")
+    case "$val" in
+        __hang__) _hang ;;
+        __error__) printf 'simulated list error' 1>&2; exit 1 ;;
+        *) printf '%s\\n' "$val"; exit 0 ;;
+    esac
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+    # Atomic increment: read current, write current+1.
+    cur=$(cat "$DIR/state.json")
+    new=$((cur + 1))
+    printf '%s\\n' "$new" > "$DIR/state.json"
+    hang_list=$(cat "$DIR/pr-comment-hang")
+    fail_list=$(cat "$DIR/pr-comment-fail")
+    for n in $hang_list; do [ "$n" = "$new" ] && _hang; done
+    for n in $fail_list; do [ "$n" = "$new" ] && { printf 'simulated comment error' 1>&2; exit 1; }; done
+    exit 0
+fi
+
+printf 'unexpected gh call: %s\\n' "$*" 1>&2
+exit 2
 `;
     fs.writeFileSync(ghPath, script);
     fs.chmodSync(ghPath, 0o755);

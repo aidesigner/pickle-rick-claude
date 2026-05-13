@@ -2272,17 +2272,21 @@ export async function processCompletionBranch(state, result, ctx) {
             finalizeTerminalState(ctx.statePath, { step: 'completed', runnerIteration: ctx.iteration, exitReason: 'limit' });
             return { kind: 'break', reason: 'limit' };
         }
-        // Genuine subprocess crash (non-zero exit, not a timeout) tears down rather
-        // than relaunches: the worker process crashed for a deterministic reason
-        // and relaunching would burn the cap on the same crash. Timeouts and
-        // missing-outcome cases (generic subprocess error) DO relaunch when
-        // tickets remain and we're below the cap.
-        const isGenuineCrash = decision.exitKind === 'other_error' &&
+        // Genuine subprocess crash or spawn failure tears down rather than
+        // relaunches: the worker process crashed for a deterministic reason and
+        // relaunching would burn the cap on the same crash. We only relaunch when
+        // the exitKind is a recognized recoverable signal (codex_4h_hang_guard,
+        // claude_max_turns) OR there is no outcome at all (generic error, no
+        // diagnostic info — likely the manager-level error path that should retry).
+        const isGenuineCrashOrSpawnFailure = decision.exitKind === 'other_error' &&
             ctx.outcome !== undefined &&
             ctx.outcome.timedOut !== true &&
-            typeof ctx.outcome.exitCode === 'number' &&
-            ctx.outcome.exitCode !== 0;
-        if (decision.shouldRelaunch && !isGenuineCrash) {
+            (
+            // Non-zero exit code: explicit crash.
+            (typeof ctx.outcome.exitCode === 'number' && ctx.outcome.exitCode !== 0) ||
+                // Null exit code without timeout: spawn failure or proc.on('error').
+                ctx.outcome.exitCode === null);
+        if (decision.shouldRelaunch && !isGenuineCrashOrSpawnFailure) {
             const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
             const detail = decision.exitKind === 'other_error'
                 ? 'errored'
@@ -3641,12 +3645,12 @@ async function runMuxRunnerMain() {
                 exitReason = 'limit';
                 break;
             }
-            const isGenuineCrash = relaunchDecision.exitKind === 'other_error' &&
+            const isGenuineCrashOrSpawnFailure = relaunchDecision.exitKind === 'other_error' &&
                 outcome !== undefined &&
                 outcome.timedOut !== true &&
-                typeof outcome.exitCode === 'number' &&
-                outcome.exitCode !== 0;
-            if (relaunchDecision.shouldRelaunch && !isGenuineCrash) {
+                ((typeof outcome.exitCode === 'number' && outcome.exitCode !== 0) ||
+                    outcome.exitCode === null);
+            if (relaunchDecision.shouldRelaunch && !isGenuineCrashOrSpawnFailure) {
                 const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
                 const detail = relaunchDecision.exitKind === 'other_error'
                     ? 'errored'
