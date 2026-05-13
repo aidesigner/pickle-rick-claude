@@ -2,7 +2,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -11,37 +11,100 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AUTO_RESUME_SH = path.resolve(__dirname, '..', 'scripts', 'auto-resume.sh');
 
 function makeTmpDir() {
-  return mkdtempSync(path.join(tmpdir(), 'ar-sc-'));
+  return realpathSync(mkdtempSync(path.join(tmpdir(), 'ar-sc-')));
 }
 
 function makeFixture({ ticket = 'abc123' } = {}) {
   const tmp = makeTmpDir();
   const extRoot = path.join(tmp, 'ext');
   const sessionDir = path.join(tmp, 'session');
-  mkdirSync(path.join(extRoot, 'extension', 'bin'), { recursive: true });
+  const muxRunnerFile = path.join(extRoot, 'extension', 'bin', 'mux-runner.js');
+  const stateFile = path.join(sessionDir, 'state.json');
+  const counterFile = path.join(sessionDir, '.n');
+  const traceFile = path.join(sessionDir, 'runner-trace.jsonl');
+  mkdirSync(path.dirname(muxRunnerFile), { recursive: true });
   mkdirSync(sessionDir, { recursive: true });
-  writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+  writeFileSync(stateFile, JSON.stringify({
     active: false,
     current_ticket: ticket,
+    exit_reason: null,
+    session_dir: sessionDir,
   }));
-  return { tmp, extRoot, sessionDir };
+  return { tmp, extRoot, sessionDir, muxRunnerFile, stateFile, counterFile, traceFile };
 }
 
-function writeMuxRunner(extRoot, cjsBody) {
-  writeFileSync(path.join(extRoot, 'extension', 'bin', 'mux-runner.js'), cjsBody);
+function readIfExists(file) {
+  return existsSync(file) ? readFileSync(file, 'utf8') : null;
 }
 
-function runScript(sessionDir, extRoot, envOverrides = {}) {
-  return spawnSync('bash', [AUTO_RESUME_SH, sessionDir], {
+function formatResultDiagnostics(result) {
+  const stateJson = readIfExists(result.fixture.stateFile);
+  const counter = readIfExists(result.fixture.counterFile);
+  const trace = readIfExists(result.fixture.traceFile);
+  return [
+    `tmp=${result.fixture.tmp}`,
+    `status=${result.status} signal=${result.signal} error=${result.error?.message ?? 'null'}`,
+    `stdout:`,
+    result.stdout || '<empty>',
+    `stderr:`,
+    result.stderr || '<empty>',
+    `state.json:`,
+    stateJson || '<missing>',
+    `.n:`,
+    counter || '<missing>',
+    `runner-trace.jsonl:`,
+    trace || '<missing>',
+  ].join('\n');
+}
+
+function cleanupFixture(fixture, preserve) {
+  if (!preserve) {
+    rmSync(fixture.tmp, { recursive: true, force: true });
+  }
+}
+
+function runFixtureTest(fn, fixtureOptions) {
+  const fixture = makeFixture(fixtureOptions);
+  let preserve = false;
+  try {
+    fn(fixture);
+  } catch (error) {
+    preserve = true;
+    if (error instanceof Error) {
+      error.message += `\nfixture-preserved-at: ${fixture.tmp}`;
+    }
+    throw error;
+  } finally {
+    cleanupFixture(fixture, preserve);
+  }
+}
+
+function writeMuxRunner(fixture, cjsBody) {
+  writeFileSync(fixture.muxRunnerFile, cjsBody);
+}
+
+function runScript(fixture, envOverrides = {}) {
+  const result = spawnSync('bash', [AUTO_RESUME_SH, fixture.sessionDir], {
     encoding: 'utf8',
     env: {
       ...process.env,
       PICKLE_AUTO_RESUME_ON_CAP_HIT: '1',
-      PICKLE_INSTALL_ROOT: extRoot,
+      PICKLE_INSTALL_ROOT: fixture.extRoot,
       ...envOverrides,
     },
     timeout: 30000,
   });
+  return {
+    ...result,
+    fixture,
+    stderrLines: result.stderr.split('\n').filter(Boolean),
+    stdoutLines: result.stdout.split('\n').filter(Boolean),
+  };
+}
+
+function assertCompleted(result) {
+  assert.equal(result.status, 0, formatResultDiagnostics(result));
+  assert.equal(result.signal, null, formatResultDiagnostics(result));
 }
 
 // CJS mock: always sets exit_reason to the given value
@@ -62,88 +125,91 @@ describe('auto-resume.stop-conditions', () => {
   });
 
   test('halts on non-pipeline_phase_incomplete exit_reason', () => {
-    const { tmp, extRoot, sessionDir } = makeFixture();
-    try {
-      writeMuxRunner(extRoot, `const fs = require('fs');
+    runFixtureTest((fixture) => {
+      writeMuxRunner(fixture, `const fs = require('fs');
 const s = JSON.parse(fs.readFileSync(process.argv[2] + '/state.json', 'utf8'));
 s.exit_reason = 'ticket_audit_failed';
 fs.writeFileSync(process.argv[2] + '/state.json', JSON.stringify(s));
 `);
-      const result = runScript(sessionDir, extRoot);
+      const result = runScript(fixture);
+      assertCompleted(result);
       assert.ok(
         result.stderr.includes("exit_reason='ticket_audit_failed'"),
-        `expected stop on non-incomplete reason; stderr:\n${result.stderr}`,
+        `expected stop on non-incomplete reason\n${formatResultDiagnostics(result)}`,
       );
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+    });
   });
 
   test('halts when MAX_RETRIES exhausted', () => {
-    const { tmp, extRoot, sessionDir } = makeFixture();
-    try {
-      writeMuxRunner(extRoot, incompleteRunner());
-      const result = runScript(sessionDir, extRoot, { PICKLE_AUTO_RESUME_MAX_RETRIES: '2' });
+    runFixtureTest((fixture) => {
+      writeMuxRunner(fixture, incompleteRunner());
+      const result = runScript(fixture, { PICKLE_AUTO_RESUME_MAX_RETRIES: '2' });
+      assertCompleted(result);
       assert.ok(
         result.stderr.includes('exhausted max retries (2)'),
-        `expected max-retries stop; stderr:\n${result.stderr}`,
+        `expected max-retries stop\n${formatResultDiagnostics(result)}`,
       );
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+    });
   });
 
   test('halts on no-progress past PROGRESS_THRESHOLD', () => {
     // PROGRESS_THRESHOLD=3 hardcoded; same ticket + 0 done → fires at retry 3
-    const { tmp, extRoot, sessionDir } = makeFixture({ ticket: 'stuck-ticket' });
-    try {
-      writeMuxRunner(extRoot, `const fs = require('fs');
+    runFixtureTest((fixture) => {
+      writeMuxRunner(fixture, `const fs = require('fs');
 const s = JSON.parse(fs.readFileSync(process.argv[2] + '/state.json', 'utf8'));
 s.exit_reason = 'pipeline_phase_incomplete';
 s.current_ticket = 'stuck-ticket';
 fs.writeFileSync(process.argv[2] + '/state.json', JSON.stringify(s));
 `);
-      const result = runScript(sessionDir, extRoot, { PICKLE_AUTO_RESUME_MAX_RETRIES: '20' });
+      const result = runScript(fixture, { PICKLE_AUTO_RESUME_MAX_RETRIES: '20' });
+      assertCompleted(result);
       assert.ok(
         result.stderr.includes('no progress'),
-        `expected no-progress stop; stderr:\n${result.stderr}`,
+        `expected no-progress stop\n${formatResultDiagnostics(result)}`,
       );
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+    }, { ticket: 'stuck-ticket' });
   });
 
   test('prints [warn] banner past retry 3', () => {
     // Rotate ticket each call so no-progress stop does not fire before retry 4
-    const { tmp, extRoot, sessionDir } = makeFixture();
-    try {
-      writeMuxRunner(extRoot, `const fs = require('fs');
+    runFixtureTest((fixture) => {
+      writeMuxRunner(fixture, `const fs = require('fs');
+const path = require('path');
+const sessionDir = process.argv[2];
+const stateFile = path.join(sessionDir, 'state.json');
 const cf = process.argv[2] + '/.n';
+const traceFile = path.join(sessionDir, 'runner-trace.jsonl');
 let n = 0;
 try { n = parseInt(fs.readFileSync(cf, 'utf8'), 10) || 0; } catch {}
 n++;
 fs.writeFileSync(cf, String(n));
-const s = JSON.parse(fs.readFileSync(process.argv[2] + '/state.json', 'utf8'));
+const s = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
 s.exit_reason = 'pipeline_phase_incomplete';
 s.current_ticket = 'ticket_' + n;
-fs.writeFileSync(process.argv[2] + '/state.json', JSON.stringify(s));
+fs.writeFileSync(stateFile, JSON.stringify(s));
+fs.appendFileSync(traceFile, JSON.stringify({
+  run: n,
+  current_ticket: s.current_ticket,
+  exit_reason: s.exit_reason,
+}) + '\\n');
 `);
       // MAX_RETRIES=5 → banner fires at retry 4, stop fires at retry 5
-      const result = runScript(sessionDir, extRoot, { PICKLE_AUTO_RESUME_MAX_RETRIES: '5' });
+      const result = runScript(fixture, { PICKLE_AUTO_RESUME_MAX_RETRIES: '5' });
+      assertCompleted(result);
       assert.ok(
         result.stderr.includes('[warn] auto-resume retry'),
-        `expected [warn] banner; stderr:\n${result.stderr}`,
+        `expected [warn] banner\n${formatResultDiagnostics(result)}`,
       );
-      const bannerLines = result.stderr.split('\n').filter(l => l.includes('[warn] auto-resume retry'));
-      for (const line of bannerLines) {
-        assert.match(
-          line,
-          /\[warn\] auto-resume retry \d+\/\d+ \(no progress for \d+ cycles\)/,
-          `banner format mismatch: ${line}`,
-        );
-      }
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+      const bannerLines = result.stderrLines.filter(line => line.includes('[warn] auto-resume retry'));
+      assert.equal(bannerLines.length, 1, `expected exactly one warning banner\n${formatResultDiagnostics(result)}`);
+      assert.match(
+        bannerLines[0],
+        /\[warn\] auto-resume retry 4\/5 \(no progress for 0 cycles\)/,
+        `banner format mismatch\n${formatResultDiagnostics(result)}`,
+      );
+      assert.equal(readIfExists(fixture.counterFile), '5', `expected retry counter to persist across five launches\n${formatResultDiagnostics(result)}`);
+      const traceLines = readIfExists(fixture.traceFile)?.trim().split('\n').filter(Boolean) ?? [];
+      assert.equal(traceLines.length, 5, `expected five runner trace entries\n${formatResultDiagnostics(result)}`);
+    });
   });
 });
