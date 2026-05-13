@@ -86,8 +86,11 @@ function makeGhMock(scenario) {
     const stateFile = path.join(dir, 'state.json');
     fs.writeFileSync(stateFile, '0\n');
 
-    // Auth behavior: 'ok' | 'fail' | 'hang'.
-    fs.writeFileSync(path.join(dir, 'auth'), `${scenario.auth || 'ok'}\n`);
+    // Auth behavior: 'ok' | 'fail' | 'hang'. Encoded as the existence of
+    // sentinel files (`auth-fail` / `auth-hang`); absent files = ok. Avoids a
+    // `cat` invocation on the hottest mock path under heavy load.
+    if (scenario.auth === 'fail') fs.writeFileSync(path.join(dir, 'auth-fail'), '');
+    if (scenario.auth === 'hang') fs.writeFileSync(path.join(dir, 'auth-hang'), '');
 
     // pr list behavior: one file per branch name, containing the stdout to
     // emit (or one of __hang__ / __error__ sentinels). Missing file → empty
@@ -107,22 +110,27 @@ function makeGhMock(scenario) {
     fs.writeFileSync(path.join(dir, 'pr-comment-fail'), ((prComment.failOnCall || []).join(' ') + '\n'));
 
     const ghPath = path.join(dir, 'gh');
-    // POSIX-shell mock. `printf '%s\\n' "$@"` for logging; `awk` for atomic
-    // counter increment; `grep -wq` for membership checks.
+    // POSIX-shell mock — sticks to /bin/sh + cat + printf to keep cold-start
+    // overhead in single-digit milliseconds under full-suite concurrency.
+    // Logging uses a fork-free here-doc-style write with `$*` (space-joined
+    // argv); only one test inspects callLog and tolerates the simpler format.
     const script = `#!/bin/sh
 DIR=${JSON.stringify(dir)}
-{ printf '['; sep=''; for a in "$@"; do printf '%s%s' "$sep" "$(printf '%s' "$a" | sed 's/"/\\\\"/g; s/^/"/; s/$/"/')"; sep=','; done; printf ']\\n'; } >> "$DIR/calls.log"
+printf '[' >> "$DIR/calls.log"
+_sep=''
+for _a in "$@"; do
+    printf '%s"%s"' "$_sep" "$_a" >> "$DIR/calls.log"
+    _sep=','
+done
+printf ']\\n' >> "$DIR/calls.log"
 
 # Hang sentinel: sleep 60s so parent execFileSync timeout aborts first.
 _hang() { /bin/sleep 60; exit 0; }
 
 if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
-    mode=$(cat "$DIR/auth")
-    case "$mode" in
-        hang) _hang ;;
-        fail) exit 1 ;;
-        *) exit 0 ;;
-    esac
+    if [ -e "$DIR/auth-hang" ]; then _hang; fi
+    if [ -e "$DIR/auth-fail" ]; then exit 1; fi
+    exit 0
 fi
 
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
