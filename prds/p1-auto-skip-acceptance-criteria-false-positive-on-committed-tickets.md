@@ -1,8 +1,9 @@
 ---
-title: P1 — auto-ticket-completion safety net mis-categorizes commit-bearing tickets as Skipped when AC list uses bullets instead of checkboxes
-status: Draft
+title: P2 — auto-skip rationale field misleadingly reports `acceptance_criteria_not_checked` for worker-deferred tickets
+status: Revised (P1 → P2; original scope retracted)
 filed: 2026-05-13
-priority: P1
+revised: 2026-05-13
+priority: P2
 type: bug
 r_code_prefix: R-ASCH
 backend_constraint: any
@@ -10,80 +11,77 @@ related:
   - prds/p1-mux-runner-no-claude-manager-relaunch-on-max-turns.md  # surfaced this bug during R-MMTR mega bundle session 2026-05-13-c122b0f7
 ---
 
-# P1 — auto-skip false-positive on committed tickets with bullet-style acceptance criteria
+# REVISION NOTE (2026-05-13)
 
-## Incident
+The original P1 framing of this PRD was **misdiagnosed**. The claim that `validateAutoTicketCompletion` should auto-`Done` any ticket with a commit-on-HEAD regardless of AC state CONTRADICTS the worker contract documented in `.claude/commands/send-to-morty.md`:
 
-Mega-bundle session `2026-05-13-c122b0f7` (codex backend, 58 atomic tickets, R-MMTR family). Tickets `d97acb1e` (R-MMTR-2) and `f9f3ace5` (R-MMTR-3):
+> "If an acceptance criterion contradicts reality (e.g. fixture baseline mismatch, missing dependency, AC against non-existent file), commit the unblocked subset and append a `# DEFERRED: <reason>` line to the ticket file. DO NOT flip `status: Done` for a deferred ticket."
 
-- worker committed (`42148351`, `5c7d089c`)
-- worker emitted `COMPLETION_COMMIT_RECORDED: <sha>` per contract
-- worker wrote `conformance_2026-05-13.md` + `code_review_2026-05-13.md` per lifecycle
-- worker did NOT flip `linear_ticket_<id>.md` frontmatter from `Todo` to `Done` (likely codex turn-budget exhaustion mid-edit, or worker considered frontmatter mutation as orchestrator-only)
-- mux-runner auto-validation safety net then ran on the still-`Todo` ticket, found no `[x]` checkboxes in the AC section, classified the ticket as `acceptance_criteria_not_checked`, and called `markTicketSkipped`
-- ticket frontmatter ended with `status: "Skipped"` + `skipped_at: "<ISO>"` despite committed implementation
-- pipeline advanced to next ticket as if work had been abandoned; downstream tickets that depend on R-MMTR-2/R-MMTR-3 lost their `Done` dependency anchor; completion-tracking dashboards reported 1/58 instead of 3/58
+Re-inspection of session `2026-05-13-c122b0f7` shows ALL three observed auto-skipped tickets (d97acb1e, f9f3ace5, 05c47442) carry `# DEFERRED:` lines explaining unrelated branch failures that prevented full AC satisfaction. The runner's auto-skip was correct in all three cases. The manual heal performed at 19:25Z was wrong and has been reverted at 20:15Z. Only `ecebb5d2` (no DEFERRED line, worker flipped `status: Done` per contract) is genuinely `Done`.
 
-Sibling ticket `ecebb5d2` (R-MMTR-1) survived only because that worker DID flip frontmatter to `status: Done` + `completion_commit: f6772986`. The early `isTerminalTicketStatus(getTicketStatus(...))` check inside `validateAutoTicketCompletion` short-circuited before reaching the AC-checkbox heuristic.
+Downgraded P1 → P2. The remaining narrow defect is documented below.
 
-## Root Cause
+---
 
-`extension/src/bin/mux-runner.ts:1086-1090`:
+# P2 — auto-skip rationale misleadingly reports `acceptance_criteria_not_checked` for worker-deferred tickets
 
-```typescript
-function hasCheckedAcceptanceCriteria(content: string): boolean {
-  const section = acceptanceCriteriaSection(content);
-  const boxes = [...section.matchAll(/^\s*-\s*\[([ xX])\]/gm)];
-  return boxes.length > 0 && boxes.every(match => match[1].toLowerCase() === 'x');
-}
-```
+## Narrow Defect
 
-Two failure modes combined:
+When a worker emits `COMPLETION_COMMIT_RECORDED`, writes all 6 phase artifacts, AND appends a `# DEFERRED: <reason>` line, the mux-runner safety net at `extension/src/bin/mux-runner.ts:1182-1206` calls `markTicketSkipped` with `verdict.reason === 'acceptance_criteria_not_checked'`. This is technically true (no checkboxes are ticked) but operationally misleading: the actual cause is the worker's explicit deferral, not a worker oversight.
 
-1. **`boxes.length > 0` requirement.** Tickets whose AC sections are plain bullets (`- AC-1: ...`) — the format produced by `spawn-refinement-team.ts` for the entire R-MMTR / R-RSU / R-MBLE / R-APMW families and presumably all post-2026-05-08 refinement output — have zero `[ ]` regex matches. The function returns `false`, the validator returns `{action: 'skip', reason: 'acceptance_criteria_not_checked'}`, and `applyAutoTicketCompletionValidation` calls `markTicketSkipped` at `mux-runner.ts:1191`.
-
-2. **Skip path ignores commit evidence.** The validator at `mux-runner.ts:1137-1171` checks AC checkboxes BEFORE looking at `hasCompletionCommit()`. A ticket with a real, ticket-id-tagged commit on HEAD is still routed to `markTicketSkipped` if the AC bullets lack checkboxes. Commit evidence is a strictly stronger signal than checkbox state — the order is wrong.
-
-The refinement team's prompt template (R-MMTR family generated `- AC-1: ...` items) and the auto-validation heuristic (requires `- [x]` items) are out of contract. The validator was written assuming the legacy hand-authored ticket template with `- [ ] AC-1: ...` lines; the refinement-team generator switched to bullet-only output without updating the validator.
+Symptoms:
+- Operator triage of `mux-runner.log` sees `Marked ticket <id> as Skipped (acceptance_criteria_not_checked)` and concludes the worker failed to satisfy AC.
+- The DEFERRED reason and the test failures cited within it remain undiscovered without manually opening each ticket file.
+- Activity event `ticket_auto_skip_no_evidence` carries `reason: acceptance_criteria_not_checked` instead of `reason: worker_deferred` or `reason: deferred_unrelated_branch_failure`.
+- The `# DEFERRED:` lines themselves are valuable forensic signal that gets buried.
 
 ## Acceptance Criteria
 
-- **AC-1:** `validateAutoTicketCompletion` checks `hasCompletionCommit()` BEFORE `hasCheckedAcceptanceCriteria()`. When commit evidence exists (`evidence.source !== 'absent'`), the function returns `{action: 'done', reason: 'commit_present'}` regardless of AC checkbox state.
-- **AC-2:** `hasCheckedAcceptanceCriteria` treats an AC section with zero `[ ]`/`[x]` checkboxes as ambiguous (NOT failing): it returns `true` when there are zero checkboxes AND zero pseudo-checkbox markers; returns `false` ONLY when there is at least one `[ ]` unchecked box. This makes the heuristic a check-the-explicit-unchecked-items detector, not a require-checkbox-template detector.
-- **AC-3:** When `validateAutoTicketCompletion` would mark a ticket Skipped, it MUST first invoke `hasCompletionCommit()` and `getTicketStatus()`. If a commit referencing the ticket exists on HEAD since `start_commit`, the function MUST return `{action: 'done', reason: 'commit_present_post_safety_net'}` and emit a `ticket_auto_done_via_commit_evidence` activity event with `gate_payload: { sha, source, ac_section_format: 'bullet'|'checkbox'|'empty' }`.
-- **AC-4:** New activity event `ticket_auto_done_via_commit_evidence` is registered in `VALID_ACTIVITY_EVENTS` (`extension/src/types/index.ts` + `extension/types/index.js` mirror) and `extension/src/types/activity-events.schema.json` with `required: ['event','ts','session','ticket','gate_payload']`.
-- **AC-5:** Integration test `extension/tests/integration/auto-validation-bullet-ac-with-commit.test.js` reproduces the bug: builds a fake session dir with a `Todo` ticket whose AC section is `- AC-1: ...` bullets, a commit on HEAD whose message starts with the ticket id, and asserts that `applyAutoTicketCompletionValidation` returns `{action: 'done'}` (not `'skip'`) and that the ticket file ends with `status: "Done"` + `completion_commit: <sha>`.
-- **AC-6:** Unit test `extension/tests/mux-runner-validate-auto-ticket-completion.test.js` covers all four AC-section shapes against all three commit-evidence states:
-  - bullet AC (`- AC-1: ...`) × {commit-present, commit-absent}
-  - mixed checkbox AC (some `[ ]`, some `[x]`) × {commit-present, commit-absent}
-  - all-checked checkbox AC (`- [x] ...`) × {commit-present, commit-absent}
-  - empty AC section × {commit-present, commit-absent}
-  Expected: commit-present always returns `done`; commit-absent + unchecked-boxes returns `skip`; commit-absent + bullet/empty AC returns `leave` (NEW reason: `no_commit_and_no_explicit_unchecked_boxes` — refuse to auto-skip without evidence either way).
+- **AC-1:** `validateAutoTicketCompletion` parses ticket content for a line matching `/^#\s*DEFERRED:\s*(.+)$/m` AFTER the early `isTerminalTicketStatus` check but BEFORE `hasCheckedAcceptanceCriteria`. When found AND `hasCompletionCommit()` returns non-absent, the function returns `{action: 'skip', reason: 'worker_deferred', deferral_reason: <captured-text>}`.
+- **AC-2:** When `applyAutoTicketCompletionValidation` encounters `verdict.reason === 'worker_deferred'`, it logs `Marked ticket <id> as Skipped (worker_deferred: <truncated-reason-180-chars>)` and emits `ticket_auto_skip_no_evidence` with payload `{ reason: 'worker_deferred', deferral_reason: <full-text>, completion_commit: <sha-if-present> }`.
+- **AC-3:** The `AutoTicketCompletionValidation` type adds optional fields `deferral_reason?: string` and `completion_commit?: string` to support the richer telemetry.
+- **AC-4:** New schema entry in `extension/src/types/activity-events.schema.json` for `ticket_auto_skip_no_evidence` enumerates valid `reason` values: `acceptance_criteria_not_checked` (legacy), `no_commit_referencing_ticket_since_current_set` (legacy), `worker_deferred` (new). When `reason === 'worker_deferred'`, `gate_payload.deferral_reason` is required.
+- **AC-5:** Integration test `extension/tests/integration/auto-skip-worker-deferred.test.js` constructs a session with a `Todo` ticket containing `# DEFERRED: <text>` and a real commit; asserts the skip path runs, reason is `worker_deferred`, the activity event carries `deferral_reason`, and stderr shows the truncated reason.
+- **AC-6:** Unit test in `extension/tests/mux-runner-validate-auto-ticket-completion.test.js` covers four cases:
+  1. DEFERRED + commit + bullet AC → `skip`, reason `worker_deferred`
+  2. DEFERRED + no commit → `skip`, reason `worker_deferred` (deferral takes precedence even without commit because worker explicitly declared deferred state)
+  3. No DEFERRED + commit + bullet AC → `skip`, reason `acceptance_criteria_not_checked` (legacy behavior preserved — operator decides)
+  4. No DEFERRED + commit + all-checked AC → `done`, reason `commit_and_acceptance_checked` (preserved)
 - **AC-7:** `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm run test:fast` pass.
 
 ## Trap Door
 
-`src/bin/mux-runner.ts` (R-ASCH-1 commit-evidence precedence) — INVARIANT: `validateAutoTicketCompletion` MUST check `hasCompletionCommit()` BEFORE `hasCheckedAcceptanceCriteria()`; commit evidence on HEAD is strictly stronger than AC-checkbox state and MUST short-circuit to `action: 'done'`. BREAKS: any ticket whose worker committed but did not flip frontmatter to `Done` gets auto-skipped when refinement-team output uses bullet-style AC lists (no `- [ ]` checkboxes), losing dependency anchors and corrupting completion tracking. ENFORCE: extension/tests/integration/auto-validation-bullet-ac-with-commit.test.js, extension/tests/mux-runner-validate-auto-ticket-completion.test.js. PATTERN_SHAPE: `hasCompletionCommit\\(` invocation in `validateAutoTicketCompletion` MUST appear textually before `hasCheckedAcceptanceCriteria\\(`.
+`src/bin/mux-runner.ts` (R-ASCH-1 deferral-aware skip rationale) — INVARIANT: `validateAutoTicketCompletion` MUST detect `# DEFERRED:` lines in ticket content (regex `/^#\s*DEFERRED:\s*(.+)$/m`) and route them to `{action: 'skip', reason: 'worker_deferred', deferral_reason: <captured>}` BEFORE the legacy `hasCheckedAcceptanceCriteria` check. The activity event `ticket_auto_skip_no_evidence` MUST include `deferral_reason` when reason is `worker_deferred`. BREAKS: operator triage of auto-skipped tickets cannot distinguish "worker self-deferred for known reason" from "worker did not satisfy AC"; deferral context is buried in ticket file body. ENFORCE: extension/tests/integration/auto-skip-worker-deferred.test.js, extension/tests/mux-runner-validate-auto-ticket-completion.test.js. PATTERN_SHAPE: `/\^#\\s\*DEFERRED:/` regex use in `validateAutoTicketCompletion`.
+
+## Retracted Scope (do NOT implement)
+
+The original P1 acceptance criteria (AC-1 through AC-7 in the pre-revision version) proposed to:
+- Check `hasCompletionCommit()` BEFORE `hasCheckedAcceptanceCriteria()` and auto-`Done` on commit evidence.
+- Treat empty AC sections as ambiguous (return `true`).
+
+Both proposals are **rejected** because they violate the worker contract for `# DEFERRED:` tickets. Auto-`Done`-ing a deferred ticket would incorrectly mark unfinished work as complete and erode the deferral audit trail.
 
 ## Out of Scope
 
-- Forcing the refinement team to emit `- [ ]` checkboxes (separate PRD; updating the generator template is a defensible alternative but does not fix the auto-validator's incorrect order-of-checks).
-- Backfilling Skipped→Done for past sessions (one-shot manual heal; not worth a migration script).
-- Changing worker contract to mandate frontmatter flip alongside `COMPLETION_COMMIT_RECORDED` (separate hardening — current contract says the runner is the fallback, this PRD fixes the fallback itself).
+- Adding a new `Deferred` ticket status to `TicketStatus` (potentially valuable but invasive — would require updates to status histogram, dashboards, `collectTickets` filter, status emoji table at `pickle-utils.ts:347-353`, and the `done | skipped` filter at `mux-runner.ts:472, 924, 978`. File a separate PRD if operators want this.)
+- Backfilling improved skip reasons for historical sessions (one-shot manual review; not worth a migration script).
+- Forcing refinement-team to emit `- [ ]` checkboxes (separate PRD — the bullet style is fine because deferral is an explicit contract, not an oversight).
 
-## Verification (manual)
+## Verification
 
 Reproduce in session `2026-05-13-c122b0f7`:
 ```bash
 SD=~/.local/share/pickle-rick/sessions/2026-05-13-c122b0f7
-# Pre-heal evidence (skipped despite commit + artifacts):
-git log --oneline | grep -E "42148351|5c7d089c"   # both commits land
-ls $SD/d97acb1e/{conformance,code_review}_*.md     # both artifacts present
-grep -E "^status:" $SD/d97acb1e/linear_ticket_*.md # status: "Skipped" (pre-heal)
+for t in d97acb1e f9f3ace5 05c47442; do
+  echo "=== $t ==="
+  rtk proxy grep -E "^# DEFERRED:" $SD/$t/linear_ticket_*.md
+done
+# All three carry # DEFERRED: lines citing unrelated branch failures.
+# Verifies the auto-skip was correct, only the rationale was misleading.
 ```
 
-Manual heal performed 2026-05-13T19:25Z restoring both tickets to `Done` with `completion_commit:` and `healed_at:`/`healed_reason:` audit fields. Three Done tickets confirmed via:
-```bash
-for f in $SD/*/linear_ticket_*.md; do grep -m1 '^status:' "$f"; done | sort | uniq -c
-# 3 Done / 1 In Progress / 54 Todo
-```
+## Lessons (for future bug triage)
+
+1. **Don't heal Skipped tickets without checking for `# DEFERRED:` lines.** The runner's Skipped status may be a faithful echo of the worker's explicit deferral, not a bug.
+2. **`status: "Skipped"` is currently overloaded.** It means both "worker didn't even start" AND "worker did the work but contract requires non-Done." Distinguishing these is the operator-experience gap above.
+3. **`completion_commit:` + `status: "Skipped"` is a valid composite state** in the current schema — it means "work committed, deferred per contract." Operators reading the dashboard should be taught this.
