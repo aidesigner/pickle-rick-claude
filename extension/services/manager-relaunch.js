@@ -30,6 +30,12 @@ export function managerRelaunchCapForBackend(backend) {
     }
     return Defaults.CODEX_MANAGER_RELAUNCH_CAP;
 }
+function managerRelaunchCapForExitKind(exitKind) {
+    if (exitKind === 'claude_max_turns') {
+        return readClaudeManagerRelaunchCapOverride() ?? Defaults.CLAUDE_MANAGER_RELAUNCH_CAP;
+    }
+    return Defaults.CODEX_MANAGER_RELAUNCH_CAP;
+}
 export function managerRelaunchCap(state) {
     return managerRelaunchCapForBackend(resolveBackend(state));
 }
@@ -57,7 +63,7 @@ export function evaluateManagerRelaunch(state, pendingInput, cbStateOrExitKind, 
     const cbState = typeof cbStateOrExitKind === 'string' ? null : (cbStateOrExitKind ?? null);
     const resolvedExitKind = typeof cbStateOrExitKind === 'string' ? cbStateOrExitKind : exitKind;
     const backend = resolveBackend(state);
-    const cap = managerRelaunchCapForBackend(backend);
+    const cap = managerRelaunchCapForExitKind(resolvedExitKind);
     const startEpoch = Number.isFinite(Number(state.start_time_epoch)) ? Number(state.start_time_epoch) : 0;
     const maxTimeMins = Number.isFinite(Number(state.max_time_minutes)) ? Number(state.max_time_minutes) : 0;
     if (maxTimeMins > 0 && startEpoch > 0) {

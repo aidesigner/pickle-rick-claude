@@ -101,10 +101,25 @@ test('manager-relaunch allows claude with cap 20', () => {
   assert.equal(capped.reason, 'cap_exceeded');
 });
 
+test('manager-relaunch chooses claude cap from exit kind even when backend is not claude', () => {
+  const decision = evaluateManagerRelaunch(
+    stateFixture({ backend: 'codex', manager_relaunch_count: 19 }),
+    pendingTickets,
+    null,
+    'claude_max_turns',
+  );
+
+  assert.equal(decision.shouldRelaunch, true);
+  assert.equal(decision.nextRelaunchCount, 20);
+  assert.equal(decision.cap, Defaults.CLAUDE_MANAGER_RELAUNCH_CAP);
+  assert.equal(decision.backend, 'codex');
+  assert.equal(decision.exitKind, 'claude_max_turns');
+});
+
 test('manager-relaunch reads claude cap override from pickle_settings.json', () => {
   withExtensionRoot({ claude_manager_relaunch_cap: 25 }, () => {
     const decision = evaluateManagerRelaunch(
-      stateFixture({ backend: 'claude', manager_relaunch_count: 24 }),
+      stateFixture({ backend: 'codex', manager_relaunch_count: 24 }),
       pendingTickets,
       null,
       'claude_max_turns',
@@ -113,6 +128,21 @@ test('manager-relaunch reads claude cap override from pickle_settings.json', () 
     assert.equal(decision.nextRelaunchCount, 25);
     assert.equal(decision.cap, 25);
   });
+});
+
+test('manager-relaunch preserves the progress gate via circuit breaker OPEN', () => {
+  const decision = evaluateManagerRelaunch(
+    stateFixture({ backend: 'codex', manager_relaunch_count: 0 }),
+    pendingTickets,
+    { state: 'OPEN', reason: 'no_progress' },
+    'claude_max_turns',
+  );
+
+  assert.equal(decision.shouldRelaunch, false);
+  assert.equal(decision.reason, 'circuit_open');
+  assert.equal(decision.pendingCount, 0);
+  assert.equal(decision.nextRelaunchCount, 0);
+  assert.equal(decision.cap, Defaults.CLAUDE_MANAGER_RELAUNCH_CAP);
 });
 
 test('recordManagerRelaunch persists canonical counter and emits activity event', () => {
