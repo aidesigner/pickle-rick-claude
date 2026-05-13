@@ -84,6 +84,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'commit_pending_probe_fired',
         'codex_manager_relaunch',
         'manager_max_turns_relaunch',
+        'iteration_classified_at_max_turns',
         'readiness_failed_post_correction',
         // BMAD residual P0.6: check-readiness --skip-readiness emits this when
         // the gate is bypassed via state.flags.skip_readiness_reason.
