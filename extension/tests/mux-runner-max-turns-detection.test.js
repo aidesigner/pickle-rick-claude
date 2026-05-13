@@ -24,14 +24,14 @@ function managerResultFixture(overrides = {}) {
     };
 }
 
-test('max-turns-detection: clean claude end_turn result returns true', () => {
+test('max-turns-detection: clean claude end_turn result at budget returns true', () => {
     const { dir, logFile } = writeLog([
         '{"type":"assistant","message":{"role":"assistant"}}',
-        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false}',
+        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false,"num_turns":40}',
         '',
     ].join('\n'));
     try {
-        assert.equal(detectManagerMaxTurnsExit(managerResultFixture(), logFile), true);
+        assert.equal(detectManagerMaxTurnsExit(managerResultFixture(), logFile, 40), true);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -39,10 +39,10 @@ test('max-turns-detection: clean claude end_turn result returns true', () => {
 
 test('max-turns-detection: timed out hang-guard outcome returns false', () => {
     const { dir, logFile } = writeLog(
-        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false}\n'
+        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false,"num_turns":40}\n'
     );
     try {
-        assert.equal(detectManagerMaxTurnsExit(managerResultFixture({ timedOut: true }), logFile), false);
+        assert.equal(detectManagerMaxTurnsExit(managerResultFixture({ timedOut: true }), logFile, 40), false);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -50,10 +50,10 @@ test('max-turns-detection: timed out hang-guard outcome returns false', () => {
 
 test('max-turns-detection: non-zero exit code returns false', () => {
     const { dir, logFile } = writeLog(
-        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false}\n'
+        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false,"num_turns":40}\n'
     );
     try {
-        assert.equal(detectManagerMaxTurnsExit(managerResultFixture({ exitCode: 1 }), logFile), false);
+        assert.equal(detectManagerMaxTurnsExit(managerResultFixture({ exitCode: 1 }), logFile, 40), false);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -61,10 +61,10 @@ test('max-turns-detection: non-zero exit code returns false', () => {
 
 test('max-turns-detection: last result event with is_error true returns false', () => {
     const { dir, logFile } = writeLog(
-        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":true}\n'
+        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":true,"num_turns":40}\n'
     );
     try {
-        assert.equal(detectManagerMaxTurnsExit(managerResultFixture(), logFile), false);
+        assert.equal(detectManagerMaxTurnsExit(managerResultFixture(), logFile, 40), false);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -72,17 +72,17 @@ test('max-turns-detection: last result event with is_error true returns false', 
 
 test('max-turns-detection: missing log file returns false', () => {
     assert.equal(
-        detectManagerMaxTurnsExit(managerResultFixture(), '/definitely/missing/pickle-max-turns.log'),
+        detectManagerMaxTurnsExit(managerResultFixture(), '/definitely/missing/pickle-max-turns.log', 40),
         false,
     );
 });
 
 test('max-turns-detection: non-error completion returns false', () => {
     const { dir, logFile } = writeLog(
-        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false}\n'
+        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false,"num_turns":40}\n'
     );
     try {
-        assert.equal(detectManagerMaxTurnsExit(managerResultFixture({ completion: 'continue' }), logFile), false);
+        assert.equal(detectManagerMaxTurnsExit(managerResultFixture({ completion: 'continue' }), logFile, 40), false);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -92,11 +92,11 @@ test('max-turns-detection: last result event must match even if earlier one does
     const { dir, logFile } = writeLog([
         '{"type":"result","stop_reason":"tool_use","terminal_reason":"completed","is_error":false}',
         '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"continuing"}]}}',
-        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false}',
+        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false,"num_turns":40}',
         '',
     ].join('\n'));
     try {
-        assert.equal(detectManagerMaxTurnsExit(managerResultFixture(), logFile), true);
+        assert.equal(detectManagerMaxTurnsExit(managerResultFixture(), logFile, 40), true);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -104,13 +104,35 @@ test('max-turns-detection: last result event must match even if earlier one does
 
 test('max-turns-detection: last result event stop_reason mismatch returns false', () => {
     const { dir, logFile } = writeLog([
-        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false}',
+        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false,"num_turns":40}',
         '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"continuing"}]}}',
-        '{"type":"result","stop_reason":"tool_use","terminal_reason":"completed","is_error":false}',
+        '{"type":"result","stop_reason":"tool_use","terminal_reason":"completed","is_error":false,"num_turns":40}',
         '',
     ].join('\n'));
     try {
-        assert.equal(detectManagerMaxTurnsExit(managerResultFixture(), logFile), false);
+        assert.equal(detectManagerMaxTurnsExit(managerResultFixture(), logFile, 40), false);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('max-turns-detection: below-budget num_turns returns false', () => {
+    const { dir, logFile } = writeLog(
+        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false,"num_turns":39}\n'
+    );
+    try {
+        assert.equal(detectManagerMaxTurnsExit(managerResultFixture(), logFile, 40), false);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('max-turns-detection: missing max-turns budget returns false', () => {
+    const { dir, logFile } = writeLog(
+        '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false,"num_turns":40}\n'
+    );
+    try {
+        assert.equal(detectManagerMaxTurnsExit(managerResultFixture(), logFile, null), false);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }

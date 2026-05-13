@@ -1184,12 +1184,14 @@ function readLastResultEventFromLog(logFile) {
     }
     return null;
 }
-export function detectManagerMaxTurnsExit(managerResult, logFile) {
+export function detectManagerMaxTurnsExit(managerResult, logFile, maxTurns) {
     if (managerResult.completion !== 'error')
         return false;
     if (managerResult.timedOut || managerResult.exitCode !== 0) {
         return false;
     }
+    if (!Number.isFinite(maxTurns) || maxTurns === null || maxTurns <= 0)
+        return false;
     const event = readLastResultEventFromLog(logFile);
     if (!event)
         return false;
@@ -1199,7 +1201,12 @@ export function detectManagerMaxTurnsExit(managerResult, logFile) {
         return false;
     if (event.is_error !== false)
         return false;
-    return true;
+    const eventTurns = typeof event.num_turns === 'number'
+        ? event.num_turns
+        : (typeof event.turn_count === 'number' ? event.turn_count : null);
+    if (!Number.isFinite(eventTurns) || eventTurns === null)
+        return false;
+    return eventTurns >= maxTurns;
 }
 function emitMaxTurnsClassifiedEvent(sessionDir, iterationNum, logFile, maxTurns, wallSeconds) {
     const resultEvent = readLastResultEventFromLog(logFile);
@@ -1216,9 +1223,9 @@ function emitMaxTurnsClassifiedEvent(sessionDir, iterationNum, logFile, maxTurns
         wall_seconds: wallSeconds,
     });
 }
-export function classifyManagerRelaunchExit(state, outcome, logFile, _maxTurns) {
+export function classifyManagerRelaunchExit(state, outcome, logFile, maxTurns) {
     const backend = resolveBackend(state);
-    if (backend === 'claude' && outcome && detectManagerMaxTurnsExit(outcome, logFile)) {
+    if (backend === 'claude' && outcome && detectManagerMaxTurnsExit(outcome, logFile, maxTurns)) {
         return 'claude_max_turns';
     }
     if (backend === 'codex' && outcome?.timedOut === true) {
@@ -1530,7 +1537,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
                 stallReason,
             };
             const isMaxTurnsExit = backend === 'claude'
-                && detectManagerMaxTurnsExit(normalizedOutcome, logFile);
+                && detectManagerMaxTurnsExit(normalizedOutcome, logFile, maxTurns);
             if (isMaxTurnsExit)
                 emitMaxTurnsClassifiedEvent(sessionDir, iterationNum, logFile, maxTurns, normalizedOutcome.wallSeconds);
             resolve({

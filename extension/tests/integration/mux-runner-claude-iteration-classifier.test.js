@@ -21,8 +21,8 @@ function baseOutcome(overrides = {}) {
 test('detectManagerMaxTurnsExit: clean claude end_turn result returns true', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
   try {
-    const logFile = makeResultLog(dir, {});
-    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile);
+    const logFile = makeResultLog(dir, { num_turns: 40 });
+    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile, 40);
     assert.equal(result, true, 'should be true: clean end_turn completion with exit code 0 matches the signature');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -32,8 +32,8 @@ test('detectManagerMaxTurnsExit: clean claude end_turn result returns true', () 
 test('detectManagerMaxTurnsExit: timedOut=true → false', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
   try {
-    const logFile = makeResultLog(dir, {});
-    const result = detectManagerMaxTurnsExit(baseOutcome({ timedOut: true, exitCode: null }), logFile);
+    const logFile = makeResultLog(dir, { num_turns: 40 });
+    const result = detectManagerMaxTurnsExit(baseOutcome({ timedOut: true, exitCode: null }), logFile, 40);
     assert.equal(result, false, 'timedOut outcome should not classify as max-turns');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -43,8 +43,8 @@ test('detectManagerMaxTurnsExit: timedOut=true → false', () => {
 test('detectManagerMaxTurnsExit: non-zero exit code → false', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
   try {
-    const logFile = makeResultLog(dir, {});
-    const result = detectManagerMaxTurnsExit(baseOutcome({ exitCode: 1 }), logFile);
+    const logFile = makeResultLog(dir, { num_turns: 40 });
+    const result = detectManagerMaxTurnsExit(baseOutcome({ exitCode: 1 }), logFile, 40);
     assert.equal(result, false, 'non-zero exit should not classify as max-turns');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -54,8 +54,8 @@ test('detectManagerMaxTurnsExit: non-zero exit code → false', () => {
 test('detectManagerMaxTurnsExit: is_error=true → false', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
   try {
-    const logFile = makeResultLog(dir, { is_error: true });
-    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile);
+    const logFile = makeResultLog(dir, { is_error: true, num_turns: 40 });
+    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile, 40);
     assert.equal(result, false, 'is_error=true should not classify as max-turns');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -63,15 +63,15 @@ test('detectManagerMaxTurnsExit: is_error=true → false', () => {
 });
 
 test('detectManagerMaxTurnsExit: missing log file → false', () => {
-  const result = detectManagerMaxTurnsExit(baseOutcome(), path.join(os.tmpdir(), 'missing-max-turns-log.jsonl'));
+  const result = detectManagerMaxTurnsExit(baseOutcome(), path.join(os.tmpdir(), 'missing-max-turns-log.jsonl'), 40);
   assert.equal(result, false, 'missing logs should fail closed');
 });
 
 test('detectManagerMaxTurnsExit: completion=continue → false', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
   try {
-    const logFile = makeResultLog(dir, {});
-    const result = detectManagerMaxTurnsExit(baseOutcome({ completion: 'continue' }), logFile);
+    const logFile = makeResultLog(dir, { num_turns: 40 });
+    const result = detectManagerMaxTurnsExit(baseOutcome({ completion: 'continue' }), logFile, 40);
     assert.equal(result, false, 'helper only classifies the error-branch shape');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -85,10 +85,10 @@ test('detectManagerMaxTurnsExit: last result event wins even if earlier event do
     fs.writeFileSync(logFile, [
       JSON.stringify({ type: 'result', stop_reason: 'tool_use', terminal_reason: 'completed', is_error: false }),
       JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'continuing' }] } }),
-      JSON.stringify({ type: 'result', stop_reason: 'end_turn', terminal_reason: 'completed', is_error: false }),
+      JSON.stringify({ type: 'result', stop_reason: 'end_turn', terminal_reason: 'completed', is_error: false, num_turns: 40 }),
       '',
     ].join('\n'));
-    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile);
+    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile, 40);
     assert.equal(result, true, 'the detector should inspect the last result event');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -102,11 +102,22 @@ test('detectManagerMaxTurnsExit: last result stop_reason mismatch → false', ()
     fs.writeFileSync(logFile, [
       JSON.stringify({ type: 'result', stop_reason: 'end_turn', terminal_reason: 'completed', is_error: false }),
       JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'continuing' }] } }),
-      JSON.stringify({ type: 'result', stop_reason: 'tool_use', terminal_reason: 'completed', is_error: false }),
+      JSON.stringify({ type: 'result', stop_reason: 'tool_use', terminal_reason: 'completed', is_error: false, num_turns: 40 }),
       '',
     ].join('\n'));
-    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile);
+    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile, 40);
     assert.equal(result, false, 'the last result event must match the end_turn signature');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('detectManagerMaxTurnsExit: below-budget turn count → false', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'icdm-test-'));
+  try {
+    const logFile = makeResultLog(dir, { num_turns: 39 });
+    const result = detectManagerMaxTurnsExit(baseOutcome(), logFile, 40);
+    assert.equal(result, false, 'helper should fail closed when the last result event did not reach the budget');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
