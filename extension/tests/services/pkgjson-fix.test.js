@@ -74,11 +74,18 @@ describe('pkgjson-fix: R-PJV-3 audit log isolation', () => {
     let origPath;
     let canonicalStatBefore;
 
+    let origExt;
     beforeEach(() => {
         tmpDir = makeTmpDir();
-        origEnv = process.env.EXTENSION_DIR;
+        // R-PJV-3 audit-log location was repointed from EXTENSION_DIR root to
+        // PICKLE_INSTALL_ROOT to match install.sh's actual write target.
+        // EXTENSION_DIR still scopes performUpgrade's operations to tmpDir;
+        // PICKLE_INSTALL_ROOT scopes the audit-log write target.
+        origExt = process.env.EXTENSION_DIR;
+        origEnv = process.env.PICKLE_INSTALL_ROOT;
         origPath = process.env.PATH;
         process.env.EXTENSION_DIR = tmpDir;
+        process.env.PICKLE_INSTALL_ROOT = tmpDir;
 
         canonicalStatBefore = fs.existsSync(CANONICAL_AUDIT_LOG)
             ? fs.statSync(CANONICAL_AUDIT_LOG).mtimeMs
@@ -86,13 +93,15 @@ describe('pkgjson-fix: R-PJV-3 audit log isolation', () => {
     });
 
     afterEach(() => {
-        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
-        else process.env.EXTENSION_DIR = origEnv;
+        if (origExt === undefined) delete process.env.EXTENSION_DIR;
+        else process.env.EXTENSION_DIR = origExt;
+        if (origEnv === undefined) delete process.env.PICKLE_INSTALL_ROOT;
+        else process.env.PICKLE_INSTALL_ROOT = origEnv;
         process.env.PATH = origPath;
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    test('internal-gate: audit log written to EXTENSION_DIR root, not canonical path', () => {
+    test('internal-gate: audit log written to PICKLE_INSTALL_ROOT, not canonical path', () => {
         writeDeployedPackage(tmpDir, '1.67.0');
         const tarball = makeReleaseTarball(tmpDir, '1.64.0');
         const binDir = mockGhDownload(tmpDir, tarball);
@@ -103,7 +112,7 @@ describe('pkgjson-fix: R-PJV-3 audit log isolation', () => {
         assert.equal(result.success, true);
 
         const auditLog = path.join(tmpDir, 'deploy-audit.log');
-        assert.ok(fs.existsSync(auditLog), 'deploy-audit.log must be written in EXTENSION_DIR root');
+        assert.ok(fs.existsSync(auditLog), 'deploy-audit.log must be written in PICKLE_INSTALL_ROOT');
 
         const canonicalStatAfter = fs.existsSync(CANONICAL_AUDIT_LOG)
             ? fs.statSync(CANONICAL_AUDIT_LOG).mtimeMs
