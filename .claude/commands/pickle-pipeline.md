@@ -158,6 +158,14 @@ From `$ARGUMENTS`:
 
 When set, these flags are written into `pipeline.json` in Step 4 — do NOT pass them to `setup.js`. pipeline-runner reads them from `pipeline.json` at startup, resolves scope (writes `${SESSION_ROOT}/scope.json`), and refreshes per non-pickle phase (archives to `${SESSION_ROOT}/archive/scope.<phase>.json`). Empty diff at setup → WARN; empty diff at anatomy-park refresh → `SCOPE_EMPTY_POST_BUILD` error.
 
+## Skip-flag overrides
+
+If pipeline launch halts at the readiness or ticket-audit pre-flight gate, edit `${SESSION_ROOT}/state.json` before relaunching and set:
+- `state.flags.skip_readiness_reason`
+- `state.flags.skip_ticket_audit_reason`
+
+Each override must contain a short reason string. The gate writes an activity breadcrumb for the skip, then the pipeline proceeds on the next launch.
+
 **Remainder** = TASK (the epic description for the pickle phase)
 
 If no TASK provided, print error and stop.

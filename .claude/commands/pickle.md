@@ -24,6 +24,14 @@ Extract `SESSION_ROOT=<path>` from output.
 
 **Flags**: `--task "TEXT"` | `--max-iterations <N>` | `--max-time <MIN>` | `--worker-timeout <SEC>` | `--completion-promise <TEXT>` | `--resume [PATH]` | `--reset` | `--backend <claude|codex|hermes>`
 
+## Skip-flag overrides
+
+If iteration-0 halts at the readiness or ticket-audit gate, you can relaunch with an audited manual override by editing `${SESSION_ROOT}/state.json` before retry:
+- `state.flags.skip_readiness_reason`
+- `state.flags.skip_ticket_audit_reason`
+
+Set each field to a short human reason string. The gates honor the reason, log the bypass in activity, and then continue on the next launch.
+
 # Step 2: Execution (Management)
 
 Read `${SESSION_ROOT}/state.json`. Check `step` field:

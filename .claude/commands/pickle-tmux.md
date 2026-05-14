@@ -18,6 +18,14 @@ Backend example: `setup.js --tmux --backend codex --task "refactor auth"` routes
 
 Extract `SESSION_ROOT=<path>` and `working_dir` from output.
 
+## Skip-flag overrides
+
+If the first mux-run halts at readiness or ticket audit, edit `${SESSION_ROOT}/state.json` before relaunching and set:
+- `state.flags.skip_readiness_reason`
+- `state.flags.skip_ticket_audit_reason`
+
+Use a short reason string for any override. mux-runner records the bypass in activity and then proceeds on the next launch.
+
 ## Step 3: tmux Session
 Session name: `pickle-<hash>` from SESSION_ROOT basename.
 ```bash

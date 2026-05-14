@@ -3506,6 +3506,7 @@ async function runMuxRunnerMain() {
       });
       if (readinessStatus !== 0) {
         log(`READINESS HALT: check-readiness exited ${readinessStatus}; no manager spawn attempted`);
+        process.stderr.write(`[mux-runner] readiness failed (exit ${readinessStatus}): fix the readiness findings or, to bypass with audit trail, set state.flags.skip_readiness_reason in state.json before relaunching\n`);
         recordExitReason(statePath, 'readiness_halt');
         safeDeactivate(statePath);
         exitReason = 'error';
@@ -3534,7 +3535,7 @@ async function runMuxRunnerMain() {
         });
       } else if (auditResult.status === 'failed') {
         log(`TICKET AUDIT HALT: audit-ticket-bundle exited ${auditResult.exitCode}; defects found — no manager spawn attempted`);
-        process.stderr.write(`[mux-runner] ticket audit failed (exit ${auditResult.exitCode}): defects must be resolved before the pipeline can proceed\n`);
+        process.stderr.write(`[mux-runner] ticket audit failed (exit ${auditResult.exitCode}): defects must be resolved before the pipeline can proceed or, to bypass with audit trail, set state.flags.skip_ticket_audit_reason in state.json before relaunching\n`);
         logActivity({
           event: 'ticket_audit_failed',
           source: 'pickle',
