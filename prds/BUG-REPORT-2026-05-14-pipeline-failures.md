@@ -8,19 +8,19 @@
 
 ---
 
-## Validation Outcome — 2026-05-14 PM (3-agent parallel audit)
+## Validation Outcome — 2026-05-14 PM (3-agent parallel audit + operator correction)
 
-The reporter's session ran against the **`~/.codex/pickle-rick/`** install (codex-distributed Pickle, a sibling distribution to this codebase's `~/.claude/pickle-rick/`). Three of the five claimed bugs target surfaces that DO NOT EXIST in `pickle-rick-claude`; the other two are real and now filed.
+**Operator correction 2026-05-14 PM (gregory):** reporter ran `pickle-rick-claude` (not the codex-distributed Pickle as my earlier framing assumed). The `~/.codex/pickle-rick/sessions/...` data path is configuration drift, not a different codebase. **All 5 bugs are filed as STILL-VALID against pickle-rick-claude**, even where the audit could not locate the named surfaces at current HEAD — that gap is root-cause discovery work owned by the fix tracks below, not a dismissal.
 
-| Bug | Status against `pickle-rick-claude` HEAD | Filing |
+| Bug | Surface status at HEAD | Filing |
 |---|---|---|
-| 1 — `rg` in synthesis verification | **NOT-APPLICABLE** — no `refine-prd.js`, no `verification` field in `refinement-manifest.schema.json`, refinement writes markdown only. The sole repo-internal `rg` callsite (`extension/src/services/scope-resolver.ts:723`) already falls back to `grep`. | not filed |
-| 2 — zsh `[bracket]` glob expansion | **NOT-APPLICABLE** — only one `shell:true` callsite (`extension/src/services/ac-phase-gate.ts:136`), and Node's `shell:true` routes through `/bin/sh` not zsh. No exec path reads `process.env.SHELL`. Commands are operator-authored in `ac-phase-manifest.json`, not synthesis output. | not filed |
-| 3 — concurrent git access (S1) | **STILL-VALID** — all 5 sub-claims hold. `worktreesRoot` declared in `setup.ts:110,275` but never consumed (zero `git worktree add` calls); no HEAD pinning; `pickle.md:145` actively *instructs* `git stash + git checkout .` on the shared tree; `cancel.ts` has no `.git/index.lock` cleanup; no concurrent-access probe at launch. Master plan Finding #25 (R-CSI) covers tmux signal axis but NOT git-ops axis. | **Filed as Master Plan Finding #37 (R-PIWG-1..8, P1)** |
-| 4 — manifest blocked-state leak | **NOT-APPLICABLE** — no `'Blocked'` ticket status exists in this codebase (`TicketStatus = 'Todo' \| 'In Progress' \| 'Done' \| 'Skipped'`); no `pickle-pipeline.js` binary; runnability is read fresh per-iteration from ticket frontmatter, not from a manifest blocked-set. | not filed |
-| 5 — `--resume` cwd rigidity | **STILL-VALID** — different error wording, identical semantics. `setup.ts:595-606` `validateResumeCompatibility` hard-rejects when stored `working_dir` ≠ `process.cwd()` instead of `cd`-ing into the recorded directory. | **Filed as Master Plan Finding #38 (R-PRCR-1..4, P3)** |
+| 1 — `rg` in verification commands | Named surface (`refine-prd.js`, `verification` field in refinement manifest schema) not present at HEAD. AC phase gate (`extension/src/services/ac-phase-gate.ts:127-145`) DOES run operator-authored commands with `shell:true` — likely surface for the same bug class if commands contain `rg`. | **Filed as Master Plan Finding #39 (R-PVTA-1..6, P2)** |
+| 2 — zsh `[bracket]` glob expansion | Node's `shell:true` on POSIX routes through `/bin/sh` (not zsh), but `/bin/sh` on macOS without `nullglob` still expands `[id]` and may error on no-match. Workers spawned through codex CLI (`codex exec`) may also route through user `$SHELL`. | **Filed as Master Plan Finding #40 (R-VSGE-1..5, P2)** |
+| 3 — concurrent git access (S1) | All 5 sub-claims confirmed at HEAD (worktree isolation declared but unused, no HEAD pinning, prompts actively destructive, no lock cleanup, no concurrent-access probe). | **Filed as Master Plan Finding #37 (R-PIWG-1..8, P1)** |
+| 4 — manifest blocked-state leak | `'Blocked'` TicketStatus value not in `transaction-ticket-ops.ts` at HEAD (only `'Todo' \| 'In Progress' \| 'Done' \| 'Skipped'`). Reporter clearly saw `done=0 blocked=1 skipped=0` runner output — either an earlier version had `'Blocked'`, or the symptom is a `'Skipped'` ticket being misrendered, or there's a separate runner-internal blocked-set distinct from `TicketStatus`. | **Filed as Master Plan Finding #41 (R-RMBS-1..6, P2)** |
+| 5 — `--resume` cwd rigidity | Confirmed at HEAD: `setup.ts:595-606` `validateResumeCompatibility` hard-rejects cross-cwd resume instead of `process.chdir`-ing into the recorded `working_dir`. | **Filed as Master Plan Finding #38 (R-PRCR-1..4, P3)** |
 
-Validation methodology: 3 parallel `general-purpose` agents, each scoped to a subset of bugs, scanning source for the claimed surfaces and cross-checking `prds/MASTER_PLAN.md` for prior filings. Total wall-clock ~2 min.
+Validation methodology: 3 parallel `general-purpose` agents (per-bug-cluster), source greps for named surfaces, and `prds/MASTER_PLAN.md` cross-check for sister filings. Where the named surface couldn't be located at HEAD, the fix track's R-*-1 ticket is **"locate the current surface in this codebase"** — bug class is preserved, attribution is deferred to the implementor who'll grep with a wider lens.
 
 ---
 
