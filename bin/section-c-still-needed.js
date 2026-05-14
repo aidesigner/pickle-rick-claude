@@ -23,18 +23,32 @@ function newestSessionRoot() {
   const dirs = fs.readdirSync(DEFAULT_SESSIONS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(DEFAULT_SESSIONS_DIR, entry.name))
-    .map((dir) => ({ dir, mtime: sessionSignalMtime(dir) }))
-    .sort((a, b) => b.mtime - a.mtime);
+    .map((dir) => sessionSignal(dir))
+    .sort(compareSessionSignals);
   return dirs[0]?.dir ?? null;
 }
 
-function sessionSignalMtime(sessionRoot) {
+function sessionSignal(sessionRoot) {
   const logMtimes = LOG_NAMES
     .map((logName) => path.join(sessionRoot, logName))
     .filter((logPath) => fs.existsSync(logPath))
     .map((logPath) => fs.statSync(logPath).mtimeMs);
-  if (logMtimes.length > 0) return Math.max(...logMtimes);
-  return fs.statSync(sessionRoot).mtimeMs;
+  return {
+    dir: sessionRoot,
+    hasWatcherLogs: logMtimes.length > 0,
+    watcherLogMtime: logMtimes.length > 0 ? Math.max(...logMtimes) : Number.NEGATIVE_INFINITY,
+    dirMtime: fs.statSync(sessionRoot).mtimeMs,
+  };
+}
+
+function compareSessionSignals(left, right) {
+  if (left.hasWatcherLogs !== right.hasWatcherLogs) {
+    return Number(right.hasWatcherLogs) - Number(left.hasWatcherLogs);
+  }
+  if (left.watcherLogMtime !== right.watcherLogMtime) {
+    return right.watcherLogMtime - left.watcherLogMtime;
+  }
+  return right.dirMtime - left.dirMtime;
 }
 
 function lastLines(text, limit = 1000) {

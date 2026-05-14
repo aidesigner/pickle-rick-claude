@@ -134,6 +134,43 @@ test('section-c-gate.default-session-selection follows newest watcher log activi
   }
 });
 
+test('section-c-gate.default-session-selection prefers sessions with watcher logs over newer empty session dirs', () => {
+  const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
+  const sessionsDir = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions');
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const activeSession = path.join(sessionsDir, '2026-05-12-active');
+  const emptySession = path.join(sessionsDir, '2026-05-12-empty');
+  mkdirSync(activeSession);
+  writeFileSync(path.join(activeSession, 'tmux-runner.log'), 'iteration 4 completed\niteration 5 starting\n');
+  mkdirSync(emptySession);
+
+  const activeLog = path.join(activeSession, 'tmux-runner.log');
+  const now = new Date();
+  const older = new Date(now.getTime() - 60_000);
+  const newer = new Date(now.getTime() + 60_000);
+  utimesSync(activeLog, older, older);
+  utimesSync(emptySession, newer, newer);
+
+  const result = spawnSync(process.execPath, [CLI], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: fakeHome,
+    },
+  });
+  const artifact = JSON.parse(readFileSync(ARTIFACT, 'utf8'));
+
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(artifact.still_needed, false);
+    assert.match(artifact.evidence, /iteration 5 starting/);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('section-c-gate.cli-guard rejects unknown arguments', () => {
   const result = spawnSync(process.execPath, [CLI, '--bogus'], {
     cwd: REPO_ROOT,
