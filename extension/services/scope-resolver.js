@@ -75,7 +75,8 @@ export function parseScope(flag) {
  * - `branch` / `diff:<ref>`: diff base…HEAD, include A/M/R-new, exclude D/B.
  * - `paths:<glob,…>`: comma-split globs matched against `git ls-files -co
  *   --exclude-standard`. Zero match → `SCOPE_EMPTY_PATHS`.
- * - Base default for branch: `--scope-base` > upstream > `main`.
+ * - Base default for branch: `--scope-base` > upstream (unless it is
+ *   `origin/<HEAD-branch>`) > `origin/<remote-default>` > `origin/main`.
  * - `allowed_paths` sorted byte-order (FR-27, locale-independent).
  *
  * `strategy:'one-hop'` expands `allowed_paths` to include one-hop importers
@@ -455,10 +456,16 @@ function assertIsRepo(repoRoot) {
     }
 }
 function resolveDefaultBase(repoRoot) {
-    const upstream = runGit(['rev-parse', '--symbolic-full-name', '@{upstream}'], repoRoot, false);
-    if (upstream && upstream.trim().length > 0)
-        return upstream.trim();
-    return 'main';
+    const currentBranch = runGit(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot, false)?.trim();
+    const upstream = runGit(['rev-parse', '--abbrev-ref', '@{upstream}'], repoRoot, false)?.trim();
+    if (upstream && upstream.length > 0) {
+        if (!currentBranch || upstream !== `origin/${currentBranch}`)
+            return upstream;
+    }
+    const remoteHead = runGit(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repoRoot, false)?.trim();
+    if (remoteHead && remoteHead.length > 0)
+        return remoteHead;
+    return 'origin/main';
 }
 function listTrackedAndUntracked(repoRoot) {
     const out = runGit(['ls-files', '-co', '--exclude-standard', '-z'], repoRoot, false);
