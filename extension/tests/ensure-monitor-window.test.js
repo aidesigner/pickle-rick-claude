@@ -16,6 +16,24 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+let withPathQueue = Promise.resolve();
+
+function withSerializedPath(shimDir, fn) {
+    const run = async () => {
+        const savedPath = process.env.PATH;
+        try {
+            process.env.PATH = `${shimDir}${path.delimiter}${savedPath || ''}`;
+            return await fn();
+        } finally {
+            if (savedPath === undefined) delete process.env.PATH;
+            else process.env.PATH = savedPath;
+        }
+    };
+    const queued = withPathQueue.then(run, run);
+    withPathQueue = queued.catch(() => undefined);
+    return queued;
+}
+
 /**
  * Set up a tmpdir with a fake tmux + fake bash so ensureMonitorWindow can be
  * exercised without a real tmux server. The shims record every invocation to
@@ -125,6 +143,7 @@ exit 0
         markerPath,
         modeMarkerPath,
         killMarkerPath,
+        shimDir,
         tmuxBin: fakeTmux,
         bashBin: fakeBash,
         cleanup() {
@@ -138,14 +157,7 @@ exit 0
             return fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
         },
         withPath(fn) {
-            const savedPath = process.env.PATH;
-            try {
-                process.env.PATH = `${shimDir}${path.delimiter}${savedPath || ''}`;
-                fn();
-            } finally {
-                if (savedPath === undefined) delete process.env.PATH;
-                else process.env.PATH = savedPath;
-            }
+            return withSerializedPath(shimDir, fn);
         },
     };
 }
@@ -196,6 +208,7 @@ exit 0
         sessionDir,
         extRoot,
         callsLog,
+        shimDir,
         cleanup() {
             fs.rmSync(tmpRoot, { recursive: true, force: true });
         },
@@ -207,14 +220,7 @@ exit 0
             return fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
         },
         withPath(fn) {
-            const savedPath = process.env.PATH;
-            try {
-                process.env.PATH = `${shimDir}${path.delimiter}${savedPath || ''}`;
-                fn();
-            } finally {
-                if (savedPath === undefined) delete process.env.PATH;
-                else process.env.PATH = savedPath;
-            }
+            return withSerializedPath(shimDir, fn);
         },
     };
 }
@@ -461,7 +467,7 @@ test('ensureMonitorWindow: inactive existing monitor skips watcher respawn', () 
     }
 });
 
-test('ensureMonitorWindow: existing monitor window runs exactly one pane-recovery sweep', () => {
+test('ensureMonitorWindow: existing monitor window runs exactly one pane-recovery sweep', async () => {
     const f = makeFakes({
         sessionName: 'pickle-abc12345',
         paneCommands: { 0: 'node', 1: 'zsh', 2: 'node', 3: 'bash' },
@@ -471,7 +477,7 @@ test('ensureMonitorWindow: existing monitor window runs exactly one pane-recover
     fs.writeFileSync(f.modeMarkerPath, 'pickle');
     try {
         let result;
-        f.withPath(() => {
+        await f.withPath(() => {
             result = ensureMonitorWindow({
                 sessionDir: f.sessionDir,
                 extensionRoot: f.extRoot,
@@ -500,12 +506,51 @@ test('ensureMonitorWindow: existing monitor window runs exactly one pane-recover
     }
 });
 
-test('ensureMonitorWindow: phase re-entry performs a fresh recovery sweep with mode-specific pane 2', () => {
+test('ensureMonitorWindow: phase re-entry performs a fresh recovery sweep with mode-specific pane 2', async () => {
     const cases = [
         ['pickle', 'pickle.md', /tmux send-keys -t pickle-phase:monitor\.2 node .+morty-watcher\.js .+session Enter/],
         ['refinement', null, /tmux send-keys -t refinement-phase:monitor\.2 node .+refinement-watcher\.js .+session Enter/],
         ['council', 'council-of-ricks.md', /tmux send-keys -t council-phase:monitor\.2 tail -F .+session\/mux-runner\.log Enter/],
     ];
+
+    const outer = makeFakes({ sessionName: 'outer-phase' });
+    const inner = makeFakes({ sessionName: 'inner-phase' });
+    const initialPath = process.env.PATH;
+    let releaseOuter;
+    let innerEntered = false;
+    let innerPath;
+    let resolveOuterReady;
+    const outerReady = new Promise(resolve => {
+        resolveOuterReady = resolve;
+    });
+    try {
+        const outerRun = outer.withPath(async () => {
+            resolveOuterReady();
+            await new Promise(resolve => {
+                releaseOuter = resolve;
+            });
+        });
+        await outerReady;
+
+        const innerRun = inner.withPath(async () => {
+            innerEntered = true;
+            innerPath = process.env.PATH;
+        });
+
+        assert.equal(innerEntered, false);
+        assert.ok(process.env.PATH.startsWith(`${outer.shimDir}${path.delimiter}`));
+
+        releaseOuter();
+        await outerRun;
+        await innerRun;
+
+        assert.equal(innerEntered, true);
+        assert.ok(innerPath.startsWith(`${inner.shimDir}${path.delimiter}`));
+        assert.equal(process.env.PATH, initialPath);
+    } finally {
+        outer.cleanup();
+        inner.cleanup();
+    }
 
     for (const [mode, commandTemplate, paneTwoPattern] of cases) {
         const f = makeFakes({
@@ -517,7 +562,7 @@ test('ensureMonitorWindow: phase re-entry performs a fresh recovery sweep with m
         fs.writeFileSync(f.modeMarkerPath, mode);
         try {
             let result;
-            f.withPath(() => {
+            await f.withPath(() => {
                 result = ensureMonitorWindow({
                     sessionDir: f.sessionDir,
                     extensionRoot: f.extRoot,
@@ -539,7 +584,7 @@ test('ensureMonitorWindow: phase re-entry performs a fresh recovery sweep with m
     }
 });
 
-test('ensureMonitorWindow: same-mode refinement monitor respawns only refinement watcher pane', () => {
+test('ensureMonitorWindow: same-mode refinement monitor respawns only refinement watcher pane', async () => {
     const f = makeFakes({
         sessionName: 'refinement-same-mode',
         paneCommands: { 0: 'node', 1: 'node', 2: 'zsh', 3: 'node' },
@@ -548,7 +593,7 @@ test('ensureMonitorWindow: same-mode refinement monitor respawns only refinement
     fs.writeFileSync(f.modeMarkerPath, 'refinement');
     try {
         let result;
-        f.withPath(() => {
+        await f.withPath(() => {
             result = ensureMonitorWindow({
                 sessionDir: f.sessionDir,
                 extensionRoot: f.extRoot,
@@ -614,10 +659,10 @@ test('extension root trap-door: production script resolution does not read proce
     assert.deepEqual(offenders, []);
 });
 
-test('restartDeadWatcherPanes: respawns dead pickle monitor and watcher panes 0, 1, 2, and 3', () => {
+test('restartDeadWatcherPanes: respawns dead pickle monitor and watcher panes 0, 1, 2, and 3', async () => {
     const f = makeWatcherFakes({ sessionName: 'pickle-dead', paneCommands: { 0: 'zsh', 1: 'zsh', 2: 'bash', 3: 'fish' } });
     try {
-        f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
+        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
 
         const calls = f.readCalls();
         assert.match(calls, /tmux display-message -p #S/);
@@ -636,10 +681,10 @@ test('restartDeadWatcherPanes: respawns dead pickle monitor and watcher panes 0,
     }
 });
 
-test('restartDeadWatcherPanes: all monitor panes already running node is a no-op', () => {
+test('restartDeadWatcherPanes: all monitor panes already running node is a no-op', async () => {
     const f = makeWatcherFakes({ paneCommands: { 0: 'node', 1: 'node', 2: 'node', 3: 'node' } });
     try {
-        f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
+        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
 
         const calls = f.readCalls();
         assert.match(calls, /tmux display-message -p -t pickle-watch:monitor\.0 #\{pane_current_command\}/);
@@ -651,10 +696,10 @@ test('restartDeadWatcherPanes: all monitor panes already running node is a no-op
     }
 });
 
-test('restartDeadWatcherPanes: inactive session skips pane probing and respawn', () => {
+test('restartDeadWatcherPanes: inactive session skips pane probing and respawn', async () => {
     const f = makeWatcherFakes({ active: false, paneCommands: { 0: 'zsh', 1: 'zsh', 2: 'bash', 3: 'fish' } });
     try {
-        f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
+        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
 
         assert.equal(f.readCalls(), '');
         assert.equal(f.readRunnerLog(), '');
@@ -663,10 +708,10 @@ test('restartDeadWatcherPanes: inactive session skips pane probing and respawn',
     }
 });
 
-test('restartDeadWatcherPanes: non-node long-running command is treated as dead and logged as warn', () => {
+test('restartDeadWatcherPanes: non-node long-running command is treated as dead and logged as warn', async () => {
     const f = makeWatcherFakes({ paneCommands: { 0: 'node', 1: 'node', 2: 'vim', 3: 'node' } });
     try {
-        f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
+        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
 
         const calls = f.readCalls();
         assert.match(calls, /tmux send-keys -t pickle-watch:monitor\.2 node .+morty-watcher\.js .+session Enter/);
@@ -678,7 +723,7 @@ test('restartDeadWatcherPanes: non-node long-running command is treated as dead 
     }
 });
 
-test('restartDeadWatcherPanes: mode-specific pane 2 command uses refinement and mux log tail modes', () => {
+test('restartDeadWatcherPanes: mode-specific pane 2 command uses refinement and mux log tail modes', async () => {
     const cases = [
         ['refinement', /tmux send-keys -t refinement-watch:monitor\.2 node .+refinement-watcher\.js .+session Enter/],
         ['meeseeks', /tmux send-keys -t meeseeks-watch:monitor\.2 tail -F .+session\/mux-runner\.log Enter/],
@@ -691,7 +736,7 @@ test('restartDeadWatcherPanes: mode-specific pane 2 command uses refinement and 
             paneCommands: { 0: 'node', 1: 'node', 2: 'zsh', 3: 'node' },
         });
         try {
-            f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, mode));
+            await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, mode));
             const calls = f.readCalls();
             assert.match(calls, paneTwoPattern);
             assert.doesNotMatch(calls, /refine-watcher/);
@@ -726,19 +771,22 @@ test('restartDeadWatcherPanes: trap-door entry documents T3 regressions and size
     assert.match(entry, /restartDeadWatcherPanes: inactive session skips pane probing and respawn/);
 });
 
-test('ensureMonitorWindow: kills and recreates when existing window has different @mode', () => {
+test('ensureMonitorWindow: kills and recreates when existing window has different @mode', async () => {
     const f = makeFakes({ sessionName: 'pickle-abc12345', commandTemplate: 'council-of-ricks.md' });
     // Simulate an existing monitor window stamped for a different mode
     // (e.g. a previous anatomy-park / pickle pipeline phase).
     fs.writeFileSync(f.markerPath, '1');
     fs.writeFileSync(f.modeMarkerPath, 'pickle');
     try {
-        const result = ensureMonitorWindow({
-            sessionDir: f.sessionDir,
-            extensionRoot: f.extRoot,
-            inTmux: true,
-            tmuxBin: f.tmuxBin,
-            bashBin: f.bashBin,
+        let result;
+        await f.withPath(() => {
+            result = ensureMonitorWindow({
+                sessionDir: f.sessionDir,
+                extensionRoot: f.extRoot,
+                inTmux: true,
+                tmuxBin: f.tmuxBin,
+                bashBin: f.bashBin,
+            });
         });
         assert.equal(result.status, 'recreated');
         const calls = f.readCalls();
@@ -761,15 +809,18 @@ test('monitorModesCompatible: unset existing => incompatible; matching => compat
     assert.equal(monitorModesCompatible('meeseeks', 'meeseeks'), true);
 });
 
-test('ensureMonitorWindow: infers meeseeks mode from state.command_template', () => {
+test('ensureMonitorWindow: infers meeseeks mode from state.command_template', async () => {
     const f = makeFakes({ sessionName: 'meeseeks-abc', commandTemplate: 'meeseeks.md' });
     try {
-        const result = ensureMonitorWindow({
-            sessionDir: f.sessionDir,
-            extensionRoot: f.extRoot,
-            inTmux: true,
-            tmuxBin: f.tmuxBin,
-            bashBin: f.bashBin,
+        let result;
+        await f.withPath(() => {
+            result = ensureMonitorWindow({
+                sessionDir: f.sessionDir,
+                extensionRoot: f.extRoot,
+                inTmux: true,
+                tmuxBin: f.tmuxBin,
+                bashBin: f.bashBin,
+            });
         });
         assert.equal(result.status, 'created');
         assert.match(f.readCalls(), /tmux-monitor\.sh meeseeks-abc .+session meeseeks/);
@@ -778,15 +829,18 @@ test('ensureMonitorWindow: infers meeseeks mode from state.command_template', ()
     }
 });
 
-test('ensureMonitorWindow: infers council mode from state.command_template', () => {
+test('ensureMonitorWindow: infers council mode from state.command_template', async () => {
     const f = makeFakes({ sessionName: 'council-abc', commandTemplate: 'council-of-ricks.md' });
     try {
-        const result = ensureMonitorWindow({
-            sessionDir: f.sessionDir,
-            extensionRoot: f.extRoot,
-            inTmux: true,
-            tmuxBin: f.tmuxBin,
-            bashBin: f.bashBin,
+        let result;
+        await f.withPath(() => {
+            result = ensureMonitorWindow({
+                sessionDir: f.sessionDir,
+                extensionRoot: f.extRoot,
+                inTmux: true,
+                tmuxBin: f.tmuxBin,
+                bashBin: f.bashBin,
+            });
         });
         assert.equal(result.status, 'created');
         assert.match(f.readCalls(), /tmux-monitor\.sh council-abc .+session council/);
@@ -795,16 +849,19 @@ test('ensureMonitorWindow: infers council mode from state.command_template', () 
     }
 });
 
-test('ensureMonitorWindow: explicit mode overrides state-inferred mode', () => {
+test('ensureMonitorWindow: explicit mode overrides state-inferred mode', async () => {
     const f = makeFakes({ sessionName: 'pickle-abc', commandTemplate: 'meeseeks.md' });
     try {
-        const result = ensureMonitorWindow({
-            sessionDir: f.sessionDir,
-            extensionRoot: f.extRoot,
-            inTmux: true,
-            tmuxBin: f.tmuxBin,
-            bashBin: f.bashBin,
-            mode: 'refinement',
+        let result;
+        await f.withPath(() => {
+            result = ensureMonitorWindow({
+                sessionDir: f.sessionDir,
+                extensionRoot: f.extRoot,
+                inTmux: true,
+                tmuxBin: f.tmuxBin,
+                bashBin: f.bashBin,
+                mode: 'refinement',
+            });
         });
         assert.equal(result.status, 'created');
         assert.match(f.readCalls(), /tmux-monitor\.sh pickle-abc .+session refinement/);
@@ -813,17 +870,20 @@ test('ensureMonitorWindow: explicit mode overrides state-inferred mode', () => {
     }
 });
 
-test('ensureMonitorWindow: returns error when tmux-monitor.sh is missing', () => {
+test('ensureMonitorWindow: returns error when tmux-monitor.sh is missing', async () => {
     const f = makeFakes({});
     // Delete the stub script to simulate a broken install.
     fs.rmSync(path.join(f.extRoot, 'extension', 'scripts', 'tmux-monitor.sh'));
     try {
-        const result = ensureMonitorWindow({
-            sessionDir: f.sessionDir,
-            extensionRoot: f.extRoot,
-            inTmux: true,
-            tmuxBin: f.tmuxBin,
-            bashBin: f.bashBin,
+        let result;
+        await f.withPath(() => {
+            result = ensureMonitorWindow({
+                sessionDir: f.sessionDir,
+                extensionRoot: f.extRoot,
+                inTmux: true,
+                tmuxBin: f.tmuxBin,
+                bashBin: f.bashBin,
+            });
         });
         assert.equal(result.status, 'error');
         assert.match(result.reason, /script missing/);
