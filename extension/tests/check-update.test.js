@@ -592,7 +592,28 @@ describe('performUpgrade', () => {
         return tarball;
     }
 
+    function makeSidecarTarball(name = 'aaa-sidecar.tar.gz', { includeInstallScript = false } = {}) {
+        const contentRoot = path.join(tmpDir, name.replace(/[.]tar[.]gz$/, ''));
+        const packageRoot = path.join(contentRoot, 'sidecar');
+        fs.mkdirSync(path.join(packageRoot, 'extension'), { recursive: true });
+        fs.writeFileSync(
+            path.join(packageRoot, 'extension', 'package.json'),
+            JSON.stringify({ version: '1.67.0' }),
+        );
+        fs.writeFileSync(path.join(packageRoot, 'README.md'), '# sidecar');
+        if (includeInstallScript) {
+            fs.writeFileSync(path.join(packageRoot, 'install.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        }
+        const tarball = path.join(tmpDir, name);
+        execFileSync('tar', ['czf', tarball, '-C', contentRoot, 'sidecar']);
+        return tarball;
+    }
+
     function mockDownloadRelease(tarball) {
+        return mockDownloadReleases([tarball]);
+    }
+
+    function mockDownloadReleases(tarballs) {
         const binDir = path.join(tmpDir, 'mock-bin');
         fs.mkdirSync(binDir, { recursive: true });
         fs.writeFileSync(
@@ -607,7 +628,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 mkdir -p "$dest"
-cp ${JSON.stringify(tarball)} "$dest/pickle-release.tar.gz"
+${tarballs.map((tarball) => `cp ${JSON.stringify(tarball)} "$dest/$(basename ${JSON.stringify(tarball)})"`).join('\n')}
 `,
             { mode: 0o755 },
         );
@@ -748,6 +769,18 @@ cp ${JSON.stringify(tarball)} "$dest/pickle-release.tar.gz"
         );
 
         assert.equal(fs.existsSync(path.join(tmpDir, 'install-marker.txt')), false);
+    });
+
+    test('check-update.ignores-sidecar-tarballs-and-installs-the-unique-installable-release', () => {
+        writeDeployedPackage('1.66.0');
+        const installableTarball = makeReleaseTarball('1.67.0');
+        const sidecarTarball = makeSidecarTarball('aaa-sidecar.tar.gz');
+        mockDownloadReleases([sidecarTarball, installableTarball]);
+
+        const result = performUpgrade('1.66.0', '1.67.0', 'v1.67.0', { noConfirm: true });
+
+        assert.equal(result.success, true, result.error);
+        assert.equal(fs.readFileSync(path.join(tmpDir, 'install-marker.txt'), 'utf-8'), 'installed');
     });
 });
 

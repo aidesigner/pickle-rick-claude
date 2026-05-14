@@ -175,13 +175,23 @@ export function downloadRelease(tag) {
             fs.rmSync(tmpDir, { recursive: true, force: true });
             return null;
         }
-        const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.tar.gz'));
+        const files = fs.readdirSync(tmpDir)
+            .filter((file) => file.endsWith('.tar.gz'))
+            .map((file) => path.join(tmpDir, file));
         if (files.length === 0) {
             log('No .tar.gz asset found in downloaded release');
             fs.rmSync(tmpDir, { recursive: true, force: true });
             return null;
         }
-        return path.join(tmpDir, files[0]);
+        const installable = files.filter(isInstallableReleaseTarball);
+        if (installable.length !== 1) {
+            log(installable.length === 0
+                ? 'No installable tar.gz asset found in downloaded release'
+                : 'Multiple installable tar.gz assets found in downloaded release');
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+            return null;
+        }
+        return installable[0];
     }
     catch (err) {
         const msg = safeErrorMessage(err);
@@ -194,6 +204,18 @@ export function downloadRelease(tag) {
         }
         return null;
     }
+}
+function isInstallableReleaseTarball(tarballPath) {
+    const tar = spawnSync('tar', ['-tzf', tarballPath], {
+        encoding: 'utf-8',
+        timeout: 30000,
+    });
+    if (tar.status !== 0)
+        return false;
+    const members = (tar.stdout || '').split(/\r?\n/);
+    const hasPackageJson = members.some((member) => /(^|\/)extension\/package\.json$/.test(member));
+    const hasInstallScript = members.some((member) => /(^|\/)install\.sh$/.test(member));
+    return hasPackageJson && hasInstallScript;
 }
 function cleanupDownloadedRelease(tarballPath, extractDir) {
     try {
