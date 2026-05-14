@@ -392,17 +392,26 @@ export function updateViolationLedger(state, judgeResult, iter) {
     if (!Array.isArray(judgeResult.violations)) {
         throw new Error('updateViolationLedger: judgeResult.violations must be an array');
     }
-    state.violation_ledger ??= [];
+    const priorLedger = state.violation_ledger ?? [];
+    const nextLedger = [];
     for (const violation of judgeResult.violations) {
         const generatedId = generateViolationId(violation);
         const vLine = violation.line ?? 0;
-        const existing = state.violation_ledger.find((e) => e.path === (violation.path ?? '') && e.rule === (violation.rule ?? '') &&
+        const existing = priorLedger.find((e) => e.path === (violation.path ?? '') && e.rule === (violation.rule ?? '') &&
             Math.abs((e.line ?? 0) - vLine) <= 5);
         if (existing) {
-            existing.last_seen_iter = iter;
+            nextLedger.push({
+                ...existing,
+                path: violation.path,
+                line: violation.line,
+                rule: violation.rule,
+                severity: violation.severity,
+                description: violation.description,
+                last_seen_iter: iter,
+            });
         }
         else {
-            state.violation_ledger.push({
+            nextLedger.push({
                 id: generatedId,
                 path: violation.path,
                 line: violation.line,
@@ -414,6 +423,7 @@ export function updateViolationLedger(state, judgeResult, iter) {
             });
         }
     }
+    state.violation_ledger = nextLedger;
 }
 export function resolveStallLimit(metricType, settings) {
     if (metricType !== 'llm')

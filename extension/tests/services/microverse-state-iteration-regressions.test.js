@@ -250,7 +250,7 @@ test('updateViolationLedger fuzzy line-match within ±5 reuses ID and updates la
   assert.equal(state.violation_ledger[0].last_seen_iter, 2, 'last_seen_iter must be updated');
 });
 
-test('updateViolationLedger beyond ±5 lines generates a new ledger entry with a new ID', () => {
+test('updateViolationLedger beyond ±5 lines replaces the live entry with a new ID', () => {
   const state = createMicroverseState(BASE_OPTS);
   state.violation_ledger = [];
 
@@ -270,8 +270,9 @@ test('updateViolationLedger beyond ±5 lines generates a new ledger entry with a
     resolved: [], new: [], remaining: [], shape: 'full',
   };
   updateViolationLedger(state, judgeResult2, 2);
-  assert.equal(state.violation_ledger.length, 2, 'should create a new entry');
-  assert.notEqual(state.violation_ledger[1].id, firstId, 'new entry must have a different ID');
+  assert.equal(state.violation_ledger.length, 1, 'live ledger should contain only the current violation set');
+  assert.notEqual(state.violation_ledger[0].id, firstId, 'replacement entry must have a different ID');
+  assert.equal(state.violation_ledger[0].line, 50, 'replacement entry should track the new location');
 });
 
 // ---------------------------------------------------------------------------

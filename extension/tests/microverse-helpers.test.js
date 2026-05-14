@@ -220,6 +220,85 @@ test('measureAndClassifyIteration consumes structured LLM judge ledger before nu
   }
 });
 
+test('measureAndClassifyIteration drops resolved violations from the live ledger before the next judge pass', async () => {
+  const sessionDir = makeTempDir('pickle-mv-llm-resolved-session-');
+  const workingDir = makeTempDir('pickle-mv-llm-resolved-work-');
+  const runnerState = makeRunnerState(sessionDir, workingDir, { backend: 'claude' });
+  const firstJudgeOutput = {
+    score: 40,
+    violations: [
+      {
+        id: 'repeat-violation',
+        path: 'src/foo.ts',
+        line: 12,
+        rule: 'no-any',
+        severity: 'high',
+        description: 'new violation',
+      },
+    ],
+    resolved: [],
+    new: ['repeat-violation'],
+    remaining: [],
+  };
+  const secondJudgeOutput = {
+    score: 40,
+    violations: [],
+    resolved: ['repeat-violation'],
+    new: [],
+    remaining: [],
+  };
+  const mv = createMicroverseState({
+    prdPath: path.join(workingDir, 'prd.md'),
+    metric: {
+      description: 'quality',
+      validation: 'improve code quality',
+      type: 'llm',
+      timeout_seconds: 60,
+      tolerance: 2,
+      direction: 'higher',
+      judge_model: 'claude-sonnet-4-6',
+    },
+    stallLimit: 3,
+  });
+  mv.status = 'iterating';
+  mv.baseline_score = 40;
+  fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify(runnerState, null, 2));
+  writeMicroverseState(sessionDir, mv);
+
+  const originalExec = _deps.execFileSync;
+  const originalReset = _deps.resetToSha;
+  let pass = 0;
+  try {
+    _deps.resetToSha = () => {};
+    _deps.execFileSync = (_cmd, args) => {
+      if (Array.isArray(args) && args[0] === '--version') return 'Claude Code 2.1.126';
+      pass += 1;
+      return JSON.stringify(pass === 1 ? firstJudgeOutput : secondJudgeOutput);
+    };
+    const firstCtx = makeContext(sessionDir, workingDir, runnerState, {
+      iteration: 2,
+      preIterSha: 'a'.repeat(40),
+      postIterSha: 'b'.repeat(40),
+    });
+    const secondCtx = makeContext(sessionDir, workingDir, runnerState, {
+      iteration: 3,
+      preIterSha: 'c'.repeat(40),
+      postIterSha: 'd'.repeat(40),
+    });
+
+    await measureAndClassifyIteration(mv, { raw: '40', score: 40 }, firstCtx);
+    assert.equal(mv.violation_ledger?.length, 1, 'first pass should seed the live ledger');
+
+    await measureAndClassifyIteration(mv, { raw: '40', score: 40 }, secondCtx);
+    assert.deepEqual(mv.violation_ledger, [], 'resolved violations must be removed from the live ledger');
+  } finally {
+    _deps.resetToSha = originalReset;
+    _deps.execFileSync = originalExec;
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    fs.rmSync(workingDir, { recursive: true, force: true });
+  }
+});
+
 test('executeMainLoop replays convergence mutation fixture order', async () => {
   const fixturePath = path.join('tests', 'fixtures', 'microverse', 'convergence-mutations.json');
   const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));

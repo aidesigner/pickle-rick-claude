@@ -1412,6 +1412,14 @@ function normalizeHistoryEntries(
  * then scans backwards for any line that is just a number.
  */
 export function extractScore(output: string): number | null {
+  try {
+    const parsed = JSON.parse(output) as { score?: unknown };
+    if (typeof parsed?.score === 'number' && Number.isFinite(parsed.score)) {
+      return parsed.score;
+    }
+  } catch {
+    // Fall through to legacy line-oriented parsing.
+  }
   const lines = output.trim().split('\n');
   // Try from last line backwards — first line that is purely numeric wins
   for (let i = lines.length - 1; i >= 0; i--) {
