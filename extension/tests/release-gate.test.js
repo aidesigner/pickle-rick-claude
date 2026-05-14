@@ -117,6 +117,17 @@ describe('release-gate.pre-tag', () => {
     }
   });
 
+  test('passes from a nested repo directory when tag package version matches HEAD package version', () => {
+    const { dir: repoDir, tagName } = makeGitFixture();
+    try {
+      const result = gate(['--pre-tag', tagName], { cwd: path.join(repoDir, 'extension') });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /ok/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   test('exits 10 when tag package version is older than HEAD package version', () => {
     const { dir: repoDir, tagName } = makeGitFixture({ headVersion: '1.67.0', tagVersion: '1.64.0' });
     try {
@@ -170,6 +181,24 @@ describe('release-gate.post-tag', () => {
     const ghDir = makeGhFixture({ tarball: tarFixture.tarball });
     try {
       const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /ok/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(tarFixture.dir, { recursive: true, force: true });
+      rmSync(ghDir, { recursive: true, force: true });
+    }
+  });
+
+  test('passes from a nested repo directory when downloaded tarball package version matches HEAD package version', () => {
+    const { dir: repoDir, tagName } = makeGitFixture();
+    const tarFixture = makeTarball('1.67.0');
+    const ghDir = makeGhFixture({ tarball: tarFixture.tarball });
+    try {
+      const result = gate(['--post-tag', tagName], {
+        cwd: path.join(repoDir, 'extension'),
+        pathPrefix: ghDir,
+      });
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stdout, /ok/);
     } finally {

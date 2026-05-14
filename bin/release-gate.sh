@@ -2,8 +2,16 @@
 set -euo pipefail
 
 REPO="gregorydickson/pickle-rick-claude"
-PKG_PATH="extension/package.json"
 RELEASE_GATE_TMPDIR=""
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+PKG_DISPLAY_PATH="extension/package.json"
+
+[ -n "$REPO_ROOT" ] || {
+  echo "release-gate: must run inside a git worktree (exit 12)" >&2
+  exit 12
+}
+
+PKG_PATH="$REPO_ROOT/$PKG_DISPLAY_PATH"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -29,8 +37,8 @@ die() {
 
 read_expected_version() {
   local version
-  version="$(jq -r '.version' "$PKG_PATH" 2>/dev/null)" || die 11 "could not parse $PKG_PATH with jq"
-  [ -n "$version" ] && [ "$version" != "null" ] || die 11 "$PKG_PATH missing version"
+  version="$(jq -r '.version' "$PKG_PATH" 2>/dev/null)" || die 11 "could not parse $PKG_DISPLAY_PATH with jq"
+  [ -n "$version" ] && [ "$version" != "null" ] || die 11 "$PKG_DISPLAY_PATH missing version"
   printf '%s\n' "$version"
 }
 
@@ -44,11 +52,11 @@ read_tag_name_version() {
 read_tag_version() {
   local tag="$1"
   local pkg
-  git rev-parse -q --verify "$tag^{commit}" >/dev/null 2>&1 || die 12 "tag $tag not found"
-  pkg="$(git show "$tag:$PKG_PATH" 2>/dev/null)" || die 12 "$PKG_PATH missing at tag $tag"
+  git -C "$REPO_ROOT" rev-parse -q --verify "$tag^{commit}" >/dev/null 2>&1 || die 12 "tag $tag not found"
+  pkg="$(git -C "$REPO_ROOT" show "$tag:$PKG_DISPLAY_PATH" 2>/dev/null)" || die 12 "$PKG_DISPLAY_PATH missing at tag $tag"
   local version
-  version="$(printf '%s\n' "$pkg" | jq -r '.version' 2>/dev/null)" || die 11 "could not parse $PKG_PATH at tag $tag with jq"
-  [ -n "$version" ] && [ "$version" != "null" ] || die 11 "$PKG_PATH at tag $tag missing version"
+  version="$(printf '%s\n' "$pkg" | jq -r '.version' 2>/dev/null)" || die 11 "could not parse $PKG_DISPLAY_PATH at tag $tag with jq"
+  [ -n "$version" ] && [ "$version" != "null" ] || die 11 "$PKG_DISPLAY_PATH at tag $tag missing version"
   printf '%s\n' "$version"
 }
 
@@ -58,9 +66,9 @@ pre_tag() {
   expected="$(read_expected_version)"
   tag_name_version="$(read_tag_name_version "$tag")"
   tagged="$(read_tag_version "$tag")"
-  [ "$expected" = "$tag_name_version" ] || die 10 "expected release tag $tag to match $PKG_PATH version $expected"
-  [ "$expected" = "$tagged" ] || die 10 "expected $PKG_PATH version $expected but tag $tag has $tagged"
-  echo "ok: tag $tag has $PKG_PATH version $expected"
+  [ "$expected" = "$tag_name_version" ] || die 10 "expected release tag $tag to match $PKG_DISPLAY_PATH version $expected"
+  [ "$expected" = "$tagged" ] || die 10 "expected $PKG_DISPLAY_PATH version $expected but tag $tag has $tagged"
+  echo "ok: tag $tag has $PKG_DISPLAY_PATH version $expected"
 }
 
 post_tag() {
@@ -68,7 +76,7 @@ post_tag() {
   local expected tag_name_version tmpdir
   expected="$(read_expected_version)"
   tag_name_version="$(read_tag_name_version "$tag")"
-  [ "$expected" = "$tag_name_version" ] || die 21 "expected release tag $tag to match $PKG_PATH version $expected"
+  [ "$expected" = "$tag_name_version" ] || die 21 "expected release tag $tag to match $PKG_DISPLAY_PATH version $expected"
   gh api "repos/$REPO/releases/tags/$tag" >/dev/null 2>&1 || die 22 "GitHub release API check failed for $tag"
   tmpdir="$(mktemp -d)"
   RELEASE_GATE_TMPDIR="$tmpdir"
@@ -79,12 +87,12 @@ post_tag() {
   tarball="$(find "$tmpdir" -type f -name '*.tar.gz' -print -quit)"
   [ -n "$tarball" ] || die 20 "release download produced no tar.gz asset for $tag"
   pkg_member="$(tar -tzf "$tarball" | awk '/(^|\/)extension\/package\.json$/ { print; exit }')"
-  [ -n "$pkg_member" ] || die 21 "downloaded tarball is missing $PKG_PATH"
-  pkg="$(tar -xOzf "$tarball" "$pkg_member" 2>/dev/null)" || die 21 "could not read $PKG_PATH from downloaded tarball"
-  tagged="$(printf '%s\n' "$pkg" | jq -r '.version' 2>/dev/null)" || die 21 "could not parse $PKG_PATH from downloaded tarball"
-  [ -n "$tagged" ] && [ "$tagged" != "null" ] || die 21 "downloaded tarball $PKG_PATH missing version"
-  [ "$expected" = "$tagged" ] || die 21 "expected downloaded $PKG_PATH version $expected but found $tagged"
-  echo "ok: release $tag tarball has $PKG_PATH version $expected"
+  [ -n "$pkg_member" ] || die 21 "downloaded tarball is missing $PKG_DISPLAY_PATH"
+  pkg="$(tar -xOzf "$tarball" "$pkg_member" 2>/dev/null)" || die 21 "could not read $PKG_DISPLAY_PATH from downloaded tarball"
+  tagged="$(printf '%s\n' "$pkg" | jq -r '.version' 2>/dev/null)" || die 21 "could not parse $PKG_DISPLAY_PATH from downloaded tarball"
+  [ -n "$tagged" ] && [ "$tagged" != "null" ] || die 21 "downloaded tarball $PKG_DISPLAY_PATH missing version"
+  [ "$expected" = "$tagged" ] || die 21 "expected downloaded $PKG_DISPLAY_PATH version $expected but found $tagged"
+  echo "ok: release $tag tarball has $PKG_DISPLAY_PATH version $expected"
 }
 
 if [ "$#" -ne 2 ]; then
