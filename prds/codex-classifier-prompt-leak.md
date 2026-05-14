@@ -1,6 +1,20 @@
 # PRD: Codex Backend Classifier Prompt-Leak
 
-**Status**: Shipped (MASTER_PLAN Open Finding #1 closed)
+**Status**: **REOPENED 2026-05-14 (Priority P1)** — original ship neutered the 14-ticket abandonment failure mode (MANAGER_FALSE_EPIC_COMPLETED guardrail in mux-runner converts false claims into retries), but the **root-cause prompt-leak in `extractAssistantContent` is still firing**. Pipeline `2026-05-13-b54f2143` (codex, R-TSPF bundle) recorded **8+ MANAGER_FALSE_EPIC_COMPLETED events across 4 tickets** plus one MANAGER_PERSISTENT_HALLUCINATION trip. Operational tax: ~80 min/ticket operator heal-and-relaunch (commit work + flip frontmatter + clear circuit breaker + relaunch tmux). With 7 tickets, ~5h of wall-clock was tax. **A real fix would 3-5× pipeline throughput for codex-backed bundles.**
+
+## 2026-05-14 reopening evidence
+
+- Pipeline `2026-05-13-b54f2143` mux-runner.log MANAGER_FALSE_EPIC_COMPLETED entries:
+  - `f54318b1` R-TSPF-1: 3 strikes → operator-healed → relaunched
+  - `02252412` R-TSPF-2: 3 strikes → operator-healed → relaunched
+  - `dd63fa85` R-TSPF-3: 3 strikes → MANAGER_PERSISTENT_HALLUCINATION (count=4 trip) → operator-healed
+  - `4a96afc6` R-TSPF-4: 2 strikes then self-recovered (codex cycle finally stretched naturally)
+- Without the mux-runner guardrail, all four tickets would have shipped silently-empty.
+- The guardrail is a *fence around* the bug, not the fix.
+
+## Original ship status (carried for context)
+
+Prior status "Shipped" referenced the closing of the 14-ticket abandonment failure mode via the mux-runner guardrails. Those guardrails are intact and continue to prevent data loss. What remains unshipped is `extractAssistantContent`'s codex-aware filter — the root-cause fix described in `## Root Cause` below.
 
 ## Problem
 

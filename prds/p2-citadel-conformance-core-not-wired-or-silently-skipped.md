@@ -1,6 +1,18 @@
 # PRD: Citadel PRD-Conformance Core (T3 / T4 / T5 / T6 / T8) Not Surfaced in Live Report
 
-**Status**: Bug PRD (2026-05-09) — citadel is partially wired. Five of its core PRD-conformance audit tasks have shipped analyzer modules but do NOT appear in the live `citadel_report.json` `sections` map. The result: citadel runs in 1.3s, returns "0 critical / 0 high / 0 medium" for every pipeline run, and the operator infers the branch is conformance-clean. **It isn't checked.** Citadel still earns its second of compute via diff hygiene + divergence reconciliation, but its CORE PURPOSE per `prds/citadel.md` line 17 — "validates an entire branch's diff against the PRD it was built from" — is structurally absent from the sections it reports.
+**Status**: **Bug PRD (2026-05-09) — Priority bumped P2→P1 on 2026-05-14** after pipeline `2026-05-13-b54f2143` (R-TSPF + anatomy-park) demonstrated this is *load-bearing*, not nice-to-have. Citadel ran in 1.3s and produced 288 findings on that bundle (good — citadel-side analyzers shipped post-2026-05-09), but **anatomy-park subsequently shipped 6 CRITICAL + 21 HIGH fixes on the same diff** — including four explicit silent-gate-pass CRITICALs (`release tarball install payload false-green`, `delegated test gate false-green`, `verify-bundle unknown AC false-green`, `stale anatomy window recapture pass`). Three of those CRITICALs are exactly the class citadel's T3/T6/T8 sections were designed to catch. Anatomy-park caught what citadel should have. **Until R-CCNW wires conformance core into the gate chain (not just the report), every bundle relies on anatomy-park as the only effective conformance audit — and anatomy-park is a 3-4h phase, not a 1.3s phase.**
+
+## 2026-05-14 promotion evidence (b54f2143)
+
+Citadel `citadel_report.json` for pipeline `2026-05-13-b54f2143`: **288 findings, exit 0** (no CRITICAL/HIGH surfaced as fatal). Anatomy-park on the same diff (still in flight at time of filing, currently iter 27) committed:
+- `46dc21a6` bin CRITICAL — release tarball install payload false-green (T6 trap-door coverage class)
+- `91f10462` bin CRITICAL — stale anatomy window recapture pass (T8 state-machine class)
+- `a38492c9` extension CRITICAL — delegated test gate false-green (T3 AC scorecard class)
+- `1bc49d48` bin HIGH — verify-bundle unknown AC false-green (T4 allowlist dead-entry class)
+
+The shape of these is "the validator was lying" — same family as the LOA-618 post-mortem that motivated the original citadel PRD. R-CCNW's wiring fix is the structural answer; without it, anatomy-park is the only safety net.
+
+**Status (continued)**: citadel is partially wired. Five of its core PRD-conformance audit tasks have shipped analyzer modules but do NOT appear in the live `citadel_report.json` `sections` map. The result: citadel runs in 1.3s, returns "0 critical / 0 high / 0 medium" for every pipeline run, and the operator infers the branch is conformance-clean. **It isn't checked.** Citadel still earns its second of compute via diff hygiene + divergence reconciliation, but its CORE PURPOSE per `prds/citadel.md` line 17 — "validates an entire branch's diff against the PRD it was built from" — is structurally absent from the sections it reports.
 **Author**: Pickle Rick
 **Project**: `pickle-rick-claude` — Claude Code extension
 **Repo**: `https://github.com/gregorydickson/pickle-rick-claude` — branch `main`
