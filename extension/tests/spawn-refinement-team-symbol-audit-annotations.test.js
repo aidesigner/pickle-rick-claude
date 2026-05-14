@@ -193,6 +193,54 @@ Helpers: \`helperFoo\`.
   }
 });
 
+test('nested composes chain symbol resolves transitively', () => {
+  const repo = makeTmpDir();
+  try {
+    const nestedPrd = path.join(repo, 'nested-prd.md');
+    const sourcePrd = path.join(repo, 'source-prd.md');
+    const wrapperPrd = path.join(repo, 'wrapper-prd.md');
+    fs.writeFileSync(nestedPrd, `# Nested PRD
+
+## Activity Events
+
+Activity events: \`event_nested\`.
+
+## Helpers And Sentinels
+
+Helpers: \`helperNested\`.
+`);
+    fs.writeFileSync(sourcePrd, `---
+composes:
+  - ./nested-prd.md
+---
+# Source PRD
+`);
+    const wrapperContent = `---
+composes:
+  - ./source-prd.md
+---
+# Wrapper PRD
+
+## Activity Events
+
+Activity events: \`event_nested\`.
+
+## Helpers And Sentinels
+
+Helpers: \`helperNested\`.
+`;
+    fs.writeFileSync(wrapperPrd, wrapperContent);
+
+    const report = evaluateSymbolAudit(wrapperContent, repo, { tickets: [] }, wrapperPrd);
+
+    assert.equal(report.ok, true, JSON.stringify(report.findings, null, 2));
+    assert.equal(report.activityEvents.find((ref) => ref.symbol === 'event_nested')?.status, 'valid');
+    assert.equal(report.helperSentinels.find((ref) => ref.symbol === 'helperNested')?.status, 'valid');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('no composes frontmatter preserves phantom behavior', () => {
   const repo = makeTmpDir();
   try {

@@ -1242,19 +1242,28 @@ export function resolveComposesChain(prdPath) {
     const resolved = { events: new Set(), helpers: new Set() };
     if (!prdPath || !fs.existsSync(prdPath))
         return resolved;
-    const frontmatter = parseFrontmatter(fs.readFileSync(prdPath, 'utf-8'));
-    for (const composePath of composedPrdPaths(frontmatter)) {
-        const composedPrdPath = resolvePeerPrdPath(prdPath, composePath);
-        if (!composedPrdPath) {
-            process.stderr.write(`[pickle-rick] warning: composed PRD not found: ${composePath}\n`);
-            continue;
+    const visited = new Set();
+    const visit = (currentPrdPath) => {
+        const canonicalPrdPath = path.resolve(currentPrdPath);
+        if (visited.has(canonicalPrdPath) || !fs.existsSync(canonicalPrdPath))
+            return;
+        visited.add(canonicalPrdPath);
+        const frontmatter = parseFrontmatter(fs.readFileSync(canonicalPrdPath, 'utf-8'));
+        for (const composePath of composedPrdPaths(frontmatter)) {
+            const composedPrdPath = resolvePeerPrdPath(canonicalPrdPath, composePath);
+            if (!composedPrdPath) {
+                process.stderr.write(`[pickle-rick] warning: composed PRD not found: ${composePath}\n`);
+                continue;
+            }
+            const composedContent = fs.readFileSync(composedPrdPath, 'utf-8');
+            for (const symbol of declaredActivityEventSymbols(composedContent))
+                resolved.events.add(symbol);
+            for (const symbol of declaredHelperSentinelSymbols(composedContent))
+                resolved.helpers.add(symbol);
+            visit(composedPrdPath);
         }
-        const composedContent = fs.readFileSync(composedPrdPath, 'utf-8');
-        for (const symbol of declaredActivityEventSymbols(composedContent))
-            resolved.events.add(symbol);
-        for (const symbol of declaredHelperSentinelSymbols(composedContent))
-            resolved.helpers.add(symbol);
-    }
+    };
+    visit(prdPath);
     return resolved;
 }
 export function parseForwardCreateAnnotation(afterQuotedToken) {
