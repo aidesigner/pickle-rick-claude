@@ -5,7 +5,7 @@ import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import { pathToFileURL } from 'node:url';
 import { Defaults } from '../types/index.js';
-import { resolveBackend, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
+import { resolveBackend, resolveWorkerBackendFromState, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, findLastAcceptedEntry, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, displayMacNotification, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
@@ -35,6 +35,15 @@ async function pathExists(targetPath) {
     }
 }
 export function loadConvergenceGateSettings(extRoot) {
+    const nonEmptyStringArrayOrDefault = (value, fallback) => {
+        if (!Array.isArray(value))
+            return fallback;
+        const normalized = value
+            .filter((entry) => typeof entry === 'string')
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0);
+        return normalized.length > 0 ? normalized : fallback;
+    };
     const positiveIntegerOrDefault = (value, fallback) => {
         return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
     };
@@ -54,9 +63,7 @@ export function loadConvergenceGateSettings(extRoot) {
             return defaults;
         const gateSettings = cg;
         return {
-            enabled_convergence_files: Array.isArray(gateSettings.enabled_convergence_files)
-                ? gateSettings.enabled_convergence_files
-                : defaults.enabled_convergence_files,
+            enabled_convergence_files: nonEmptyStringArrayOrDefault(gateSettings.enabled_convergence_files, defaults.enabled_convergence_files),
             regression_warning_threshold: positiveIntegerOrDefault(gateSettings.regression_warning_threshold, defaults.regression_warning_threshold),
             remediator_timeout_s: positiveIntegerOrDefault(gateSettings.remediator_timeout_s, defaults.remediator_timeout_s),
             baseline_max_age_iterations: positiveIntegerOrDefault(gateSettings.baseline_max_age_iterations, defaults.baseline_max_age_iterations),

@@ -164,6 +164,14 @@ export function loadConvergenceGateSettings(extRoot: string): {
   baseline_max_age_iterations: number;
   baseline_max_age_seconds: number;
 } {
+  const nonEmptyStringArrayOrDefault = (value: unknown, fallback: string[]): string[] => {
+    if (!Array.isArray(value)) return fallback;
+    const normalized = value
+      .filter((entry): entry is string => typeof entry === 'string')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    return normalized.length > 0 ? normalized : fallback;
+  };
   const positiveIntegerOrDefault = (value: unknown, fallback: number): number => {
     return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
   };
@@ -181,9 +189,10 @@ export function loadConvergenceGateSettings(extRoot: string): {
     if (!cg || typeof cg !== 'object') return defaults;
     const gateSettings = cg as Record<string, unknown>;
     return {
-      enabled_convergence_files: Array.isArray(gateSettings.enabled_convergence_files)
-        ? (gateSettings.enabled_convergence_files as string[])
-        : defaults.enabled_convergence_files,
+      enabled_convergence_files: nonEmptyStringArrayOrDefault(
+        gateSettings.enabled_convergence_files,
+        defaults.enabled_convergence_files,
+      ),
       regression_warning_threshold: positiveIntegerOrDefault(
         gateSettings.regression_warning_threshold,
         defaults.regression_warning_threshold,

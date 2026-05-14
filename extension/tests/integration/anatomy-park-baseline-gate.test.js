@@ -753,7 +753,7 @@ test('microverse startup settings default invalid numeric gate controls before r
   try {
     fs.writeFileSync(path.join(extRoot, 'pickle_settings.json'), JSON.stringify({
       convergence_gate: {
-        enabled_convergence_files: ['anatomy-park.json'],
+        enabled_convergence_files: [42, '', '   '],
         regression_warning_threshold: 0,
         remediator_timeout_s: 0.5,
         baseline_max_age_iterations: -1,
