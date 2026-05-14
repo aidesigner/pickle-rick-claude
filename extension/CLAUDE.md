@@ -4,12 +4,7 @@ Compiled TS → JS lives in `extension/services/`, `extension/bin/`, `extension/
 
 ## R-TSPF
 
-R-TSPF stabilization spans five admitted flakes across four race classes:
-
-- `load-dependent-timeout`: `extension/tests/auto-resume-stop-conditions.test.js` warn-banner progression depends on retry-state transitions, not extra waiting.
-- `subprocess-spawn-timing`: `extension/tests/council-publish.test.js` hung-`gh` regressions and `extension/tests/mux-runner-relaunch.test.js` delayed fake-`tmux` writes both require deterministic barriers instead of incidental timing luck.
-- `process-global-state`: `extension/tests/ensure-monitor-window.test.js` path-shim helpers must serialize `process.env.PATH` mutation across concurrent tests.
-- `file-existence` scope: R-TSPF-5 merged into the R-TSPF-4 `ensure-monitor-window` fix, so the missing-`tmux-monitor.sh` case inherits the same shared PATH-serialization trap door instead of a standalone entry.
+R-TSPF stabilization spans five admitted flakes across four race classes. `load-dependent-timeout` covers `extension/tests/auto-resume-stop-conditions.test.js` warn-banner progression (depends on retry-state transitions, not extra waiting). `subprocess-spawn-timing` covers `extension/tests/council-publish.test.js` hung-`gh` regressions and `extension/tests/mux-runner-relaunch.test.js` delayed fake-`tmux` writes (both require deterministic barriers, not incidental timing luck). `process-global-state` covers `extension/tests/ensure-monitor-window.test.js` path-shim helpers (must serialize `process.env.PATH` mutation across concurrent tests). `file-existence` scope was merged: R-TSPF-5 collapsed into the R-TSPF-4 `ensure-monitor-window` fix, so the missing-`tmux-monitor.sh` case inherits the same shared PATH-serialization trap door.
 
 Use `## Trap Doors` as the source of truth for the per-file invariant text, race class, and `PATTERN_SHAPE` anchors. For the pre-merge external proof of AC-1', operators run `gh workflow run stability-gate.yml -f run_count=30` once per bundle; worker AC-7 keeps the single-pass `test:fast` path.
 
