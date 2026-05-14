@@ -1653,6 +1653,7 @@ export async function runIteration(
     let didTimeout = false;
     let stallReason: IterationOutcome['stallReason'];
     let lastDataAt = start;
+    let timeoutResolveTimer: NodeJS.Timeout | null = null;
 
     const proc = spawn(invocation.cmd, invocation.args, {
       cwd: state.working_dir || process.cwd(),
@@ -1673,17 +1674,14 @@ export async function runIteration(
       }
     }
 
-    function resolveTimeout(reason: NonNullable<IterationOutcome['stallReason']>) {
-      if (settled) return;
-      settled = true;
-      didTimeout = true;
-      stallReason = reason;
-      clearIterationGuards();
-      currentChildProc = null;
-      try { proc.kill('SIGTERM'); } catch { /* already dead */ }
+    function finishTimeoutResolution() {
+      if (timeoutResolveTimer) {
+        clearTimeout(timeoutResolveTimer);
+        timeoutResolveTimer = null;
+      }
       try { fs.fsyncSync(logFd); } catch { /* already closed or error */ }
       try { fs.closeSync(logFd); } catch { /* already closed */ }
-      const label = reason === 'output_stall' ? 'output stall detected' : 'hang detected';
+      const label = stallReason === 'output_stall' ? 'output stall detected' : 'hang detected';
       console.error(`${Style.RED}❌ Iteration ${iterationNum} ${label} — forcing failure${Style.RESET}`);
       resolve({
         completion: 'error',
@@ -1692,6 +1690,23 @@ export async function runIteration(
         wallSeconds: (Date.now() - start) / 1000,
         stallReason,
       });
+    }
+
+    function resolveTimeout(reason: NonNullable<IterationOutcome['stallReason']>) {
+      if (settled) return;
+      settled = true;
+      didTimeout = true;
+      stallReason = reason;
+      clearIterationGuards();
+      currentChildProc = null;
+      proc.once('close', () => {
+        finishTimeoutResolution();
+      });
+      timeoutResolveTimer = setTimeout(() => {
+        finishTimeoutResolution();
+      }, 500);
+      timeoutResolveTimer.unref();
+      try { proc.kill('SIGTERM'); } catch { /* already dead */ }
     }
 
     function armOutputStallGuard() {

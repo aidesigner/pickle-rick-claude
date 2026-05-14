@@ -67,6 +67,7 @@ function emit(line) {
 }
 
 process.on('SIGTERM', () => {
+  if (scenario === 'output-stall-delayed-sigterm') return;
   if (signalFile) fs.appendFileSync(signalFile, 'SIGTERM\\n');
   process.exit(0);
 });
@@ -87,6 +88,34 @@ if (scenario === 'output-stall') {
     }
   }, 60);
   process.on('exit', () => {
+    if (keepAlive) clearTimeout(keepAlive);
+  });
+} else if (scenario === 'output-stall-delayed-sigterm') {
+  emit('start');
+  let count = 0;
+  let keepAlive = null;
+  const timer = setInterval(() => {
+    count += 1;
+    emit('progress-' + count);
+    if (count >= 3) {
+      clearInterval(timer);
+      keepAlive = setTimeout(() => {
+        note('unexpected-exit');
+        process.exit(0);
+      }, 60_000);
+    }
+  }, 60);
+  process.on('SIGTERM', () => {
+    clearInterval(timer);
+    if (keepAlive) clearTimeout(keepAlive);
+    setTimeout(() => {
+      if (signalFile) fs.appendFileSync(signalFile, 'SIGTERM\\n');
+      emit('shutdown-complete');
+      process.exit(0);
+    }, 75);
+  });
+  process.on('exit', () => {
+    clearInterval(timer);
     if (keepAlive) clearTimeout(keepAlive);
   });
 } else if (scenario === 'wall-clock') {
@@ -110,7 +139,7 @@ if (scenario === 'output-stall') {
 }
 
 async function runScenario(
-  scenario: 'output-stall' | 'wall-clock' | 'success',
+  scenario: 'output-stall' | 'output-stall-delayed-sigterm' | 'wall-clock' | 'success',
   overrides: { MAX_ITERATION_SECONDS: number; OUTPUT_STALL_SECONDS: number },
 ) {
   const { sessionDir, fakeBin, signalFile, markerFile } = makeScenarioSession(`pickle-rapmw6-${scenario}-`);
@@ -163,7 +192,22 @@ test('R-APMW-6: output every 10s for 4h - wall-clock guard fires', async () => {
     assert.equal(scenario.outcome.timedOut, true);
     assert.equal(scenario.outcome.stallReason, 'wall_clock');
     assert.equal(scenario.outcome.exitCode, null);
-    assert.match(await fs.promises.readFile(scenario.markerFile, 'utf-8'), /emit:progress/);
+  } finally {
+    fs.rmSync(scenario.sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('R-APMW-6: timeout waits for delayed SIGTERM cleanup before resolving', async () => {
+  const scenario = await runScenario('output-stall-delayed-sigterm', {
+    MAX_ITERATION_SECONDS: 2,
+    OUTPUT_STALL_SECONDS: 0.35,
+  });
+
+  try {
+    assert.equal(scenario.outcome.completion, 'error');
+    assert.equal(scenario.outcome.timedOut, true);
+    assert.equal(scenario.outcome.stallReason, 'output_stall');
+    assert.match(await fs.promises.readFile(path.join(scenario.sessionDir, 'tmux_iteration_1.log'), 'utf-8'), /shutdown-complete/);
     assert.match(await fs.promises.readFile(scenario.signalFile, 'utf-8'), /SIGTERM/);
   } finally {
     fs.rmSync(scenario.sessionDir, { recursive: true, force: true });

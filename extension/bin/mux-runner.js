@@ -1420,6 +1420,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
         let didTimeout = false;
         let stallReason;
         let lastDataAt = start;
+        let timeoutResolveTimer = null;
         const proc = spawn(invocation.cmd, invocation.args, {
             cwd: state.working_dir || process.cwd(),
             env,
@@ -1436,18 +1437,11 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
                 outputStallGuard = null;
             }
         }
-        function resolveTimeout(reason) {
-            if (settled)
-                return;
-            settled = true;
-            didTimeout = true;
-            stallReason = reason;
-            clearIterationGuards();
-            currentChildProc = null;
-            try {
-                proc.kill('SIGTERM');
+        function finishTimeoutResolution() {
+            if (timeoutResolveTimer) {
+                clearTimeout(timeoutResolveTimer);
+                timeoutResolveTimer = null;
             }
-            catch { /* already dead */ }
             try {
                 fs.fsyncSync(logFd);
             }
@@ -1456,7 +1450,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
                 fs.closeSync(logFd);
             }
             catch { /* already closed */ }
-            const label = reason === 'output_stall' ? 'output stall detected' : 'hang detected';
+            const label = stallReason === 'output_stall' ? 'output stall detected' : 'hang detected';
             console.error(`${Style.RED}❌ Iteration ${iterationNum} ${label} — forcing failure${Style.RESET}`);
             resolve({
                 completion: 'error',
@@ -1465,6 +1459,26 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
                 wallSeconds: (Date.now() - start) / 1000,
                 stallReason,
             });
+        }
+        function resolveTimeout(reason) {
+            if (settled)
+                return;
+            settled = true;
+            didTimeout = true;
+            stallReason = reason;
+            clearIterationGuards();
+            currentChildProc = null;
+            proc.once('close', () => {
+                finishTimeoutResolution();
+            });
+            timeoutResolveTimer = setTimeout(() => {
+                finishTimeoutResolution();
+            }, 500);
+            timeoutResolveTimer.unref();
+            try {
+                proc.kill('SIGTERM');
+            }
+            catch { /* already dead */ }
         }
         function armOutputStallGuard() {
             if (settled)
