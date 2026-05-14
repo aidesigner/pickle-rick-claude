@@ -72,6 +72,16 @@ async function withSession(fn, { stack, summary, directiveJson, skipStack } = {}
     }
 }
 
+async function withPathEnv(pathValue, fn) {
+    const originalPath = process.env.PATH;
+    process.env.PATH = pathValue;
+    try {
+        return await fn();
+    } finally {
+        process.env.PATH = originalPath;
+    }
+}
+
 /**
  * Writes a POSIX-shell script that mocks the `gh` CLI. Behavior is driven by
  * per-subcommand scenario files written to disk (one file per dispatch table
@@ -94,13 +104,14 @@ function makeGhMock(scenario) {
 
     // pr list behavior: one file per branch name, containing the stdout to
     // emit (or one of __hang__ / __error__ sentinels). Missing file → empty
-    // stdout, exit 0.
+    // stdout, exit 0. Branch names become nested paths so the shell mock can
+    // resolve them without spawning helper binaries such as `base64` or `tr`.
     const prListDir = path.join(dir, 'pr-list');
     fs.mkdirSync(prListDir);
     for (const [branch, value] of Object.entries(scenario.prList || {})) {
-        // Branch names contain `/`; use base64 to make them filesystem-safe.
-        const key = Buffer.from(branch, 'utf-8').toString('base64').replace(/[/=+]/g, '_');
-        fs.writeFileSync(path.join(prListDir, key), String(value));
+        const branchPath = path.join(prListDir, ...branch.split('/'));
+        fs.mkdirSync(path.dirname(branchPath), { recursive: true });
+        fs.writeFileSync(branchPath, String(value) + '\n');
     }
 
     // pr comment behavior: serialize hangOnCall and failOnCall as files with
@@ -142,10 +153,17 @@ if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
         shift
     done
     if [ -z "$branch" ]; then printf ''; exit 0; fi
-    key=$(printf '%s' "$branch" | base64 | tr -d '\\n' | tr '/=+' '___')
-    f="$DIR/pr-list/$key"
+    f="$DIR/pr-list/$branch"
     if [ ! -e "$f" ]; then printf ''; exit 0; fi
-    val=$(cat "$f")
+    val=''
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ -n "$val" ]; then
+            val="$val
+$line"
+        else
+            val="$line"
+        fi
+    done < "$f"
     case "$val" in
         __hang__) _hang ;;
         __error__) printf 'simulated list error' 1>&2; exit 1 ;;
@@ -155,11 +173,11 @@ fi
 
 if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
     # Atomic increment: read current, write current+1.
-    cur=$(cat "$DIR/state.json")
+    IFS= read -r cur < "$DIR/state.json" || cur=0
     new=$((cur + 1))
     printf '%s\\n' "$new" > "$DIR/state.json"
-    hang_list=$(cat "$DIR/pr-comment-hang")
-    fail_list=$(cat "$DIR/pr-comment-fail")
+    IFS= read -r hang_list < "$DIR/pr-comment-hang" || hang_list=''
+    IFS= read -r fail_list < "$DIR/pr-comment-fail" || fail_list=''
     for n in $hang_list; do [ "$n" = "$new" ] && _hang; done
     for n in $fail_list; do [ "$n" = "$new" ] && { printf 'simulated comment error' 1>&2; exit 1; }; done
     exit 0
@@ -888,16 +906,18 @@ test('publishCouncilStack: hung `gh pr list` is aborted by timeout, classified a
         prList: { 'feat/one': '__hang__', 'feat/two': 99 },
         prComment: {},
     });
+    const emptyPathDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-path-')));
     try {
-        await withSession(async (sessionDir) => {
+        await withPathEnv(emptyPathDir, () => withSession(async (sessionDir) => {
             const startedAt = Date.now();
             const report = await publishCouncilStack(sessionDir, {
                 ghCommand: mock.ghPath,
                 ghTimeoutMs: HUNG_GH_TIMEOUT_MS,
             });
             const elapsedMs = Date.now() - startedAt;
-            // Publisher must return promptly after timeout fires — well under
-            // the 60s mock hang window. Generous ceiling covers CI jitter.
+            // Regression for the hung `gh` race class: the shell mock must not
+            // depend on PATH-resolved helper binaries for branch lookup/state IO.
+            // Head~1 used `base64`, `tr`, and `cat` here and fails this test.
             assert.ok(elapsedMs < 50_000, `elapsed ${elapsedMs}ms should be < 50s; timeout did not fire`);
 
             const one = report.results.find(r => r.branch === 'feat/one');
@@ -907,8 +927,9 @@ test('publishCouncilStack: hung `gh pr list` is aborted by timeout, classified a
             // Sweep continues: feat/two still posts.
             const two = report.results.find(r => r.branch === 'feat/two');
             assert.equal(two.outcome, 'posted');
-        }, { directiveJson: minimalDirective() });
+        }, { directiveJson: minimalDirective() }));
     } finally {
+        fs.rmSync(emptyPathDir, { recursive: true, force: true });
         cleanupGhMock(mock);
     }
 });
@@ -920,8 +941,9 @@ test('publishCouncilStack: hung `gh pr comment` is aborted by timeout, classifie
         // First comment invocation hangs; second returns normally.
         prComment: { hangOnCall: [1] },
     });
+    const emptyPathDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-path-')));
     try {
-        await withSession(async (sessionDir) => {
+        await withPathEnv(emptyPathDir, () => withSession(async (sessionDir) => {
             const startedAt = Date.now();
             const report = await publishCouncilStack(sessionDir, {
                 ghCommand: mock.ghPath,
@@ -936,12 +958,15 @@ test('publishCouncilStack: hung `gh pr comment` is aborted by timeout, classifie
             const failed = report.results.find(r => r.outcome === 'failed');
             assert.ok(/pr comment/.test(failed.error || ''), `error should mention pr comment, got: ${failed.error}`);
 
-            // No .published marker for the failed branch.
+            // Regression for the hung `gh` race class: comment-call state tracking
+            // must remain builtin-only so PATH starvation does not create a second
+            // synthetic failure after the timed-out first comment.
             const pubDir = path.join(sessionDir, '.published');
             const markers = fs.existsSync(pubDir) ? fs.readdirSync(pubDir) : [];
             assert.equal(markers.length, 1, 'only the posted branch gets a marker');
-        }, { directiveJson: minimalDirective() });
+        }, { directiveJson: minimalDirective() }));
     } finally {
+        fs.rmSync(emptyPathDir, { recursive: true, force: true });
         cleanupGhMock(mock);
     }
 });
