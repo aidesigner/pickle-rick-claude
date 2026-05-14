@@ -148,6 +148,7 @@ export const PATH_VERIFICATION_PROMPT_SECTION = `## Path Verification & Forward-
 1. **Paths** — Run \`git ls-files <path>\` in the working directory; empty output means the path is not tracked at HEAD.
 2. **Symbols** — Verify the symbol is defined or exported at HEAD via \`grep -n '<symbol>' <files>\` or \`git grep -n '<symbol>'\`. Stdlib/external-package APIs (\`Promise.all\`, \`fs.readFileSync\`, \`process.exit\`) must NEVER be backticked because the readiness contract resolver treats them as in-repo refs and reports false positives.
 3. **Forward-created artifacts** — If a path does not exist at HEAD and is created by THIS bundle (introduced in a sibling ticket), mark it as (forward-created) with a sibling-ticket reference, then annotate per R-RTRC-7 annotation schema:
+   For any path listed under \`Implementation Details > Files to modify/create\` that does not exist at HEAD, append the canonical forward-reference annotation immediately after the backticked path as either \`(forward-created)\` or \`(created by ticket <hash>)\`. Write it as \`\\\`path/to/file.ts\\\` (forward-created)\` or \`\\\`path/to/file.ts\\\` (created by ticket <hash>)\`; the annotation stays OUTSIDE the backticks and is separated by exactly one ASCII space.
    - Format: \`\\\`path/to/file.ts\\\` (created by ticket <8-char-hash-or-ticket-dir-basename)\` — annotation OUTSIDE backticks, separated by **exactly one ASCII space** (no-space, two-space, or tab separators emit \`annotation-format-error\`).
    - \`(introduced by ticket <hash>)\` is the equivalent annotation for symbols.
    - Hash format: 8-char short SHA OR ticket-dir basename (both 8-char alphanumerics; resolver accepts either).
@@ -1015,11 +1016,32 @@ function composedPrdPaths(frontmatter) {
 function resolvePeerPrdPath(parentPrdPath, peerPath) {
     if (path.isAbsolute(peerPath) && fs.existsSync(peerPath))
         return peerPath;
-    const candidates = [
-        path.resolve(path.dirname(parentPrdPath), peerPath),
-        path.resolve(process.cwd(), peerPath),
-    ];
+    const candidates = [path.resolve(path.dirname(parentPrdPath), peerPath)];
     return candidates.find((candidate) => fs.existsSync(candidate));
+}
+function findRepoRoot(startDir) {
+    let dir = startDir;
+    for (;;) {
+        if (fs.existsSync(path.join(dir, '.git')))
+            return dir;
+        const parent = path.dirname(dir);
+        if (parent === dir)
+            return startDir;
+        dir = parent;
+    }
+}
+function toPosixPath(filePath) {
+    return filePath.split(path.sep).join('/');
+}
+function normalizeResolvedPeerPrdPath(parentPrdPath, resolvedPath) {
+    const repoRoot = findRepoRoot(path.dirname(parentPrdPath));
+    const relative = path.relative(repoRoot, resolvedPath);
+    if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+        const fallback = path.basename(resolvedPath);
+        process.stderr.write(`[pickle-rick] source_prd path ${resolvedPath} is outside repo root ${repoRoot}; using basename ${fallback}.\n`);
+        return fallback;
+    }
+    return toPosixPath(relative);
 }
 function extractSourceRequirements(parentPrdPath) {
     if (!fs.existsSync(parentPrdPath))
@@ -1038,7 +1060,11 @@ function extractSourceRequirements(parentPrdPath) {
             if (heading)
                 section = heading[1].trim();
             for (const match of line.matchAll(/\bAC-[A-Z0-9-]+\b/g)) {
-                requirements.push({ sourcePrd: peerPath, sourceSection: section, requirementId: match[0] });
+                requirements.push({
+                    sourcePrd: normalizeResolvedPeerPrdPath(parentPrdPath, resolved),
+                    sourceSection: section,
+                    requirementId: match[0],
+                });
             }
         }
     }
@@ -1048,6 +1074,9 @@ function uniqueStrings(values) {
     return [...new Set(values.filter((value) => value.trim() !== ''))].sort();
 }
 export function enrichManifestTicketsFromSourcePrds(prdPath, tickets) {
+    if (!path.isAbsolute(prdPath)) {
+        throw new Error('enrichManifestTicketsFromSourcePrds requires absolute parentPrdPath');
+    }
     const byRequirement = new Map();
     for (const requirement of extractSourceRequirements(prdPath)) {
         const existing = byRequirement.get(requirement.requirementId) ?? [];

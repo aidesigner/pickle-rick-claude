@@ -1267,11 +1267,35 @@ interface SourceRequirement {
 
 function resolvePeerPrdPath(parentPrdPath: string, peerPath: string): string | undefined {
   if (path.isAbsolute(peerPath) && fs.existsSync(peerPath)) return peerPath;
-  const candidates = [
-    path.resolve(path.dirname(parentPrdPath), peerPath),
-    path.resolve(process.cwd(), peerPath),
-  ];
+  const candidates = [path.resolve(path.dirname(parentPrdPath), peerPath)];
   return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+function findRepoRoot(startDir: string): string {
+  let dir = startDir;
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return startDir;
+    dir = parent;
+  }
+}
+
+function toPosixPath(filePath: string): string {
+  return filePath.split(path.sep).join('/');
+}
+
+function normalizeResolvedPeerPrdPath(parentPrdPath: string, resolvedPath: string): string {
+  const repoRoot = findRepoRoot(path.dirname(parentPrdPath));
+  const relative = path.relative(repoRoot, resolvedPath);
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    const fallback = path.basename(resolvedPath);
+    process.stderr.write(
+      `[pickle-rick] source_prd path ${resolvedPath} is outside repo root ${repoRoot}; using basename ${fallback}.\n`
+    );
+    return fallback;
+  }
+  return toPosixPath(relative);
 }
 
 function extractSourceRequirements(parentPrdPath: string): SourceRequirement[] {
@@ -1288,7 +1312,11 @@ function extractSourceRequirements(parentPrdPath: string): SourceRequirement[] {
       const heading = /^#{1,6}\s+(.+?)\s*$/.exec(line);
       if (heading) section = heading[1].trim();
       for (const match of line.matchAll(/\bAC-[A-Z0-9-]+\b/g)) {
-        requirements.push({ sourcePrd: peerPath, sourceSection: section, requirementId: match[0] });
+        requirements.push({
+          sourcePrd: normalizeResolvedPeerPrdPath(parentPrdPath, resolved),
+          sourceSection: section,
+          requirementId: match[0],
+        });
       }
     }
   }
@@ -1300,6 +1328,9 @@ function uniqueStrings(values: string[]): string[] {
 }
 
 export function enrichManifestTicketsFromSourcePrds(prdPath: string, tickets: RefinementTicketManifestEntry[]): RefinementTicketManifestEntry[] {
+  if (!path.isAbsolute(prdPath)) {
+    throw new Error('enrichManifestTicketsFromSourcePrds requires absolute parentPrdPath');
+  }
   const byRequirement = new Map<string, SourceRequirement[]>();
   for (const requirement of extractSourceRequirements(prdPath)) {
     const existing = byRequirement.get(requirement.requirementId) ?? [];
