@@ -6,6 +6,8 @@ import { extractTrapDoorsSection } from './trap-doors-section.js';
 
 export interface CitadelContext {
   projectRoot: string;
+  claudeFiles?: string[];
+  testFiles?: string[];
 }
 
 export interface AnalyzerResult {
@@ -20,16 +22,25 @@ export const ENFORCE_REF_RE =
   /(?<=ENFORCE:\s*)((?:[`]?[\w./*-]+\.(?:test\.js|sh)[`]?(?:#[\w_-]+)?(?:,\s*)?)+)/g;
 
 export function auditTrapDoorCoverage(diff: DiffSummary): TrapDoorCoverageResult {
-  return runT6TrapDoorCoverage({ projectRoot: diff.repoRoot });
+  return runT6TrapDoorCoverage({
+    projectRoot: diff.repoRoot,
+    claudeFiles: diff.claudeFiles,
+    testFiles: diff.changedFiles
+      .filter((file) => file.kind === 'test')
+      .map((file) => file.path),
+  });
 }
 
 export function runT6TrapDoorCoverage(context: CitadelContext): AnalyzerResult {
   const { projectRoot } = context;
   const findings: CitadelFinding[] = [];
-  const claudeFiles = collectClaudeMdFiles(projectRoot);
+  const allClaudeFiles = collectClaudeMdFiles(projectRoot);
+  const scopedClaudeFiles = new Set((context.claudeFiles ?? []).map(normalizeRelativePath));
+  const scopedTestFiles = new Set((context.testFiles ?? []).map(normalizeRelativePath));
+  const hasScope = scopedClaudeFiles.size > 0 || scopedTestFiles.size > 0;
   const referencedFiles = new Set<string>();
 
-  for (const claudeFile of claudeFiles) {
+  for (const claudeFile of allClaudeFiles) {
     let content: string;
     try {
       content = readFileSync(claudeFile, 'utf-8');
@@ -40,16 +51,19 @@ export function runT6TrapDoorCoverage(context: CitadelContext): AnalyzerResult {
     const section = extractTrapDoorsSection(content);
     if (!section) continue;
 
-    const relClaude = path.relative(projectRoot, claudeFile);
+    const relClaude = normalizeRelativePath(path.relative(projectRoot, claudeFile));
+    const claudeInScope = !hasScope || scopedClaudeFiles.has(relClaude);
     let barePathWarned = false;
 
     for (const match of section.matchAll(new RegExp(ENFORCE_REF_RE.source, ENFORCE_REF_RE.flags))) {
       const refs = parseEnforceRefs(match[1]);
 
       for (const { filePath, anchor } of refs) {
-        referencedFiles.add(filePath);
+        const normalizedFilePath = normalizeRelativePath(filePath);
+        referencedFiles.add(normalizedFilePath);
+        const refInScope = !hasScope || claudeInScope || scopedTestFiles.has(normalizedFilePath);
 
-        if (!anchor && !barePathWarned) {
+        if (!anchor && !barePathWarned && claudeInScope) {
           findings.push({
             id: `trap-door-bare-path:${relClaude}`,
             severity: 'Low',
@@ -59,25 +73,27 @@ export function runT6TrapDoorCoverage(context: CitadelContext): AnalyzerResult {
           barePathWarned = true;
         }
 
-        const absPath = path.resolve(projectRoot, filePath);
+        const absPath = path.resolve(projectRoot, normalizedFilePath);
         if (!existsSync(absPath)) {
-          findings.push({
-            id: `orphan-enforce:${filePath}`,
-            severity: 'High',
-            message: `ENFORCE ref points to nonexistent file: ${filePath} (in ${relClaude})`,
-            file: relClaude,
-          });
+          if (refInScope) {
+            findings.push({
+              id: `orphan-enforce:${normalizedFilePath}`,
+              severity: 'High',
+              message: `ENFORCE ref points to nonexistent file: ${normalizedFilePath} (in ${relClaude})`,
+              file: relClaude,
+            });
+          }
           continue;
         }
 
         if (anchor) {
           const testContent = readFileSync(absPath, 'utf-8');
-          if (!hasTestCase(testContent, anchor)) {
+          if (refInScope && !hasTestCase(testContent, anchor)) {
             findings.push({
-              id: `orphan-test-case:${filePath}#${anchor}`,
+              id: `orphan-test-case:${normalizedFilePath}#${anchor}`,
               severity: 'High',
-              message: `ENFORCE anchor #${anchor} not found in ${filePath}`,
-              file: filePath,
+              message: `ENFORCE anchor #${anchor} not found in ${normalizedFilePath}`,
+              file: normalizedFilePath,
             });
           }
         }
@@ -85,8 +101,12 @@ export function runT6TrapDoorCoverage(context: CitadelContext): AnalyzerResult {
     }
   }
 
-  for (const absTestFile of collectTestFiles(projectRoot)) {
-    const relPath = path.relative(projectRoot, absTestFile);
+  const scopedTestCandidates = hasScope
+    ? [...scopedTestFiles].map((filePath) => path.resolve(projectRoot, filePath))
+    : collectTestFiles(projectRoot);
+
+  for (const absTestFile of scopedTestCandidates) {
+    const relPath = normalizeRelativePath(path.relative(projectRoot, absTestFile));
     if (!referencedFiles.has(relPath)) {
       findings.push({
         id: `orphan-test-file:${relPath}`,
@@ -161,4 +181,8 @@ function walkForTestFiles(dir: string): string[] {
     // non-fatal
   }
   return results;
+}
+
+function normalizeRelativePath(filePath: string): string {
+  return filePath.split(path.sep).join('/');
 }

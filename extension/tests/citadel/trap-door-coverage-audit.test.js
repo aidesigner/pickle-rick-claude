@@ -156,6 +156,84 @@ describe('runT6TrapDoorCoverage', () => {
     assert.equal(high.length, 0, 'refs outside Trap Doors section do not produce orphan_enforce');
   });
 
+  test('diff-scoped audit only emits orphan-test-file for changed tests but still honors unchanged ENFORCE refs', async () => {
+    const projectRoot = path.join(tmpRoot, 'diff-scoped-orphans');
+    mkFixture(projectRoot, {
+      enforceLines: '- ENFORCE: extension/tests/referenced.test.js#kept-anchor\n',
+      testFiles: {
+        'extension/tests/referenced.test.js': "test('kept-anchor', () => {});\n",
+        'extension/tests/unreferenced-changed.test.js': "test('changed', () => {});\n",
+        'extension/tests/unreferenced-unchanged.test.js': "test('unchanged', () => {});\n",
+      },
+    });
+    const { auditTrapDoorCoverage } = await importAnalyzer();
+    const result = auditTrapDoorCoverage({
+      range: 'base..head',
+      base: 'base',
+      head: 'head',
+      repoRoot: projectRoot,
+      claudeFiles: [],
+      changedFiles: [
+        {
+          path: 'extension/tests/referenced.test.js',
+          status: 'M',
+          kind: 'test',
+          changedLines: [],
+          blame: [],
+        },
+        {
+          path: 'extension/tests/unreferenced-changed.test.js',
+          status: 'A',
+          kind: 'test',
+          changedLines: [],
+          blame: [],
+        },
+      ],
+    });
+
+    const orphanIds = result.findings
+      .filter((f) => f.id.startsWith('orphan-test-file:'))
+      .map((f) => f.id)
+      .sort();
+    assert.deepEqual(orphanIds, [
+      'orphan-test-file:extension/tests/unreferenced-changed.test.js',
+    ]);
+  });
+
+  test('diff-scoped audit still emits orphan-test-case when a changed test breaks an unchanged ENFORCE anchor', async () => {
+    const projectRoot = path.join(tmpRoot, 'diff-scoped-anchor-break');
+    mkFixture(projectRoot, {
+      enforceLines: '- ENFORCE: extension/tests/referenced.test.js#kept-anchor\n',
+      testFiles: {
+        'extension/tests/referenced.test.js': "test('different-anchor', () => {});\n",
+      },
+    });
+    const { auditTrapDoorCoverage } = await importAnalyzer();
+    const result = auditTrapDoorCoverage({
+      range: 'base..head',
+      base: 'base',
+      head: 'head',
+      repoRoot: projectRoot,
+      claudeFiles: [],
+      changedFiles: [
+        {
+          path: 'extension/tests/referenced.test.js',
+          status: 'M',
+          kind: 'test',
+          changedLines: [],
+          blame: [],
+        },
+      ],
+    });
+
+    const highIds = result.findings
+      .filter((f) => f.severity === 'High')
+      .map((f) => f.id);
+    assert.deepEqual(highIds, [
+      'orphan-test-case:extension/tests/referenced.test.js#kept-anchor',
+    ]);
+  });
+
   test('subsystem CLAUDE.md absence handled gracefully (no throw)', async () => {
     const projectRoot = path.join(tmpRoot, 'no-subsystem');
     mkFixture(projectRoot, { enforceLines: '' });
