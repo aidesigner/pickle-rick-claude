@@ -5,7 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXTENSION_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SRC_ROOT="$EXTENSION_ROOT/src"
 AUDIT_DIR="$EXTENSION_ROOT/audit"
-OUTPUT_FILE="$AUDIT_DIR/subsystem-claude-md-2026-05-08.json"
+DEFAULT_OUTPUT_DIR="${TMPDIR:-$AUDIT_DIR}"
+DEFAULT_OUTPUT_TEMPLATE="${DEFAULT_OUTPUT_DIR%/}/subsystem-claude-md.XXXXXX"
+OUTPUT_FILE="${OUTPUT_FILE_OVERRIDE:-$(mktemp "$DEFAULT_OUTPUT_TEMPLATE")}"
 SUBSYSTEMS=("bin" "hooks" "lib" "services" "types")
 STALE_THRESHOLD_DAYS=7
 

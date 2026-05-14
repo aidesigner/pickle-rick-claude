@@ -22,12 +22,53 @@ test('audit-subsystem-claude-md: script exists and is executable', () => {
 });
 
 test('audit-subsystem-claude-md: script runs cleanly (exit 0)', () => {
+  const committedBefore = fs.readFileSync(JSON_PATH, 'utf8');
   const result = spawnSync('bash', [SCRIPT_PATH], { encoding: 'utf8', timeout: 30000 });
-  assert.equal(
-    result.status,
-    0,
-    `Script exited with code ${result.status}.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
-  );
+  try {
+    assert.equal(
+      result.status,
+      0,
+      `Script exited with code ${result.status}.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+    );
+
+    const match = result.stdout.match(/\[audit-subsystem-claude-md\] wrote (.+)\n/);
+    assert.ok(match, `expected output path in stdout, got:\n${result.stdout}`);
+    const outputPath = match[1].trim();
+    assert.ok(fs.existsSync(outputPath), `script output not found: ${outputPath}`);
+    assert.notEqual(outputPath, JSON_PATH, 'default audit run must not overwrite the tracked report');
+    assert.equal(
+      fs.readFileSync(JSON_PATH, 'utf8'),
+      committedBefore,
+      'default audit run must leave the tracked report unchanged',
+    );
+  } finally {
+    const match = result.stdout.match(/\[audit-subsystem-claude-md\] wrote (.+)\n/);
+    const outputPath = match?.[1]?.trim();
+    if (outputPath && outputPath !== JSON_PATH && fs.existsSync(outputPath)) {
+      fs.rmSync(outputPath, { force: true });
+    }
+  }
+});
+
+test('audit-subsystem-claude-md: OUTPUT_FILE_OVERRIDE writes the requested report path', () => {
+  const overridePath = path.join(EXTENSION_ROOT, 'audit', `subsystem-claude-md.override.${process.pid}.json`);
+  try {
+    const result = spawnSync('bash', [SCRIPT_PATH], {
+      encoding: 'utf8',
+      timeout: 30000,
+      env: { ...process.env, OUTPUT_FILE_OVERRIDE: overridePath },
+    });
+    assert.equal(
+      result.status,
+      0,
+      `Script exited with code ${result.status}.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+    );
+    assert.ok(fs.existsSync(overridePath), `override output not found: ${overridePath}`);
+    const data = JSON.parse(fs.readFileSync(overridePath, 'utf8'));
+    assert.ok(Array.isArray(data), 'override JSON root must be an array');
+  } finally {
+    fs.rmSync(overridePath, { force: true });
+  }
 });
 
 test('audit-subsystem-claude-md: JSON report exists at committed path', () => {
