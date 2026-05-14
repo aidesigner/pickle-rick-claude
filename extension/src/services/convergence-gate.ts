@@ -101,6 +101,7 @@ const WORKSPACE_ROOT_CONTROL_FILES = new Set([
 
 const UNSAFE_TEST_SCRIPT_REGEX = /integration|e2e|golden|smoke|baseline|playwright|cypress|hardhat/i;
 const SAFE_TEST_RUNNER_REGEX = /(vitest|jest|node|mocha)/;
+const PACKAGE_MANAGER_RUN_RE = /^(npm|pnpm|yarn)(?:\s+run)?\s+([A-Za-z0-9:_-]+)\b/;
 
 function buildFingerprint(f: GateFailure): string {
   return `${f.file}::${f.ruleOrCode}::${f.occurrence_index}`;
@@ -723,17 +724,63 @@ async function canRunTestScript(check: GateCheck, projectType: ProjectType, dir:
   if (check !== 'tests' || !['pnpm', 'npm', 'yarn'].includes(projectType)) return true;
   const pkgJsonPath = path.join(dir, 'package.json');
   let scriptContent = '';
+  let scripts: Record<string, string> = {};
   try {
     const raw = await fs.promises.readFile(pkgJsonPath, 'utf-8');
-    scriptContent = (JSON.parse(raw) as { scripts?: { test?: string } }).scripts?.test ?? '';
+    scripts = (JSON.parse(raw) as { scripts?: Record<string, string> }).scripts ?? {};
+    scriptContent = scripts.test ?? '';
   } catch {
     // file absent or unreadable — leave scriptContent empty
   }
-  if (UNSAFE_TEST_SCRIPT_REGEX.test(scriptContent)) {
-    emit('gate_unsafe_test_command_blocked', { script: scriptContent });
+
+  const leafCommands = resolveDelegatedScriptLeaves('test', scripts);
+  const commandsToInspect = leafCommands.length > 0 ? leafCommands : [scriptContent].filter((value) => value.length > 0);
+  const unsafeLeaf = commandsToInspect.find((command) => UNSAFE_TEST_SCRIPT_REGEX.test(command));
+  if (unsafeLeaf) {
+    emit('gate_unsafe_test_command_blocked', { script: scriptContent, leaf_script: unsafeLeaf });
     return false;
   }
-  return SAFE_TEST_RUNNER_REGEX.test(scriptContent);
+  return commandsToInspect.some((command) => SAFE_TEST_RUNNER_REGEX.test(command));
+}
+
+function splitScriptSegments(script: string): string[] {
+  return script
+    .split(/\s*(?:&&|\|\||;)\s*/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+}
+
+function delegatedScriptName(segment: string): string | null {
+  const match = segment.match(PACKAGE_MANAGER_RUN_RE);
+  return match?.[2] ?? null;
+}
+
+function resolveDelegatedScriptLeaves(
+  scriptName: string,
+  scripts: Record<string, string>,
+  seen = new Set<string>(),
+): string[] {
+  if (seen.has(scriptName)) return [];
+  const script = scripts[scriptName];
+  if (typeof script !== 'string' || script.trim().length === 0) return [];
+
+  const nextSeen = new Set(seen);
+  nextSeen.add(scriptName);
+  const leaves: string[] = [];
+
+  for (const segment of splitScriptSegments(script)) {
+    const delegatedName = delegatedScriptName(segment);
+    if (delegatedName && delegatedName !== scriptName && scripts[delegatedName]) {
+      const nestedLeaves = resolveDelegatedScriptLeaves(delegatedName, scripts, nextSeen);
+      if (nestedLeaves.length > 0) {
+        leaves.push(...nestedLeaves);
+        continue;
+      }
+    }
+    leaves.push(segment);
+  }
+
+  return leaves;
 }
 
 async function runGateCheck(
