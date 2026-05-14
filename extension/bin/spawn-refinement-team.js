@@ -1050,29 +1050,49 @@ function normalizeResolvedPeerPrdPath(parentPrdPath, resolvedPath) {
 function extractSourceRequirements(parentPrdPath) {
     if (!fs.existsSync(parentPrdPath))
         return [];
-    const parentContent = fs.readFileSync(parentPrdPath, 'utf-8');
-    const peerPaths = peerPrdDeferredPaths(parseFrontmatter(parentContent));
-    const requirements = [];
-    for (const peerPath of peerPaths) {
-        const resolved = resolvePeerPrdPath(parentPrdPath, peerPath);
-        if (!resolved)
-            continue;
-        const lines = fs.readFileSync(resolved, 'utf-8').split(/\r?\n/);
+    const requirementsById = new Map();
+    const visited = new Set();
+    const visitPrd = (resolvedPath) => {
+        const canonicalPath = path.resolve(resolvedPath);
+        if (visited.has(canonicalPath) || !fs.existsSync(canonicalPath))
+            return;
+        visited.add(canonicalPath);
+        const content = fs.readFileSync(canonicalPath, 'utf-8');
+        const frontmatter = parseFrontmatter(content);
+        const lines = content.split(/\r?\n/);
         let section = '';
         for (const line of lines) {
             const heading = /^#{1,6}\s+(.+?)\s*$/.exec(line);
             if (heading)
                 section = heading[1].trim();
             for (const match of line.matchAll(/\bAC-[A-Z0-9-]+\b/g)) {
-                requirements.push({
-                    sourcePrd: normalizeResolvedPeerPrdPath(parentPrdPath, resolved),
+                if (requirementsById.has(match[0]))
+                    continue;
+                requirementsById.set(match[0], {
+                    sourcePrd: normalizeResolvedPeerPrdPath(parentPrdPath, canonicalPath),
                     sourceSection: section,
                     requirementId: match[0],
                 });
             }
         }
+        for (const composedPath of composedPrdPaths(frontmatter)) {
+            const resolvedCompose = resolvePeerPrdPath(canonicalPath, composedPath);
+            if (resolvedCompose)
+                visitPrd(resolvedCompose);
+        }
+    };
+    const parentContent = fs.readFileSync(parentPrdPath, 'utf-8');
+    const parentFrontmatter = parseFrontmatter(parentContent);
+    const sourcePrdPaths = uniqueStrings([
+        ...peerPrdDeferredPaths(parentFrontmatter),
+        ...composedPrdPaths(parentFrontmatter),
+    ]);
+    for (const sourcePrdPath of sourcePrdPaths) {
+        const resolved = resolvePeerPrdPath(parentPrdPath, sourcePrdPath);
+        if (resolved)
+            visitPrd(resolved);
     }
-    return requirements;
+    return [...requirementsById.values()];
 }
 function uniqueStrings(values) {
     return [...new Set(values.filter((value) => value.trim() !== ''))].sort();

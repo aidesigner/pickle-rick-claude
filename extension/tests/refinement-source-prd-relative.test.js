@@ -166,6 +166,83 @@ test('spawn-refinement-team: nested bundle PRDs still resolve repo-root-relative
   }
 });
 
+test('spawn-refinement-team: composed source PRDs propagate nested AC provenance into the manifest', () => {
+  const repoRoot = tmpDir('pickle-source-prd-compose-');
+  const refinementDir = path.join(repoRoot, 'refinement');
+  try {
+    fs.mkdirSync(refinementDir, { recursive: true });
+    const parentPrdPath = writeFile(repoRoot, 'bundle.md', [
+      '---',
+      'composes:',
+      '  - prds/source-beta.md',
+      '---',
+      '# Bundle',
+    ].join('\n'));
+    writeFile(repoRoot, 'prds/source-beta.md', [
+      '---',
+      'composes:',
+      '  - nested/source-gamma.md',
+      '---',
+      '# Source Beta',
+      '',
+      '## Beta Section',
+      '',
+      '- AC-BETA-01',
+    ].join('\n'));
+    writeFile(repoRoot, 'prds/nested/source-gamma.md', [
+      '# Source Gamma',
+      '',
+      '## Gamma Section',
+      '',
+      '- AC-GAMMA-01',
+    ].join('\n'));
+    fs.writeFileSync(path.join(refinementDir, 'analysis_requirements.md'), [
+      '## ac_shape_smells',
+      '```json',
+      JSON.stringify({
+        ac_shape_smells: [],
+        tickets: [
+          {
+            id: 'ticket-gamma',
+            title: 'Gamma',
+            source_ac_ids: ['AC-GAMMA-01'],
+          },
+        ],
+      }),
+      '```',
+      '',
+    ].join('\n'));
+
+    const manifest = buildRefinementManifest({
+      prdPath: parentPrdPath,
+      sessionDir: repoRoot,
+    }, {
+      refinementDir,
+      cyclesRequested: 1,
+      maxTurns: 1,
+      allCycleResults: [[]],
+      finalResults: [{ roleId: 'requirements', success: true, logPath: path.join(repoRoot, 'worker.log'), exitCode: 0, signal: null, cycle: 1 }],
+      allSuccess: true,
+    });
+
+    assert.deepEqual(manifest.tickets.map((ticket) => ({
+      id: ticket.id,
+      source_prd: ticket.source_prd,
+      source_section: ticket.source_section,
+      mapped_requirements: ticket.mapped_requirements,
+    })), [
+      {
+        id: 'ticket-gamma',
+        source_prd: 'prds/nested/source-gamma.md',
+        source_section: 'Gamma Section',
+        mapped_requirements: ['AC-GAMMA-01'],
+      },
+    ]);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('spawn-refinement-team: manifest enrichment normalizes analyst-provided source_prd values', () => {
   const { repoRoot, parentPrdPath } = createFixtureRepo('prds/bundles/bundle.md');
   const refinementDir = path.join(repoRoot, 'refinement');
