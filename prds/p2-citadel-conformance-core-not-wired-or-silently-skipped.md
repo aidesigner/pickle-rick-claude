@@ -1,6 +1,32 @@
 # PRD: Citadel PRD-Conformance Core (T3 / T4 / T5 / T6 / T8) Not Surfaced in Live Report
 
-**Status**: **Bug PRD (2026-05-09) — Priority bumped P2→P1 on 2026-05-14** after pipeline `2026-05-13-b54f2143` (R-TSPF + anatomy-park) demonstrated this is *load-bearing*, not nice-to-have. Citadel ran in 1.3s and produced 288 findings on that bundle (good — citadel-side analyzers shipped post-2026-05-09), but **anatomy-park subsequently shipped 6 CRITICAL + 21 HIGH fixes on the same diff** — including four explicit silent-gate-pass CRITICALs (`release tarball install payload false-green`, `delegated test gate false-green`, `verify-bundle unknown AC false-green`, `stale anatomy window recapture pass`). Three of those CRITICALs are exactly the class citadel's T3/T6/T8 sections were designed to catch. Anatomy-park caught what citadel should have. **Until R-CCNW wires conformance core into the gate chain (not just the report), every bundle relies on anatomy-park as the only effective conformance audit — and anatomy-park is a 3-4h phase, not a 1.3s phase.**
+**Status**: **CLOSED via verify-then-close 2026-05-14 PM** — HEAD audit (5 parallel Explore agents against `c8f64d88` / deployed `v1.74.0`) confirmed the wiring scope of this PRD is shipped:
+
+| AC | Status | Evidence |
+|---|---|---|
+| AC-01 | NOT-SHIPPED | Shell script absent; JS variant `extension/scripts/audit-citadel-wiring.js` exists instead. No `extension/audit/citadel-section-coverage-2026-05-09.md`. Optional cleanup. |
+| AC-02 | SHIPPED | All 4 analyzers (T3 ac-coverage-scorecard, T4 allowlist-dead-entry-detector, T5 endpoint-contract-conformance, T8 state-transition-audit) imported + invoked + sectioned at `extension/src/services/citadel/audit-runner.ts:15-145` |
+| AC-03 | SHIPPED | `extension/src/services/citadel/trap-door-coverage-audit.ts` exists, wired at `audit-runner.ts:18+110`, `trap_door_coverage` section emits at `:130/:144` |
+| AC-04 | SHIPPED | Composes-chain walker fully at `prd-parser.ts:433-555` with cycle detection + depth limit; mega-bundle yields 75 ACs + 26 R-codes (>60 target) |
+| AC-05 | PARTIAL | Skipped-emission contract works (`{findings:[], skipped:'project_shape_mismatch', reason}`) but uses `reason` field, not `detail` as PRD spec'd. Cosmetic field-naming drift. |
+| AC-06 | SHIPPED | `rule-set-invariant-audit.ts:383-426` parses INVARIANT/BREAKS/ENFORCE triples; populates `inventory` field |
+| AC-07 | SHIPPED | `extension/tests/citadel/citadel-analyzer-wiring.test.js` asserts ≥10 analyzer modules imported + 12 section keys present |
+| AC-08 | SHIPPED | Trap-door pin at `extension/CLAUDE.md:198` labeled `R-CCNW-2 analyzer wiring` (fulfills R-CCNW-8 intent) |
+| AC-09 | SHIPPED (static) | Sections-map shape correct: `ac_coverage`, `allowlist_dead`, `trap_door_coverage`, `state_transitions` all present; T3 emits Critical for zero-match ACs (`ac-coverage-scorecard.ts:267`) |
+
+**The semantic gap that motivated the P2→P1 promotion is a DIFFERENT bug.** The wired analyzers ran on b54f2143 and emitted 288 findings exit 0 — but zero referenced the 4 anatomy-park-fixed files (`release-gate.sh`, `verify-recapture-fired.js`, `verify-bundle.js`, `convergence-gate.ts`). The wiring works; the detection-coverage logic doesn't catch the silent-gate-pass class. **Successor PRD**: `prds/p1-citadel-detection-coverage-silent-gate-pass.md` (R-CCDC, filed 2026-05-14 PM) scopes the detection-coverage diagnosis and fix.
+
+Optional cleanup tickets that may be filed standalone (do not block R-CCDC):
+- AC-01 cleanup — port `audit-citadel-wiring.js` to `audit-citadel-section-coverage.sh` shape, commit diagnostic table to `extension/audit/`
+- AC-05 cleanup — rename `reason` → `detail` in `AnalyzerSkippedResult`, or accept current naming and update PRD spec to match
+
+The original problem statement and requirements below are preserved as historical context. **Do NOT use this PRD as a current-HEAD problem statement.**
+
+---
+
+## Historical problem statement (pre-2026-05-14 — preserved for reference)
+
+Originally filed 2026-05-09 and bumped P2→P1 on 2026-05-14 after pipeline `2026-05-13-b54f2143` (R-TSPF + anatomy-park) demonstrated this is *load-bearing*, not nice-to-have. Citadel ran in 1.3s and produced 288 findings on that bundle (good — citadel-side analyzers shipped post-2026-05-09), but **anatomy-park subsequently shipped 6 CRITICAL + 21 HIGH fixes on the same diff** — including four explicit silent-gate-pass CRITICALs (`release tarball install payload false-green`, `delegated test gate false-green`, `verify-bundle unknown AC false-green`, `stale anatomy window recapture pass`). Three of those CRITICALs are exactly the class citadel's T3/T6/T8 sections were designed to catch. Anatomy-park caught what citadel should have. Until R-CCNW wires conformance core into the gate chain (not just the report), every bundle relies on anatomy-park as the only effective conformance audit — and anatomy-park is a 3-4h phase, not a 1.3s phase.
 
 ## 2026-05-14 promotion evidence (b54f2143)
 
