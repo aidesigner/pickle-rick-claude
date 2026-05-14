@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getDataRoot } from '../extension/services/pickle-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const ARTIFACT_PATH = path.join(REPO_ROOT, 'bundle', 'section-c-still-needed.json');
-const DEFAULT_SESSIONS_DIR = path.join(os.homedir(), '.local', 'share', 'pickle-rick', 'sessions');
+const DEFAULT_SESSIONS_DIR = path.join(getDataRoot(), 'sessions');
 const LOG_NAMES = Object.freeze(['tmux-runner.log', 'pipeline-runner.log']);
 const BANNER = '◤ FEED TERMINATED ◢';
 

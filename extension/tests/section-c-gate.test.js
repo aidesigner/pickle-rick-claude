@@ -171,6 +171,34 @@ test('section-c-gate.default-session-selection prefers sessions with watcher log
   }
 });
 
+test('section-c-gate.default-session-selection honors PICKLE_DATA_ROOT override for session discovery', () => {
+  const fakeDataRoot = mkdtempSync(path.join(tmpdir(), 'section-c-data-root-'));
+  const sessionsDir = path.join(fakeDataRoot, 'sessions');
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const session = path.join(sessionsDir, '2026-05-12-custom-root');
+  mkdirSync(session);
+  writeFileSync(path.join(session, 'pipeline-runner.log'), 'phase handoff\niteration 5 starting\n');
+
+  const result = spawnSync(process.execPath, [CLI], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PICKLE_DATA_ROOT: fakeDataRoot,
+    },
+  });
+  const artifact = JSON.parse(readFileSync(ARTIFACT, 'utf8'));
+
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(artifact.still_needed, false);
+    assert.match(artifact.evidence, /iteration 5 starting/);
+  } finally {
+    rmSync(fakeDataRoot, { recursive: true, force: true });
+  }
+});
+
 test('section-c-gate.cli-guard rejects unknown arguments', () => {
   const result = spawnSync(process.execPath, [CLI, '--bogus'], {
     cwd: REPO_ROOT,
