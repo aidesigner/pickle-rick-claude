@@ -477,11 +477,39 @@ function extractRcodesFromMarkdown(content: string): RcodeEntry[] {
   return entries;
 }
 
+function mergeParsedPrd(target: ParsedPrd, source: ParsedPrd): void {
+  mergeUniqueByKey(target.decisions, source.decisions, (entry) => entry.id);
+  mergeUniqueByKey(target.acceptanceCriteria, source.acceptanceCriteria, (entry) => entry.id);
+  mergeUniqueByKey(target.endpoints, source.endpoints, (entry) => `${entry.method} ${entry.path}`);
+  mergeUniqueByKey(target.allowlistEntries, source.allowlistEntries, (entry) => `${entry.kind}:${entry.name}:${entry.value}`);
+  mergeUniqueByKey(
+    target.statusCodeRows,
+    source.statusCodeRows,
+    (entry) => `${entry.endpointMethod ?? ''} ${entry.endpointPath ?? ''} ${entry.statusCode} ${entry.errorMessage ?? ''}`,
+  );
+  mergeUniqueByKey(
+    target.transitionAuditRows,
+    source.transitionAuditRows,
+    (entry) => `${entry.transition}:${entry.auditAction}:${entry.expectedCallSite ?? ''}`,
+  );
+}
+
+function mergeUniqueByKey<T>(target: T[], source: T[], keyOf: (entry: T) => string): void {
+  const seen = new Set(target.map((entry) => keyOf(entry)));
+  for (const entry of source) {
+    const key = keyOf(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    target.push(entry);
+  }
+}
+
 function walkComposeChain(
   prdPath: string,
   repoRoot: string,
   depth: number,
   visited: Set<string>,
+  aggregate: ParsedPrd,
   composedRcodes: Map<string, RcodeEntry[]>,
 ): void {
   let content: string;
@@ -519,9 +547,10 @@ function walkComposeChain(
       const msg = err instanceof Error ? err.message : String(err);
       throw new ComposesError(`Failed to read composed PRD "${realPath}": ${msg}`);
     }
+    mergeParsedPrd(aggregate, parsePrdMarkdown(sourceContent));
     composedRcodes.set(realPath, extractRcodesFromMarkdown(sourceContent));
 
-    walkComposeChain(realPath, repoRoot, depth + 1, visited, composedRcodes);
+    walkComposeChain(realPath, repoRoot, depth + 1, visited, aggregate, composedRcodes);
   }
 }
 
@@ -535,6 +564,16 @@ export function parseWithComposes(prdPath: string, options: ParseWithComposesOpt
   const base = parsePrdFile(prdPath);
   const repoRoot = options.repoRoot ?? findRepoRoot(path.dirname(prdPath));
   const composedRcodes: Map<string, RcodeEntry[]> = new Map();
+  const aggregate: ParsedPrd = {
+    ...base,
+    decisions: [...base.decisions],
+    acceptanceCriteria: [...base.acceptanceCriteria],
+    endpoints: [...base.endpoints],
+    allowlistEntries: [...base.allowlistEntries],
+    statusCodeRows: [...base.statusCodeRows],
+    transitionAuditRows: [...base.transitionAuditRows],
+    composedRcodes,
+  };
 
   let selfReal: string;
   try {
@@ -545,7 +584,7 @@ export function parseWithComposes(prdPath: string, options: ParseWithComposesOpt
   }
   const visited = options.visited ?? new Set<string>([selfReal]);
 
-  walkComposeChain(prdPath, repoRoot, 0, visited, composedRcodes);
+  walkComposeChain(prdPath, repoRoot, 0, visited, aggregate, composedRcodes);
 
-  return { ...base, composedRcodes };
+  return aggregate;
 }

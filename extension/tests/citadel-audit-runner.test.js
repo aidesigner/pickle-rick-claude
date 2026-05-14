@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import {
   buildCitadelAuditReport,
   __setAnalyzerOverridesForTests,
@@ -245,5 +246,72 @@ describe('citadel audit-runner composes: wiring (ticket 98dc9bed)', () => {
     );
 
     fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  test('buildCitadelAuditReport consumes composed child AC and transition inputs', () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-runner-composed-inputs-'));
+    const run = (args, cwd) => execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
+
+    try {
+      run(['init'], tmpRoot);
+      run(['config', 'user.email', 't@example.com'], tmpRoot);
+      run(['config', 'user.name', 'T'], tmpRoot);
+      fs.mkdirSync(path.join(tmpRoot, 'prds'), { recursive: true });
+      fs.mkdirSync(path.join(tmpRoot, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(tmpRoot, 'prds', 'bundle.md'), '# baseline\n');
+      run(['add', '.'], tmpRoot);
+      run(['commit', '-m', 'baseline'], tmpRoot);
+
+      fs.writeFileSync(
+        path.join(tmpRoot, 'prds', 'child.md'),
+        [
+          '# Child',
+          '',
+          'AC-CHILD-1 child acceptance criterion.',
+          '',
+          '| Transition | Audit | Expected Call Site |',
+          '| child->done | logChildTransition | childRunner |',
+        ].join('\n'),
+      );
+      fs.writeFileSync(
+        path.join(tmpRoot, 'prds', 'bundle.md'),
+        [
+          '---',
+          'composes:',
+          '  - prds/child.md',
+          '---',
+          '# Bundle',
+        ].join('\n'),
+      );
+      fs.writeFileSync(
+        path.join(tmpRoot, 'src', 'child-runner.ts'),
+        [
+          'export function childRunner() {',
+          "  logChildTransition('child->done');",
+          '}',
+        ].join('\n'),
+      );
+      run(['add', '.'], tmpRoot);
+      run(['commit', '-m', 'feature'], tmpRoot);
+
+      const report = buildCitadelAuditReport({
+        prdPath: 'prds/bundle.md',
+        diffRange: 'HEAD~1..HEAD',
+        repoRoot: tmpRoot,
+      });
+
+      assert.equal(
+        report.sections.ac_coverage.rows.some((row) => row.id === 'AC-CHILD-1'),
+        true,
+        'composed child AC must reach ac_coverage',
+      );
+      assert.equal(
+        report.sections.state_transitions.rows.some((row) => row.auditAction === 'logChildTransition'),
+        true,
+        'composed child transition rows must reach state_transitions',
+      );
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
   });
 });

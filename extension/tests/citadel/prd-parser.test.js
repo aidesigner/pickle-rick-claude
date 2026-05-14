@@ -63,6 +63,40 @@ describe('parseWithComposes', () => {
     assert.ok(result.composedRcodes.get(cReal).some((r) => r.id === 'R-CHAIN-3'));
   });
 
+  test('composed child audit surfaces merge into the parsed bundle', async () => {
+    const { parseWithComposes } = await importParser();
+    writePrd(
+      tmpDir,
+      'merged/source.md',
+      [],
+      [
+        '# Source',
+        '',
+        'AC-CHILD-1 child acceptance criterion.',
+        '',
+        'VALID_ACTIONS = ["child_flag"]',
+        '',
+        '| Transition | Audit | Expected Call Site |',
+        '| child->done | logChildTransition | childRunner |',
+      ].join('\n'),
+    );
+    const bundlePath = writePrd(
+      tmpDir,
+      'merged/bundle.md',
+      ['merged/source.md'],
+      '# Bundle\n\nAC-ROOT-1 root acceptance criterion.\n',
+    );
+
+    const result = parseWithComposes(bundlePath, { repoRoot: tmpDir });
+
+    assert.deepEqual(
+      result.acceptanceCriteria.map((criterion) => criterion.id),
+      ['AC-ROOT-1', 'AC-CHILD-1'],
+    );
+    assert.equal(result.allowlistEntries.some((entry) => entry.kind === 'valid_action' && entry.value === 'child_flag'), true);
+    assert.equal(result.transitionAuditRows.some((row) => row.auditAction === 'logChildTransition'), true);
+  });
+
   test('cycle A→B→A → throws ComposesCycleError', async () => {
     const { parseWithComposes, ComposesCycleError } = await importParser();
     writePrd(tmpDir, 'cycle/a.md', ['cycle/b.md']);
