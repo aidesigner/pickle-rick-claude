@@ -495,7 +495,7 @@ function checkCrossDocNamingDrift(t, ctx) {
         ticket_id: t.id,
         ticket_path: t.relPath,
         defect_class: 'cross-doc-naming-drift',
-        severity: 'warning',
+        severity: 'info',
         evidence: `ticket cites \`${ticketPath}\` but \`${docFile}\` uses \`${docPath}\` (same basename, path differs)`,
         remediation_hint: 'align path references across documents to the canonical full path',
     }));
