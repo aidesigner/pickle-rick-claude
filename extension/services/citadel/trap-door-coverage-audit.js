@@ -36,9 +36,9 @@ export function runT6TrapDoorCoverage(context) {
         for (const match of section.matchAll(new RegExp(ENFORCE_REF_RE.source, ENFORCE_REF_RE.flags))) {
             const refs = parseEnforceRefs(match[1]);
             for (const { filePath, anchor } of refs) {
-                const normalizedFilePath = normalizeRelativePath(filePath);
-                referencedFiles.add(normalizedFilePath);
-                const refInScope = !hasScope || claudeInScope || scopedTestFiles.has(normalizedFilePath);
+                const { canonicalPath, absPath } = resolveEnforceRef(projectRoot, filePath);
+                referencedFiles.add(canonicalPath);
+                const refInScope = !hasScope || claudeInScope || scopedTestFiles.has(canonicalPath);
                 if (!anchor && !barePathWarned && claudeInScope) {
                     findings.push({
                         id: `trap-door-bare-path:${relClaude}`,
@@ -48,13 +48,12 @@ export function runT6TrapDoorCoverage(context) {
                     });
                     barePathWarned = true;
                 }
-                const absPath = path.resolve(projectRoot, normalizedFilePath);
                 if (!existsSync(absPath)) {
                     if (refInScope) {
                         findings.push({
-                            id: `orphan-enforce:${normalizedFilePath}`,
+                            id: `orphan-enforce:${canonicalPath}`,
                             severity: 'High',
-                            message: `ENFORCE ref points to nonexistent file: ${normalizedFilePath} (in ${relClaude})`,
+                            message: `ENFORCE ref points to nonexistent file: ${canonicalPath} (in ${relClaude})`,
                             file: relClaude,
                         });
                     }
@@ -64,10 +63,10 @@ export function runT6TrapDoorCoverage(context) {
                     const testContent = readFileSync(absPath, 'utf-8');
                     if (refInScope && !hasTestCase(testContent, anchor)) {
                         findings.push({
-                            id: `orphan-test-case:${normalizedFilePath}#${anchor}`,
+                            id: `orphan-test-case:${canonicalPath}#${anchor}`,
                             severity: 'High',
-                            message: `ENFORCE anchor #${anchor} not found in ${normalizedFilePath}`,
-                            file: normalizedFilePath,
+                            message: `ENFORCE anchor #${anchor} not found in ${canonicalPath}`,
+                            file: canonicalPath,
                         });
                     }
                 }
@@ -128,6 +127,18 @@ function parseEnforceRefs(raw) {
             return [{ filePath: cleaned }];
         return [{ filePath: cleaned.slice(0, hashIdx), anchor: cleaned.slice(hashIdx + 1) }];
     });
+}
+function resolveEnforceRef(projectRoot, filePath) {
+    const normalized = normalizeRelativePath(filePath);
+    const canonicalPath = normalized.startsWith('extension/')
+        ? normalized
+        : normalized.startsWith('tests/')
+            ? `extension/${normalized}`
+            : `extension/tests/${normalized}`;
+    return {
+        canonicalPath,
+        absPath: path.resolve(projectRoot, canonicalPath),
+    };
 }
 function hasTestCase(content, anchor) {
     const escaped = anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

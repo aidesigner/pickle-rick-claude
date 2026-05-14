@@ -139,6 +139,34 @@ describe('runT6TrapDoorCoverage', () => {
     assert.equal(low.length, 1, 'one LOW warning per CLAUDE.md regardless of bare-path ref count');
   });
 
+  test('subsystem CLAUDE bare ENFORCE refs resolve to extension/tests and do not emit false orphan findings', async () => {
+    const projectRoot = path.join(tmpRoot, 'subsystem-bare-ref');
+    mkFixture(projectRoot, {
+      testFiles: {
+        'extension/tests/backend-spawn.test.js': "test('cli-override', () => {});\n",
+      },
+    });
+    const subsystemClaudePath = path.join(projectRoot, 'extension', 'src', 'services', 'CLAUDE.md');
+    fs.mkdirSync(path.dirname(subsystemClaudePath), { recursive: true });
+    fs.writeFileSync(
+      subsystemClaudePath,
+      [
+        '## Trap Doors',
+        '',
+        '- `backend-spawn.ts` — INVARIANT: cli override wins. BREAKS: stale backend. ENFORCE: `backend-spawn.test.js#cli-override`.',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const { runT6TrapDoorCoverage } = await importAnalyzer();
+    const result = runT6TrapDoorCoverage({ projectRoot });
+    const highIds = result.findings.filter((f) => f.severity === 'High').map((f) => f.id);
+    const mediumIds = result.findings.filter((f) => f.severity === 'Medium').map((f) => f.id);
+    assert.deepEqual(highIds, []);
+    assert.deepEqual(mediumIds, []);
+  });
+
   test('ENFORCE refs outside ## Trap Doors section are ignored', async () => {
     const projectRoot = path.join(tmpRoot, 'outside-section');
     const claudeMd = [
