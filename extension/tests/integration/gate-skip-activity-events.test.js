@@ -12,6 +12,10 @@ const REPO_ROOT = path.resolve(__dirname, '../../..');
 const CHECK_READINESS_BIN = path.resolve(__dirname, '../../bin/check-readiness.js');
 const TMUX_RUNNER_BIN = path.resolve(__dirname, '../../bin/mux-runner.js');
 
+function assertIsoTimestamp(value, label) {
+  assert.match(value ?? '', /^\d{4}-\d{2}-\d{2}T/, `${label} should be an ISO timestamp`);
+}
+
 function tmpDir(prefix) {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
@@ -110,7 +114,8 @@ test('readiness skip path emits readiness_skipped with matching reason', () => {
     const event = events.find((entry) => entry.event === 'readiness_skipped');
     assert.ok(event, `expected readiness_skipped event, got ${JSON.stringify(events)}`);
     assert.equal(event.gate_payload?.reason, reason);
-    assert.match(event.gate_payload?.timestamp ?? '', /^\d{4}-\d{2}-\d{2}T/);
+    assertIsoTimestamp(event.ts, 'readiness_skipped.ts');
+    assertIsoTimestamp(event.gate_payload?.timestamp, 'readiness_skipped.gate_payload.timestamp');
   } finally {
     fs.rmSync(sessionDir, { recursive: true, force: true });
     fs.rmSync(dataRoot, { recursive: true, force: true });
@@ -138,7 +143,8 @@ test('mux-runner skip flags emit ticket_audit_bypassed on the audit bypass path'
     assert.ok(auditEvent, `expected ticket_audit_bypassed event, got ${JSON.stringify(events)}`);
     assert.equal(readinessEvent.gate_payload?.reason, 'preflight manually reviewed');
     assert.equal(auditEvent.reason, 'historical drift acknowledged');
-    assert.match(auditEvent.ts ?? '', /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(auditEvent.gate_payload, undefined);
+    assertIsoTimestamp(auditEvent.ts, 'ticket_audit_bypassed.ts');
   } finally {
     fs.rmSync(sessionDir, { recursive: true, force: true });
     fs.rmSync(dataRoot, { recursive: true, force: true });
