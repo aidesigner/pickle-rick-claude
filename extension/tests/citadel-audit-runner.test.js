@@ -228,4 +228,22 @@ describe('citadel audit-runner composes: wiring (ticket 98dc9bed)', () => {
       );
     }
   });
+
+  test('buildCitadelAuditReport rethrows malformed composes: paths instead of silently auditing the wrong graph', () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-runner-bad-composes-'));
+    fs.mkdirSync(path.join(tmpRoot, '.git'), { recursive: true });
+    const badComposer = path.join(tmpRoot, 'composer.md');
+    fs.writeFileSync(badComposer, '---\ncomposes:\n  - ../escape.md\n---\n# Composer\n');
+
+    assert.throws(
+      () => buildCitadelAuditReport({
+        prdPath: path.relative(tmpRoot, badComposer),
+        diffRange: 'HEAD..HEAD',
+        repoRoot: tmpRoot,
+      }),
+      /Invalid composes: path "\.\.\/escape\.md"/,
+    );
+
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
 });

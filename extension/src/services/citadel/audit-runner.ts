@@ -10,7 +10,7 @@ import { auditRuleSetInvariants } from './rule-set-invariant-audit.js';
 import { auditDiffHygiene } from './diff-hygiene.js';
 import { reconcileDivergences, DivergenceDecisionRequired } from './divergence-reconciliation.js';
 import { CitadelFinding, CitadelJsonReport, CitadelReportHeader, CitadelRunResult, CitadelSeverity, Reporter } from './reporter.js';
-import { parsePrdMarkdown, parseWithComposes, ComposesError } from './prd-parser.js';
+import { parseWithComposes } from './prd-parser.js';
 import { detectProjectShapes, ProjectShape } from './project-shape.js';
 import { buildAcCoverageScorecard } from './ac-coverage-scorecard.js';
 import { detectAllowlistDeadEntries } from './allowlist-dead-entry-detector.js';
@@ -76,17 +76,10 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
   const repoRoot = path.resolve(options.repoRoot ?? process.cwd());
   const prdPath = path.resolve(repoRoot, options.prdPath);
   const prdMarkdown = readFileSync(prdPath, 'utf-8');
-  // ticket 98dc9bed F3.1: walk composes: chain so parsedPrd.composedRcodes
-  // is populated for downstream analyzers. Failure on malformed composes:
-  // paths falls through to the no-compose parse so audit-runner does not
-  // regress on PRDs without composes: front-matter.
-  let parsedPrd;
-  try {
-    parsedPrd = parseWithComposes(prdPath, { repoRoot });
-  } catch (err) {
-    if (!(err instanceof ComposesError)) throw err;
-    parsedPrd = parsePrdMarkdown(prdMarkdown);
-  }
+  // ticket 98dc9bed F3.1: parseWithComposes already handles PRDs without a
+  // composes: front-matter block. Swallowing ComposesError here masks malformed
+  // compose graphs and audits the wrong PRD scope.
+  const parsedPrd = parseWithComposes(prdPath, { repoRoot });
   const diff = walkDiff(options.diffRange, { repoRoot });
   const projectShapes = detectProjectShapes(repoRoot);
   const siblingAuth = auditSiblingAuthPreconditions(diff);
