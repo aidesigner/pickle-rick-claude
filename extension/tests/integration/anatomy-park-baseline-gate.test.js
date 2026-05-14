@@ -604,6 +604,45 @@ test('stale baseline refresh: matching stale failure is discarded before the nex
   );
 });
 
+test('fresh recaptured baseline: iteration-age check uses captured_iteration instead of absolute loop count', async () => {
+  const workingDir = makeGitRepo('ap-gate-fresh-age-repo-');
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-fresh-age-session-'));
+  writeGateFixtureRepo(workingDir);
+  commitAll(workingDir, 'initial clean state');
+
+  await ensurePerIterationGateBaseline({
+    currentMv: makeMv(),
+    workingDir,
+    sessionDir,
+    enabledFiles: ['anatomy-park.json'],
+    currentIteration: 30,
+    baselineMaxAgeIterations: 30,
+    baselineMaxAgeSeconds: 14_400,
+    log: () => {},
+  });
+
+  const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
+  const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf-8'));
+  assert.equal(baseline.captured_iteration, 30, 'baseline recapture must persist the capture iteration');
+
+  const logs = [];
+  await ensurePerIterationGateBaseline({
+    currentMv: makeMv(),
+    workingDir,
+    sessionDir,
+    enabledFiles: ['anatomy-park.json'],
+    currentIteration: 31,
+    baselineMaxAgeIterations: 30,
+    baselineMaxAgeSeconds: 14_400,
+    log: (msg) => logs.push(msg),
+  });
+
+  assert.ok(
+    !logs.some((msg) => msg.includes('refreshing per-iteration gate baseline')),
+    `freshly recaptured baseline must remain fresh on the next loop, got: ${JSON.stringify(logs)}`,
+  );
+});
+
 test('worker convergence: converged=true is deferred when the per-iteration gate leaves regressions behind', async () => {
   const workingDir = makeGitRepo('ap-gate-worker-converged-repo-');
   const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-worker-converged-session-'));

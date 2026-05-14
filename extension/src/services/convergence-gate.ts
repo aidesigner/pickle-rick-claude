@@ -128,13 +128,20 @@ function validateBaselineStructure(data: unknown): data is GateBaselineFile {
   if (!data || typeof data !== 'object') return false;
   const d = data as Record<string, unknown>;
   const projectType = d['project_type'];
+  const capturedIteration = d['captured_iteration'];
   const projectTypeValid =
     projectType === null ||
     (typeof projectType === 'string' &&
       ['pnpm', 'npm', 'yarn', 'cargo', 'go', 'bun'].includes(projectType));
+  const capturedIterationValid =
+    capturedIteration === undefined ||
+    (typeof capturedIteration === 'number' &&
+      Number.isInteger(capturedIteration) &&
+      capturedIteration >= 0);
   return (
     d['schema_version'] === 1 &&
     typeof d['captured_at'] === 'string' &&
+    capturedIterationValid &&
     typeof d['working_dir'] === 'string' &&
     projectTypeValid &&
     Array.isArray(d['checks']) &&
@@ -198,9 +205,14 @@ export function assertBaselineFresh(
       `Baseline at ${baselinePath} is ${Math.round(ageMs / 1000)}s old (max ${opts.max_age_seconds}s)`
     );
   }
-  if (opts.current_iteration >= opts.max_age_iterations) {
+  const baseline = loadBaselineFile(baselinePath);
+  const capturedIteration = baseline.captured_iteration;
+  const iterationAge = typeof capturedIteration === 'number'
+    ? opts.current_iteration - capturedIteration
+    : opts.current_iteration;
+  if (iterationAge >= opts.max_age_iterations) {
     throw new BaselineStaleError(
-      `current_iteration (${opts.current_iteration}) >= max_age_iterations (${opts.max_age_iterations})`
+      `baseline iteration age (${iterationAge}) >= max_age_iterations (${opts.max_age_iterations})`
     );
   }
 }
@@ -211,6 +223,7 @@ export interface RunGateOpts {
   scope: 'full' | 'changed';
   checks: ('typecheck' | 'lint' | 'tests')[];
   baselinePath?: string;
+  baselineIteration?: number;
   since?: string;
   allowedPaths?: string[];
   /** When true, gate skips (green) if the working tree is dirty. P0.6b. */
@@ -819,6 +832,7 @@ async function writeEmptyBaselineFile(
     const baseline: GateBaselineFile = {
       schema_version: 1,
       captured_at: new Date().toISOString(),
+      captured_iteration: opts.baselineIteration,
       working_dir: opts.workingDir,
       project_type: projectType as GateBaselineFile['project_type'],
       checks: [],
@@ -851,6 +865,7 @@ async function writeBaselineFile(
     const baseline: GateBaselineFile = {
       schema_version: 1,
       captured_at: new Date().toISOString(),
+      captured_iteration: opts.baselineIteration,
       working_dir: opts.workingDir,
       project_type: projectType as GateBaselineFile['project_type'],
       checks: opts.checks,

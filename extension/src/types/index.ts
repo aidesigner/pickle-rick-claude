@@ -885,6 +885,7 @@ export interface GateResult {
 export interface GateBaselineFile {
   schema_version: 1;
   captured_at: string;
+  captured_iteration?: number;
   working_dir: string;
   project_type: 'pnpm' | 'npm' | 'yarn' | 'cargo' | 'go' | 'bun' | null;
   checks: ('typecheck' | 'lint' | 'tests')[];

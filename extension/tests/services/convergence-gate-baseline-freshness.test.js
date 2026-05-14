@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { assertBaselineFresh, BaselineMissingError, BaselineStaleError } from '../../services/convergence-gate.js';
 
-function writeMinimalBaseline(filePath) {
+function writeMinimalBaseline(filePath, overrides = {}) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify({
     schema_version: 1,
@@ -15,6 +15,7 @@ function writeMinimalBaseline(filePath) {
     project_type: 'npm',
     checks: [],
     failures: [],
+    ...overrides,
   }));
 }
 
@@ -59,11 +60,25 @@ test('assertBaselineFresh: throws BaselineStaleError when current_iteration >= m
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-fresh-iter-'));
   try {
     const baselinePath = path.join(dir, 'baseline.json');
-    writeMinimalBaseline(baselinePath);
+    writeMinimalBaseline(baselinePath, { captured_iteration: 0 });
 
     assert.throws(
       () => assertBaselineFresh(baselinePath, { max_age_iterations: 30, max_age_seconds: 14400, current_iteration: 30 }),
       (err) => err instanceof BaselineStaleError
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('assertBaselineFresh: uses captured_iteration age for fresh baselines after high iteration counts', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-fresh-captured-iter-'));
+  try {
+    const baselinePath = path.join(dir, 'baseline.json');
+    writeMinimalBaseline(baselinePath, { captured_iteration: 30 });
+
+    assert.doesNotThrow(() =>
+      assertBaselineFresh(baselinePath, { max_age_iterations: 30, max_age_seconds: 14400, current_iteration: 31 })
     );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

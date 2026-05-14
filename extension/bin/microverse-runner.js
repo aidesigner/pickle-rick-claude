@@ -255,6 +255,7 @@ async function capturePerIterationGateBaseline(opts) {
         mode: 'baseline',
         scope: 'full',
         baselinePath: opts.baselinePath,
+        baselineIteration: opts.currentIteration,
         allowedPaths: opts.currentMv.allowed_paths,
         checks: [...PER_ITERATION_GATE_CHECKS],
         onEvent: (event, data) => opts.deps.logActivityFn({
@@ -310,6 +311,7 @@ async function runChangedPerIterationGate(opts) {
                 workingDir: opts.workingDir,
                 sessionDir: opts.sessionDir,
                 baselinePath: opts.baselinePath,
+                currentIteration: opts.iteration,
                 log: opts.log,
                 deps: opts.deps,
                 failureEvent: 'baseline_recapture_failed',
@@ -466,6 +468,7 @@ export async function ensurePerIterationGateBaseline(opts) {
             workingDir,
             sessionDir,
             baselinePath,
+            currentIteration,
             log,
             deps: {
                 runGateFn: _deps?.runGateFn ?? runGate,

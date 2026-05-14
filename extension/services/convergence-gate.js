@@ -111,11 +111,17 @@ function validateBaselineStructure(data) {
         return false;
     const d = data;
     const projectType = d['project_type'];
+    const capturedIteration = d['captured_iteration'];
     const projectTypeValid = projectType === null ||
         (typeof projectType === 'string' &&
             ['pnpm', 'npm', 'yarn', 'cargo', 'go', 'bun'].includes(projectType));
+    const capturedIterationValid = capturedIteration === undefined ||
+        (typeof capturedIteration === 'number' &&
+            Number.isInteger(capturedIteration) &&
+            capturedIteration >= 0);
     return (d['schema_version'] === 1 &&
         typeof d['captured_at'] === 'string' &&
+        capturedIterationValid &&
         typeof d['working_dir'] === 'string' &&
         projectTypeValid &&
         Array.isArray(d['checks']) &&
@@ -167,8 +173,13 @@ export function assertBaselineFresh(baselinePath, opts) {
     if (ageMs > opts.max_age_seconds * 1000) {
         throw new BaselineStaleError(`Baseline at ${baselinePath} is ${Math.round(ageMs / 1000)}s old (max ${opts.max_age_seconds}s)`);
     }
-    if (opts.current_iteration >= opts.max_age_iterations) {
-        throw new BaselineStaleError(`current_iteration (${opts.current_iteration}) >= max_age_iterations (${opts.max_age_iterations})`);
+    const baseline = loadBaselineFile(baselinePath);
+    const capturedIteration = baseline.captured_iteration;
+    const iterationAge = typeof capturedIteration === 'number'
+        ? opts.current_iteration - capturedIteration
+        : opts.current_iteration;
+    if (iterationAge >= opts.max_age_iterations) {
+        throw new BaselineStaleError(`baseline iteration age (${iterationAge}) >= max_age_iterations (${opts.max_age_iterations})`);
     }
 }
 export function detectProjectType(workingDir) {
@@ -686,6 +697,7 @@ async function writeEmptyBaselineFile(baselinePath, opts, projectType, emit) {
         const baseline = {
             schema_version: 1,
             captured_at: new Date().toISOString(),
+            captured_iteration: opts.baselineIteration,
             working_dir: opts.workingDir,
             project_type: projectType,
             checks: [],
@@ -709,6 +721,7 @@ async function writeBaselineFile(baselinePath, opts, projectType, withIndices, e
         const baseline = {
             schema_version: 1,
             captured_at: new Date().toISOString(),
+            captured_iteration: opts.baselineIteration,
             working_dir: opts.workingDir,
             project_type: projectType,
             checks: opts.checks,
