@@ -139,6 +139,28 @@ test('log-activity: omitting --gate-payload preserves existing behavior (no gate
   assert.equal('gate_payload' in events[0], false, 'gate_payload should not be present when flag omitted');
 });
 
+test('log-activity: required gate_payload event exits 1 when flag is omitted', () => {
+  const { status, stderr, events } = runCapture([
+    'pkgjson_revert_forensic_captured',
+    'capture title',
+  ]);
+  assert.equal(status, 1);
+  assert.equal(events.length, 0);
+  assert.match(stderr, /requires CLI-backed fields: gate_payload/);
+});
+
+test('log-activity: rejects gate_payload missing schema-required keys', () => {
+  const { status, stderr, events } = runCapture([
+    'pkgjson_revert_forensic_captured',
+    'capture title',
+    '--gate-payload',
+    JSON.stringify({ src_version: '1.73.0' }),
+  ]);
+  assert.equal(status, 1);
+  assert.equal(events.length, 0);
+  assert.match(stderr, /requires gate_payload keys:/);
+});
+
 test('log-activity --gate-payload: flag accepted before positional args', () => {
   const payload = { src_version: '1.73.0', deployed_version: '1.72.0', suspected_hypothesis: 'h-b', forensic_artifact_path: '/tmp/x.json' };
   const { status, events } = runCapture([

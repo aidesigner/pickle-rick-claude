@@ -102,16 +102,25 @@ test('log-activity --backend: rejects --flag value', () => {
   assert.ok(stderr.includes('--backend requires'), `stderr should mention required value, got: ${stderr}`);
 });
 
-test('log-activity: omitting --backend without env fallback omits backend field (negative)', () => {
-  // With PICKLE_BACKEND scrubbed, omitting --backend means no backend resolution path.
-  // For subtool_backend_override this reproduces the pre-fix schema-non-conformance.
+test('log-activity: omitting --backend for backend-required event exits 1', () => {
   const { status, events } = runCapture([
     'subtool_backend_override',
     'codex sub-tool invoked',
   ]);
-  assert.equal(status, 0);
-  assert.equal(events.length, 1);
-  assert.equal('backend' in events[0], false, 'pre-fix shape: omitting flag and env yields no backend field');
+  assert.equal(status, 1);
+  assert.equal(events.length, 0);
+});
+
+test('log-activity: rejects schema-required fields the CLI cannot provide', () => {
+  const { status, stderr, events } = runCapture([
+    'worker_spawn_backend_resolved',
+    'spawned',
+    '--backend',
+    'codex',
+  ]);
+  assert.equal(status, 1);
+  assert.equal(events.length, 0);
+  assert.match(stderr, /requires CLI-backed fields: pid/);
 });
 
 test('log-activity --backend: flag accepted before positional args', () => {

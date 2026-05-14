@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import { VALID_ACTIVITY_EVENTS, BACKENDS } from '../types/index.js';
 import { isBackend } from '../services/backend-spawn.js';
@@ -5,6 +6,7 @@ import { logActivity } from '../services/activity-logger.js';
 import { safeErrorMessage } from '../services/pickle-utils.js';
 const USAGE = `Usage: log-activity <event_type> "<title>" [--gate-payload <json-object>] [--backend <name>]
 Valid types: ${VALID_ACTIVITY_EVENTS.join(', ')}`;
+let schemaDefinitionsCache = null;
 function parseGatePayload(json) {
     let parsed;
     try {
@@ -26,6 +28,43 @@ function parseBackend(value) {
         process.exit(1);
     }
     return value;
+}
+function loadSchemaDefinitions() {
+    if (schemaDefinitionsCache)
+        return schemaDefinitionsCache;
+    try {
+        const raw = fs.readFileSync(new URL('../src/types/activity-events.schema.json', import.meta.url), 'utf8');
+        const parsed = JSON.parse(raw);
+        schemaDefinitionsCache = parsed.definitions ?? {};
+        return schemaDefinitionsCache;
+    }
+    catch (err) {
+        console.error(`Failed to load activity schema: ${safeErrorMessage(err)}`);
+        process.exit(1);
+    }
+}
+function asRequiredFields(value) {
+    return Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : [];
+}
+function validateCliPayloadShape(eventType, payload, gatePayload) {
+    const definition = loadSchemaDefinitions()[eventType];
+    if (!definition)
+        return;
+    const missingTopLevel = asRequiredFields(definition.required)
+        .filter((field) => !(field in payload));
+    if (missingTopLevel.length > 0) {
+        console.error(`Event "${eventType}" requires CLI-backed fields: ${missingTopLevel.join(', ')}.`);
+        process.exit(1);
+    }
+    const gatePayloadSchema = definition.properties?.gate_payload;
+    if (!gatePayloadSchema || typeof gatePayloadSchema !== 'object' || gatePayloadSchema === null)
+        return;
+    const missingGatePayload = asRequiredFields(gatePayloadSchema.required)
+        .filter((field) => !gatePayload || !(field in gatePayload));
+    if (missingGatePayload.length > 0) {
+        console.error(`Event "${eventType}" requires gate_payload keys: ${missingGatePayload.join(', ')}.`);
+        process.exit(1);
+    }
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
     const argv = process.argv.slice(2);
@@ -75,14 +114,17 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
         console.error('Title must not be empty after sanitization.');
         process.exit(1);
     }
+    const payload = {
+        event: eventType,
+        ts: new Date().toISOString(),
+        title,
+        source: 'persona',
+        ...(gatePayload ? { gate_payload: gatePayload } : {}),
+        ...(backend ? { backend } : {}),
+    };
+    validateCliPayloadShape(eventType, payload, gatePayload);
     try {
-        logActivity({
-            event: eventType,
-            title,
-            source: 'persona',
-            ...(gatePayload ? { gate_payload: gatePayload } : {}),
-            ...(backend ? { backend } : {}),
-        });
+        logActivity(payload);
     }
     catch (err) {
         console.error(`Failed to log activity: ${safeErrorMessage(err)}`);
