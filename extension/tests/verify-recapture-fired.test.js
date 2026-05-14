@@ -49,12 +49,12 @@ function baseState(activity) {
   };
 }
 
-test('verify-recapture.pass writes passing artifact when iteration 1 event is in anatomy-park window', () => {
+test('verify-recapture.pass writes passing artifact when a recapture event is in the latest anatomy-park window', () => {
   const session = makeSession(baseState([
     {
       ts: '2026-05-02T11:15:00.000Z',
       event: 'baseline_recapture_attempted',
-      iteration: 1,
+      iteration: 3,
     },
   ]));
   const baseline = readFileSync(STABLE_ARTIFACT, 'utf8');
@@ -104,12 +104,12 @@ test('verify-recapture.wrong-phase fails when event timestamp is outside anatomy
   }
 });
 
-test('verify-recapture.wrong-iteration fails when matching event is not iteration 1', () => {
+test('verify-recapture.earlier-phase-run does not satisfy the latest anatomy run even if the iteration differs', () => {
   const session = makeSession(baseState([
     {
-      ts: '2026-05-02T11:15:00.000Z',
+      ts: '2026-05-02T10:15:00.000Z',
       event: 'baseline_recapture_attempted',
-      iteration: 2,
+      iteration: 99,
     },
   ]));
   try {

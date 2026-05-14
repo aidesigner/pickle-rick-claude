@@ -55,7 +55,6 @@ function isInWindow(timestamp, windows) {
 function findMatchingEvent(activity, windows) {
   return activity.find((entry) => (
     entry?.event === 'baseline_recapture_attempted'
-    && entry.iteration === 1
     && isInWindow(entry.ts ?? entry.timestamp, windows)
   )) ?? null;
 }
@@ -74,7 +73,7 @@ function writeRuntimeArtifact({ pass, failureReason, evidence }) {
     checked_at: new Date().toISOString(),
     evidence,
     failure_reason: failureReason,
-    remediation_hint: pass ? null : 'Ensure anatomy-park records baseline_recapture_attempted at iteration 1 inside its phase window.',
+    remediation_hint: pass ? null : 'Ensure anatomy-park records baseline_recapture_attempted inside its latest anatomy-park phase window.',
   };
   fs.mkdirSync(path.dirname(RUNTIME_ARTIFACT_PATH), { recursive: true });
   fs.writeFileSync(RUNTIME_ARTIFACT_PATH, `${JSON.stringify(artifact, null, 2)}\n`);
