@@ -75,12 +75,16 @@ select_installable_tarball() {
   [ ${#downloaded[@]} -gt 0 ] || die 20 "release download produced no tar.gz asset for $tag"
 
   for tarball in "${downloaded[@]}"; do
-    if tar -tzf "$tarball" | awk '/(^|\/)extension\/package\.json$/ { found=1; exit } END { exit found ? 0 : 1 }'; then
+    if tar -tzf "$tarball" | awk '
+      /(^|\/)extension\/package\.json$/ { has_pkg=1 }
+      /(^|\/)install\.sh$/ { has_install=1 }
+      END { exit (has_pkg && has_install) ? 0 : 1 }
+    '; then
       installable+=("$tarball")
     fi
   done
 
-  [ ${#installable[@]} -gt 0 ] || die 21 "downloaded tarball is missing $PKG_DISPLAY_PATH"
+  [ ${#installable[@]} -gt 0 ] || die 21 "downloaded tarball is missing install payload ($PKG_DISPLAY_PATH + install.sh)"
   [ ${#installable[@]} -eq 1 ] || die 21 "release $tag downloaded multiple installable tar.gz assets"
   printf '%s\n' "${installable[0]}"
 }
