@@ -1,15 +1,12 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { getDataRoot } from '../extension/services/pickle-utils.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, '..');
-const ARTIFACT_PATH = path.join(REPO_ROOT, 'bundle', 'section-c-still-needed.json');
 const DEFAULT_SESSIONS_DIR = path.join(getDataRoot(), 'sessions');
 const LOG_NAMES = Object.freeze(['tmux-runner.log', 'pipeline-runner.log']);
 const BANNER = '◤ FEED TERMINATED ◢';
+const DEFAULT_RUNTIME_ARTIFACT_PATH = path.join(getDataRoot(), 'bundle', 'section-c-still-needed.json');
 
 function parseArgs(argv) {
   const args = argv.slice(2);
@@ -64,26 +61,37 @@ function evidenceFor(lines, reason = null) {
   return matches.join('\n');
 }
 
-function writeArtifact(payload) {
-  fs.mkdirSync(path.dirname(ARTIFACT_PATH), { recursive: true });
-  fs.writeFileSync(ARTIFACT_PATH, `${JSON.stringify(payload, null, 2)}\n`);
-  return payload;
+function resolveArtifactPath(sessionRoot) {
+  if (process.env.SECTION_C_ARTIFACT_PATH) {
+    return process.env.SECTION_C_ARTIFACT_PATH;
+  }
+  if (sessionRoot) {
+    return path.join(sessionRoot, 'bundle', 'section-c-still-needed.json');
+  }
+  return DEFAULT_RUNTIME_ARTIFACT_PATH;
+}
+
+function writeArtifact(artifactPath, payload) {
+  fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+  fs.writeFileSync(artifactPath, `${JSON.stringify(payload, null, 2)}\n`);
+  return { artifactPath, ...payload };
 }
 
 export function evaluateSectionC({ sessionRoot } = {}) {
   const resolvedSession = sessionRoot ?? newestSessionRoot();
+  const artifactPath = resolveArtifactPath(resolvedSession);
   if (!resolvedSession || !fs.existsSync(resolvedSession)) {
-    return writeArtifact({
+    return writeArtifact(artifactPath, {
       still_needed: true,
       evidence: 'No recent session found; defaulting Section C to still needed.',
-      });
+    });
   }
 
   const logPaths = LOG_NAMES
     .map((logName) => path.join(resolvedSession, logName))
     .filter((logPath) => fs.existsSync(logPath));
   if (logPaths.length === 0) {
-    return writeArtifact({
+    return writeArtifact(artifactPath, {
       still_needed: true,
       evidence: `${LOG_NAMES.join(' and ')} missing in ${resolvedSession}; defaulting Section C to still needed.`,
     });
@@ -91,7 +99,7 @@ export function evaluateSectionC({ sessionRoot } = {}) {
 
   const lines = logPaths.flatMap((logPath) => lastLines(fs.readFileSync(logPath, 'utf8')));
   const stillNeeded = lines.some((line) => line.includes(BANNER));
-  return writeArtifact({
+  return writeArtifact(artifactPath, {
     still_needed: stillNeeded,
     evidence: evidenceFor(lines) || `No ${BANNER} found in ${logPaths.join(', ')}.`,
   });
@@ -101,7 +109,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'section-c-still-neede
   try {
     const { session } = parseArgs(process.argv);
     const artifact = evaluateSectionC({ sessionRoot: session });
-    process.stdout.write(`section-c-still-needed ${artifact.still_needed ? 'STILL_NEEDED' : 'CLEARED'} ${ARTIFACT_PATH}\n`);
+    process.stdout.write(`section-c-still-needed ${artifact.still_needed ? 'STILL_NEEDED' : 'CLEARED'} ${artifact.artifactPath}\n`);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(2);

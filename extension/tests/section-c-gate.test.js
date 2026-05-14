@@ -17,7 +17,6 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CLI = path.join(REPO_ROOT, 'bin', 'section-c-still-needed.js');
-const ARTIFACT = path.join(REPO_ROOT, 'bundle', 'section-c-still-needed.json');
 
 function makeSession(log) {
   const session = mkdtempSync(path.join(tmpdir(), 'section-c-gate-'));
@@ -38,9 +37,11 @@ function runGate(session) {
     cwd: REPO_ROOT,
     encoding: 'utf8',
   });
+  const artifactPath = path.join(session, 'bundle', 'section-c-still-needed.json');
   return {
     ...result,
-    artifact: JSON.parse(readFileSync(ARTIFACT, 'utf8')),
+    artifactPath,
+    artifact: JSON.parse(readFileSync(artifactPath, 'utf8')),
   };
 }
 
@@ -58,6 +59,7 @@ test('section-c-gate.symptom-present writes still_needed true with evidence', ()
     assert.equal(result.artifact.still_needed, true);
     assert.match(result.artifact.evidence, /FEED TERMINATED/);
     assert.match(result.stdout, /STILL_NEEDED/);
+    assert.match(result.stdout, new RegExp(result.artifactPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   } finally {
     rmSync(session, { recursive: true, force: true });
   }
@@ -123,7 +125,8 @@ test('section-c-gate.default-session-selection follows newest watcher log activi
       HOME: fakeHome,
     },
   });
-  const artifact = JSON.parse(readFileSync(ARTIFACT, 'utf8'));
+  const artifactPath = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions', '2026-05-12-active', 'bundle', 'section-c-still-needed.json');
+  const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
 
   try {
     assert.equal(result.status, 0, result.stderr);
@@ -160,7 +163,8 @@ test('section-c-gate.default-session-selection prefers sessions with watcher log
       HOME: fakeHome,
     },
   });
-  const artifact = JSON.parse(readFileSync(ARTIFACT, 'utf8'));
+  const artifactPath = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions', '2026-05-12-active', 'bundle', 'section-c-still-needed.json');
+  const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
 
   try {
     assert.equal(result.status, 0, result.stderr);
@@ -188,7 +192,8 @@ test('section-c-gate.default-session-selection honors PICKLE_DATA_ROOT override 
       PICKLE_DATA_ROOT: fakeDataRoot,
     },
   });
-  const artifact = JSON.parse(readFileSync(ARTIFACT, 'utf8'));
+  const artifactPath = path.join(session, 'bundle', 'section-c-still-needed.json');
+  const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
 
   try {
     assert.equal(result.status, 0, result.stderr);
@@ -196,6 +201,28 @@ test('section-c-gate.default-session-selection honors PICKLE_DATA_ROOT override 
     assert.match(artifact.evidence, /iteration 5 starting/);
   } finally {
     rmSync(fakeDataRoot, { recursive: true, force: true });
+  }
+});
+
+test('section-c-gate.no-session writes runtime artifact outside the tracked repo bundle tree', () => {
+  const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
+  const result = spawnSync(process.execPath, [CLI], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: fakeHome,
+    },
+  });
+  const artifactPath = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'bundle', 'section-c-still-needed.json');
+  const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
+
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(artifact.still_needed, true);
+    assert.equal(artifactPath.startsWith(path.join(REPO_ROOT, 'bundle')), false);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
   }
 });
 
