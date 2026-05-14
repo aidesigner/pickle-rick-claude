@@ -83,7 +83,7 @@ function writeMuxRunner(fixture, cjsBody) {
   writeFileSync(fixture.muxRunnerFile, cjsBody);
 }
 
-function runScript(fixture, envOverrides = {}) {
+function runScript(fixture, envOverrides = {}, timeout = 30000) {
   const result = spawnSync('bash', [AUTO_RESUME_SH, fixture.sessionDir], {
     encoding: 'utf8',
     env: {
@@ -92,7 +92,7 @@ function runScript(fixture, envOverrides = {}) {
       PICKLE_INSTALL_ROOT: fixture.extRoot,
       ...envOverrides,
     },
-    timeout: 30000,
+    timeout,
   });
   return {
     ...result,
@@ -106,6 +106,13 @@ function assertCompleted(result) {
   assert.equal(result.status, 0, formatResultDiagnostics(result));
   assert.equal(result.signal, null, formatResultDiagnostics(result));
 }
+
+function readTraceEntries(fixture) {
+  return (readIfExists(fixture.traceFile)?.trim().split('\n').filter(Boolean) ?? []).map(line => JSON.parse(line));
+}
+
+const WARN_BANNER_TIMEOUT_MS = 45000;
+const LOAD_TIMEOUT_REGRESSION_MS = 18000;
 
 // CJS mock: always sets exit_reason to the given value
 function incompleteRunner() {
@@ -171,7 +178,8 @@ fs.writeFileSync(process.argv[2] + '/state.json', JSON.stringify(s));
   });
 
   test('prints [warn] banner past retry 3', () => {
-    // Rotate ticket each call so no-progress stop does not fire before retry 4
+    // Repeat the prior ticket on the third launch so retry 4 reaches the warning
+    // and no-progress halt in the same loop instead of waiting for a fifth launch.
     runFixtureTest((fixture) => {
       writeMuxRunner(fixture, `const fs = require('fs');
 const path = require('path');
@@ -185,7 +193,8 @@ n++;
 fs.writeFileSync(cf, String(n));
 const s = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
 s.exit_reason = 'pipeline_phase_incomplete';
-s.current_ticket = 'ticket_' + n;
+const nextTicket = n === 3 ? 'ticket_2' : 'ticket_' + n;
+s.current_ticket = nextTicket;
 fs.writeFileSync(stateFile, JSON.stringify(s));
 fs.appendFileSync(traceFile, JSON.stringify({
   run: n,
@@ -193,8 +202,9 @@ fs.appendFileSync(traceFile, JSON.stringify({
   exit_reason: s.exit_reason,
 }) + '\\n');
 `);
-      // MAX_RETRIES=5 → banner fires at retry 4, stop fires at retry 5
-      const result = runScript(fixture, { PICKLE_AUTO_RESUME_MAX_RETRIES: '5' });
+      // MAX_RETRIES stays above the banner threshold while retry-state progression
+      // forces the stop after the retry-4 warning.
+      const result = runScript(fixture, { PICKLE_AUTO_RESUME_MAX_RETRIES: '5' }, WARN_BANNER_TIMEOUT_MS);
       assertCompleted(result);
       assert.ok(
         result.stderr.includes('[warn] auto-resume retry'),
@@ -204,12 +214,75 @@ fs.appendFileSync(traceFile, JSON.stringify({
       assert.equal(bannerLines.length, 1, `expected exactly one warning banner\n${formatResultDiagnostics(result)}`);
       assert.match(
         bannerLines[0],
-        /\[warn\] auto-resume retry 4\/5 \(no progress for 0 cycles\)/,
+        /\[warn\] auto-resume retry 4\/5 \(no progress for 1 cycles\)/,
         `banner format mismatch\n${formatResultDiagnostics(result)}`,
       );
-      assert.equal(readIfExists(fixture.counterFile), '5', `expected retry counter to persist across five launches\n${formatResultDiagnostics(result)}`);
-      const traceLines = readIfExists(fixture.traceFile)?.trim().split('\n').filter(Boolean) ?? [];
-      assert.equal(traceLines.length, 5, `expected five runner trace entries\n${formatResultDiagnostics(result)}`);
+      assert.ok(
+        result.stderr.includes('stopped: no progress for 1 consecutive retries'),
+        `expected retry-state stop after warning banner\n${formatResultDiagnostics(result)}`,
+      );
+      assert.equal(readIfExists(fixture.counterFile), '4', `expected retry counter to persist across four launches\n${formatResultDiagnostics(result)}`);
+      assert.deepEqual(
+        readTraceEntries(fixture).map(entry => [entry.run, entry.current_ticket]),
+        [
+          [1, 'ticket_1'],
+          [2, 'ticket_2'],
+          [3, 'ticket_2'],
+          [4, 'ticket_4'],
+        ],
+        `expected retry-state progression trace\n${formatResultDiagnostics(result)}`,
+      );
+    });
+  });
+
+  test('prints [warn] banner past retry 3 — regression for load-dependent-timeout', () => {
+    runFixtureTest((fixture) => {
+      writeMuxRunner(fixture, `const fs = require('fs');
+const path = require('path');
+const sessionDir = process.argv[2];
+const stateFile = path.join(sessionDir, 'state.json');
+const cf = process.argv[2] + '/.n';
+const traceFile = path.join(sessionDir, 'runner-trace.jsonl');
+let n = 0;
+try { n = parseInt(fs.readFileSync(cf, 'utf8'), 10) || 0; } catch {}
+n++;
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+fs.writeFileSync(cf, String(n));
+const s = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+s.exit_reason = 'pipeline_phase_incomplete';
+const nextTicket = n === 3 ? 'ticket_2' : 'ticket_' + n;
+s.current_ticket = nextTicket;
+fs.writeFileSync(stateFile, JSON.stringify(s));
+fs.appendFileSync(traceFile, JSON.stringify({
+  run: n,
+  current_ticket: s.current_ticket,
+  exit_reason: s.exit_reason,
+}) + '\\n');
+`);
+      const result = runScript(fixture, { PICKLE_AUTO_RESUME_MAX_RETRIES: '5' }, LOAD_TIMEOUT_REGRESSION_MS);
+      assertCompleted(result);
+      const bannerLines = result.stderrLines.filter(line => line.includes('[warn] auto-resume retry'));
+      assert.equal(bannerLines.length, 1, `expected one delayed warning banner\n${formatResultDiagnostics(result)}`);
+      assert.match(
+        bannerLines[0],
+        /\[warn\] auto-resume retry 4\/5 \(no progress for 1 cycles\)/,
+        `delayed banner format mismatch\n${formatResultDiagnostics(result)}`,
+      );
+      assert.ok(
+        result.stderr.includes('stopped: no progress for 1 consecutive retries'),
+        `expected delayed retry-state stop\n${formatResultDiagnostics(result)}`,
+      );
+      assert.equal(readIfExists(fixture.counterFile), '4', `expected delayed fixture to stop after four launches\n${formatResultDiagnostics(result)}`);
+      assert.deepEqual(
+        readTraceEntries(fixture).map(entry => [entry.run, entry.current_ticket]),
+        [
+          [1, 'ticket_1'],
+          [2, 'ticket_2'],
+          [3, 'ticket_2'],
+          [4, 'ticket_4'],
+        ],
+        `expected delayed retry-state progression trace\n${formatResultDiagnostics(result)}`,
+      );
     });
   });
 });
