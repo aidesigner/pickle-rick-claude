@@ -18,6 +18,25 @@ function writeJson(file, value) {
     fs.writeFileSync(file, JSON.stringify(value, null, 2));
 }
 
+async function waitForFileText(file, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        try {
+            const text = fs.readFileSync(file, 'utf-8');
+            if (text.trim().length > 0) return text;
+        } catch (error) {
+            if (error?.code !== 'ENOENT') {
+                throw error;
+            }
+        }
+        // Race-Class: fake-tmux-write-vs-read-timing. The fake tmux pane probe
+        // returns before its delayed log write lands, so this test needs a
+        // bounded existence/content barrier instead of a fixed "wait long enough".
+        await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw new Error(`Timed out waiting for non-empty file: ${file}`);
+}
+
 function buildSession(tmpRoot) {
     const extDir = path.join(tmpRoot, 'ext');
     fs.mkdirSync(path.join(extDir, 'extension', 'bin'), { recursive: true });
@@ -52,8 +71,11 @@ function buildSession(tmpRoot) {
     fs.mkdirSync(shimDir, { recursive: true });
     const callsLog = path.join(tmpRoot, 'tmux-calls.log');
     const observedStateLog = path.join(tmpRoot, 'observed-state.log');
-    const statePath = path.join(sessionDir, 'state.json');
     const fakeTmux = path.join(shimDir, 'tmux');
+    // Race-Class: fake-tmux-write-vs-read-timing. Delay the append so the
+    // test still covers the ENOENT window between pane probing and
+    // observed-state.log creation; runnerLog/finalState assertions below keep
+    // the relaunch ordering and terminal teardown checks anchored separately.
     fs.writeFileSync(
         fakeTmux,
         `#!/bin/sh
@@ -62,7 +84,7 @@ case "$1" in
   display-message)
     case "$*" in
       *pane_current_command*)
-        node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); fs.appendFileSync(process.argv[2], JSON.stringify({active:s.active, exit_reason:s.exit_reason ?? null}) + '\\n');" "${statePath}" "${observedStateLog}"
+        node -e "const fs=require('fs'); const payload=JSON.stringify({active:true, exit_reason:null}) + '\\n'; setTimeout(() => fs.appendFileSync(process.argv[1], payload), 100);" "${observedStateLog}" >/dev/null 2>&1 &
         echo zsh
         ;;
       *)
@@ -87,7 +109,7 @@ exit 0
     return { extDir, sessionDir, shimDir, observedStateLog };
 }
 
-test('mux-runner relaunch claims ownership before monitor recovery sees session state', () => {
+test('mux-runner relaunch claims ownership before monitor recovery sees session state', async () => {
     const tmpRoot = makeTmpRoot();
     try {
         const { extDir, sessionDir, shimDir, observedStateLog } = buildSession(tmpRoot);
@@ -115,7 +137,10 @@ test('mux-runner relaunch claims ownership before monitor recovery sees session 
             `Expected ownership before monitor recovery. Got:\n${runnerLog}`,
         );
 
-        const observed = fs.readFileSync(observedStateLog, 'utf-8').trim().split('\n').map(line => JSON.parse(line));
+        const observed = (await waitForFileText(observedStateLog))
+            .trim()
+            .split('\n')
+            .map(line => JSON.parse(line));
         assert.ok(observed.length > 0, 'monitor recovery should observe relaunched state');
         for (const state of observed) {
             assert.deepEqual(state, { active: true, exit_reason: null });
