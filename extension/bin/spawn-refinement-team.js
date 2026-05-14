@@ -1098,8 +1098,8 @@ export function enrichManifestTicketsFromSourcePrds(prdPath, tickets) {
         const mapped = uniqueStrings([...ticket.source_ac_ids, ...(ticket.mapped_requirements ?? [])]);
         return {
             ...ticket,
-            source_prd: ticket.source_prd ?? sourcePrds.join(', '),
-            source_section: ticket.source_section ?? sourceSections.join(', '),
+            source_prd: sourcePrds.join(', ') || ticket.source_prd,
+            source_section: sourceSections.join(', ') || ticket.source_section,
             mapped_requirements: mapped,
         };
     });

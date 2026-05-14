@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const READINESS_BIN = path.resolve(__dirname, '../bin/check-readiness.js');
 const {
+  buildRefinementManifest,
   enrichManifestTicketsFromSourcePrds,
 } = await import('../bin/spawn-refinement-team.js');
 
@@ -159,6 +160,68 @@ test('spawn-refinement-team: nested bundle PRDs still resolve repo-root-relative
       'prds/source-relative.md',
       'prds/source-absolute.md',
       'prds/source-repo.md',
+    ]);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('spawn-refinement-team: manifest enrichment normalizes analyst-provided source_prd values', () => {
+  const { repoRoot, parentPrdPath } = createFixtureRepo('prds/bundles/bundle.md');
+  const refinementDir = path.join(repoRoot, 'refinement');
+  try {
+    fs.mkdirSync(refinementDir, { recursive: true });
+    fs.writeFileSync(path.join(refinementDir, 'analysis_requirements.md'), [
+      '## ac_shape_smells',
+      '```json',
+      JSON.stringify({
+        ac_shape_smells: [],
+        tickets: [
+          {
+            id: 'ticket-rel',
+            title: 'Relative',
+            source_ac_ids: ['AC-REL-01'],
+            source_prd: './prds/source-relative.md',
+            source_section: 'Wrong Section',
+          },
+          {
+            id: 'ticket-abs',
+            title: 'Absolute',
+            source_ac_ids: ['AC-ABS-01'],
+            source_prd: path.join(repoRoot, 'prds/source-absolute.md'),
+          },
+          {
+            id: 'ticket-root',
+            title: 'Repo',
+            source_ac_ids: ['AC-ROOT-01'],
+            source_prd: 'prds/bundles/prds/source-repo.md',
+          },
+        ],
+      }),
+      '```',
+      '',
+    ].join('\n'));
+
+    const manifest = buildRefinementManifest({
+      prdPath: parentPrdPath,
+      sessionDir: repoRoot,
+    }, {
+      refinementDir,
+      cyclesRequested: 1,
+      maxTurns: 1,
+      allCycleResults: [[]],
+      finalResults: [{ roleId: 'requirements', success: true, logPath: path.join(repoRoot, 'worker.log'), exitCode: 0, signal: null, cycle: 1 }],
+      allSuccess: true,
+    });
+
+    assert.deepEqual(manifest.tickets.map((ticket) => ({
+      id: ticket.id,
+      source_prd: ticket.source_prd,
+      source_section: ticket.source_section,
+    })), [
+      { id: 'ticket-rel', source_prd: 'prds/source-relative.md', source_section: 'Relative Section' },
+      { id: 'ticket-abs', source_prd: 'prds/source-absolute.md', source_section: 'Absolute Section' },
+      { id: 'ticket-root', source_prd: 'prds/source-repo.md', source_section: 'Repo Section' },
     ]);
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
