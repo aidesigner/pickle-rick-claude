@@ -28,6 +28,7 @@ import {
   compareMetric,
   classifyFailure,
   findLastAcceptedEntry,
+  updateViolationLedger,
 } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import {
@@ -2391,10 +2392,22 @@ export async function measureAndClassifyIteration(
 ): Promise<IterationClassification> {
   const backend = resolveBackend(ctx.currentRunnerState);
   let metricResult: MetricSnapshot;
+  let currentLedger: { resolved: string[]; new: string[]; remaining: string[] } | undefined;
+  let previousLedger: { resolved: string[]; new: string[]; remaining: string[] } | undefined;
   if (state.key_metric.type === 'llm') {
     const llmOutcome = await measureLlmIteration(state, ctx, backend);
     if (llmOutcome.kind === 'failed') return { kind: 'failed', exitReason: llmOutcome.exitReason };
     metricResult = llmOutcome.metric;
+    const judgeResult = parseLlmJudgeOutput(metricResult.raw);
+    if (judgeResult.shape === 'full') {
+      previousLedger = { resolved: [], new: [], remaining: state.violation_ledger?.map((entry) => entry.id) ?? [] };
+      updateViolationLedger(state, judgeResult, ctx.iteration);
+      currentLedger = {
+        resolved: judgeResult.resolved,
+        new: judgeResult.new,
+        remaining: judgeResult.remaining,
+      };
+    }
   } else {
     let measured = measureCurrentMetric(state, ctx, backend);
     if (!measured) {
@@ -2415,7 +2428,14 @@ export async function measureAndClassifyIteration(
   adoptLateBaseline(state, baseline, metricResult, metricConv, ctx);
 
   const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
-  const classification = compareMetric(metricResult.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
+  const classification = compareMetric(
+    metricResult.score,
+    previousScore,
+    state.key_metric.tolerance,
+    state.key_metric.direction,
+    currentLedger,
+    previousLedger,
+  );
   ctx.log(`Classification: ${classification} (previous=${previousScore}, tolerance=${state.key_metric.tolerance})`);
 
   const entry = buildMetricHistoryEntry(state, metricResult, previousScore, classification, ctx);

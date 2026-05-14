@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import { pathToFileURL } from 'node:url';
 import { Defaults } from '../types/index.js';
 import { resolveBackend, resolveWorkerBackendFromState, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
-import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, findLastAcceptedEntry, } from '../services/microverse-state.js';
+import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, findLastAcceptedEntry, updateViolationLedger, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, displayMacNotification, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
@@ -1766,11 +1766,23 @@ async function measureLlmIteration(state, ctx, backend) {
 export async function measureAndClassifyIteration(state, baseline, ctx) {
     const backend = resolveBackend(ctx.currentRunnerState);
     let metricResult;
+    let currentLedger;
+    let previousLedger;
     if (state.key_metric.type === 'llm') {
         const llmOutcome = await measureLlmIteration(state, ctx, backend);
         if (llmOutcome.kind === 'failed')
             return { kind: 'failed', exitReason: llmOutcome.exitReason };
         metricResult = llmOutcome.metric;
+        const judgeResult = parseLlmJudgeOutput(metricResult.raw);
+        if (judgeResult.shape === 'full') {
+            previousLedger = { resolved: [], new: [], remaining: state.violation_ledger?.map((entry) => entry.id) ?? [] };
+            updateViolationLedger(state, judgeResult, ctx.iteration);
+            currentLedger = {
+                resolved: judgeResult.resolved,
+                new: judgeResult.new,
+                remaining: judgeResult.remaining,
+            };
+        }
     }
     else {
         let measured = measureCurrentMetric(state, ctx, backend);
@@ -1789,7 +1801,7 @@ export async function measureAndClassifyIteration(state, baseline, ctx) {
     const lastAccepted = findLastAcceptedEntry(metricConv.history);
     adoptLateBaseline(state, baseline, metricResult, metricConv, ctx);
     const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
-    const classification = compareMetric(metricResult.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
+    const classification = compareMetric(metricResult.score, previousScore, state.key_metric.tolerance, state.key_metric.direction, currentLedger, previousLedger);
     ctx.log(`Classification: ${classification} (previous=${previousScore}, tolerance=${state.key_metric.tolerance})`);
     const entry = buildMetricHistoryEntry(state, metricResult, previousScore, classification, ctx);
     if (classification === 'regressed') {

@@ -145,6 +145,81 @@ test('measureAndClassifyIteration returns unchanged for held score and increment
   }
 });
 
+test('measureAndClassifyIteration consumes structured LLM judge ledger before numeric comparison', async () => {
+  const sessionDir = makeTempDir('pickle-mv-llm-session-');
+  const workingDir = makeTempDir('pickle-mv-llm-work-');
+  const runnerState = makeRunnerState(sessionDir, workingDir, { backend: 'claude' });
+  const judgeOutput = {
+    score: 40,
+    violations: [
+      {
+        id: 'new-violation',
+        path: 'src/foo.ts',
+        line: 12,
+        rule: 'no-any',
+        severity: 'high',
+        description: 'new violation',
+      },
+    ],
+    resolved: ['old-violation'],
+    new: ['new-violation'],
+    remaining: [],
+  };
+  const mv = createMicroverseState({
+    prdPath: path.join(workingDir, 'prd.md'),
+    metric: {
+      description: 'quality',
+      validation: 'improve code quality',
+      type: 'llm',
+      timeout_seconds: 60,
+      tolerance: 2,
+      direction: 'higher',
+      judge_model: 'claude-sonnet-4-6',
+    },
+    stallLimit: 3,
+  });
+  mv.status = 'iterating';
+  mv.baseline_score = 40;
+  fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify(runnerState, null, 2));
+  writeMicroverseState(sessionDir, mv);
+
+  const originalExec = _deps.execFileSync;
+  try {
+    _deps.execFileSync = (_cmd, args) => {
+      if (Array.isArray(args) && args[0] === '--version') return 'Claude Code 2.1.126';
+      return JSON.stringify(judgeOutput);
+    };
+    const ctx = makeContext(sessionDir, workingDir, runnerState, {
+      iteration: 2,
+      preIterSha: 'a'.repeat(40),
+      postIterSha: 'b'.repeat(40),
+    });
+    const result = await measureAndClassifyIteration(mv, { raw: '40', score: 40 }, ctx);
+    assert.deepEqual(result, { kind: 'improved', metric: { raw: JSON.stringify(judgeOutput), score: 40 } });
+    assert.equal(mv.convergence.history[0].classification, 'improved');
+    assert.deepEqual(
+      mv.violation_ledger?.map(({ path: filePath, line, rule, first_seen_iter, last_seen_iter }) => ({
+        path: filePath,
+        line,
+        rule,
+        first_seen_iter,
+        last_seen_iter,
+      })),
+      [{
+        path: 'src/foo.ts',
+        line: 12,
+        rule: 'no-any',
+        first_seen_iter: 2,
+        last_seen_iter: 2,
+      }],
+    );
+  } finally {
+    _deps.execFileSync = originalExec;
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    fs.rmSync(workingDir, { recursive: true, force: true });
+  }
+});
+
 test('executeMainLoop replays convergence mutation fixture order', async () => {
   const fixturePath = path.join('tests', 'fixtures', 'microverse', 'convergence-mutations.json');
   const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
