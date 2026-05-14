@@ -230,6 +230,27 @@ test('stop-hook: stale active=true dead pid from PICKLE_STATE_FILE is recovered 
   assert.equal(state.active, false, 'dead-pid recovery must clear stale active sessions before stop-hook gating');
 });
 
+test('stop-hook: symlink cwd alias does not trigger early approve for a live same-repo session', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-symlink-'));
+  const originalCwd = process.cwd();
+  try {
+    const repoRoot = path.join(tmp, 'repo-real');
+    const repoAlias = path.join(tmp, 'repo-alias');
+    fs.mkdirSync(repoRoot, { recursive: true });
+    fs.symlinkSync(repoRoot, repoAlias);
+
+    process.chdir(repoAlias);
+    const { decision } = runHook({
+      state: baseState({ working_dir: repoRoot }),
+      response: 'Still working on the ticket.',
+    });
+    assert.equal(decision.decision, 'block');
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('stop-hook: tmux_mode, no PICKLE_STATE_FILE (main window) → approve, state unchanged', () => {
   // Main Claude window: resolves state via sessions map, not PICKLE_STATE_FILE
   const { decision, state } = runHook({

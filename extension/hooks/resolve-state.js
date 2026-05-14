@@ -5,8 +5,17 @@ import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 import { StateManager } from '../services/state-manager.js';
 const ALLOW = JSON.stringify({ decision: 'approve' });
 const sm = new StateManager();
-function sameWorkingDir(a, b) {
-    return typeof a === 'string' && path.resolve(a) === path.resolve(b);
+function normalizeWorkingDir(input) {
+    const resolved = path.resolve(input);
+    try {
+        return fs.realpathSync(resolved);
+    }
+    catch {
+        return resolved;
+    }
+}
+export function sameWorkingDir(a, b) {
+    return typeof a === 'string' && normalizeWorkingDir(a) === normalizeWorkingDir(b);
 }
 const MAX_FUTURE_RECENCY_DRIFT_MS = 5 * 60 * 1000;
 function readLookupState(stateFile) {
@@ -163,7 +172,7 @@ export function resolveStateFile(dataDir) {
 export function loadActiveState(stateFile) {
     try {
         const state = sm.read(stateFile);
-        if (state.working_dir != null && state.working_dir !== '' && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
+        if (state.working_dir != null && state.working_dir !== '' && !sameWorkingDir(state.working_dir, process.cwd())) {
             return null;
         }
         if (state.active !== true)

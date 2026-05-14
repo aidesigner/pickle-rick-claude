@@ -131,6 +131,37 @@ test('resolveStateFile: falls back to sessions map when env not set', () => {
   }
 });
 
+test('resolveStateFile: symlink cwd alias still matches the active session working_dir', () => {
+  const tmp = tmpDir();
+  const originalCwd = process.cwd();
+  try {
+    const repoRoot = path.join(tmp, 'repo-real');
+    const repoAlias = path.join(tmp, 'repo-alias');
+    fs.mkdirSync(repoRoot, { recursive: true });
+    fs.symlinkSync(repoRoot, repoAlias);
+
+    const sessionDir = path.join(tmp, 'sessions', 'session1');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const stateFile = path.join(sessionDir, 'state.json');
+    fs.writeFileSync(stateFile, JSON.stringify(baseState({ working_dir: repoRoot, session_dir: sessionDir })));
+
+    process.chdir(repoAlias);
+    fs.writeFileSync(path.join(tmp, 'current_sessions.json'), JSON.stringify({ [process.cwd()]: sessionDir }));
+
+    const orig = process.env.PICKLE_STATE_FILE;
+    delete process.env.PICKLE_STATE_FILE;
+    try {
+      assert.equal(resolveStateFile(tmp), stateFile);
+      assert.equal(loadActiveState(stateFile)?.session_dir, sessionDir);
+    } finally {
+      if (orig !== undefined) process.env.PICKLE_STATE_FILE = orig;
+    }
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('resolveStateFile: promotes newer dead current_sessions tmp before resolving hook state', () => {
   const tmp = tmpDir();
   try {

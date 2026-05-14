@@ -8,8 +8,17 @@ import { StateManager } from '../services/state-manager.js';
 const ALLOW = JSON.stringify({ decision: 'approve' });
 const sm = new StateManager();
 
-function sameWorkingDir(a: unknown, b: string): boolean {
-  return typeof a === 'string' && path.resolve(a) === path.resolve(b);
+function normalizeWorkingDir(input: string): string {
+  const resolved = path.resolve(input);
+  try {
+    return fs.realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+export function sameWorkingDir(a: unknown, b: string): boolean {
+  return typeof a === 'string' && normalizeWorkingDir(a) === normalizeWorkingDir(b);
 }
 
 interface LookupState {
@@ -188,7 +197,7 @@ export function resolveStateFile(dataDir: string): string | null {
 export function loadActiveState(stateFile: string): State | null {
   try {
     const state = sm.read(stateFile);
-    if (state.working_dir != null && state.working_dir !== '' && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
+    if (state.working_dir != null && state.working_dir !== '' && !sameWorkingDir(state.working_dir, process.cwd())) {
       return null;
     }
     if (state.active !== true) return null;

@@ -4,7 +4,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { State, HookInput, PromiseTokens, hasToken } from '../../types/index.js';
 import { PROMISE_TOKENS } from '../../services/promise-tokens.js';
-import { resolveStateFile, approve } from '../resolve-state.js';
+import { resolveStateFile, approve, sameWorkingDir } from '../resolve-state.js';
 import { getExtensionRoot, getDataRoot, safeErrorMessage } from '../../services/pickle-utils.js';
 import { StateManager, writeActivityEntry } from '../../services/state-manager.js';
 import { logActivity } from '../../services/activity-logger.js';
@@ -796,7 +796,7 @@ function readHookState(
 }
 
 function approveEarlyIfNeeded(state: State, log: (msg: string) => void): boolean {
-  if (state.working_dir && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
+  if (state.working_dir && !sameWorkingDir(state.working_dir, process.cwd())) {
     log(`CWD Mismatch: ${process.cwd()} !== ${state.working_dir}`);
     approve();
     return true;
