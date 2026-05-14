@@ -49,7 +49,9 @@ function isObject(value) {
 function isCanonicalUtcIsoTimestamp(value) {
   if (typeof value !== 'string') return false;
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.]\d{3}Z$/.test(value)) return false;
-  return !Number.isNaN(Date.parse(value));
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.toISOString() === value;
 }
 
 export function validateBundleArtifact(artifact) {

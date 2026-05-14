@@ -194,6 +194,24 @@ test('verify-bundle.non-canonical-checked-at fails when artifact timestamp is no
   }
 });
 
+test('verify-bundle.invalid-calendar-checked-at fails when timestamp rolls into a different UTC day', () => {
+  const fixture = makeFixture(({ bundleDir }) => {
+    writeFileSync(
+      path.join(bundleDir, 'ac-dr-11.json'),
+      `${JSON.stringify(artifact('AC-DR-11', {
+        checked_at: '2026-02-31T00:00:00.000Z',
+      }), null, 2)}\n`,
+    );
+  });
+  try {
+    const result = runVerifier(fixture);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /checked_at must be a canonical UTC ISO date string/);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test('verify-bundle.single-ac validates only requested artifact', () => {
   const fixture = makeFixture(({ bundleDir }) => {
     rmSync(path.join(bundleDir, 'ac-dr-09.json'));
@@ -235,4 +253,10 @@ test('verify-bundle.ac-dr-05 accepts the real watcher-liveness artifact shape', 
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
+});
+
+test('verify-bundle.repo-ac-dr-04d stays verifier-clean as a tracked artifact', () => {
+  const result = runVerifier(REPO_ROOT, ['--ac', 'AC-DR-04d']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /bundle PASS/);
 });
