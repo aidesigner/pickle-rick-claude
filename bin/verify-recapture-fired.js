@@ -42,6 +42,11 @@ function anatomyWindows(history) {
   });
 }
 
+function latestAnatomyWindow(history) {
+  const windows = anatomyWindows(history);
+  return windows.length > 0 ? windows[windows.length - 1] : null;
+}
+
 function isInWindow(timestamp, windows) {
   const ts = isoMs(timestamp);
   return ts !== null && windows.some(({ start, end }) => ts >= start && ts < end);
@@ -96,7 +101,8 @@ export function verifyRecaptureFired(sessionRoot) {
 
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   const activity = state.activity;
-  const windows = anatomyWindows(state.history);
+  const latestWindow = latestAnatomyWindow(state.history);
+  const windows = latestWindow ? [latestWindow] : [];
   const matchingEvent = Array.isArray(activity) ? findMatchingEvent(activity, windows) : null;
   const failureReason = !Array.isArray(activity)
     ? 'activity-missing'
