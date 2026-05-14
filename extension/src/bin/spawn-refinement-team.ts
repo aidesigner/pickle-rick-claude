@@ -1330,6 +1330,10 @@ function extractSourceRequirements(parentPrdPath: string): SourceRequirement[] {
       const resolvedCompose = resolvePeerPrdPath(canonicalPath, composedPath);
       if (resolvedCompose) visitPrd(resolvedCompose);
     }
+    for (const peerPath of peerPrdDeferredPaths(frontmatter)) {
+      const resolvedPeer = resolvePeerPrdPath(canonicalPath, peerPath);
+      if (resolvedPeer) visitPrd(resolvedPeer);
+    }
   };
   const parentContent = fs.readFileSync(parentPrdPath, 'utf-8');
   const parentFrontmatter = parseFrontmatter(parentContent);
