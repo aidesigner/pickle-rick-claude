@@ -46,6 +46,12 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isCanonicalUtcIsoTimestamp(value) {
+  if (typeof value !== 'string') return false;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.]\d{3}Z$/.test(value)) return false;
+  return !Number.isNaN(Date.parse(value));
+}
+
 export function validateBundleArtifact(artifact) {
   const errors = [];
   if (!isObject(artifact)) return ['artifact must be an object'];
@@ -54,10 +60,8 @@ export function validateBundleArtifact(artifact) {
   }
   if ('ac_id' in artifact && typeof artifact.ac_id !== 'string') errors.push('ac_id must be a string');
   if ('pass' in artifact && typeof artifact.pass !== 'boolean') errors.push('pass must be a boolean');
-  if ('checked_at' in artifact && (
-    typeof artifact.checked_at !== 'string' || Number.isNaN(Date.parse(artifact.checked_at))
-  )) {
-    errors.push('checked_at must be an ISO date string');
+  if ('checked_at' in artifact && !isCanonicalUtcIsoTimestamp(artifact.checked_at)) {
+    errors.push('checked_at must be a canonical UTC ISO date string');
   }
   if ('checker' in artifact && typeof artifact.checker !== 'string') errors.push('checker must be a string');
   if ('checker_version' in artifact && typeof artifact.checker_version !== 'string') {

@@ -176,6 +176,24 @@ test('verify-bundle.malformed-fail exits 1 and names missing field', () => {
   }
 });
 
+test('verify-bundle.non-canonical-checked-at fails when artifact timestamp is not UTC ISO', () => {
+  const fixture = makeFixture(({ bundleDir }) => {
+    writeFileSync(
+      path.join(bundleDir, 'ac-dr-11.json'),
+      `${JSON.stringify(artifact('AC-DR-11', {
+        checked_at: '2026-05-02T00:00:00-05:00',
+      }), null, 2)}\n`,
+    );
+  });
+  try {
+    const result = runVerifier(fixture);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /checked_at must be a canonical UTC ISO date string/);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test('verify-bundle.single-ac validates only requested artifact', () => {
   const fixture = makeFixture(({ bundleDir }) => {
     rmSync(path.join(bundleDir, 'ac-dr-09.json'));
