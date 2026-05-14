@@ -52,18 +52,29 @@ function makeGitFixture({
   return { dir, tagName };
 }
 
-function makeTarball(version) {
+function makeTarball(version, archiveName = 'release.tar.gz') {
   const dir = mkdtempSync(path.join(tmpdir(), 'release-gate-tar-'));
   const root = path.join(dir, 'pickle-rick-claude');
   writePackage(root, version);
-  const tarball = path.join(dir, 'release.tar.gz');
+  const tarball = path.join(dir, archiveName);
   run('tar', ['-czf', tarball, '-C', dir, 'pickle-rick-claude']);
   return { dir, tarball };
 }
 
-function makeGhFixture({ mode = 'ok', tarball }) {
+function makeSidecarTarball(archiveName = 'sidecar.tar.gz') {
+  const dir = mkdtempSync(path.join(tmpdir(), 'release-gate-sidecar-'));
+  const root = path.join(dir, 'sidecar');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(path.join(root, 'README.md'), '# sidecar\n');
+  const tarball = path.join(dir, archiveName);
+  run('tar', ['-czf', tarball, '-C', dir, 'sidecar']);
+  return { dir, tarball };
+}
+
+function makeGhFixture({ mode = 'ok', tarball, tarballs, fakeFindNames }) {
   const binDir = mkdtempSync(path.join(tmpdir(), 'release-gate-bin-'));
   const ghPath = path.join(binDir, 'gh');
+  const downloadTarballs = tarballs ?? (tarball ? [tarball] : ['/no/such/file']);
   writeFileSync(
     ghPath,
     `#!/usr/bin/env bash
@@ -85,13 +96,24 @@ if [ "$1" = "release" ] && [ "$2" = "download" ]; then
     fi
     shift
   done
-  cp ${JSON.stringify(tarball ?? '/no/such/file')} "$dest/release.tar.gz"
-  exit $?
+  status=0
+  ${downloadTarballs.map((asset) => `cp ${JSON.stringify(asset)} "$dest/$(basename ${JSON.stringify(asset)})" || status=$?`).join('\n  ')}
+  exit "$status"
 fi
 exit 1
 `,
     { mode: 0o755 },
   );
+  if (fakeFindNames) {
+    writeFileSync(
+      path.join(binDir, 'find'),
+      `#!/usr/bin/env bash
+dir="$1"
+${fakeFindNames.map((name) => `printf '%s\\n' "$dir/${name}"`).join('\n')}
+`,
+      { mode: 0o755 },
+    );
+  }
   return binDir;
 }
 
@@ -204,6 +226,26 @@ describe('release-gate.post-tag', () => {
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
       rmSync(tarFixture.dir, { recursive: true, force: true });
+      rmSync(ghDir, { recursive: true, force: true });
+    }
+  });
+
+  test('ignores sidecar tar.gz assets and verifies the unique installable release tarball', () => {
+    const { dir: repoDir, tagName } = makeGitFixture();
+    const tarFixture = makeTarball('1.67.0', 'pickle-release.tar.gz');
+    const sidecarFixture = makeSidecarTarball('aaa-sidecar.tar.gz');
+    const ghDir = makeGhFixture({
+      tarballs: [tarFixture.tarball, sidecarFixture.tarball],
+      fakeFindNames: ['aaa-sidecar.tar.gz', 'pickle-release.tar.gz'],
+    });
+    try {
+      const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /ok/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(tarFixture.dir, { recursive: true, force: true });
+      rmSync(sidecarFixture.dir, { recursive: true, force: true });
       rmSync(ghDir, { recursive: true, force: true });
     }
   });

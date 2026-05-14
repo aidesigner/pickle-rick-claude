@@ -60,6 +60,31 @@ read_tag_version() {
   printf '%s\n' "$version"
 }
 
+select_installable_tarball() {
+  local dir="$1"
+  local tag="$2"
+  local -a downloaded=()
+  local -a installable=()
+  local tarball
+
+  while IFS= read -r tarball; do
+    [ -n "$tarball" ] || continue
+    downloaded+=("$tarball")
+  done < <(find "$dir" -type f -name '*.tar.gz' -print)
+
+  [ ${#downloaded[@]} -gt 0 ] || die 20 "release download produced no tar.gz asset for $tag"
+
+  for tarball in "${downloaded[@]}"; do
+    if tar -tzf "$tarball" | awk '/(^|\/)extension\/package\.json$/ { found=1; exit } END { exit found ? 0 : 1 }'; then
+      installable+=("$tarball")
+    fi
+  done
+
+  [ ${#installable[@]} -gt 0 ] || die 21 "downloaded tarball is missing $PKG_DISPLAY_PATH"
+  [ ${#installable[@]} -eq 1 ] || die 21 "release $tag downloaded multiple installable tar.gz assets"
+  printf '%s\n' "${installable[0]}"
+}
+
 pre_tag() {
   local tag="$1"
   local expected tag_name_version tagged
@@ -84,8 +109,7 @@ post_tag() {
   gh release download "$tag" -R "$REPO" -A 'tar.gz' -D "$tmpdir" >/dev/null 2>&1 || die 20 "release download failed for $tag"
 
   local tarball pkg_member pkg tagged
-  tarball="$(find "$tmpdir" -type f -name '*.tar.gz' -print -quit)"
-  [ -n "$tarball" ] || die 20 "release download produced no tar.gz asset for $tag"
+  tarball="$(select_installable_tarball "$tmpdir" "$tag")"
   pkg_member="$(tar -tzf "$tarball" | awk '/(^|\/)extension\/package\.json$/ { print; exit }')"
   [ -n "$pkg_member" ] || die 21 "downloaded tarball is missing $PKG_DISPLAY_PATH"
   pkg="$(tar -xOzf "$tarball" "$pkg_member" 2>/dev/null)" || die 21 "could not read $PKG_DISPLAY_PATH from downloaded tarball"
