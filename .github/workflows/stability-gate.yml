@@ -1,0 +1,51 @@
+name: Stability Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_count:
+        description: Number of consecutive test:fast passes required
+        required: false
+        default: '10'
+  pull_request:
+    paths:
+      - extension/tests/auto-resume-stop-conditions.test.js
+      - extension/tests/council-publish.test.js
+      - extension/tests/ensure-monitor-window.test.js
+      - extension/tests/mux-runner-relaunch.test.js
+      - extension/tests/.serial-tests-fast.json
+
+jobs:
+  stability-gate:
+    runs-on: ubuntu-latest
+    env:
+      RUN_COUNT: ${{ inputs.run_count || '10' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Install extension dependencies
+        working-directory: extension
+        run: npm ci
+
+      - name: Run test:fast repeatedly
+        working-directory: extension
+        shell: bash
+        run: |
+          mkdir -p ../stability-gate-logs
+          for i in $(seq 1 "$RUN_COUNT"); do
+            log_file="../stability-gate-logs/test-fast-pass-${i}.log"
+            echo "=== Pass $i/$RUN_COUNT ==="
+            echo "=== Pass $i/$RUN_COUNT ===" > "$log_file"
+            npm run test:fast 2>&1 | tee -a "$log_file" || exit 1
+          done
+
+      - name: Upload stability logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stability-gate-logs
+          path: stability-gate-logs/
