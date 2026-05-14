@@ -38,7 +38,7 @@ function writeFile(repoRoot, relativePath, content) {
   return fullPath;
 }
 
-function createFixtureRepo() {
+function createFixtureRepo(parentRelativePath = 'bundle.md') {
   const repoRoot = tmpDir('pickle-source-prd-repo-');
   git(repoRoot, ['init', '-q']);
   fs.mkdirSync(path.join(repoRoot, 'extension'), { recursive: true });
@@ -64,7 +64,7 @@ function createFixtureRepo() {
     '',
     '- AC-ROOT-01',
   ].join('\n'));
-  const parentPrdPath = writeFile(repoRoot, 'bundle.md', [
+  const parentPrdPath = writeFile(repoRoot, parentRelativePath, [
     '---',
     'peer_prds:',
     '  deferred:',
@@ -149,6 +149,20 @@ test('spawn-refinement-team: relative parentPrdPath throws explicit assertion', 
     () => enrichManifestTicketsFromSourcePrds('bundle.md', baseTickets()),
     /enrichManifestTicketsFromSourcePrds requires absolute parentPrdPath/
   );
+});
+
+test('spawn-refinement-team: nested bundle PRDs still resolve repo-root-relative peer_prds', () => {
+  const { repoRoot, parentPrdPath } = createFixtureRepo('prds/bundles/bundle.md');
+  try {
+    const tickets = buildEnrichedTickets(parentPrdPath, os.tmpdir());
+    assert.deepEqual(tickets.map((ticket) => ticket.source_prd), [
+      'prds/source-relative.md',
+      'prds/source-absolute.md',
+      'prds/source-repo.md',
+    ]);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
 });
 
 test('check-readiness: normalized source_prd does not emit file_path findings', () => {

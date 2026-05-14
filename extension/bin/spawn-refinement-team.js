@@ -1016,7 +1016,11 @@ function composedPrdPaths(frontmatter) {
 function resolvePeerPrdPath(parentPrdPath, peerPath) {
     if (path.isAbsolute(peerPath) && fs.existsSync(peerPath))
         return peerPath;
-    const candidates = [path.resolve(path.dirname(parentPrdPath), peerPath)];
+    const repoRoot = findRepoRoot(path.dirname(parentPrdPath));
+    const candidates = [
+        path.resolve(path.dirname(parentPrdPath), peerPath),
+        path.resolve(repoRoot, peerPath),
+    ];
     return candidates.find((candidate) => fs.existsSync(candidate));
 }
 function findRepoRoot(startDir) {
