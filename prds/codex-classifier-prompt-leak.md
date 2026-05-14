@@ -1,22 +1,60 @@
 # PRD: Codex Backend Classifier Prompt-Leak
 
-**Status**: **REOPENED 2026-05-14 (Priority P1)** — original ship neutered the 14-ticket abandonment failure mode (MANAGER_FALSE_EPIC_COMPLETED guardrail in mux-runner converts false claims into retries), but the **root-cause prompt-leak in `extractAssistantContent` is still firing**. Pipeline `2026-05-13-b54f2143` (codex, R-TSPF bundle) recorded **8+ MANAGER_FALSE_EPIC_COMPLETED events across 4 tickets** plus one MANAGER_PERSISTENT_HALLUCINATION trip. Operational tax: ~80 min/ticket operator heal-and-relaunch (commit work + flip frontmatter + clear circuit breaker + relaunch tmux). With 7 tickets, ~5h of wall-clock was tax. **A real fix would 3-5× pipeline throughput for codex-backed bundles.**
+**Status**: **DIAGNOSIS-ONLY 2026-05-14 PM (Priority P1, blocking)** — earlier "REOPENED" reflagging was based on operational evidence (8+ MANAGER_FALSE_EPIC_COMPLETED strikes in `2026-05-13-b54f2143`) without reconciling against current HEAD. **HEAD reconciliation** (next section) shows the fix this PRD prescribed has already shipped: codex-aware `extractAssistantContent`, `detectOutputFormat` probe, stream-json assistant-line guard, `PromiseTokens` constants module, template scrub, R3/R5 fixture matrix, and trap-door pin are all in place at `v1.74.0`. The operational evidence is real, but the prescribed fix cannot cause it — a different bug class is firing. **DO NOT launch this PRD as a bundle until diagnosis identifies the actual fault.** See `## Diagnostic Plan` below.
 
-## 2026-05-14 reopening evidence
+## HEAD reconciliation (2026-05-14 PM)
+
+Verified against `c8f64d88` / deployed `v1.74.0`:
+
+| PRD requirement (original) | HEAD reality | Status |
+|---|---|---|
+| R1 codex-aware `extractAssistantContent` | `extension/src/services/classifier-utils.ts:92` — implements all 3 detection modes verbatim to spec | **SHIPPED** |
+| R1 fix-bug: stream-json detection requires `type:"assistant"` JSON | `isAssistantJsonLine` at `classifier-utils.ts:6` enforces this | **SHIPPED** |
+| R3 `PromiseTokens` shared constants module | `extension/src/services/promise-tokens.ts` + `types/index.ts:375` enum | **SHIPPED** |
+| R3 template scrub (no unbroken `<promise>…</promise>` in deployed templates) | Verified 0 matches in deployed `pickle.md`/`meeseeks.md`/`szechuan-sauce.md`/`pickle-tmux.md` | **SHIPPED** |
+| R4 `detectOutputFormat` canonical probe | Exported from `classifier-utils.ts:69`, re-exported via `mux-runner.ts:22` | **SHIPPED** |
+| R5 three-fixture matrix + claude regression coverage | `extension/tests/mux-runner-classifier.test.js` (2.6K) + 6 fixtures at `extension/tests/fixtures/iteration-logs/` | **SHIPPED** |
+| R3 template scrub test | `extension/tests/template-no-bare-tokens.test.js` (3.7K) | **SHIPPED** |
+| R-CCPL-4 trap-door pin (contract enforcement) | `extension/CLAUDE.md` "Codex plain-text classifier MUST detect via block delimiters … stream-json mode MUST require ≥1 type:'assistant' JSON line" | **SHIPPED** |
+
+Inference: the `## Root Cause` / `## Why it's non-deterministic` analysis preserved below describes the *original* bug class, which is fixed. The operational evidence from `2026-05-13-b54f2143` describes a *different* failure that surfaces with the same symptom (`MANAGER_FALSE_EPIC_COMPLETED`).
+
+## 2026-05-14 operational evidence (cause unknown)
 
 - Pipeline `2026-05-13-b54f2143` mux-runner.log MANAGER_FALSE_EPIC_COMPLETED entries:
   - `f54318b1` R-TSPF-1: 3 strikes → operator-healed → relaunched
   - `02252412` R-TSPF-2: 3 strikes → operator-healed → relaunched
   - `dd63fa85` R-TSPF-3: 3 strikes → MANAGER_PERSISTENT_HALLUCINATION (count=4 trip) → operator-healed
   - `4a96afc6` R-TSPF-4: 2 strikes then self-recovered (codex cycle finally stretched naturally)
-- Without the mux-runner guardrail, all four tickets would have shipped silently-empty.
-- The guardrail is a *fence around* the bug, not the fix.
+- The guardrail prevented data loss. The trigger is unidentified — the original prompt-leak fix is in HEAD, so the strikes have a different source.
 
-## Original ship status (carried for context)
+## Diagnostic Plan
 
-Prior status "Shipped" referenced the closing of the 14-ticket abandonment failure mode via the mux-runner guardrails. Those guardrails are intact and continue to prevent data loss. What remains unshipped is `extractAssistantContent`'s codex-aware filter — the root-cause fix described in `## Root Cause` below.
+Three competing hypotheses for the b54f2143 strikes. Diagnosis must disambiguate before any new bundle is queued.
 
-## Problem
+| H | Hypothesis | Disambiguation |
+|---|---|---|
+| H-A | Codex `codex` block legitimately contains the literal token (model echoes prompt body as reasoning/recap) — fix is upstream of `extractAssistantContent` | For each strike, slice the iteration log between the immediately-preceding `codex` delimiter and the next delimiter. Token presence inside → H-A. |
+| H-B | Codex delimiter detection has a gap (new block type, renamed delimiter, or whitespace drift) — fix is in `CODEX_DELIMITER_RE` | Grep each strike's iteration log for `^(user|codex|exec|tokens used|reasoning|tool_call)\s*$` count and contrast with raw structural blocks. If a non-matching delimiter appears → H-B. |
+| H-C | `classifyCompletion` returned `continue` correctly but the MANAGER_FALSE_EPIC_COMPLETED counter is incremented on a different signal (e.g., manager's prose self-claim, not the classifier) — fix is in mux-runner's strike accounting | Grep mux-runner.log for `MANAGER_FALSE_EPIC_COMPLETED` adjacent to `classifyCompletion`'s decision log. If the strike fires without `classifyCompletion === task_completed` → H-C. |
+
+Additional defense-in-depth probe — R-CCPL-4 trap door already mandates a stderr drift warning when codex-context callers observe `detectOutputFormat === 'plain-text'`. Check b54f2143's mux-runner.log for that warning; presence → drift detected, absence → detection still routing through codex-block mode (H-A or H-C, rules out H-B variants that drop delimiters entirely).
+
+### Diagnostic deliverables
+
+1. Per-strike forensic note (8+ strikes × what mode `detectOutputFormat` returned, what tokens appeared in which block) committed to `prds/research-r-ccpl-b54f2143-2026-05-14.md`.
+2. Hypothesis selection (one of H-A/H-B/H-C, or a new H-D the diagnosis surfaces).
+3. **Decision**: either (a) draft a fresh, narrow PRD scoped to the actual fault (likely 1–2 tickets), (b) close this PRD via verify-then-close if the strikes were all spurious (e.g., counter increment that the guardrail later self-corrected), or (c) re-open with a corrected `## Problem` section and a real `## Root Cause`.
+
+### Implementer constraint
+
+Diagnosis is read-only forensics — no source changes, no test changes. Run with `--backend claude` if anything spawns. Output is a research note, not a bundle.
+
+## Historical Root Cause Analysis (pre-ship — preserved for reference)
+
+The following two sections describe the **original** bug that the v1.74.0 fix already remediates. They are kept here as background for anyone tracing the parsing-surface lineage. Do NOT use them as a current-HEAD problem statement.
+
+## Problem (HISTORICAL — fixed in v1.74.0)
 
 When `mux-runner.js` runs with `--backend codex`, `classifyCompletion()` non-deterministically returns `'task_completed'` even when the model never emitted `<promise>EPIC_COMPLETED</promise>`. The classifier matches the literal token *inside its own prompt* — codex's plain-text output format defeats the filter that exists to prevent exactly this.
 
@@ -217,7 +255,8 @@ This PRD shares a parsing surface with **T5 (`stop-hook.ts` split, 8-token detec
 ## Stakeholders
 
 - **Author**: Gregory Dickson (Pickle Rick)
-- **Implementer**: TBD (single Morty worker, ~half-day estimate excluding fixture authoring). **Backend constraint**: implement and verify with `--backend claude`. Running this fix through `--backend codex` would reproduce the very bug being fixed and risk silent loss of the implementer's own work mid-PR.
+- **Diagnostician (current phase)**: ad-hoc forensic pass on `2026-05-13-b54f2143` mux-runner.log + per-strike iteration logs; read-only, no source changes. Output is `prds/research-r-ccpl-b54f2143-2026-05-14.md`.
+- **Implementer (conditional, post-diagnosis)**: TBD. Only assigned if diagnosis surfaces an actual fault. Backend constraint stays `--backend claude`.
 - **Reviewers**: any operator who has run `/pickle-tmux --backend codex`
 
 ## References
