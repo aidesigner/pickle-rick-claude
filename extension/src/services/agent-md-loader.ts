@@ -72,11 +72,12 @@ export function parseAgentMdFrontmatter(frontmatter: string, sourcePath = '<agen
   const raw = parseFlatFrontmatter(frontmatter);
   const name = required(raw, 'name', sourcePath);
   const description = required(raw, 'description', sourcePath);
-  const tools = splitCsv(required(raw, 'tools', sourcePath));
+  const tools = parseInlineArray(required(raw, 'tools', sourcePath));
   if (tools.length === 0) {
     throw new Error(`Agent markdown frontmatter key "tools" must contain at least one tool: ${sourcePath}`);
   }
   const model = raw.model ? parseModel(raw.model, sourcePath) : undefined;
+  const principles = raw['principles[]'] ?? raw.principles;
   return {
     name,
     description,
@@ -85,7 +86,7 @@ export function parseAgentMdFrontmatter(frontmatter: string, sourcePath = '<agen
     ...(raw.role ? { role: raw.role } : {}),
     ...(raw.identity ? { identity: raw.identity } : {}),
     ...(raw.communication_style ? { communicationStyle: raw.communication_style } : {}),
-    ...(raw['principles[]'] ? { principles: parseInlineArray(raw['principles[]']) } : {}),
+    ...(principles ? { principles: parseInlineArray(principles) } : {}),
     raw,
   };
 }
@@ -99,12 +100,30 @@ function agentFilename(agentName: string): string {
 
 function parseFlatFrontmatter(frontmatter: string): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const line of frontmatter.split(/\r?\n/)) {
+  const lines = frontmatter.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
     const colon = line.indexOf(':');
     if (colon === -1) continue;
     const key = line.slice(0, colon).trim();
-    const value = line.slice(colon + 1).trim();
-    if (key) result[key] = stripQuotes(value);
+    let value = line.slice(colon + 1).trim();
+    if (!key) continue;
+    if (value === '') {
+      const items: string[] = [];
+      let cursor = index + 1;
+      while (cursor < lines.length) {
+        const match = lines[cursor]?.match(/^\s*-\s+(.*)$/);
+        if (!match) break;
+        items.push(stripQuotes(match[1].trim()));
+        cursor++;
+      }
+      if (items.length > 0) {
+        result[key] = `[${items.map((item) => JSON.stringify(item)).join(', ')}]`;
+        index = cursor - 1;
+        continue;
+      }
+    }
+    result[key] = stripQuotes(value);
   }
   return result;
 }

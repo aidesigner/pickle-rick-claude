@@ -33,6 +33,32 @@ function writeAgent(filePath, name, description) {
   );
 }
 
+function writeYamlListAgent(filePath, name, description) {
+  writeFileSync(
+    filePath,
+    [
+      '---',
+      `name: ${name}`,
+      `description: ${description}`,
+      'tools:',
+      '  - Read',
+      '  - Glob',
+      '  - Grep',
+      'model: sonnet',
+      'role: phase-researcher',
+      'identity: Know what exists.',
+      'communication_style: direct',
+      'principles:',
+      '  - Ground claims.',
+      '  - Cite files.',
+      '---',
+      '',
+      '# Body',
+      '',
+    ].join('\n'),
+  );
+}
+
 test('agent-md-loader: user override wins over managed canonical file', () => {
   const agentsDir = tempAgentsDir();
   try {
@@ -64,6 +90,23 @@ test('agent-md-loader: managed canonical file is fallback when override is absen
     assert.ok(loaded);
     assert.equal(loaded.source, 'managed');
     assert.equal(loaded.path, managed);
+  } finally {
+    rmSync(agentsDir, { recursive: true, force: true });
+  }
+});
+
+test('agent-md-loader: loadAgentMd accepts YAML list frontmatter for tools and principles', () => {
+  const agentsDir = tempAgentsDir();
+  try {
+    const managed = path.join(agentsDir, '.pickle-managed', 'morty-phase-researcher.md');
+    writeYamlListAgent(managed, 'morty-phase-researcher', 'Managed');
+
+    const loaded = loadAgentMd('morty-phase-researcher', { agentsDir });
+
+    assert.ok(loaded);
+    assert.equal(loaded.source, 'managed');
+    assert.deepEqual(loaded.frontmatter.tools, ['Read', 'Glob', 'Grep']);
+    assert.deepEqual(loaded.frontmatter.principles, ['Ground claims.', 'Cite files.']);
   } finally {
     rmSync(agentsDir, { recursive: true, force: true });
   }
