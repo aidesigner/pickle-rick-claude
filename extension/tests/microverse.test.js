@@ -1275,6 +1275,29 @@ test('buildMicroverseHandoff includes PRD path when sessionDir provided', () => 
     assert.ok(handoff.includes('## PRD: /tmp/sessions/abc123/prd.md'), 'should include PRD path');
 });
 
+test('buildMicroverseHandoff omits gap-analysis section when gap_analysis_path file is missing', () => {
+    const mvState = createMicroverseState({ prdPath: '/tmp/target', metric: TEST_METRIC, stallLimit: 3 });
+    mvState.gap_analysis_path = '/tmp/definitely-missing-gap-analysis.md';
+    const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
+    assert.ok(!handoff.includes('## Gap Analysis'), 'should not advertise a missing gap analysis file');
+    assert.ok(!handoff.includes('Read gap_analysis.md'), 'should not tell the worker to read a missing file');
+});
+
+test('buildMicroverseHandoff includes gap-analysis section when gap_analysis_path file exists', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-gap-handoff-'));
+    try {
+        const gapPath = path.join(dir, 'gap_analysis.md');
+        fs.writeFileSync(gapPath, '# Gap Analysis\n');
+        const mvState = createMicroverseState({ prdPath: '/tmp/target', metric: TEST_METRIC, stallLimit: 3 });
+        mvState.gap_analysis_path = gapPath;
+        const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
+        assert.ok(handoff.includes('## Gap Analysis'), 'should include gap-analysis heading when the file exists');
+        assert.ok(handoff.includes(`See: ${gapPath}`), 'should include the live gap-analysis path');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test('buildMicroverseHandoff omits PRD section when sessionDir not provided', () => {
     const mvState = createMicroverseState({ prdPath: '/tmp/target', metric: TEST_METRIC, stallLimit: 3 });
     const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');

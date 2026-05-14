@@ -1259,12 +1259,15 @@ function buildWorkerMicroverseHandoff(mvState, iteration, workingDir, sessionDir
     return parts.join('\n');
 }
 function appendGapAnalysisHandoff(parts, mvState) {
-    if (mvState.gap_analysis_path) {
-        parts.push(`## Gap Analysis`);
-        parts.push(`See: ${mvState.gap_analysis_path}`);
-        parts.push(`Read gap_analysis.md — items marked Fixed are done, skip them.`);
-        parts.push('');
-    }
+    const gapAnalysisPath = typeof mvState.gap_analysis_path === 'string'
+        ? mvState.gap_analysis_path.trim()
+        : '';
+    if (!gapAnalysisPath || !fs.existsSync(gapAnalysisPath))
+        return;
+    parts.push(`## Gap Analysis`);
+    parts.push(`See: ${gapAnalysisPath}`);
+    parts.push(`Read gap_analysis.md — items marked Fixed are done, skip them.`);
+    parts.push('');
 }
 function appendFailedApproachesHandoff(parts, mvState) {
     if (mvState.failed_approaches.length === 0)
