@@ -9,6 +9,7 @@ import type { ActivityEventType, Backend, IterationExitType, MicroverseSessionSt
 import type { ErrorRecord } from '../types/index.js';
 import {
   resolveBackend,
+  resolveWorkerBackendFromState,
   resolveWorkerBackendFromStateFile,
   buildJudgeInvocation,
   buildWorkerInvocation,
@@ -76,6 +77,11 @@ export type IterationClassification =
   | { kind: 'failed'; exitReason: JudgeMeasurementFailureExitReason }
   | { kind: 'unchanged' };
 export type NoCommitExitClassification = 'clean_pass' | 'stall' | 'amnesiac';
+
+interface RemediatorRuntimeOverrides {
+  workerEnvOverrides?: NodeJS.ProcessEnv;
+  logActivityFn?: typeof logActivity;
+}
 
 export interface StallClassifierInput {
   outcome?: IterationRunOutcome;
@@ -225,6 +231,7 @@ export async function runRemediatorForIteration(
   workingDir: string,
   backend: Backend,
   remediatorTimeoutS: number,
+  runtimeOverrides: RemediatorRuntimeOverrides = {},
 ): Promise<{ success: boolean }> {
   const iso = isoCompactStamp();
   const gateDir = path.join(sessionDir, 'gate');
@@ -255,22 +262,25 @@ export async function runRemediatorForIteration(
 
   const startMs = Date.now();
   const statePath = path.join(sessionDir, 'state.json');
-  const workerBackendResolution = resolveWorkerBackendFromStateFile(statePath);
-  // R-XBL-2: re-read state.backend immediately before exec via StateManager.read
-  // so any mid-iteration backend flip is honored at the spawn site (single
-  // source of truth). Falls back to the param if the state read fails.
-  // PICKLE_REFINEMENT_LOCK=1 still wins via resolveBackendFromStateFileWithSource.
-  const execBackend = workerBackendResolution.backend;
-
-  // Preserve the legacy fallback behavior for codex model resolution: if the
-  // state file is missing/unreadable and the backend is still codex, use the
-  // caller-provided fallback model defaults.
   let remediatorState: State | null = null;
   try {
     remediatorState = sm.read(statePath);
   } catch {
     // Keep the fallback state null when the file is unreadable.
   }
+  const workerBackendResolution = remediatorState
+    ? resolveWorkerBackendFromState(remediatorState)
+    : resolveWorkerBackendFromState({ backend });
+  // R-XBL-2: re-read state.backend immediately before exec via StateManager.read
+  // so any mid-iteration backend flip is honored at the spawn site (single
+  // source of truth). When the state read fails, fall back to the caller's
+  // explicit backend instead of ambient env/default resolution.
+  // PICKLE_REFINEMENT_LOCK=1 still wins via resolveWorkerBackendFromState.
+  const execBackend = workerBackendResolution.backend;
+
+  // Preserve the legacy fallback behavior for codex model resolution: if the
+  // state file is missing/unreadable and the backend is still codex, use the
+  // caller-provided fallback model defaults.
   // Plumb codex model so remediator spawns honor `default_codex_model` /
   // `state.codex_model` instead of falling back to the codex CLI compiled-in
   // default. Other backends ignore the field.
@@ -288,7 +298,8 @@ export async function runRemediatorForIteration(
     addDirs: [workingDir],
     ...(codexModel ? { model: codexModel } : {}),
   });
-  logActivity({
+  const writeActivity = runtimeOverrides.logActivityFn ?? logActivity;
+  writeActivity({
     event: 'worker_backend_resolved',
     source: workerBackendResolution.source,
     backend: workerBackendResolution.managerBackend,
@@ -302,7 +313,7 @@ export async function runRemediatorForIteration(
       cwd: workingDir,
       timeout: remediatorTimeoutS * 1000,
       stdio: 'pipe',
-      env: { ...process.env, ...backendEnvOverrides(execBackend) },
+      env: { ...process.env, ...runtimeOverrides.workerEnvOverrides, ...backendEnvOverrides(execBackend) },
     });
   } catch (err) {
     const msg = safeErrorMessage(err);
@@ -319,14 +330,28 @@ function readRemediationResult(gateDir: string, startMs: number): { success: boo
       .map(f => {
         const match = f.match(/^(remediation_.+_result\.json)(?:\.tmp\.\d+(?:\..+)?)?$/);
         if (!match) return null;
-        return { name: match[1], mtime: fs.statSync(path.join(gateDir, f)).mtimeMs };
+        return {
+          actualName: f,
+          canonicalName: match[1],
+          mtime: fs.statSync(path.join(gateDir, f)).mtimeMs,
+        };
       })
-      .filter((f): f is { name: string; mtime: number } => f !== null)
+      .filter((f): f is { actualName: string; canonicalName: string; mtime: number } => f !== null)
       .filter(({ mtime }) => mtime >= startMs)
       .sort((a, b) => b.mtime - a.mtime);
 
     if (resultFiles.length === 0) return { success: false };
-    const resultRaw = readRecoverableJsonObject(path.join(gateDir, resultFiles[0].name)) as {
+    const latest = resultFiles[0];
+    const actualPath = path.join(gateDir, latest.actualName);
+    const canonicalPath = path.join(gateDir, latest.canonicalName);
+    if (latest.actualName !== latest.canonicalName) {
+      try {
+        fs.renameSync(actualPath, canonicalPath);
+      } catch {
+        if (!fs.existsSync(canonicalPath)) return { success: false };
+      }
+    }
+    const resultRaw = readRecoverableJsonObject(canonicalPath) as {
       aborted?: boolean;
       failures_out?: number;
     } | null;

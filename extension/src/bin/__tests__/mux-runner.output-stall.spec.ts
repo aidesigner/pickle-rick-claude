@@ -7,11 +7,6 @@ import { test } from 'node:test';
 import { runIteration } from '../../bin/mux-runner.js';
 import { Defaults, type State } from '../../types/index.js';
 
-type MutableTimeoutDefaults = {
-  MAX_ITERATION_SECONDS: number;
-  OUTPUT_STALL_SECONDS: number;
-};
-
 function makeExecutableNodeScript(filePath: string, source: string): void {
   fs.writeFileSync(filePath, `#!/usr/bin/env node\n${source}`);
   fs.chmodSync(filePath, 0o755);
@@ -114,60 +109,28 @@ if (scenario === 'output-stall') {
   return { sessionDir, fakeBin, signalFile, markerFile };
 }
 
-async function withPatchedTimeoutDefaults<T>(
-  overrides: MutableTimeoutDefaults,
-  run: () => Promise<T>,
-): Promise<T> {
-  const defaults = Defaults as MutableTimeoutDefaults;
-  const original = {
-    MAX_ITERATION_SECONDS: defaults.MAX_ITERATION_SECONDS,
-    OUTPUT_STALL_SECONDS: defaults.OUTPUT_STALL_SECONDS,
-  };
-
-  defaults.MAX_ITERATION_SECONDS = overrides.MAX_ITERATION_SECONDS;
-  defaults.OUTPUT_STALL_SECONDS = overrides.OUTPUT_STALL_SECONDS;
-  try {
-    return await run();
-  } finally {
-    defaults.MAX_ITERATION_SECONDS = original.MAX_ITERATION_SECONDS;
-    defaults.OUTPUT_STALL_SECONDS = original.OUTPUT_STALL_SECONDS;
-  }
-}
-
 async function runScenario(
   scenario: 'output-stall' | 'wall-clock' | 'success',
-  overrides: MutableTimeoutDefaults,
+  overrides: { MAX_ITERATION_SECONDS: number; OUTPUT_STALL_SECONDS: number },
 ) {
   const { sessionDir, fakeBin, signalFile, markerFile } = makeScenarioSession(`pickle-rapmw6-${scenario}-`);
-  const oldPath = process.env.PATH;
-  const oldBackend = process.env.PICKLE_BACKEND;
-  const oldScenario = process.env.R_APMW6_SCENARIO;
-  const oldSignalFile = process.env.R_APMW6_SIGNAL_FILE;
-  const oldMarkerFile = process.env.R_APMW6_MARKER_FILE;
 
   try {
-    process.env.PATH = `${fakeBin}${path.delimiter}${oldPath ?? ''}`;
-    process.env.PICKLE_BACKEND = 'claude';
-    process.env.R_APMW6_SCENARIO = scenario;
-    process.env.R_APMW6_SIGNAL_FILE = signalFile;
-    process.env.R_APMW6_MARKER_FILE = markerFile;
-
-    const outcome = await withPatchedTimeoutDefaults(overrides, async () => (
-      runIteration(sessionDir, 1, sessionDir, '')
-    ));
+    const outcome = await runIteration(sessionDir, 1, sessionDir, '', {
+      envOverrides: {
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ''}`,
+        PICKLE_BACKEND: 'claude',
+        R_APMW6_SCENARIO: scenario,
+        R_APMW6_SIGNAL_FILE: signalFile,
+        R_APMW6_MARKER_FILE: markerFile,
+      },
+      maxIterationSeconds: overrides.MAX_ITERATION_SECONDS,
+      outputStallSeconds: overrides.OUTPUT_STALL_SECONDS,
+    });
 
     return { outcome, sessionDir, signalFile, markerFile };
   } finally {
-    if (oldPath === undefined) delete process.env.PATH;
-    else process.env.PATH = oldPath;
-    if (oldBackend === undefined) delete process.env.PICKLE_BACKEND;
-    else process.env.PICKLE_BACKEND = oldBackend;
-    if (oldScenario === undefined) delete process.env.R_APMW6_SCENARIO;
-    else process.env.R_APMW6_SCENARIO = oldScenario;
-    if (oldSignalFile === undefined) delete process.env.R_APMW6_SIGNAL_FILE;
-    else process.env.R_APMW6_SIGNAL_FILE = oldSignalFile;
-    if (oldMarkerFile === undefined) delete process.env.R_APMW6_MARKER_FILE;
-    else process.env.R_APMW6_MARKER_FILE = oldMarkerFile;
+    // env overrides are scoped to runIteration; only the temp session needs cleanup here.
   }
 }
 

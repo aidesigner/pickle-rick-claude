@@ -60,11 +60,11 @@ export function managerRelaunchCapForBackend(backend: Backend): number {
   return Defaults.CODEX_MANAGER_RELAUNCH_CAP;
 }
 
-function managerRelaunchCapForExitKind(exitKind: ManagerRelaunchExitKind): number {
+function managerRelaunchCapForExitKind(exitKind: ManagerRelaunchExitKind, backend: Backend): number {
   if (exitKind === 'claude_max_turns') {
     return readClaudeManagerRelaunchCapOverride() ?? Defaults.CLAUDE_MANAGER_RELAUNCH_CAP;
   }
-  return Defaults.CODEX_MANAGER_RELAUNCH_CAP;
+  return managerRelaunchCapForBackend(backend);
 }
 
 export function managerRelaunchCap(state: State): number {
@@ -116,7 +116,7 @@ export function evaluateManagerRelaunch(
   const cbState = typeof cbStateOrExitKind === 'string' ? null : (cbStateOrExitKind ?? null);
   const resolvedExitKind = typeof cbStateOrExitKind === 'string' ? cbStateOrExitKind : exitKind;
   const backend = resolveBackend(state);
-  const cap = managerRelaunchCapForExitKind(resolvedExitKind);
+  const cap = managerRelaunchCapForExitKind(resolvedExitKind, backend);
 
   const startEpoch = Number.isFinite(Number(state.start_time_epoch)) ? Number(state.start_time_epoch) : 0;
   const maxTimeMins = Number.isFinite(Number(state.max_time_minutes)) ? Number(state.max_time_minutes) : 0;

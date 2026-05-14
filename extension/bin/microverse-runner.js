@@ -5,7 +5,7 @@ import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import { pathToFileURL } from 'node:url';
 import { Defaults } from '../types/index.js';
-import { resolveBackend, resolveWorkerBackendFromStateFile, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
+import { resolveBackend, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, findLastAcceptedEntry, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, displayMacNotification, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
@@ -84,7 +84,7 @@ export function loadPassModelOverrides(extRoot) {
 export function resolvePassModelOverride(overrides, pass) {
     return overrides[String(pass)];
 }
-export async function runRemediatorForIteration(gateResult, sessionDir, workingDir, backend, remediatorTimeoutS) {
+export async function runRemediatorForIteration(gateResult, sessionDir, workingDir, backend, remediatorTimeoutS, runtimeOverrides = {}) {
     const iso = isoCompactStamp();
     const gateDir = path.join(sessionDir, 'gate');
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -113,15 +113,6 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
     }
     const startMs = Date.now();
     const statePath = path.join(sessionDir, 'state.json');
-    const workerBackendResolution = resolveWorkerBackendFromStateFile(statePath);
-    // R-XBL-2: re-read state.backend immediately before exec via StateManager.read
-    // so any mid-iteration backend flip is honored at the spawn site (single
-    // source of truth). Falls back to the param if the state read fails.
-    // PICKLE_REFINEMENT_LOCK=1 still wins via resolveBackendFromStateFileWithSource.
-    const execBackend = workerBackendResolution.backend;
-    // Preserve the legacy fallback behavior for codex model resolution: if the
-    // state file is missing/unreadable and the backend is still codex, use the
-    // caller-provided fallback model defaults.
     let remediatorState = null;
     try {
         remediatorState = sm.read(statePath);
@@ -129,6 +120,18 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
     catch {
         // Keep the fallback state null when the file is unreadable.
     }
+    const workerBackendResolution = remediatorState
+        ? resolveWorkerBackendFromState(remediatorState)
+        : resolveWorkerBackendFromState({ backend });
+    // R-XBL-2: re-read state.backend immediately before exec via StateManager.read
+    // so any mid-iteration backend flip is honored at the spawn site (single
+    // source of truth). When the state read fails, fall back to the caller's
+    // explicit backend instead of ambient env/default resolution.
+    // PICKLE_REFINEMENT_LOCK=1 still wins via resolveWorkerBackendFromState.
+    const execBackend = workerBackendResolution.backend;
+    // Preserve the legacy fallback behavior for codex model resolution: if the
+    // state file is missing/unreadable and the backend is still codex, use the
+    // caller-provided fallback model defaults.
     // Plumb codex model so remediator spawns honor `default_codex_model` /
     // `state.codex_model` instead of falling back to the codex CLI compiled-in
     // default. Other backends ignore the field.
@@ -147,7 +150,8 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
         addDirs: [workingDir],
         ...(codexModel ? { model: codexModel } : {}),
     });
-    logActivity({
+    const writeActivity = runtimeOverrides.logActivityFn ?? logActivity;
+    writeActivity({
         event: 'worker_backend_resolved',
         source: workerBackendResolution.source,
         backend: workerBackendResolution.managerBackend,
@@ -160,7 +164,7 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
             cwd: workingDir,
             timeout: remediatorTimeoutS * 1000,
             stdio: 'pipe',
-            env: { ...process.env, ...backendEnvOverrides(execBackend) },
+            env: { ...process.env, ...runtimeOverrides.workerEnvOverrides, ...backendEnvOverrides(execBackend) },
         });
     }
     catch (err) {
@@ -177,14 +181,30 @@ function readRemediationResult(gateDir, startMs) {
             const match = f.match(/^(remediation_.+_result\.json)(?:\.tmp\.\d+(?:\..+)?)?$/);
             if (!match)
                 return null;
-            return { name: match[1], mtime: fs.statSync(path.join(gateDir, f)).mtimeMs };
+            return {
+                actualName: f,
+                canonicalName: match[1],
+                mtime: fs.statSync(path.join(gateDir, f)).mtimeMs,
+            };
         })
             .filter((f) => f !== null)
             .filter(({ mtime }) => mtime >= startMs)
             .sort((a, b) => b.mtime - a.mtime);
         if (resultFiles.length === 0)
             return { success: false };
-        const resultRaw = readRecoverableJsonObject(path.join(gateDir, resultFiles[0].name));
+        const latest = resultFiles[0];
+        const actualPath = path.join(gateDir, latest.actualName);
+        const canonicalPath = path.join(gateDir, latest.canonicalName);
+        if (latest.actualName !== latest.canonicalName) {
+            try {
+                fs.renameSync(actualPath, canonicalPath);
+            }
+            catch {
+                if (!fs.existsSync(canonicalPath))
+                    return { success: false };
+            }
+        }
+        const resultRaw = readRecoverableJsonObject(canonicalPath);
         if (!resultRaw)
             return { success: false };
         return { success: resultRaw.aborted !== true && resultRaw.failures_out === 0 };

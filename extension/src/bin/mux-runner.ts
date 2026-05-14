@@ -85,6 +85,12 @@ export function killCurrentChild(): void {
   }
 }
 
+interface IterationRuntimeOverrides {
+  envOverrides?: NodeJS.ProcessEnv;
+  maxIterationSeconds?: number;
+  outputStallSeconds?: number;
+}
+
 /**
  * Strips the Setup section from dual-mode templates (e.g. meeseeks.md, szechuan-sauce.md).
  * The mux-runner always invokes with --resume, so Setup instructions are dead weight
@@ -1509,7 +1515,13 @@ export function computeRateLimitAction(
 }
 
 // eslint-disable-next-line -- legacy iteration loop retained behavior-preserving for global bin acceptance
-export async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string, qualityPassModel: string): Promise<IterationOutcome> {
+export async function runIteration(
+  sessionDir: string,
+  iterationNum: number,
+  extensionRoot: string,
+  qualityPassModel: string,
+  runtimeOverrides: IterationRuntimeOverrides = {},
+): Promise<IterationOutcome> {
   const statePath = path.join(sessionDir, 'state.json');
   let state: State;
   try {
@@ -1613,6 +1625,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    ...runtimeOverrides.envOverrides,
     ...backendEnvOverrides(backend),
     PICKLE_STATE_FILE: statePath,
     PYTHONUNBUFFERED: '1',
@@ -1648,8 +1661,8 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
     });
     currentChildProc = proc;
 
-    const hangGuardMs = Defaults.MAX_ITERATION_SECONDS * 1000;
-    const outputStallGuardMs = Defaults.OUTPUT_STALL_SECONDS * 1000;
+    const hangGuardMs = (runtimeOverrides.maxIterationSeconds ?? Defaults.MAX_ITERATION_SECONDS) * 1000;
+    const outputStallGuardMs = (runtimeOverrides.outputStallSeconds ?? Defaults.OUTPUT_STALL_SECONDS) * 1000;
     let outputStallGuard: NodeJS.Timeout | null = null;
 
     function clearIterationGuards() {

@@ -1290,7 +1290,7 @@ export function computeRateLimitAction(exitResult, consecutiveRateLimits, maxRet
     };
 }
 // eslint-disable-next-line -- legacy iteration loop retained behavior-preserving for global bin acceptance
-export async function runIteration(sessionDir, iterationNum, extensionRoot, qualityPassModel) {
+export async function runIteration(sessionDir, iterationNum, extensionRoot, qualityPassModel, runtimeOverrides = {}) {
     const statePath = path.join(sessionDir, 'state.json');
     let state;
     try {
@@ -1392,6 +1392,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
     });
     const env = {
         ...process.env,
+        ...runtimeOverrides.envOverrides,
         ...backendEnvOverrides(backend),
         PICKLE_STATE_FILE: statePath,
         PYTHONUNBUFFERED: '1',
@@ -1425,8 +1426,8 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
             stdio: ['inherit', 'pipe', 'pipe'],
         });
         currentChildProc = proc;
-        const hangGuardMs = Defaults.MAX_ITERATION_SECONDS * 1000;
-        const outputStallGuardMs = Defaults.OUTPUT_STALL_SECONDS * 1000;
+        const hangGuardMs = (runtimeOverrides.maxIterationSeconds ?? Defaults.MAX_ITERATION_SECONDS) * 1000;
+        const outputStallGuardMs = (runtimeOverrides.outputStallSeconds ?? Defaults.OUTPUT_STALL_SECONDS) * 1000;
         let outputStallGuard = null;
         function clearIterationGuards() {
             clearTimeout(hangGuard);
