@@ -31,7 +31,9 @@ test('R-RTRC-1: hygiene section forbids stdlib/external-package backticks', () =
 test('R-RTRC-1: hygiene section references R-RTRC-7 annotation schema', () => {
     const content = fs.readFileSync(SPAWN_REFINEMENT_TS, 'utf-8');
     assert.match(content, /R-RTRC-7/);
+    assert.match(content, /\(forward-created\)/);
     assert.match(content, /\(created by ticket/);
+    assert.match(content, /\(created by ticket <hash>\)/);
 });
 
 test('R-RTRC-1: annotation schema mandates exactly one ASCII space separator', () => {
