@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import {
   BUNDLE_ARTIFACT_SCHEMA,
   EXPECTED_BUNDLE_AC_IDS,
+  REFINED_TO_BUNDLE_ARTIFACT_AC_ID,
 } from '../../bin/verify-bundle.js';
 import { writeWatcherLivenessArtifact } from '../bin/pipeline-runner.js';
 
@@ -43,10 +44,6 @@ const REFINED_DEPLOY_REVERSION_AC_IDS = Object.freeze([
   'AC-DR-15',
   'AC-DR-16',
 ]);
-const REFINED_TO_BUNDLE_ARTIFACT_AC_ID = Object.freeze({
-  'AC-DR-15': 'AC-DR-PRE-FLIGHT',
-});
-
 function acFileName(acId) {
   return `${acId.toLowerCase()}.json`;
 }
@@ -185,6 +182,23 @@ test('verify-bundle.single-ac validates only requested artifact', () => {
   });
   try {
     const result = runVerifier(fixture, ['--ac', 'AC-DR-08']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /checked=1/);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('verify-bundle.single-ac alias resolves refined AC ids to canonical bundle artifacts', () => {
+  const fixture = makeFixture(({ bundleDir }) => {
+    rmSync(path.join(bundleDir, 'ac-dr-pre-flight.json'));
+    writeFileSync(
+      path.join(bundleDir, 'ac-dr-pre-flight.json'),
+      `${JSON.stringify(artifact('AC-DR-PRE-FLIGHT'), null, 2)}\n`,
+    );
+  });
+  try {
+    const result = runVerifier(fixture, ['--ac', 'AC-DR-15']);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /checked=1/);
   } finally {

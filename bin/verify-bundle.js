@@ -26,12 +26,20 @@ export const EXPECTED_BUNDLE_AC_IDS = Object.freeze([
   'AC-DR-13', 'AC-DR-14', 'AC-DR-PRE-FLIGHT', 'AC-DR-16',
 ]);
 
+export const REFINED_TO_BUNDLE_ARTIFACT_AC_ID = Object.freeze({
+  'AC-DR-15': 'AC-DR-PRE-FLIGHT',
+});
+
 function acIdToFileName(acId) {
   return `${acId.toLowerCase()}.json`;
 }
 
 function artifactPath(repoRoot, acId) {
   return path.join(repoRoot, 'bundle', acIdToFileName(acId));
+}
+
+function normalizeBundleArtifactAcId(acId) {
+  return REFINED_TO_BUNDLE_ARTIFACT_AC_ID[acId] ?? acId;
 }
 
 function isObject(value) {
@@ -66,7 +74,9 @@ export function validateBundleArtifact(artifact) {
 
 export function verifyBundle(options = {}) {
   const repoRoot = options.repoRoot ?? process.cwd();
-  const expectedIds = options.ac ? [options.ac] : [...EXPECTED_BUNDLE_AC_IDS];
+  const expectedIds = options.ac
+    ? [normalizeBundleArtifactAcId(options.ac)]
+    : [...EXPECTED_BUNDLE_AC_IDS];
   const failures = [];
   const missing = [];
 
