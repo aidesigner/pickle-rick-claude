@@ -242,6 +242,22 @@ test('verify-bundle.single-ac alias resolves refined AC ids to canonical bundle 
   }
 });
 
+test('verify-bundle.single-ac rejects unknown AC ids instead of validating arbitrary bundle files', () => {
+  const fixture = makeFixture(({ bundleDir }) => {
+    writeFileSync(
+      path.join(bundleDir, 'ac-dr-99.json'),
+      `${JSON.stringify(artifact('AC-DR-99'), null, 2)}\n`,
+    );
+  });
+  try {
+    const result = runVerifier(fixture, ['--ac', 'AC-DR-99']);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /unknown AC id AC-DR-99/);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test('verify-bundle.ac-dr-05 accepts the real watcher-liveness artifact shape', () => {
   const fixture = mkdtempSync(path.join(tmpdir(), 'verify-bundle-watcher-'));
   try {

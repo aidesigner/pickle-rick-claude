@@ -42,6 +42,10 @@ function normalizeBundleArtifactAcId(acId) {
   return REFINED_TO_BUNDLE_ARTIFACT_AC_ID[acId] ?? acId;
 }
 
+function isKnownBundleArtifactAcId(acId) {
+  return EXPECTED_BUNDLE_AC_IDS.includes(acId);
+}
+
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -80,8 +84,17 @@ export function validateBundleArtifact(artifact) {
 
 export function verifyBundle(options = {}) {
   const repoRoot = options.repoRoot ?? process.cwd();
-  const expectedIds = options.ac
-    ? [normalizeBundleArtifactAcId(options.ac)]
+  const requestedAcId = options.ac ?? null;
+  const normalizedRequestedAcId = requestedAcId ? normalizeBundleArtifactAcId(requestedAcId) : null;
+  if (normalizedRequestedAcId && !isKnownBundleArtifactAcId(normalizedRequestedAcId)) {
+    return {
+      exitCode: 2,
+      stdout: 'bundle INCONCLUSIVE checked=0 missing=0 failures=0\n',
+      stderr: `verify-bundle: unknown AC id ${requestedAcId}${normalizedRequestedAcId === requestedAcId ? '' : ` (canonical ${normalizedRequestedAcId})`}\n`,
+    };
+  }
+  const expectedIds = normalizedRequestedAcId
+    ? [normalizedRequestedAcId]
     : [...EXPECTED_BUNDLE_AC_IDS];
   const failures = [];
   const missing = [];
