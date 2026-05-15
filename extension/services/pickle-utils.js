@@ -1476,7 +1476,7 @@ logTag = 'restartDeadWatcherPanes') {
         const target = `${sessionName}:monitor.${watcher.pane}`;
         const currentCommand = readPaneCurrentCommand(target, spawnSyncFn);
         if (currentCommand === null) {
-            appendWatcherRestartLog(sessionDir, `${logTag} WARN: unable to read pane_current_command for pane ${watcher.pane}`);
+            recreateMissingWatcherPane(sessionDir, sessionName, watcher, spawnSyncFn, logTag);
             continue;
         }
         if (currentCommand === 'node')
@@ -1522,6 +1522,61 @@ function readPaneCurrentCommand(target, spawnSyncFn) {
     if (result.status !== 0)
         return null;
     return (result.stdout || '').trim();
+}
+function withSerializedPath(fn) {
+    // R-TSPF-4 trap door: tests serialize PATH shim mutations around this
+    // helper. Runtime tmux calls stay synchronous; the helper marks the call
+    // sites that must stay on the shared serialized path in test fixtures.
+    return fn();
+}
+function recreateMissingWatcherPane(sessionDir, sessionName, watcher, spawnSyncFn, logTag) {
+    const splitSpec = missingWatcherPaneSplitSpec(sessionName, watcher.pane);
+    const split = withSerializedPath(() => spawnSyncFn('tmux', splitSpec.args, {
+        encoding: 'utf-8',
+        timeout: 5_000,
+    }));
+    if (split.status !== 0) {
+        const err = (split.stderr || split.stdout || '').toString().trim();
+        appendWatcherRestartLog(sessionDir, `${logTag} WARN: failed to recreate missing pane ${watcher.pane} via ${splitSpec.target}: ${err || 'non-zero exit'}`);
+        return false;
+    }
+    appendWatcherRestartLog(sessionDir, `${logTag} WARN: pane ${watcher.pane} missing; recreated via ${splitSpec.target}`);
+    const send = withSerializedPath(() => spawnSyncFn('tmux', ['send-keys', '-t', `${sessionName}:monitor.${watcher.pane}`, watcher.command, 'Enter'], {
+        encoding: 'utf-8',
+        timeout: 5_000,
+    }));
+    if (send.status === 0) {
+        appendWatcherRestartLog(sessionDir, `${logTag}: respawned ${watcher.name} in pane ${watcher.pane}`);
+        return true;
+    }
+    const err = (send.stderr || send.stdout || '').toString().trim();
+    appendWatcherRestartLog(sessionDir, `${logTag} WARN: failed to respawn ${watcher.name} in recreated pane ${watcher.pane}: ${err || 'non-zero exit'}`);
+    return false;
+}
+function missingWatcherPaneSplitSpec(sessionName, pane) {
+    const windowTarget = `${sessionName}:monitor`;
+    switch (pane) {
+        case 0:
+            return {
+                target: `${windowTarget}.1`,
+                args: ['split-window', '-h', '-b', '-t', `${windowTarget}.1`],
+            };
+        case 1:
+            return {
+                target: `${windowTarget}.0`,
+                args: ['split-window', '-h', '-t', `${windowTarget}.0`],
+            };
+        case 2:
+            return {
+                target: `${windowTarget}.0`,
+                args: ['split-window', '-v', '-l', '40%', '-t', `${windowTarget}.0`],
+            };
+        case 3:
+            return {
+                target: `${windowTarget}.2`,
+                args: ['split-window', '-h', '-t', `${windowTarget}.2`],
+            };
+    }
 }
 function watcherPaneCommands(sessionDir, extensionRoot, mode) {
     const binRoot = path.join(extensionRoot, 'extension', 'bin');

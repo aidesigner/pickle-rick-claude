@@ -195,6 +195,7 @@ function makeWatcherFakes(opts = {}) {
     fs.writeFileSync(path.join(extRoot, 'extension', 'bin', 'log-watcher.js'), '// sentinel\n');
 
     const paneCommands = opts.paneCommands || { 0: 'zsh', 1: 'zsh', 2: 'bash', 3: 'fish' };
+    const missingPanes = new Set(opts.missingPanes || []);
     for (const pane of [0, 1, 2, 3]) {
         fs.writeFileSync(path.join(tmpRoot, `.pane-${pane}`), paneCommands[pane] || '');
     }
@@ -206,17 +207,58 @@ function makeWatcherFakes(opts = {}) {
 echo "tmux $*" >> "${callsLog}"
 if [ "$1" = "display-message" ]; then
   case "$*" in
-    *monitor.0*pane_current_command*) cat "${path.join(tmpRoot, '.pane-0')}" ;;
-    *monitor.1*pane_current_command*) cat "${path.join(tmpRoot, '.pane-1')}" ;;
-    *monitor.2*pane_current_command*) cat "${path.join(tmpRoot, '.pane-2')}" ;;
-    *monitor.3*pane_current_command*) cat "${path.join(tmpRoot, '.pane-3')}" ;;
+    *monitor.0*pane_current_command*)
+      if [ -f "${path.join(tmpRoot, '.missing-0')}" ]; then
+        exit 1
+      fi
+      cat "${path.join(tmpRoot, '.pane-0')}" ;;
+    *monitor.1*pane_current_command*)
+      if [ -f "${path.join(tmpRoot, '.missing-1')}" ]; then
+        exit 1
+      fi
+      cat "${path.join(tmpRoot, '.pane-1')}" ;;
+    *monitor.2*pane_current_command*)
+      if [ -f "${path.join(tmpRoot, '.missing-2')}" ]; then
+        exit 1
+      fi
+      cat "${path.join(tmpRoot, '.pane-2')}" ;;
+    *monitor.3*pane_current_command*)
+      if [ -f "${path.join(tmpRoot, '.missing-3')}" ]; then
+        exit 1
+      fi
+      cat "${path.join(tmpRoot, '.pane-3')}" ;;
     *) echo "${opts.sessionName || 'pickle-watch'}" ;;
+  esac
+elif [ "$1" = "split-window" ]; then
+  target=""
+  prev=""
+  for arg in "$@"; do
+    if [ "$prev" = "-t" ]; then
+      target="$arg"
+      break
+    fi
+    prev="$arg"
+  done
+  case "$target" in
+    *monitor.0)
+      rm -f "${path.join(tmpRoot, '.missing-1')}" "${path.join(tmpRoot, '.missing-2')}"
+      ;;
+    *monitor.1)
+      rm -f "${path.join(tmpRoot, '.missing-0')}"
+      ;;
+    *monitor.2)
+      rm -f "${path.join(tmpRoot, '.missing-3')}"
+      ;;
   esac
 fi
 exit 0
 `,
     );
     fs.chmodSync(fakeTmux, 0o755);
+
+    for (const pane of missingPanes) {
+        fs.writeFileSync(path.join(tmpRoot, `.missing-${pane}`), '');
+    }
 
     return {
         tmpRoot,
@@ -758,6 +800,27 @@ test('restartDeadWatcherPanes: mode-specific pane 2 command uses refinement and 
         } finally {
             f.cleanup();
         }
+    }
+});
+
+test('restartDeadWatcherPanes: missing pane recreates collapsed layout via split-window fallback', async () => {
+    const f = makeWatcherFakes({
+        sessionName: 'pickle-collapsed',
+        paneCommands: { 0: 'node', 1: 'node', 2: 'bash', 3: 'fish' },
+        missingPanes: [2, 3],
+    });
+    try {
+        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
+
+        const calls = f.readCalls();
+        assert.match(calls, /tmux split-window -v -l 40% -t pickle-collapsed:monitor\.0/);
+        assert.match(calls, /tmux send-keys -t pickle-collapsed:monitor\.2 node .+morty-watcher\.js .+session Enter/);
+        assert.match(calls, /tmux split-window -h -t pickle-collapsed:monitor\.2/);
+        assert.match(calls, /tmux send-keys -t pickle-collapsed:monitor\.3 node .+raw-morty\.js .+session Enter/);
+        assert.match(f.readRunnerLog(), /restartDeadWatcherPanes WARN: pane 2 missing; recreated via pickle-collapsed:monitor\.0/);
+        assert.match(f.readRunnerLog(), /restartDeadWatcherPanes WARN: pane 3 missing; recreated via pickle-collapsed:monitor\.2/);
+    } finally {
+        f.cleanup();
     }
 });
 

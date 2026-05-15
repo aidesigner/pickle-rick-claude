@@ -25,6 +25,7 @@ import {
     safeErrorMessage,
     pruneOrphanedMapEntries,
     clearTicketCacheFields,
+    restartDeadWatcherPanes,
 } from '../services/pickle-utils.js';
 import { LockError } from '../types/index.js';
 
@@ -231,6 +232,41 @@ test('pipeline-runner: spawn targets are under extension/bin/, never directly un
     const stale = src.match(/path\.join\(\s*extensionRoot\s*,\s*['"]bin['"]/g);
     assert.equal(stale, null,
         `pipeline-runner.js has ${stale?.length} callsite(s) joining extensionRoot with 'bin' directly — must go through 'extension/bin/'`);
+});
+
+test('restartDeadWatcherPanes: healthy 2x2 layout is a no-op', () => {
+    const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-utils-watchers-')));
+    const sessionDir = path.join(tmpRoot, 'session');
+    const extRoot = path.join(tmpRoot, 'ext');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.mkdirSync(path.join(extRoot, 'extension', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({ active: true, command_template: null }));
+    fs.writeFileSync(path.join(extRoot, 'extension', 'bin', 'log-watcher.js'), '// sentinel\n');
+
+    const spawnCalls = [];
+    const spawnSyncFn = (command, args = []) => {
+        spawnCalls.push({ command, args: [...args] });
+        if (command !== 'tmux') return { status: 0, stdout: '', stderr: '' };
+        if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '#S') {
+            return { status: 0, stdout: 'pickle-utils-healthy\n', stderr: '' };
+        }
+        if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '-t') {
+            return { status: 0, stdout: 'node\n', stderr: '' };
+        }
+        return { status: 0, stdout: '', stderr: '' };
+    };
+
+    try {
+        restartDeadWatcherPanes(sessionDir, extRoot, 'pickle', spawnSyncFn);
+        const tmuxCommands = spawnCalls
+            .filter(call => call.command === 'tmux')
+            .map(call => call.args[0]);
+        assert.equal(tmuxCommands.filter(command => command === 'send-keys').length, 0);
+        assert.equal(tmuxCommands.filter(command => command === 'split-window').length, 0);
+        assert.equal(tmuxCommands.filter(command => command === 'display-message').length, 5);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
 });
 
 // --- extractFrontmatter ---
