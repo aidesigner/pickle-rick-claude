@@ -368,7 +368,7 @@ export const VALID_TICKET_COMPLEXITY_TIERS = ['trivial', 'small', 'medium', 'lar
 export const TICKET_TIER_BUDGETS = {
     trivial: { max_iterations: 5, worker_timeout_seconds: 5 * 60 },
     small: { max_iterations: 10, worker_timeout_seconds: 10 * 60 },
-    medium: { max_iterations: 30, worker_timeout_seconds: 20 * 60 },
+    medium: { max_iterations: 30, worker_timeout_seconds: 2400 },
     large: { max_iterations: 60, worker_timeout_seconds: 80 * 60 },
 };
 export function normalizeTicketComplexityTier(value) {

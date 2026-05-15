@@ -5,9 +5,9 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus, type TicketInfo } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, TICKET_TIER_BUDGETS, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus, type TicketInfo } from '../services/pickle-utils.js';
 import { getHeadSha, getHeadBranch } from '../services/git-utils.js';
-import { State, Defaults, LockError, SessionMapEntry, Backend, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
+import { State, LockError, SessionMapEntry, Backend, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
 import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive, readMappedPid } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -66,6 +66,7 @@ export interface SetupArgs {
 }
 
 export const DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS = 60_000;
+const DEFAULT_WORKER_TIMEOUT_SECONDS = TICKET_TIER_BUDGETS.medium.worker_timeout_seconds;
 
 export function resolveManagerIdleBackoffFallbackMs(value: unknown): number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1_000 && value <= 600_000
@@ -117,7 +118,7 @@ function createSetupConfig(): SetupArgs {
   return {
     loopLimit: 100,
     timeLimit: 0,
-    workerTimeout: Defaults.WORKER_TIMEOUT_SECONDS,
+    workerTimeout: DEFAULT_WORKER_TIMEOUT_SECONDS,
     pipelineContinueOnPhaseFail: true,
     promiseToken: null,
     resumeMode: false,
@@ -149,6 +150,22 @@ function createSetupConfig(): SetupArgs {
 function applyPositiveIntegerSetting(settings: Record<string, unknown>, key: string, apply: (value: number) => void) {
   const value = settings[key];
   if (typeof value === 'number' && Number.isInteger(value) && value > 0) apply(value);
+}
+
+function persistMediumWorkerTimeoutOverride(state: State, workerTimeout: number): void {
+  const flags = state.flags && typeof state.flags === 'object'
+    ? state.flags as Record<string, unknown>
+    : {};
+  const tierCapOverride = flags.tier_cap_override && typeof flags.tier_cap_override === 'object'
+    ? flags.tier_cap_override as Record<string, unknown>
+    : {};
+  const medium = tierCapOverride.medium && typeof tierCapOverride.medium === 'object'
+    ? tierCapOverride.medium as Record<string, unknown>
+    : {};
+  medium.worker_timeout_seconds = workerTimeout;
+  tierCapOverride.medium = medium;
+  flags.tier_cap_override = tierCapOverride;
+  state.flags = flags;
 }
 
 export function resolvePipelineContinueOnPhaseFailSetting(settings: Record<string, unknown> | null | undefined): boolean {
@@ -824,6 +841,7 @@ function applyResumeLimitConfig(s: State, config: SetupArgs): void {
 
   if (config.explicitFlags.has('worker-timeout')) {
     s.worker_timeout_seconds = config.workerTimeout;
+    persistMediumWorkerTimeoutOverride(s, config.workerTimeout);
   } else {
     const persisted = Number(s.worker_timeout_seconds);
     if (!Number.isFinite(persisted) || persisted <= 0) {
@@ -1017,6 +1035,9 @@ function createInitialState(config: SetupArgs, sessionPath: string, taskStr: str
 
   if (config.explicitFlags.has('max-time')) {
     state.max_time_minutes = config.timeLimit;
+  }
+  if (config.explicitFlags.has('worker-timeout')) {
+    persistMediumWorkerTimeoutOverride(state, config.workerTimeout);
   }
   const startCommit = resolveStartCommit();
   if (config.prdPath) state.prd_path = config.prdPath;

@@ -11,6 +11,7 @@ import { compatibleCodexVersion, codexVersionLine } from './__helpers__/codex-sh
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SETUP = path.resolve(__dirname, '../bin/setup.js');
+const REPO_ROOT = path.resolve(__dirname, '../..');
 
 function runSetup(args) {
     const output = execFileSync(process.execPath, [SETUP, ...args], {
@@ -333,6 +334,33 @@ test('setup: fresh session without --max-time omits max_time_minutes and emits t
         if (previousDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
         else process.env.PICKLE_DATA_ROOT = previousDataRoot;
         fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('setup: fresh session defaults worker_timeout_seconds to medium-tier 2400 seconds', () => {
+    const output = runSetupWithEnv(['--task', 'default-worker-timeout-test'], { EXTENSION_DIR: REPO_ROOT });
+    const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.worker_timeout_seconds, 2400);
+        assert.deepEqual(state.flags ?? {}, {}, 'fresh setup without explicit override should not write tier_cap_override');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: --worker-timeout persists medium tier override into state.flags', () => {
+    const output = runSetupWithEnv(
+        ['--worker-timeout', '1800', '--task', 'worker-timeout-flag-persistence-test'],
+        { EXTENSION_DIR: REPO_ROOT },
+    );
+    const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.worker_timeout_seconds, 1800);
+        assert.deepEqual(state.flags?.tier_cap_override?.medium, { worker_timeout_seconds: 1800 });
+    } finally {
+        cleanup(sessionPath);
     }
 });
 
@@ -1127,7 +1155,7 @@ test('setup: ignores fractional numeric settings and backend budgets', () => {
         const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
         assert.equal(state.max_iterations, 100, 'fractional max_iterations and backend budgets must fall back to defaults');
         assert.equal('max_time_minutes' in state, false, 'fractional max_time setting should be ignored and no default cap should be written');
-        assert.equal(state.worker_timeout_seconds, 1200, 'fractional worker timeout must fall back to defaults');
+        assert.equal(state.worker_timeout_seconds, 2400, 'fractional worker timeout must fall back to defaults');
     } finally {
         codexEnv.cleanup();
         fs.rmSync(extRoot, { recursive: true, force: true });

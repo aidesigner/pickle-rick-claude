@@ -212,7 +212,7 @@ Use `## Trap Doors` as the source of truth for the per-file invariant text, race
 - INVARIANT: `iteration` is the current manager-loop counter and remains a finite integer. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `max_iterations` is a positive integer budget for manager loops. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `max_time_minutes` is an optional non-negative integer wall-clock budget; absent or `0` disables the wall-clock cap, positive values opt in. ENFORCE: extension/tests/state-field-invariants.test.js.
-- INVARIANT: `worker_timeout_seconds` is a positive integer worker budget. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `worker_timeout_seconds` is a positive integer worker budget. The compiled medium-tier default is `2400` seconds (40 minutes), which intentionally clears the R-PTG lifecycle floor of 28 realistic minutes for research + plan + implement + fast-test + type/lint + artifact/commit overhead. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `start_time_epoch` is the numeric epoch used for elapsed-time gates. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `completion_promise` is nullable completion evidence and is never used as the sole state authority. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `original_prompt` preserves the launch request for worker prompts and reports. ENFORCE: extension/tests/state-field-invariants.test.js.
