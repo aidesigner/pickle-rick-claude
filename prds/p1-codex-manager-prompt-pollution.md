@@ -1,8 +1,9 @@
 ---
 title: P1 — Codex manager subprocess executes operator-facing setup.js invocations from skill prompt body
-status: Draft
+status: Shipped
 filed: 2026-05-15
 refined: 2026-05-15 (3-analyst team, session 2026-05-15-e9d9da8e)
+shipped: 2026-05-15 (5/10 substantive tickets — implementation tier complete; wiring + 4 hardening deferred to R-CCPM-WH)
 priority: P1
 type: bug
 r_code_prefix: R-CCPM
@@ -10,7 +11,22 @@ backend_constraint: claude
 related:
   - prds/codex-classifier-prompt-leak.md  # R-CCPL (REOPENED P1, Master Plan Finding #1) — Phase 1a-bis successor
   - prds/research-r-ccpl-7fe6da60-2026-05-15.md  # forensic artifact from R-RHGS run
+  - prds/p3-ccpm-wiring-and-hardening-followup.md  # R-CCPM-WH — deferred wiring + hardening (1 + 4 tickets)
 ---
+
+## HEAD reconciliation (shipped 2026-05-15)
+
+R-CCPM closes the R-CCPL successor class (Master Plan Finding #1) via 5 substantive implementation commits authored autonomously by session `2026-05-15-e9d9da8e` (claude backend; codex was the fix target — chicken-and-egg). Bundle was operator-stopped at 5/10 after the implementation tier completed cleanly; the remaining 1 wiring + 4 hardening tickets are deferred as `prds/p3-ccpm-wiring-and-hardening-followup.md` (R-CCPM-WH).
+
+| Ticket | R-code | Commit | Substance |
+|---|---|---|---|
+| `2d9f16d7` | R-CCPM-5 | `f915b821` | Register 3 new activity events at 6-site triangle + pin trap door |
+| `cf912ac9` | R-CCPM-1 | `690e5c5c` | Shared `composeManagerPromptFromSkill` helper + codex Role Framing + scrub at both call sites |
+| `838f4cbf` | R-CCPM-2 | `e955ce4d` | Runtime guard — LOG-only observation of codex `setup.js` tool-calls |
+| `c7396196` | R-CCPM-3 | `39a660e4` | Orphan-session detection at iteration boundary (schema v4 bump; new State fields `orphans_detected` + `parent_session_hash` + `invocation_source`) |
+| `3bc1c3ca` | R-CCPM-4 | `73657d27` | Session-map cwd-collision protection in `updateSessionMap` — fixes the root cause of the apparent `worker_timeout_seconds` drift (codex manager subprocess's setup.js was overwriting the parent pointer) |
+
+**Operator stop rationale**: the R-CCPL bug class is closed in HEAD with R-CCPM-1..5 substantive shipped. Wiring + 4 hardening are filler relative to the queued backlog (R-GBK Grok backend slot 37, R-MFW MCP forwarding slot 36, R-FRA gate ergonomics, R-CCDC citadel detection-coverage). R-CCPM-WH ships opportunistically when paired with the next state-manager / mux-runner touch.
 
 # R-CCPM — Codex Manager Prompt Pollution
 
