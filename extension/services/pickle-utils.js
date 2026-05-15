@@ -1437,11 +1437,20 @@ export function inferMonitorMode(sessionDir) {
     try {
         const state = new StateManager().read(path.join(sessionDir, 'state.json'));
         const tpl = (state.command_template || '').toLowerCase();
-        if (tpl === 'meeseeks.md')
-            return 'meeseeks';
-        if (tpl === 'council-of-ricks.md')
-            return 'council';
-        return 'pickle';
+        switch (tpl) {
+            case 'meeseeks.md':
+                return 'meeseeks';
+            case 'council-of-ricks.md':
+                return 'council';
+            case 'refinement.md':
+                return 'refinement';
+            case 'szechuan-sauce.md':
+                return 'szechuan-sauce';
+            case 'anatomy-park.md':
+                return 'anatomy-park';
+            default:
+                return 'pickle';
+        }
     }
     catch {
         return 'pickle';
@@ -1516,7 +1525,17 @@ function readPaneCurrentCommand(target, spawnSyncFn) {
 }
 function watcherPaneCommands(sessionDir, extensionRoot, mode) {
     const binRoot = path.join(extensionRoot, 'extension', 'bin');
-    const paneTwo = watcherPaneTwoCommand(sessionDir, binRoot, mode);
+    let paneTwo;
+    switch (mode) {
+        case 'pickle':
+        case 'meeseeks':
+        case 'council':
+        case 'refinement':
+        case 'szechuan-sauce':
+        case 'anatomy-park':
+            paneTwo = watcherPaneTwoCommand(sessionDir, binRoot, mode);
+            break;
+    }
     return [
         {
             pane: 0,
@@ -1537,25 +1556,29 @@ function watcherPaneCommands(sessionDir, extensionRoot, mode) {
     ];
 }
 function watcherPaneTwoCommand(sessionDir, binRoot, mode) {
-    if (mode === 'refinement') {
-        return {
-            pane: 2,
-            name: 'refinement-watcher.js',
-            command: `node ${path.join(binRoot, 'refinement-watcher.js')} ${sessionDir}`,
-        };
+    switch (mode) {
+        case 'refinement':
+            return {
+                pane: 2,
+                name: 'refinement-watcher.js',
+                command: `node ${path.join(binRoot, 'refinement-watcher.js')} ${sessionDir}`,
+            };
+        case 'meeseeks':
+        case 'council':
+            return {
+                pane: 2,
+                name: 'mux-runner.log tail',
+                command: `tail -F ${path.join(sessionDir, 'mux-runner.log')}`,
+            };
+        case 'pickle':
+        case 'szechuan-sauce':
+        case 'anatomy-park':
+            return {
+                pane: 2,
+                name: 'morty-watcher.js',
+                command: `node ${path.join(binRoot, 'morty-watcher.js')} ${sessionDir}`,
+            };
     }
-    if (mode === 'meeseeks' || mode === 'council') {
-        return {
-            pane: 2,
-            name: 'mux-runner.log tail',
-            command: `tail -F ${path.join(sessionDir, 'mux-runner.log')}`,
-        };
-    }
-    return {
-        pane: 2,
-        name: 'morty-watcher.js',
-        command: `node ${path.join(binRoot, 'morty-watcher.js')} ${sessionDir}`,
-    };
 }
 function appendWatcherRestartLog(sessionDir, line) {
     try {
@@ -1733,7 +1756,20 @@ function readWindowMode(tmuxBin, target, spawnSyncFn) {
 export function monitorModesCompatible(existing, want) {
     if (!existing)
         return false;
-    return existing === want;
+    switch (want) {
+        case 'pickle':
+            return existing === 'pickle';
+        case 'meeseeks':
+            return existing === 'meeseeks';
+        case 'council':
+            return existing === 'council';
+        case 'refinement':
+            return existing === 'refinement';
+        case 'szechuan-sauce':
+            return existing === 'szechuan-sauce';
+        case 'anatomy-park':
+            return existing === 'anatomy-park';
+    }
 }
 /** Default timeout for macOS notification shell-outs (`osascript`). Kept short
  *  because notifications run on the exit path — a wedged Notification Center /

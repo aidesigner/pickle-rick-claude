@@ -1,10 +1,11 @@
 // @tier: fast
-import { test } from 'node:test';
+import { describe as nodeDescribe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { format } from 'node:util';
 
 import {
     ensureMonitorWindow,
@@ -15,6 +16,20 @@ import {
 } from '../services/pickle-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const describe = Object.assign(
+    (name, fn) => nodeDescribe(name, fn),
+    {
+        each(cases) {
+            return (name, fn) => {
+                for (const row of cases) {
+                    const values = Array.isArray(row) ? row : [row];
+                    test(format(name, ...values), () => fn(...values));
+                }
+            };
+        },
+    },
+);
 
 let withPathQueue = Promise.resolve();
 
@@ -809,6 +824,18 @@ test('monitorModesCompatible: unset existing => incompatible; matching => compat
     assert.equal(monitorModesCompatible('meeseeks', 'meeseeks'), true);
 });
 
+test('monitorModesCompatible: every MonitorMode member matches only itself', () => {
+    const modes = ['pickle', 'meeseeks', 'council', 'refinement', 'szechuan-sauce', 'anatomy-park'];
+    for (const mode of modes) {
+        assert.equal(monitorModesCompatible(mode, mode), true, `expected ${mode} to match itself`);
+        assert.equal(
+            monitorModesCompatible(mode === 'pickle' ? 'meeseeks' : 'pickle', mode),
+            false,
+            `expected ${mode} to reject a different existing mode`,
+        );
+    }
+});
+
 test('ensureMonitorWindow: infers meeseeks mode from state.command_template', async () => {
     const f = makeFakes({ sessionName: 'meeseeks-abc', commandTemplate: 'meeseeks.md' });
     try {
@@ -901,25 +928,20 @@ test('inferMonitorMode: defaults to pickle when state.json missing', () => {
     }
 });
 
-test('inferMonitorMode: maps command_template values', () => {
+describe.each([
+    ['szechuan-sauce.md', 'szechuan-sauce'],
+    ['anatomy-park.md', 'anatomy-park'],
+    ['meeseeks.md', 'meeseeks'],
+    ['council-of-ricks.md', 'council'],
+    ['refinement.md', 'refinement'],
+    [undefined, 'pickle'],
+    ['unknown-template.md', 'pickle'],
+])('inferMonitorMode template %s => %s', (template, expected) => {
     const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mode-')));
     try {
-        const write = (tpl) => fs.writeFileSync(
-            path.join(tmpRoot, 'state.json'),
-            JSON.stringify({ command_template: tpl }),
-        );
-
-        write('meeseeks.md');
-        assert.equal(inferMonitorMode(tmpRoot), 'meeseeks');
-
-        write('council-of-ricks.md');
-        assert.equal(inferMonitorMode(tmpRoot), 'council');
-
-        write('szechuan-sauce.md');
-        assert.equal(inferMonitorMode(tmpRoot), 'pickle');
-
-        write(null);
-        assert.equal(inferMonitorMode(tmpRoot), 'pickle');
+        const state = template === undefined ? {} : { command_template: template };
+        fs.writeFileSync(path.join(tmpRoot, 'state.json'), JSON.stringify(state));
+        assert.equal(inferMonitorMode(tmpRoot), expected);
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }

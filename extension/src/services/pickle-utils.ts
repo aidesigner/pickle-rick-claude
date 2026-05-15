@@ -1608,9 +1608,10 @@ export function updateState(key: string, value: string, sessionDir: string): voi
  * Monitor-window modes — map to the layout selector inside tmux-monitor.sh.
  * `pickle` is the default (2×2 grid with morty-watcher in the bottom-left);
  * `meeseeks` / `council` swap morty-watcher for mux-runner.log tail;
- * `refinement` swaps in refinement-watcher.
+ * `refinement` swaps in refinement-watcher;
+ * `szechuan-sauce` / `anatomy-park` preserve the default watcher layout.
  */
-export type MonitorMode = 'pickle' | 'meeseeks' | 'council' | 'refinement';
+export type MonitorMode = 'pickle' | 'meeseeks' | 'council' | 'refinement' | 'szechuan-sauce' | 'anatomy-park';
 
 type MonitorPane = 0 | 1 | 2 | 3;
 
@@ -1647,9 +1648,20 @@ export function inferMonitorMode(sessionDir: string): MonitorMode {
   try {
     const state = new StateManager().read(path.join(sessionDir, 'state.json')) as { command_template?: string };
     const tpl = (state.command_template || '').toLowerCase();
-    if (tpl === 'meeseeks.md') return 'meeseeks';
-    if (tpl === 'council-of-ricks.md') return 'council';
-    return 'pickle';
+    switch (tpl) {
+      case 'meeseeks.md':
+        return 'meeseeks';
+      case 'council-of-ricks.md':
+        return 'council';
+      case 'refinement.md':
+        return 'refinement';
+      case 'szechuan-sauce.md':
+        return 'szechuan-sauce';
+      case 'anatomy-park.md':
+        return 'anatomy-park';
+      default:
+        return 'pickle';
+    }
   } catch {
     return 'pickle';
   }
@@ -1742,7 +1754,17 @@ function readPaneCurrentCommand(target: string, spawnSyncFn: typeof spawnSync): 
 
 function watcherPaneCommands(sessionDir: string, extensionRoot: string, mode: MonitorMode): WatcherPaneCommand[] {
   const binRoot = path.join(extensionRoot, 'extension', 'bin');
-  const paneTwo = watcherPaneTwoCommand(sessionDir, binRoot, mode);
+  let paneTwo: WatcherPaneCommand;
+  switch (mode) {
+    case 'pickle':
+    case 'meeseeks':
+    case 'council':
+    case 'refinement':
+    case 'szechuan-sauce':
+    case 'anatomy-park':
+      paneTwo = watcherPaneTwoCommand(sessionDir, binRoot, mode);
+      break;
+  }
 
   return [
     {
@@ -1765,25 +1787,29 @@ function watcherPaneCommands(sessionDir: string, extensionRoot: string, mode: Mo
 }
 
 function watcherPaneTwoCommand(sessionDir: string, binRoot: string, mode: MonitorMode): WatcherPaneCommand {
-  if (mode === 'refinement') {
-    return {
-      pane: 2,
-      name: 'refinement-watcher.js',
-      command: `node ${path.join(binRoot, 'refinement-watcher.js')} ${sessionDir}`,
-    };
+  switch (mode) {
+    case 'refinement':
+      return {
+        pane: 2,
+        name: 'refinement-watcher.js',
+        command: `node ${path.join(binRoot, 'refinement-watcher.js')} ${sessionDir}`,
+      };
+    case 'meeseeks':
+    case 'council':
+      return {
+        pane: 2,
+        name: 'mux-runner.log tail',
+        command: `tail -F ${path.join(sessionDir, 'mux-runner.log')}`,
+      };
+    case 'pickle':
+    case 'szechuan-sauce':
+    case 'anatomy-park':
+      return {
+        pane: 2,
+        name: 'morty-watcher.js',
+        command: `node ${path.join(binRoot, 'morty-watcher.js')} ${sessionDir}`,
+      };
   }
-  if (mode === 'meeseeks' || mode === 'council') {
-    return {
-      pane: 2,
-      name: 'mux-runner.log tail',
-      command: `tail -F ${path.join(sessionDir, 'mux-runner.log')}`,
-    };
-  }
-  return {
-    pane: 2,
-    name: 'morty-watcher.js',
-    command: `node ${path.join(binRoot, 'morty-watcher.js')} ${sessionDir}`,
-  };
 }
 
 function appendWatcherRestartLog(sessionDir: string, line: string): void {
@@ -1988,7 +2014,20 @@ function readWindowMode(tmuxBin: string, target: string, spawnSyncFn: typeof spa
  */
 export function monitorModesCompatible(existing: string | null, want: MonitorMode): boolean {
   if (!existing) return false;
-  return existing === want;
+  switch (want) {
+    case 'pickle':
+      return existing === 'pickle';
+    case 'meeseeks':
+      return existing === 'meeseeks';
+    case 'council':
+      return existing === 'council';
+    case 'refinement':
+      return existing === 'refinement';
+    case 'szechuan-sauce':
+      return existing === 'szechuan-sauce';
+    case 'anatomy-park':
+      return existing === 'anatomy-park';
+  }
 }
 
 /** Default timeout for macOS notification shell-outs (`osascript`). Kept short
