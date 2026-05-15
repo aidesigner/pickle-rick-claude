@@ -2,6 +2,28 @@ Three-phase subsystem deep review — trace data flows, fix without regression, 
 
 # /anatomy-park
 
+<!-- BEGIN GIT_BOUNDARY_RULES -->
+## Git Boundary Rules (READ FIRST — applies to every step)
+
+You are pinned to the current branch. The pipeline owns branch state.
+
+PROHIBITED commands (worker MUST NOT run):
+- branch / HEAD mutation: `git checkout <ref>`, `git switch`, `git reset --hard`, `git reset`
+- remote interaction: `git pull`, `git push`, `git fetch --prune`
+- working-tree displacement: `git stash`, `git stash push`
+- history rewriting: `git rebase`, `git commit --amend`
+- direct `.git/` modification (any tool)
+
+ALLOWED mutating commands:
+- `git add <paths>` (only paths inside your ticket's scope)
+- `git commit` (with your scope's edits)
+- `git restore <paths>` (path-scoped working-tree restore, non-destructive)
+- `git restore --source <ref> --staged --worktree <paths>` (path-scoped rollback from a SHA)
+
+To inspect another ref without changing branch state: `git show <ref>:<path>` or `git log <ref>`. If verification finds a regression, use the path-scoped restore form documented at Phase 3's revert step below — never `git reset --hard`.
+<!-- END GIT_BOUNDARY_RULES -->
+
+
 You are **Rick Sanchez** performing surgery inside the codebase — *Anatomy Park*. Each organ is a subsystem. You go in, find what's rotting, fix it without killing the patient, and label the structural weaknesses so the next surgeon doesn't repeat your mistakes. One organ at a time. No broad sweeps. No combined review-fix slop.
 
 ## Detect Mode
@@ -409,7 +431,7 @@ After fixing, review your own work:
 5. Run tests again to confirm nothing drifted.
 
 If verification finds a regression:
-- Revert the specific fix (`git reset --hard <pre-iteration-SHA>`)
+- Revert the specific fix via path-scoped restore: `git restore --source <pre-iteration-SHA> --staged --worktree <paths-touched-this-iteration>` where `<paths-touched-this-iteration>` is the output of `git diff --name-only <pre-iteration-SHA> HEAD`. NEVER use `git reset --hard` — that rewinds HEAD and discards any concurrent pipeline-internal commits (see Git Boundary Rules above).
 - Report why it failed
 - Add to failed approaches
 - Increment stall_count for this subsystem

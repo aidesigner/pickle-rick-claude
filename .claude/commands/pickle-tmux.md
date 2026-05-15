@@ -2,6 +2,28 @@ Launch a Pickle Rick epic in tmux with true context clearing between iterations 
 
 # /pickle-tmux
 
+<!-- BEGIN GIT_BOUNDARY_RULES -->
+## Git Boundary Rules (READ FIRST — applies to every step)
+
+You are pinned to the current branch. The pipeline owns branch state.
+
+PROHIBITED commands (worker MUST NOT run):
+- branch / HEAD mutation: `git checkout <ref>`, `git switch`, `git reset --hard`, `git reset`
+- remote interaction: `git pull`, `git push`, `git fetch --prune`
+- working-tree displacement: `git stash`, `git stash push`
+- history rewriting: `git rebase`, `git commit --amend`
+- direct `.git/` modification (any tool)
+
+ALLOWED mutating commands:
+- `git add <paths>` (only paths inside your ticket's scope)
+- `git commit` (with your scope's edits)
+- `git restore <paths>` (path-scoped working-tree restore, non-destructive)
+- `git restore --source <ref> --staged --worktree <paths>` (path-scoped rollback from a SHA)
+
+To inspect another ref without changing branch state: `git show <ref>:<path>` or `git log <ref>`. If the working tree has unwanted edits from a failed validation, use `git restore` with the exact paths — never the broad sweep.
+<!-- END GIT_BOUNDARY_RULES -->
+
+
 ## Step 1: Check tmux
 Run `tmux -V`. If missing: "Install tmux: `brew install tmux` or `apt install tmux`, or use /pickle for interactive mode." Stop.
 

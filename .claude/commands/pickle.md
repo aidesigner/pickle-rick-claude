@@ -1,3 +1,24 @@
+<!-- BEGIN GIT_BOUNDARY_RULES -->
+## Git Boundary Rules (READ FIRST — applies to every step)
+
+You are pinned to the current branch. The pipeline owns branch state.
+
+PROHIBITED commands (worker MUST NOT run):
+- branch / HEAD mutation: `git checkout <ref>`, `git switch`, `git reset --hard`, `git reset`
+- remote interaction: `git pull`, `git push`, `git fetch --prune`
+- working-tree displacement: `git stash`, `git stash push`
+- history rewriting: `git rebase`, `git commit --amend`
+- direct `.git/` modification (any tool)
+
+ALLOWED mutating commands:
+- `git add <paths>` (only paths inside your ticket's scope)
+- `git commit` (with your scope's edits)
+- `git restore <paths>` (path-scoped working-tree restore, non-destructive)
+- `git restore --source <ref> --staged --worktree <paths>` (path-scoped rollback from a SHA)
+
+To inspect another ref without changing branch state: `git show <ref>:<path>` or `git log <ref>`. If the working tree has unwanted edits from a failed validation, use `git restore` with the exact paths — never the broad sweep.
+<!-- END GIT_BOUNDARY_RULES -->
+
 ## Step 0 — Queue Check (mandatory)
 Before any other action, read every linear_ticket_*.md frontmatter in the session root. If every status: field is Done, emit:
 `<promise` + `>EPIC_COMPLETED</promise>`
@@ -142,7 +163,7 @@ Read `${SESSION_ROOT}/state.json` once at Phase 3 entry. If `state.teams_mode ==
    `update-state.js current_ticket <ID> ${SESSION_ROOT}` + `update-state.js step research ${SESSION_ROOT}`
 2. **Delegate**: `node "${EXTENSION_ROOT}/extension/bin/spawn-morty.js" "<DESC>" --ticket-id <ID> --ticket-path "${SESSION_ROOT}/<ID>/" --ticket-file "${SESSION_ROOT}/<ID>/linear_ticket_<ID>.md" --timeout <worker_timeout_seconds>`
 3. **Validate** (after Morty outputs `<promise>I AM DONE</promise>`): check `${SESSION_ROOT}/[id]/` for `research_*.md`, `research_review.md`, `plan_*.md`, `plan_review.md`, `conformance_*.md`, `code_review_*.md` — FORBIDDEN to mark Done if missing. Run `git status`, `git diff`, tests/build.
-4. **Cleanup**: validation fail → `git stash` + `git checkout .`; pass → commit
+4. **Cleanup**: validation fail → `git restore <paths-edited-this-iteration>` (path-scoped — never `git stash` + `git checkout .` per Git Boundary Rules above); pass → commit
 5. **Update**: mark ticket Done in frontmatter
 6. **Signal**: output `<promise` + `>TASK_COMPLETED</promise>` to confirm ticket completion
 7. **Increment iteration**:
@@ -182,7 +203,7 @@ When `state.teams_mode === true`. Claude backend only (setup.js rejects codex+te
    - `prompt`: a self-contained phase brief that includes `SESSION_ROOT`, `TICKET_ID`, `TICKET_DIR=${SESSION_ROOT}/${TICKET_ID}`, the `team_task_id`, the phase name, the path to `linear_ticket_${TICKET_ID}.md`, and the `working_dir` from the ticket's frontmatter (if present — needed for sub-repo targets). If `${SESSION_ROOT}/project-context.md` exists and is non-empty, include its content as a `## Project Context` block before the phase instructions / 8-phase lifecycle guidance. Only the final `refactor` phase calls `TaskUpdate(taskId=<team_task_id>, status="completed")`.
 4. **Wait**: after each phase Agent call, wait for its completion response before dispatching the next phase. After `refactor`, the teammate's `TaskUpdate(status="completed")` arrives as an auto-delivered notification (a new turn). Do NOT poll. Only fall back to a `TaskList` check if no notification has arrived past `state.worker_timeout_seconds`.
 5. **Validate**: run `node "${EXTENSION_ROOT}/extension/bin/validate-teams-ticket.js" --ticket-path "${SESSION_ROOT}/${TICKET_ID}" --role implementation`. Exit 0 → continue. Exit 1 → log the missing artifacts (stderr lists them), mark the ticket Failed in frontmatter, do NOT commit.
-6. **Commit**: pass → run `git status`, `git diff`, project tests/build, then commit. Fail → `git stash` + `git checkout .`.
+6. **Commit**: pass → run `git status`, `git diff`, project tests/build, then commit. Fail → `git restore <paths-edited-this-iteration>` (path-scoped — never `git stash` + `git checkout .` per Git Boundary Rules above).
 7. **Update**: mark ticket Done in frontmatter; output `<promise` + `>TASK_COMPLETED</promise>`.
 8. **Increment iteration** (same as Legacy step 7).
 9. **Next ticket**: repeat until `TaskList` shows all team tasks `completed` or all tickets in frontmatter are Done/Failed.
