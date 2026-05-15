@@ -103,6 +103,10 @@ export interface State {
    * use this to distinguish a clean exit from a forensic halt.
    */
   exit_reason?: string | null;
+  pinned_branch?: string | null;
+  pinned_sha?: string;
+  /** Mismatch context written by mux-runner; read by pipeline-runner to surface to stderr. */
+  head_pin_mismatch_detail?: { pinned_branch: string | null; observed_branch: string | null; pinned_sha: string; observed_sha: string } | null;
   /**
    * Per-pane producer liveness flags. Length 4 (pane indices 0..3). Written
    * exclusively by pipeline-runner.ts at non-citadel phase boundaries.
@@ -544,6 +548,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'monitor_mode_swapped',
   'setup_resume_ticket_status_preserved',
   'setup_resume_overrode_ticket_status',
+  'head_mismatch_detected',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

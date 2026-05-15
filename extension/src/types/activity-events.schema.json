@@ -650,6 +650,26 @@
         "new_status": { "type": "string", "const": "In Progress" },
         "source": { "type": "string", "const": "force_flag" }
       }
+    },
+    "head_mismatch_detected": {
+      "type": "object",
+      "required": ["event", "ts", "session", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "head_mismatch_detected" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["pinned_branch", "observed_branch", "pinned_sha", "observed_sha", "detected_at_phase"],
+          "properties": {
+            "pinned_branch": { "type": ["string", "null"] },
+            "observed_branch": { "type": ["string", "null"] },
+            "pinned_sha": { "type": "string" },
+            "observed_sha": { "type": "string" },
+            "detected_at_phase": { "type": "string" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -697,6 +717,7 @@
     { "$ref": "#/definitions/monitor_respawn_failed" },
     { "$ref": "#/definitions/monitor_mode_swapped" },
     { "$ref": "#/definitions/setup_resume_ticket_status_preserved" },
-    { "$ref": "#/definitions/setup_resume_overrode_ticket_status" }
+    { "$ref": "#/definitions/setup_resume_overrode_ticket_status" },
+    { "$ref": "#/definitions/head_mismatch_detected" }
   ]
 }

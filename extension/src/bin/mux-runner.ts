@@ -19,6 +19,7 @@ import {
   recordManagerRelaunch,
   type ManagerRelaunchExitKind,
 } from '../services/manager-relaunch.js';
+import { getHeadBranch } from '../services/git-utils.js';
 export { extractAssistantContent, detectOutputFormat } from '../services/classifier-utils.js';
 export { hasCompletionCommit } from '../services/pickle-utils.js';
 export {
@@ -2043,10 +2044,10 @@ export function appendPipelineRunnerMarker(sessionDir: string, message: string):
   } catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
 
-export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed';
+export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally';
 
 const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat';
-const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed';
+const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally';
 
 // ---------------------------------------------------------------------------
 // R-CNAR-6 — Spark codex smoke-run gate
@@ -2827,6 +2828,89 @@ function processReviewClean(ctx: LoopContext): LoopAction {
   return { kind: 'break', reason: 'success' };
 }
 
+/** Observe current HEAD: returns { branch, sha } or null on git failure. */
+function observeCurrentHead(workingDir: string): { branch: string | null; sha: string } | null {
+  const r = spawnSync('git', ['-C', workingDir, 'rev-parse', 'HEAD'], { encoding: 'utf-8', timeout: 5000 });
+  if (r.status !== 0) return null;
+  const sha = ((r.stdout as string) || '').trim();
+  return sha ? { branch: getHeadBranch(workingDir), sha } : null;
+}
+
+/** Returns true if the HEAD has drifted externally relative to the pinned state. */
+function hasHeadDrifted(
+  pinnedBranch: string | null,
+  pinnedSha: string,
+  observed: { branch: string | null; sha: string },
+  workingDir: string,
+): boolean {
+  if (pinnedBranch !== null) return observed.branch !== pinnedBranch;
+  if (observed.sha === pinnedSha) return false;
+  const r = spawnSync('git', ['-C', workingDir, 'merge-base', '--is-ancestor', pinnedSha, observed.sha], { encoding: 'utf-8', timeout: 5000 });
+  return r.status !== 0;
+}
+
+/**
+ * R-PIWG-1: Before each ticket selection, verify HEAD hasn't been switched externally.
+ * Returns true if a mismatch was detected (caller should break the loop).
+ */
+export function checkHeadPinMismatch(
+  state: State,
+  workingDir: string,
+  sessionDir: string,
+  statePath: string,
+  log: (msg: string) => void,
+): boolean {
+  if (state.pinned_sha === undefined) return false;
+  const pinnedBranch = state.pinned_branch ?? null;
+  const pinnedSha = state.pinned_sha;
+  try {
+    const observed = observeCurrentHead(workingDir);
+    if (!observed) return false;
+    if (!hasHeadDrifted(pinnedBranch, pinnedSha, observed, workingDir)) return false;
+
+    const detectedAtPhase = state.step || 'unknown';
+    log(`HEAD mismatch detected: pinned_branch=${pinnedBranch ?? 'null'} observed_branch=${observed.branch ?? 'null'} pinned_sha=${pinnedSha} observed_sha=${observed.sha}`);
+
+    try {
+      writeActivityEntry(statePath, {
+        event: 'head_mismatch_detected',
+        source: 'pickle',
+        ts: new Date().toISOString(),
+        session: path.basename(sessionDir),
+        gate_payload: {
+          pinned_branch: pinnedBranch,
+          observed_branch: observed.branch,
+          pinned_sha: pinnedSha,
+          observed_sha: observed.sha,
+          detected_at_phase: detectedAtPhase,
+        },
+      });
+    } catch (err) {
+      log(`head_mismatch_detected activity write failed: ${safeErrorMessage(err)}`);
+    }
+
+    try {
+      sm.update(statePath, s => {
+        s.head_pin_mismatch_detail = {
+          pinned_branch: pinnedBranch,
+          observed_branch: observed.branch,
+          pinned_sha: pinnedSha,
+          observed_sha: observed.sha,
+        };
+      });
+    } catch (err) {
+      log(`head_pin_mismatch_detail write failed: ${safeErrorMessage(err)}`);
+    }
+
+    recordExitReason(statePath, 'working_tree_modified_externally');
+    safeDeactivate(statePath);
+    return true;
+  } catch (err) {
+    log(`checkHeadPinMismatch: threw (ignored): ${safeErrorMessage(err)}`);
+    return false;
+  }
+}
+
 /**
  * R-WSE-2: Emit worker_partial_lifecycle_exit when research-review is APPROVED
  * but downstream lifecycle artifacts are missing from the ticket dir.
@@ -3424,6 +3508,14 @@ async function runMuxRunnerMain() {
     }
 
     iteration++;
+    {
+      const checkState = sm.read(statePath);
+      const checkDir = checkState.working_dir || process.cwd();
+      if (checkHeadPinMismatch(checkState, checkDir, sessionDir, statePath, log)) {
+        exitReason = 'working_tree_modified_externally';
+        break;
+      }
+    }
     const templateName = state.command_template || 'pickle.md';
     if (templateName !== 'meeseeks.md') {
       correctPhantomDoneTickets({

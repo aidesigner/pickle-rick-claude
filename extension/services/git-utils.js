@@ -146,6 +146,10 @@ export function updateTicketStatus(ticketId, newStatus, sessionDir) {
 export function getHeadSha(cwd) {
     return runGit(['rev-parse', 'HEAD'], cwd).trim();
 }
+export function getHeadBranch(cwd) {
+    const result = runGit(['symbolic-ref', '--short', 'HEAD'], cwd, false).trim();
+    return result || null;
+}
 function buildCleanArgs(preservePrefixes) {
     const args = ['clean', '-fd'];
     const cleanedPrefixes = normalizeExcludePrefixes(preservePrefixes);

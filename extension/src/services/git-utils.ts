@@ -166,6 +166,11 @@ export function getHeadSha(cwd: string): string {
   return runGit(['rev-parse', 'HEAD'], cwd).trim();
 }
 
+export function getHeadBranch(cwd: string): string | null {
+  const result = runGit(['symbolic-ref', '--short', 'HEAD'], cwd, false).trim();
+  return result || null;
+}
+
 function buildCleanArgs(preservePrefixes?: string[]): string[] {
   const args = ['clean', '-fd'];
   const cleanedPrefixes = normalizeExcludePrefixes(preservePrefixes);

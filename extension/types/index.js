@@ -250,6 +250,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'monitor_mode_swapped',
     'setup_resume_ticket_status_preserved',
     'setup_resume_overrode_ticket_status',
+    'head_mismatch_detected',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

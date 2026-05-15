@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus, type TicketInfo } from '../services/pickle-utils.js';
-import { getHeadSha } from '../services/git-utils.js';
+import { getHeadSha, getHeadBranch } from '../services/git-utils.js';
 import { State, Defaults, LockError, SessionMapEntry, Backend, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
 import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
@@ -968,6 +968,12 @@ function createInitialState(config: SetupArgs, sessionPath: string, taskStr: str
   const startCommit = resolveStartCommit();
   if (config.prdPath) state.prd_path = config.prdPath;
   if (startCommit) state.start_commit = startCommit;
+
+  const pinnedBranch = (() => {
+    try { return getHeadBranch(process.cwd()); } catch { return null; }
+  })();
+  state.pinned_branch = pinnedBranch;
+  if (startCommit) state.pinned_sha = startCommit;
 
   return state;
 }

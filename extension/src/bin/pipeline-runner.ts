@@ -2014,13 +2014,32 @@ type PhaseIterationOutcome =
   | { action: 'continue' }
   | { action: 'break'; phaseIncomplete?: boolean };
 
-function logPhaseHaltReason(
+function emitHeadMismatchStderr(statePath: string): boolean {
+  try {
+    const s = sm.read(statePath);
+    if (s.exit_reason !== 'working_tree_modified_externally') return false;
+    const detail = s.head_pin_mismatch_detail;
+    const pinned = detail ? String(detail.pinned_branch ?? 'null') : String(s.pinned_branch ?? 'null');
+    const observed = detail ? String(detail.observed_branch ?? 'unknown') : 'unknown';
+    process.stderr.write(`[pipeline-runner] HEAD mismatch: pinned_branch=${pinned} observed_branch=${observed}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function logPhaseHaltReason(
   runtime: PipelineRuntime,
   rawPhase: PhaseName,
   exitCode: number,
   log: (msg: string) => void,
 ): 'abort' | 'run-finalize-gate' {
   const haltMsg = `Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`;
+  // R-PIWG-1: surface HEAD mismatch before phase-type gating so it fires for all phases.
+  if (exitCode !== 0 && emitHeadMismatchStderr(runtime.statePath)) {
+    log(`Phase ${rawPhase} aborted: working_tree_modified_externally`);
+    return 'abort';
+  }
   if (exitCode === 0 || (rawPhase !== 'anatomy-park' && rawPhase !== 'szechuan-sauce')) {
     log(haltMsg);
     return 'abort';
