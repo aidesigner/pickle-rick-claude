@@ -89,17 +89,18 @@ export function cleanupStaleIndexLock(ctx: LockCleanupContext): void {
 }
 
 /**
- * Probe whether a live process holds the given path. Returns null when
- * the lock is unheld OR the probe tools are unavailable (safer default:
- * "do not remove" is enforced by the caller treating this as "unheld
- * means safe to remove", so when probe tools are missing we deliberately
- * RETURN a synthetic holder to refuse cleanup conservatively).
+ * Probe whether a live process holds the given path. Returns null only
+ * when a probe tool confidently reports no holder (lsof or pgrep exit
+ * with a clear "unheld" status). When neither tool answers confidently
+ * (both unavailable, both errored), returns a synthetic
+ * `{ pid: -1, command: 'probe-unavailable' }` so the caller refuses to
+ * remove the lock conservatively.
  *
  * Strategy:
  *   1. `lsof -t <path>` — POSIX standard, returns PID list on stdout.
  *   2. Fall back to `pgrep -f 'git -C <repo>'` — looser match.
- *   3. If neither tool is available, return a synthetic holder so the
- *      caller refuses to remove the lock (conservative).
+ *   3. If neither tool answers confidently, return a synthetic holder
+ *      so the caller refuses to remove the lock (conservative).
  */
 function probeLockHolder(lockPath: string): { pid: number; command: string } | null {
   // Try lsof first.
