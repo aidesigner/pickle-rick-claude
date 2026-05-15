@@ -29,6 +29,24 @@ If you want the legacy behavior (auto-correct frontmatter to match `state.curren
 
 - `mux-runner.ts` (R-PIWG-1 HEAD pin) — INVARIANT: every iteration in `runMuxRunnerMain` re-checks `state.pinned_branch`/`state.pinned_sha` via `checkHeadPinMismatch` before ticket selection; an external branch switch sets `exit_reason='working_tree_modified_externally'`, emits `head_mismatch_detected`, and calls `safeDeactivate`. Pipeline-internal commits on a named branch do NOT trigger this (branch name unchanged). BREAKS: removing the pre-ticket check allows a parallel `git checkout` to silently shift the branch under a live pipeline. ENFORCE: extension/tests/integration/head-pin-mismatch-detection.test.js. PATTERN_SHAPE: `checkHeadPinMismatch\(` before ticket selection in `runMuxRunnerMain`.
 
+## Resume-time ticket runnability contract
+
+Precedence: ticket frontmatter `status:` is authoritative for runnable/skipped decisions. The runner reads it fresh per iteration via `getTicketStatus(sessionDir, ticketId)` (`extension/src/services/pickle-utils.ts`) inside `isPendingMuxTicket` (`extension/src/bin/mux-runner.ts:471-480`). All other sources are advisory:
+1. ticket frontmatter `status:` — AUTHORITATIVE; values `Todo` / `In Progress` are runnable, `Done` / `Skipped` are not (`isPendingMuxTicket` short-circuits via `normalizeTicketStatus`)
+2. `state.current_ticket` — single-active-ticket lock for the in-flight iteration; cleared between tickets, does NOT gate runnability of other tickets
+3. `pipeline.json.completed_phases` — phase-advance ledger, not a per-ticket gate
+4. `refinement_manifest.json[].status` — informational metadata only; NOT consulted at runtime for runnability (the runner reads ticket frontmatter, not the manifest)
+
+There is no `state.failed_tickets` / `state.blocked_tickets` / `state.skipped_tickets` field in this codebase — a parallel runnability set would be a regression. R-RMBS-3 emits `ticket_runnability_resolved` per iteration to surface the runner's decision for observability without changing the underlying mechanism.
+
+Heal flow recipe: To make a previously-failed or skipped ticket runnable again:
+1. Stop the pipeline (Ctrl-C or `eat-pickle`).
+2. Edit the ticket's frontmatter file at `<SESSION_ROOT>/<hash>/linear_ticket_<hash>.md`: set `status: Todo`.
+3. (Optional Finding #36 workaround if `state.current_ticket` points at this same ticket): set `state.current_ticket = null` BEFORE running setup.js — only needed when running an older deployed setup.js that lacks R-SRTS-1.
+4. Re-run `setup.js --resume <SESSION_ROOT>`. The runner will pick up the ticket via `findNextPendingTicketId` (frontmatter read). Do NOT edit `refinement_manifest.json` for this purpose — the runner does not consult it for runnability.
+
+- `mux-runner.ts` (R-RMBS-1/R-RMBS-3 frontmatter authority) — INVARIANT: `isPendingMuxTicket` is the canonical pendingness check; it MUST read ticket frontmatter via `getTicketStatus(sessionDir, ticketId)` and return `false` only for `done`/`skipped` statuses. NO field in `state.json` may parallel this decision — `state.failed_tickets`, `state.blocked_tickets`, `state.skipped_tickets` are FORBIDDEN field names that would re-introduce the heal-flow papercut (Master Plan Finding #41). Per-iteration `ticket_runnability_resolved` event emits `{ ticket_id, frontmatter_status, runnable, reason }` for observability. BREAKS: reintroducing a parallel set in State means an operator who edits ticket frontmatter back from Skipped to Todo cannot make the ticket runnable again without also clearing the parallel set, defeating the heal flow recipe. ENFORCE: extension/tests/runnability-contract-doc-shape.test.js, extension/tests/integration/runnability-frontmatter-authoritative.test.js. PATTERN_SHAPE: `state\.(failed|blocked|skipped)_tickets` MUST NOT appear in `extension/src/bin/mux-runner.ts` or `extension/src/types/index.ts`.
+
 ## Probe vs Measurement Timeout Distinction (R-MJCP-8)
 
 `probeJudgeCliAvailability` is a fail-fast existence check (≥5s default via `PICKLE_JUDGE_PROBE_TIMEOUT_MS`, max 60s). Only `kind: 'missing'` (ENOENT-class) short-circuits to `judge_cli_missing`. `kind: 'timeout'` or `kind: 'failed'` fall through to the measurement loop so a slow cold-start does not kill the convergence run.

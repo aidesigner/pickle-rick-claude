@@ -168,6 +168,7 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`stale_index_lock_cleaned\` | \`gate_payload.path\`, \`gate_payload.mtime\`, \`gate_payload.age_seconds\` | cancel.ts cleanupStaleIndexLock |
 | \`stale_index_lock_held_by_live_process\` | \`gate_payload.path\`, \`gate_payload.mtime\`, \`gate_payload.age_seconds\`, \`gate_payload.holder_pid\`, \`gate_payload.holder_command\` | cancel.ts cleanupStaleIndexLock |
 | \`setup_resume_chdir_applied\` | \`gate_payload.from\`, \`gate_payload.to\` | setup.ts validateResumeCompatibility cross-cwd path |
+| \`ticket_runnability_resolved\` | \`ticket_id\`, \`gate_payload.frontmatter_status\`, \`gate_payload.runnable\`, \`gate_payload.reason\` | mux-runner per-iteration ticket-selection path |
 
 When writing ACs that assert event emission, include the full event name and required payload fields. Do NOT invent event names — use only the names listed here or already present in \`extension/src/types/index.ts:VALID_ACTIVITY_EVENTS\`.`;
 

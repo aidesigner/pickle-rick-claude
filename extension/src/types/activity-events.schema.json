@@ -725,6 +725,25 @@
           }
         }
       }
+    },
+    "ticket_runnability_resolved": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "ticket_runnability_resolved" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["frontmatter_status", "runnable", "reason"],
+          "properties": {
+            "frontmatter_status": { "type": ["string", "null"] },
+            "runnable": { "type": "boolean" },
+            "reason": { "type": "string" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -776,6 +795,7 @@
     { "$ref": "#/definitions/head_mismatch_detected" },
     { "$ref": "#/definitions/stale_index_lock_cleaned" },
     { "$ref": "#/definitions/stale_index_lock_held_by_live_process" },
-    { "$ref": "#/definitions/setup_resume_chdir_applied" }
+    { "$ref": "#/definitions/setup_resume_chdir_applied" },
+    { "$ref": "#/definitions/ticket_runnability_resolved" }
   ]
 }

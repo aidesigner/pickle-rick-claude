@@ -552,6 +552,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'stale_index_lock_cleaned',
   'stale_index_lock_held_by_live_process',
   'setup_resume_chdir_applied',
+  'ticket_runnability_resolved',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

@@ -441,6 +441,21 @@ const EVENT_CASES = [
     },
     drop: 'gate_payload',
   },
+  {
+    type: 'ticket_runnability_resolved',
+    valid: {
+      event: 'ticket_runnability_resolved',
+      ts: TS,
+      ticket_id: 'abc12345',
+      session: 'session-1',
+      gate_payload: {
+        frontmatter_status: 'Todo',
+        runnable: true,
+        reason: 'frontmatter_pending',
+      },
+    },
+    drop: 'ticket_id',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -665,6 +680,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'stale_index_lock_cleaned',
     'stale_index_lock_held_by_live_process',
     'setup_resume_chdir_applied',
+    'ticket_runnability_resolved',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

@@ -21,6 +21,7 @@ const PIWG_EVENTS = [
   'stale_index_lock_cleaned',
   'stale_index_lock_held_by_live_process',
   'setup_resume_chdir_applied',
+  'ticket_runnability_resolved',
 ];
 
 const schema = JSON.parse(fs.readFileSync(SCHEMA_PATH, 'utf-8'));

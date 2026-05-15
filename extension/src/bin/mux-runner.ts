@@ -3532,6 +3532,28 @@ async function runMuxRunnerMain() {
     const preStep = templateName === 'meeseeks.md'
       ? 'review'
       : inferTicketLifecycleStep(sessionDir, preTicket, state.step);
+    if (preTicket && templateName !== 'meeseeks.md') {
+      // R-RMBS-3: emit per-iteration runnability decision for observability.
+      // Frontmatter status is the authoritative source — runnable means status is
+      // Todo or In Progress (per isPendingMuxTicket).
+      try {
+        const frontmatterStatus = getTicketStatus(sessionDir, preTicket);
+        const normalized = normalizeTicketStatus(frontmatterStatus);
+        const runnable = normalized !== 'done' && normalized !== 'skipped';
+        const reasonSource = state.current_ticket === preTicket ? 'state_current_ticket' : 'frontmatter_pending';
+        logActivity({
+          event: 'ticket_runnability_resolved',
+          source: 'pickle',
+          session: path.basename(sessionDir),
+          ticket_id: preTicket,
+          gate_payload: {
+            frontmatter_status: frontmatterStatus ?? null,
+            runnable,
+            reason: reasonSource,
+          },
+        });
+      } catch { /* best-effort */ }
+    }
     state = updateMuxLifecycleState(statePath, { iteration, currentTicket: preTicket, step: preStep });
     state = reconcileTicketStateDesync(statePath, sessionDir, state.current_ticket || null, iteration, log);
     if (templateName !== 'meeseeks.md') {
