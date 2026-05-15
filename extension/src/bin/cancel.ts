@@ -22,9 +22,10 @@ interface LockCleanupContext {
  * R-PIWG-4: clean up an orphaned `.git/index.lock` in the session's
  * working_dir when (a) it predates the session's last activity by less
  * than STALE_LOCK_WINDOW_MS (so it's plausibly ours, not external) and
- * (b) no live process holds it. External locks (mtime > stateMtime +
- * window) and live-holder locks are preserved; both surface schema-
- * conformant activity events for audit.
+ * (b) no live process holds it. Three outcomes:
+ *   - External lock (mtime > stateMtime + window): preserved, no event.
+ *   - Live-holder lock: preserved, emits `stale_index_lock_held_by_live_process`.
+ *   - Cleanly removable lock: deleted, emits `stale_index_lock_cleaned`.
  */
 export function cleanupStaleIndexLock(ctx: LockCleanupContext): void {
   const lockPath = path.join(ctx.workingDir, '.git', 'index.lock');
