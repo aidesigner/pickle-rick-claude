@@ -1851,7 +1851,6 @@ Your ONLY valid setup.js invocation is the one already completed to initialize t
  * Call sites pre-resolve handoffText/iterationSummary/taskNotes strings.
  */
 export function composeManagerPromptFromSkill(skillPath, backend, opts) {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     let content = fs.readFileSync(skillPath, 'utf-8');
     content = content.replace(/\$ARGUMENTS/g, opts.argumentSubstitution);
     content = stripSetupSection(content);

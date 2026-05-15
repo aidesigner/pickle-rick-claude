@@ -11,7 +11,7 @@ import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractEr
 import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides } from '../services/backend-spawn.js';
 import { resolveCodexModel } from './spawn-morty.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
-import { extractAssistantContent, detectOutputFormat } from '../services/classifier-utils.js';
+import { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream } from '../services/classifier-utils.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
 import { emitCrossTicketRegressionLinearComment } from '../lib/linear-comment.js';
 import {
@@ -20,7 +20,7 @@ import {
   type ManagerRelaunchExitKind,
 } from '../services/manager-relaunch.js';
 import { getHeadBranch } from '../services/git-utils.js';
-export { extractAssistantContent, detectOutputFormat } from '../services/classifier-utils.js';
+export { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream } from '../services/classifier-utils.js';
 export { hasCompletionCommit, stripSetupSection } from '../services/pickle-utils.js';
 export {
   evaluateManagerRelaunch,
@@ -1010,6 +1010,42 @@ export function classifyCompletion(output: string): 'task_completed' | 'review_c
   return 'continue';
 }
 
+// Block delimiter regex for codex-block format (mirrors CODEX_DELIMITER_RE in classifier-utils.ts).
+const CODEX_BLOCK_DELIMITER_RE = /^(user|codex|exec|tokens used|reasoning|tool_call)\s*$/;
+
+/**
+ * R-CCPM-2: Scans a full iteration log for codex Bash tool-calls invoking setup.js.
+ * Returns detected events; caller emits logActivity for each.
+ * Returns empty array for non-codex backend (no-op for claude sessions).
+ */
+export function checkIterationLogForCodexSelfBootstrap(
+  output: string,
+  backend: Backend,
+  currentTicket: string | null | undefined,
+  iterationNum: number,
+): Array<{ attempted_argv: string[]; ticket: string | null; iteration: number }> {
+  if (backend !== 'codex') return [];
+  const fmt = detectOutputFormat(output);
+  if (fmt === 'plain-text') return [];
+  const results: Array<{ attempted_argv: string[]; ticket: string | null; iteration: number }> = [];
+  const lines = output.split('\n');
+  let inToolCallBlock = false;
+  for (const line of lines) {
+    if (fmt === 'codex-block') {
+      if (CODEX_BLOCK_DELIMITER_RE.test(line)) {
+        inToolCallBlock = /^tool_call\s*$/.test(line);
+        continue;
+      }
+      if (!inToolCallBlock) continue;
+    }
+    const obs = observeCodexToolCallStream(line, fmt === 'stream-json' ? 'stream-json' : 'codex-block');
+    if (obs?.isSetupInvocation) {
+      results.push({ attempted_argv: obs.argv, ticket: currentTicket ?? null, iteration: iterationNum });
+    }
+  }
+  return results;
+}
+
 /**
  * Post-hoc safety net: validates whether a ticket was actually completed
  * before marking it Done. TASK_COMPLETED token is strong evidence. Otherwise
@@ -1740,6 +1776,22 @@ export async function runIteration(
       try { output = fs.readFileSync(logFile, 'utf-8'); } catch { /* missing/unreadable log */ }
       if (backend === 'codex' && detectOutputFormat(output) === 'plain-text') {
         process.stderr.write(`[classifier] codex delimiter drift: no recognizable codex/user blocks in iteration ${iterationNum} output\n`);
+      }
+      // R-CCPM-2: observe codex stream for setup.js self-bootstrap attempts (LOG-ONLY)
+      if (state.backend === 'codex') {
+        const bootstrapObs = checkIterationLogForCodexSelfBootstrap(output, state.backend, state.current_ticket, iterationNum);
+        for (const obs of bootstrapObs) {
+          logActivity({
+            event: 'codex_manager_self_bootstrap_attempted',
+            ts: new Date().toISOString(),
+            source: 'pickle',
+            session: path.basename(sessionDir),
+            ticket: obs.ticket,
+            attempted_argv: obs.attempted_argv,
+            iteration: obs.iteration,
+            action_taken: 'logged',
+          });
+        }
       }
       const completion = classifyCompletion(output);
       const normalizedOutcome = {

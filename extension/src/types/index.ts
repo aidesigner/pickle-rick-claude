@@ -612,7 +612,7 @@ export interface ActivityEvent {
   source: ActivityEventSource;
   session?: string;
   epic?: string;
-  ticket?: string;
+  ticket?: string | null;
   title?: string;
   step?: string;
   mode?: string;
@@ -691,6 +691,9 @@ export interface ActivityEvent {
   expected_status?: string;
   prior_status?: string;
   new_status?: string;
+  // R-CCPM-2: codex_manager_self_bootstrap_attempted payload fields
+  attempted_argv?: string[];
+  action_taken?: string;
 }
 
 // ---------------------------------------------------------------------------
