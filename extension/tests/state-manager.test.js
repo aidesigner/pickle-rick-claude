@@ -95,7 +95,7 @@ test('StateManager.read: reads valid state file', () => {
     const result = sm.read(sp);
     assert.equal(result.active, true);
     assert.equal(result.iteration, 1);
-    assert.equal(result.schema_version, 3);
+    assert.equal(result.schema_version, LATEST_SCHEMA_VERSION);
   });
 });
 
@@ -267,11 +267,11 @@ test('StateManager.read: migrates undefined schema_version to current schema', (
     delete state.schema_version;
     fs.writeFileSync(sp, JSON.stringify(state, null, 2));
     const result = sm.read(sp);
-    assert.equal(result.schema_version, 3);
+    assert.equal(result.schema_version, LATEST_SCHEMA_VERSION);
     assertV3Defaults(result);
     // Persisted to disk
     const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
-    assert.equal(onDisk.schema_version, 3);
+    assert.equal(onDisk.schema_version, LATEST_SCHEMA_VERSION);
     assertV3Defaults(onDisk);
   });
 });
@@ -567,7 +567,7 @@ test('StateManager.read: promotes same-iteration orphan tmp before legacy schema
     const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
     assert.equal(onDisk.active, false);
     assert.equal(onDisk.current_ticket, 'T-RECOVERED');
-    assert.equal(onDisk.schema_version, 3);
+    assert.equal(onDisk.schema_version, LATEST_SCHEMA_VERSION);
   });
 });
 
@@ -999,7 +999,7 @@ test('STATE_MANAGER_DEFAULTS: has expected values', () => {
   assert.equal(STATE_MANAGER_DEFAULTS.baseLockDelayMs, 100);
   assert.equal(STATE_MANAGER_DEFAULTS.lockJitter, true);
   assert.equal(STATE_MANAGER_DEFAULTS.staleLockTimeoutMs, 30_000);
-  assert.equal(STATE_MANAGER_DEFAULTS.schemaVersion, 3);
+  assert.equal(STATE_MANAGER_DEFAULTS.schemaVersion, LATEST_SCHEMA_VERSION);
 });
 
 // ---------------------------------------------------------------------------
@@ -1013,7 +1013,7 @@ test('StateManager: custom options override defaults', () => {
     writeStateFile(sp, makeState());
     // Should work with custom options
     const result = sm.read(sp);
-    assert.equal(result.schema_version, 3);
+    assert.equal(result.schema_version, LATEST_SCHEMA_VERSION);
   });
 });
 

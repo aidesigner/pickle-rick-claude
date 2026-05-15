@@ -252,11 +252,11 @@ export const STATE_MANAGER_DEFAULTS: StateManagerOptions = {
   baseLockDelayMs: 100,
   lockJitter: true,
   staleLockTimeoutMs: 30_000,
-  schemaVersion: 3,
+  schemaVersion: 4,
 };
 
 /** Latest schema_version that this code knows how to write/read. Must match the latest migration target in state-manager.ts. */
-export const LATEST_SCHEMA_VERSION = 3;
+export const LATEST_SCHEMA_VERSION = 4;
 
 export type StateErrorCode = 'MISSING' | 'CORRUPT' | 'SCHEMA_MISMATCH' | 'SCHEMA_DEPLOY_DRIFT' | 'LOCK_FAILED' | 'WRITE_FAILED';
 
@@ -694,6 +694,11 @@ export interface ActivityEvent {
   // R-CCPM-2: codex_manager_self_bootstrap_attempted payload fields
   attempted_argv?: string[];
   action_taken?: string;
+  // R-CCPM-3: orphan_session_detected payload fields
+  orphan_session_path?: string;
+  orphan_started_at?: number;
+  orphan_pid?: number;
+  parent_session_hash?: string;
 }
 
 // ---------------------------------------------------------------------------

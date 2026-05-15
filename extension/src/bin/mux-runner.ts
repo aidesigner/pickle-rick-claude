@@ -35,6 +35,47 @@ const sm = new StateManager();
 
 let currentChildProc: import('child_process').ChildProcess | null = null;
 
+export interface OrphanDetectionResult {
+  orphan_session_path: string;
+  orphan_started_at: number;
+  parent_session_hash: string;
+  orphan_pid: number;
+}
+
+export function detectOrphanSessions(
+  state: State,
+  dataRoot: string,
+  sessionDir: string,
+): OrphanDetectionResult[] {
+  const sessionsRoot = path.join(dataRoot, 'sessions');
+  const parentWorkingDir = state.working_dir;
+  const results: OrphanDetectionResult[] = [];
+  const alreadyDetected = new Set(Array.isArray(state.orphans_detected) ? state.orphans_detected : []);
+  let entries: string[];
+  try { entries = fs.readdirSync(sessionsRoot); } catch { return results; }
+  for (const entry of entries) {
+    if (path.join(sessionsRoot, entry) === sessionDir) continue;
+    const siblingStatePath = path.join(sessionsRoot, entry, 'state.json');
+    let sibling: Record<string, unknown>;
+    try {
+      sibling = JSON.parse(fs.readFileSync(siblingStatePath, 'utf-8')) as Record<string, unknown>;
+    } catch { continue; }
+    const siblingParentHash = typeof sibling.parent_session_hash === 'string' && sibling.parent_session_hash
+      ? sibling.parent_session_hash : null;
+    const isManagerSubprocess = sibling.invocation_source === 'manager_subprocess';
+    if (!siblingParentHash && !isManagerSubprocess) continue;
+    if (sibling.working_dir !== parentWorkingDir) continue;
+    if (alreadyDetected.has(entry)) continue;
+    results.push({
+      orphan_session_path: path.join(sessionsRoot, entry),
+      orphan_started_at: typeof sibling.start_time_epoch === 'number' ? sibling.start_time_epoch : 0,
+      parent_session_hash: siblingParentHash ?? 'unknown',
+      orphan_pid: typeof sibling.pid === 'number' ? sibling.pid : 0,
+    });
+  }
+  return results;
+}
+
 function readRunnerState(statePath: string): State {
   return sm.read(statePath);
 }
@@ -3601,6 +3642,36 @@ async function runMuxRunnerMain() {
         previousTicketStartCommit = readHeadCommit(ticketInfo?.working_dir || state.working_dir || process.cwd());
       }
     }
+    // R-CCPM-3: orphan-session detection at iteration boundary
+    try {
+      const dataRoot = getDataRoot();
+      const orphans = detectOrphanSessions(state, dataRoot, sessionDir);
+      if (orphans.length > 0) {
+        state = sm.update(statePath, s => {
+          if (!Array.isArray(s.orphans_detected)) s.orphans_detected = [];
+          for (const orphan of orphans) {
+            const basename = path.basename(orphan.orphan_session_path);
+            if (!s.orphans_detected.includes(basename)) {
+              s.orphans_detected.push(basename);
+            }
+          }
+        });
+        for (const orphan of orphans) {
+          logActivity({
+            event: 'orphan_session_detected',
+            source: 'pickle',
+            session: path.basename(sessionDir),
+            orphan_session_path: orphan.orphan_session_path,
+            orphan_started_at: orphan.orphan_started_at,
+            parent_session_hash: orphan.parent_session_hash,
+            orphan_pid: orphan.orphan_pid,
+          });
+        }
+      }
+    } catch (err) {
+      log(`orphan detection error (ignored): ${safeErrorMessage(err)}`);
+    }
+
     log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
     logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration, backend: resolveBackend(state) });
 

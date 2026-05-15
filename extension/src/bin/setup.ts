@@ -990,6 +990,9 @@ function createInitialState(config: SetupArgs, sessionPath: string, taskStr: str
     flags: {},
     readiness: { cycle_history: [] },
     codex_version_seen: codexVersionSeen,
+    orphans_detected: [],
+    invocation_source: process.env.PICKLE_PARENT_SESSION_HASH ? 'manager_subprocess' : 'operator',
+    parent_session_hash: process.env.PICKLE_PARENT_SESSION_HASH || null,
   };
 
   if (config.explicitFlags.has('max-time')) {

@@ -31,6 +31,9 @@
     "flags",
     "readiness",
     "codex_version_seen",
+    "orphans_detected",
+    "invocation_source",
+    "parent_session_hash",
     "start_commit",
     "pinned_branch",
     "pinned_sha"
@@ -53,7 +56,7 @@
     "min_iterations": 0,
     "command_template": "pickle.md",
     "chain_meeseeks": false,
-    "schema_version": 3,
+    "schema_version": 4,
     "backend": "claude",
     "worker_backend": "codex",
     "pipeline_continue_on_phase_fail": true,
@@ -68,6 +71,9 @@
       "cycle_history": []
     },
     "codex_version_seen": null,
+    "orphans_detected": [],
+    "invocation_source": "operator",
+    "parent_session_hash": null,
     "start_commit": "abc123",
     "pinned_branch": "main",
     "pinned_sha": "abc123"

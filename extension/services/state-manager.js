@@ -210,6 +210,20 @@ function normalizeV3StateDefaults(state) {
         ];
     }
 }
+function normalizeV4StateDefaults(state) {
+    if (!Array.isArray(state.orphans_detected))
+        state.orphans_detected = [];
+    if (state.parent_session_hash === undefined)
+        state.parent_session_hash = null;
+    if (state.invocation_source === undefined)
+        state.invocation_source = 'operator';
+}
+function normalizeUpToVersion(state, schemaVersion) {
+    if (schemaVersion >= 3)
+        normalizeV3StateDefaults(state);
+    if (schemaVersion >= 4)
+        normalizeV4StateDefaults(state);
+}
 function readFiniteCount(value) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
@@ -369,8 +383,7 @@ export class StateManager {
             state.schema_version = 1;
             process.stderr.write(`[state-manager] schema_version missing in ${statePath} — migrating to 1\n`);
             // Best-effort persist migration — don't throw if write fails
-            if (this.opts.schemaVersion >= 3)
-                normalizeV3StateDefaults(state);
+            normalizeUpToVersion(state, this.opts.schemaVersion);
             migrateLegacyManagerRelaunchCount(state);
             migrateLegacySignalExitReason(state);
             migrateLegacyBaselineExitReason(state);
@@ -384,8 +397,7 @@ export class StateManager {
         }
         if (state.schema_version < this.opts.schemaVersion) {
             state.schema_version = this.opts.schemaVersion;
-            if (this.opts.schemaVersion >= 3)
-                normalizeV3StateDefaults(state);
+            normalizeUpToVersion(state, this.opts.schemaVersion);
             migrateLegacyManagerRelaunchCount(state);
             migrateLegacySignalExitReason(state);
             migrateLegacyBaselineExitReason(state);
@@ -397,7 +409,7 @@ export class StateManager {
         }
         else if (state.schema_version >= 3) {
             const missingPipelineContinueOnPhaseFail = typeof state.pipeline_continue_on_phase_fail !== 'boolean';
-            normalizeV3StateDefaults(state);
+            normalizeUpToVersion(state, state.schema_version);
             const didMigrateRelaunch = migrateLegacyManagerRelaunchCount(state);
             const didMigrateSignal = migrateLegacySignalExitReason(state);
             if (missingPipelineContinueOnPhaseFail || didMigrateRelaunch || didMigrateSignal) {
