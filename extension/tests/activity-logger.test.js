@@ -171,10 +171,21 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'monitor_respawn_started',
         'monitor_respawn_failed',
         'monitor_mode_swapped',
+        'monitor_stderr_rotated',
         'worker_spawn_backend_mismatch',
         'cross_ticket_regression_detected',
         'manager_idle_backoff_engaged',
         'manager_idle_backoff_released',
+        'setup_resume_ticket_status_preserved',
+        'setup_resume_overrode_ticket_status',
+        'head_mismatch_detected',
+        'stale_index_lock_cleaned',
+        'stale_index_lock_held_by_live_process',
+        'setup_resume_chdir_applied',
+        'ticket_runnability_resolved',
+        'codex_manager_self_bootstrap_attempted',
+        'orphan_session_detected',
+        'session_map_collision_blocked',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {

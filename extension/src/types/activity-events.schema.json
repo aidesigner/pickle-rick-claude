@@ -627,6 +627,18 @@
         "mode": { "type": "string" }
       }
     },
+    "monitor_stderr_rotated": {
+      "type": "object",
+      "required": ["event", "ts", "session", "pid", "bytes_dropped", "cap"],
+      "properties": {
+        "event": { "type": "string", "const": "monitor_stderr_rotated" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "pid": { "type": "integer" },
+        "bytes_dropped": { "type": "integer", "minimum": 1 },
+        "cap": { "type": "integer", "minimum": 1 }
+      }
+    },
     "setup_resume_ticket_status_preserved": {
       "type": "object",
       "required": ["event", "ts", "ticket_id", "observed_status", "expected_status", "reason"],
@@ -827,6 +839,7 @@
     { "$ref": "#/definitions/monitor_respawn_started" },
     { "$ref": "#/definitions/monitor_respawn_failed" },
     { "$ref": "#/definitions/monitor_mode_swapped" },
+    { "$ref": "#/definitions/monitor_stderr_rotated" },
     { "$ref": "#/definitions/setup_resume_ticket_status_preserved" },
     { "$ref": "#/definitions/setup_resume_overrode_ticket_status" },
     { "$ref": "#/definitions/head_mismatch_detected" },

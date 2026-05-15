@@ -8,6 +8,9 @@ import { logActivity } from '../services/activity-logger.js';
 import { readMicroverseState, readRecoverableJsonObject } from '../services/microverse-state.js';
 import { readCircuitBreakerState } from '../services/circuit-breaker.js';
 const sm = new StateManager();
+export const MONITOR_STDERR_LOG_NAME = 'monitor-stderr.log';
+export const MONITOR_STDERR_CAP_BYTES = 64 * 1024;
+const MONITOR_STDERR_HEADER_PREFIX = '[monitor-stderr]';
 /**
  * Watchdog timeout for stdout writes. When `process.stdout.write()` reports
  * backpressure (returns `false`) and the kernel buffer never drains within
@@ -185,7 +188,87 @@ export function summarizeLine(raw) {
     return '';
 }
 const MX = MatrixStyle;
-const VALID_MODES = ['pickle', 'microverse', 'idle'];
+const VALID_MODES = ['pickle', 'microverse', 'idle', 'meeseeks', 'council', 'refinement', 'szechuan-sauce', 'anatomy-park'];
+function normalizeStderrChunk(chunk) {
+    return typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : Buffer.from(chunk);
+}
+export function buildMonitorStderrHeader(sessionDir, pid = process.pid, ts = new Date().toISOString()) {
+    return `${MONITOR_STDERR_HEADER_PREFIX} session=${path.basename(sessionDir)} pid=${pid} ts=${ts}\n`;
+}
+export function appendMonitorStderrLog(opts) {
+    const logFn = opts.logFn ?? logActivity;
+    const capBytes = opts.capBytes ?? MONITOR_STDERR_CAP_BYTES;
+    const pid = opts.pid ?? process.pid;
+    const ts = opts.ts ?? new Date().toISOString();
+    const logPath = path.join(opts.sessionDir, MONITOR_STDERR_LOG_NAME);
+    const payload = normalizeStderrChunk(opts.chunk);
+    const header = opts.firstWriteForProcess === false ? Buffer.alloc(0) : Buffer.from(buildMonitorStderrHeader(opts.sessionDir, pid, ts), 'utf8');
+    const appended = header.length > 0 ? Buffer.concat([header, payload]) : payload;
+    let existing = Buffer.alloc(0);
+    try {
+        if (fs.existsSync(logPath)) {
+            existing = fs.readFileSync(logPath);
+        }
+    }
+    catch {
+        existing = Buffer.alloc(0);
+    }
+    const combined = Buffer.concat([existing, appended]);
+    let next = combined;
+    let bytesDropped = 0;
+    if (combined.length > capBytes) {
+        bytesDropped = combined.length - capBytes;
+        next = combined.subarray(bytesDropped);
+    }
+    fs.appendFileSync(logPath, appended, 'utf8');
+    if (bytesDropped > 0) {
+        fs.writeFileSync(logPath, next);
+        logFn({
+            event: 'monitor_stderr_rotated',
+            source: 'pickle',
+            session: path.basename(opts.sessionDir),
+            pid,
+            bytes_dropped: bytesDropped,
+            cap: capBytes,
+        });
+    }
+    return { bytesWritten: appended.length, bytesDropped, rotated: bytesDropped > 0 };
+}
+export function createMonitorStderrCapture(opts) {
+    const stderr = opts.stderr ?? process.stderr;
+    const logFn = opts.logFn ?? logActivity;
+    const originalWrite = stderr.write.bind(stderr);
+    let wroteHeader = false;
+    const write = (chunk, encoding, cb) => {
+        let captureErr = null;
+        try {
+            appendMonitorStderrLog({
+                sessionDir: opts.sessionDir,
+                chunk,
+                logFn,
+                capBytes: opts.capBytes,
+                firstWriteForProcess: !wroteHeader,
+            });
+            wroteHeader = true;
+        }
+        catch (err) {
+            captureErr = err instanceof Error ? err : new Error(String(err));
+        }
+        if (typeof encoding === 'function') {
+            cb = encoding;
+            encoding = undefined;
+        }
+        const ok = originalWrite(chunk, encoding, cb);
+        if (captureErr) {
+            originalWrite(`[monitor-stderr] capture failure: ${captureErr.message}\n`);
+        }
+        return ok;
+    };
+    return {
+        write,
+        getHasWrittenHeader: () => wroteHeader,
+    };
+}
 /**
  * R-MDS-3: Map a lifecycle step to the MonitorMode that should display it.
  * Returns null for unrecognised steps — callers should preserve the current mode.
@@ -758,9 +841,11 @@ async function main() {
     let mode = initialMode;
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (!sessionDir || !fs.existsSync(sessionDir)) {
-        console.error('Usage: node monitor.js <session-dir> [--mode pickle|microverse|idle]');
+        console.error('Usage: node monitor.js <session-dir> [--mode pickle|microverse|idle|meeseeks|council|refinement|szechuan-sauce|anatomy-park]');
         process.exit(1);
     }
+    const stderrCapture = createMonitorStderrCapture({ sessionDir });
+    process.stderr.write = stderrCapture.write;
     // R-MWR-1: arm the dead-pane respawn watchdog before entering the
     // render loop so panes that die mid-iteration get revived without
     // waiting for the next mux-runner phase boundary.

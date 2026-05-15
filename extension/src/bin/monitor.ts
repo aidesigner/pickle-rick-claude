@@ -11,6 +11,9 @@ import { State, MicroverseSessionState, ClassifiedFailure, MicroverseHistoryEntr
 
 type PipelineLifecycleStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown' | 'none';
 const sm = new StateManager();
+export const MONITOR_STDERR_LOG_NAME = 'monitor-stderr.log';
+export const MONITOR_STDERR_CAP_BYTES = 64 * 1024;
+const MONITOR_STDERR_HEADER_PREFIX = '[monitor-stderr]';
 
 /**
  * Watchdog timeout for stdout writes. When `process.stdout.write()` reports
@@ -201,8 +204,121 @@ export function summarizeLine(raw: string): string {
 
 const MX = MatrixStyle;
 
-export type MonitorMode = 'pickle' | 'microverse' | 'idle';
-const VALID_MODES: ReadonlyArray<MonitorMode> = ['pickle', 'microverse', 'idle'];
+export type MonitorMode =
+  | 'pickle'
+  | 'microverse'
+  | 'idle'
+  | 'meeseeks'
+  | 'council'
+  | 'refinement'
+  | 'szechuan-sauce'
+  | 'anatomy-park';
+const VALID_MODES: ReadonlyArray<MonitorMode> = ['pickle', 'microverse', 'idle', 'meeseeks', 'council', 'refinement', 'szechuan-sauce', 'anatomy-park'];
+
+type StderrChunk = string | Uint8Array;
+type StderrWriteFn = (chunk: StderrChunk, encoding?: BufferEncoding, cb?: (err?: Error | null) => void) => boolean;
+
+function normalizeStderrChunk(chunk: StderrChunk): Buffer {
+  return typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : Buffer.from(chunk);
+}
+
+export function buildMonitorStderrHeader(sessionDir: string, pid: number = process.pid, ts: string = new Date().toISOString()): string {
+  return `${MONITOR_STDERR_HEADER_PREFIX} session=${path.basename(sessionDir)} pid=${pid} ts=${ts}\n`;
+}
+
+export function appendMonitorStderrLog(opts: {
+  sessionDir: string;
+  chunk: StderrChunk;
+  logFn?: typeof logActivity;
+  pid?: number;
+  ts?: string;
+  capBytes?: number;
+  firstWriteForProcess?: boolean;
+}): { bytesWritten: number; bytesDropped: number; rotated: boolean } {
+  const logFn = opts.logFn ?? logActivity;
+  const capBytes = opts.capBytes ?? MONITOR_STDERR_CAP_BYTES;
+  const pid = opts.pid ?? process.pid;
+  const ts = opts.ts ?? new Date().toISOString();
+  const logPath = path.join(opts.sessionDir, MONITOR_STDERR_LOG_NAME);
+  const payload = normalizeStderrChunk(opts.chunk);
+  const header = opts.firstWriteForProcess === false ? Buffer.alloc(0) : Buffer.from(buildMonitorStderrHeader(opts.sessionDir, pid, ts), 'utf8');
+  const appended = header.length > 0 ? Buffer.concat([header, payload]) : payload;
+
+  let existing = Buffer.alloc(0);
+  try {
+    if (fs.existsSync(logPath)) {
+      existing = fs.readFileSync(logPath);
+    }
+  } catch {
+    existing = Buffer.alloc(0);
+  }
+
+  const combined = Buffer.concat([existing, appended]);
+  let next = combined;
+  let bytesDropped = 0;
+  if (combined.length > capBytes) {
+    bytesDropped = combined.length - capBytes;
+    next = combined.subarray(bytesDropped);
+  }
+
+  fs.appendFileSync(logPath, appended, 'utf8');
+  if (bytesDropped > 0) {
+    fs.writeFileSync(logPath, next);
+    logFn({
+      event: 'monitor_stderr_rotated',
+      source: 'pickle',
+      session: path.basename(opts.sessionDir),
+      pid,
+      bytes_dropped: bytesDropped,
+      cap: capBytes,
+    });
+  }
+
+  return { bytesWritten: appended.length, bytesDropped, rotated: bytesDropped > 0 };
+}
+
+export function createMonitorStderrCapture(opts: {
+  sessionDir: string;
+  stderr?: NodeJS.WriteStream;
+  logFn?: typeof logActivity;
+  capBytes?: number;
+}): { write: StderrWriteFn; getHasWrittenHeader: () => boolean } {
+  const stderr = opts.stderr ?? process.stderr;
+  const logFn = opts.logFn ?? logActivity;
+  const originalWrite = stderr.write.bind(stderr) as StderrWriteFn;
+  let wroteHeader = false;
+
+  const write: StderrWriteFn = (chunk, encoding, cb) => {
+    let captureErr: Error | null = null;
+    try {
+      appendMonitorStderrLog({
+        sessionDir: opts.sessionDir,
+        chunk,
+        logFn,
+        capBytes: opts.capBytes,
+        firstWriteForProcess: !wroteHeader,
+      });
+      wroteHeader = true;
+    } catch (err) {
+      captureErr = err instanceof Error ? err : new Error(String(err));
+    }
+
+    if (typeof encoding === 'function') {
+      cb = encoding as (err?: Error | null) => void;
+      encoding = undefined;
+    }
+    const ok = originalWrite(chunk, encoding as BufferEncoding | undefined, cb);
+    if (captureErr) {
+      originalWrite(`[monitor-stderr] capture failure: ${captureErr.message}\n`);
+    }
+    return ok;
+  };
+
+  return {
+    write,
+    getHasWrittenHeader: () => wroteHeader,
+  };
+}
 
 /**
  * R-MDS-3: Map a lifecycle step to the MonitorMode that should display it.
@@ -841,9 +957,12 @@ async function main() {
   let mode: MonitorMode = initialMode;
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (!sessionDir || !fs.existsSync(sessionDir)) {
-    console.error('Usage: node monitor.js <session-dir> [--mode pickle|microverse|idle]');
+    console.error('Usage: node monitor.js <session-dir> [--mode pickle|microverse|idle|meeseeks|council|refinement|szechuan-sauce|anatomy-park]');
     process.exit(1);
   }
+
+  const stderrCapture = createMonitorStderrCapture({ sessionDir });
+  process.stderr.write = stderrCapture.write as typeof process.stderr.write;
 
   // R-MWR-1: arm the dead-pane respawn watchdog before entering the
   // render loop so panes that die mid-iteration get revived without

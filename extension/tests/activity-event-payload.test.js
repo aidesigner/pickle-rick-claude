@@ -359,6 +359,18 @@ const EVENT_CASES = [
     drop: 'mode',
   },
   {
+    type: 'monitor_stderr_rotated',
+    valid: {
+      event: 'monitor_stderr_rotated',
+      ts: TS,
+      session: 'session-1',
+      pid: 1234,
+      bytes_dropped: 4096,
+      cap: 65536,
+    },
+    drop: 'bytes_dropped',
+  },
+  {
     type: 'setup_resume_ticket_status_preserved',
     valid: {
       event: 'setup_resume_ticket_status_preserved',
@@ -711,6 +723,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'monitor_respawn_started',
     'monitor_respawn_failed',
     'monitor_mode_swapped',
+    'monitor_stderr_rotated',
     'setup_resume_ticket_status_preserved',
     'setup_resume_overrode_ticket_status',
     'head_mismatch_detected',

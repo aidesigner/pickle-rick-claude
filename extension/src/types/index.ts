@@ -552,6 +552,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'monitor_respawn_started',
   'monitor_respawn_failed',
   'monitor_mode_swapped',
+  'monitor_stderr_rotated',
   'setup_resume_ticket_status_preserved',
   'setup_resume_overrode_ticket_status',
   'head_mismatch_detected',
