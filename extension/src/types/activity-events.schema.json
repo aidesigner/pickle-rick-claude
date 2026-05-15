@@ -670,6 +670,44 @@
           }
         }
       }
+    },
+    "stale_index_lock_cleaned": {
+      "type": "object",
+      "required": ["event", "ts", "session", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "stale_index_lock_cleaned" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["path", "mtime", "age_seconds"],
+          "properties": {
+            "path": { "type": "string" },
+            "mtime": { "type": "string" },
+            "age_seconds": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "stale_index_lock_held_by_live_process": {
+      "type": "object",
+      "required": ["event", "ts", "session", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "stale_index_lock_held_by_live_process" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["path", "mtime", "age_seconds", "holder_pid", "holder_command"],
+          "properties": {
+            "path": { "type": "string" },
+            "mtime": { "type": "string" },
+            "age_seconds": { "type": "integer", "minimum": 0 },
+            "holder_pid": { "type": "integer" },
+            "holder_command": { "type": "string" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -718,6 +756,8 @@
     { "$ref": "#/definitions/monitor_mode_swapped" },
     { "$ref": "#/definitions/setup_resume_ticket_status_preserved" },
     { "$ref": "#/definitions/setup_resume_overrode_ticket_status" },
-    { "$ref": "#/definitions/head_mismatch_detected" }
+    { "$ref": "#/definitions/head_mismatch_detected" },
+    { "$ref": "#/definitions/stale_index_lock_cleaned" },
+    { "$ref": "#/definitions/stale_index_lock_held_by_live_process" }
   ]
 }

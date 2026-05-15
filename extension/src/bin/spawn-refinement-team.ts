@@ -164,6 +164,9 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 
 | \`setup_resume_ticket_status_preserved\` | \`ticket_id\`, \`observed_status\`, \`expected_status\`, \`reason\` | setup.ts resume path (default, preserves operator edit) |
 | \`setup_resume_overrode_ticket_status\` | \`ticket_id\`, \`prior_status\`, \`new_status\`, \`source\` | setup.ts --force-ticket-status-sync path |
+| \`head_mismatch_detected\` | \`gate_payload.pinned_branch\`, \`gate_payload.observed_branch\`, \`gate_payload.pinned_sha\`, \`gate_payload.observed_sha\`, \`gate_payload.detected_at_phase\` | mux-runner checkHeadPinMismatch path |
+| \`stale_index_lock_cleaned\` | \`gate_payload.path\`, \`gate_payload.mtime\`, \`gate_payload.age_seconds\` | cancel.ts cleanupStaleIndexLock |
+| \`stale_index_lock_held_by_live_process\` | \`gate_payload.path\`, \`gate_payload.mtime\`, \`gate_payload.age_seconds\`, \`gate_payload.holder_pid\`, \`gate_payload.holder_command\` | cancel.ts cleanupStaleIndexLock |
 
 When writing ACs that assert event emission, include the full event name and required payload fields. Do NOT invent event names — use only the names listed here or already present in \`extension/src/types/index.ts:VALID_ACTIVITY_EVENTS\`.`;
 

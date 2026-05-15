@@ -251,6 +251,8 @@ export const VALID_ACTIVITY_EVENTS = [
     'setup_resume_ticket_status_preserved',
     'setup_resume_overrode_ticket_status',
     'head_mismatch_detected',
+    'stale_index_lock_cleaned',
+    'stale_index_lock_held_by_live_process',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {
