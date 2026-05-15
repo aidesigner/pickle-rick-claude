@@ -94,6 +94,42 @@ test('startRespawnWatchdog: returns a timer handle that is unref-d', () => {
     }
 });
 
+test('startRespawnWatchdog: fires once immediately on registration, then again after the interval', async () => {
+    const f = makeWatchdogFakes();
+    try {
+        const intervalMs = 60;
+        const handle = startRespawnWatchdog({
+            sessionDir: f.sessionDir,
+            extensionRoot: f.extRoot,
+            intervalMs,
+            spawnSyncFn: f.spawnSyncFn,
+        });
+
+        const sendKeysAfterRegistration = f.sendKeysCount();
+        assert.equal(
+            sendKeysAfterRegistration,
+            4,
+            `expected exactly one immediate respawn sweep (4 panes); got ${sendKeysAfterRegistration}`,
+        );
+
+        const muxLogPath = path.join(f.sessionDir, 'mux-runner.log');
+        await new Promise(resolve => setTimeout(resolve, 20));
+        const immediateLog = fs.existsSync(muxLogPath) ? fs.readFileSync(muxLogPath, 'utf-8') : '';
+        assert.match(immediateLog, /monitor-watchdog: respawned monitor\.js in pane 0/, immediateLog);
+
+        await new Promise(resolve => setTimeout(resolve, intervalMs + 30));
+        clearInterval(handle);
+
+        const sendKeysAfterSecondTick = f.sendKeysCount();
+        assert.ok(
+            sendKeysAfterSecondTick >= 8,
+            `expected immediate tick plus one interval tick (>=8 send-keys); got ${sendKeysAfterSecondTick}`,
+        );
+    } finally {
+        f.cleanup();
+    }
+});
+
 test('startRespawnWatchdog: tick respawns dead panes via restartDeadWatcherPanes', async () => {
     const f = makeWatchdogFakes();
     try {
@@ -177,6 +213,43 @@ test('startRespawnWatchdog: callback errors do not crash the timer (best-effort 
         // (depending on whether the error escaped the spawnSync mock or
         // was already absorbed by restartDeadWatcherPanes' own try/catch).
         assert.ok(true, 'watchdog timer survived spawnSync exceptions');
+    } finally {
+        f.cleanup();
+    }
+});
+
+test('startRespawnWatchdog: first-tick failure still leaves the interval armed', async () => {
+    const f = makeWatchdogFakes();
+    try {
+        let shouldThrow = true;
+        const errors = [];
+        const intervalMs = 50;
+        const flakySpawn = (command, args = []) => {
+            if (shouldThrow) {
+                shouldThrow = false;
+                throw new Error('synthetic first-tick failure');
+            }
+            return f.spawnSyncFn(command, args);
+        };
+        const handle = startRespawnWatchdog({
+            sessionDir: f.sessionDir,
+            extensionRoot: f.extRoot,
+            intervalMs,
+            spawnSyncFn: flakySpawn,
+            logger: (msg) => errors.push(msg),
+        });
+
+        assert.equal(errors.length, 1, 'immediate failure must be logged once');
+        assert.match(errors[0], /monitor-watchdog tick error: synthetic first-tick failure/);
+        assert.equal(f.sendKeysCount(), 0, 'failed immediate tick must not fake a successful respawn');
+
+        await new Promise(resolve => setTimeout(resolve, intervalMs + 30));
+        clearInterval(handle);
+
+        assert.ok(
+            f.sendKeysCount() >= 4,
+            `expected later interval tick to proceed after initial failure; got ${f.sendKeysCount()} send-keys`,
+        );
     } finally {
         f.cleanup();
     }
@@ -280,11 +353,12 @@ test('startRespawnWatchdog: respawns a dead pane exactly once per tick (R-MWR-7)
         clearInterval(handle);
 
         const sendKeys = f.spawnCalls.filter(c => c.command === 'tmux' && c.args[0] === 'send-keys');
-        // Each tick respawns 4 panes, so a single-tick window has 4 send-keys.
-        // Allow up to 8 (in case CI scheduled an extra tick before clearInterval).
+        // Registration now fires immediately. Depending on scheduler timing,
+        // the narrow window may capture only that first sweep or also the
+        // first interval-driven sweep before clearInterval lands.
         assert.ok(
             sendKeys.length >= 4 && sendKeys.length <= 8,
-            `expected 4-8 send-keys for one tick window; got ${sendKeys.length}`,
+            `expected 4-8 send-keys for immediate sweep with at most one interval sweep; got ${sendKeys.length}`,
         );
     } finally {
         f.cleanup();

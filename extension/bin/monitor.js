@@ -812,6 +812,9 @@ export function startRespawnWatchdog(opts) {
         }
     };
     const handle = setInterval(tick, intervalMs);
+    // R-MWCL-5: fire once at registration so collapsed panes recover
+    // immediately instead of waiting a full watchdog interval.
+    tick();
     if (typeof handle.unref === 'function') {
         handle.unref();
     }
