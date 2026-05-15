@@ -147,7 +147,7 @@ export function cancelSession(cwd) {
         return;
     }
     let stateMtimeMs = Date.now();
-    let workingDir = cwd;
+    let workingDir;
     try {
         const stateSnapshot = sm.read(statePath);
         if (stateSnapshot.active !== true) {
