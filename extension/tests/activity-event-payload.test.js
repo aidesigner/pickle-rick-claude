@@ -398,6 +398,36 @@ const EVENT_CASES = [
     },
     drop: 'session',
   },
+  {
+    type: 'stale_index_lock_cleaned',
+    valid: {
+      event: 'stale_index_lock_cleaned',
+      ts: TS,
+      session: 'session-1',
+      gate_payload: {
+        path: '/tmp/repo/.git/index.lock',
+        mtime: TS,
+        age_seconds: 12,
+      },
+    },
+    drop: 'session',
+  },
+  {
+    type: 'stale_index_lock_held_by_live_process',
+    valid: {
+      event: 'stale_index_lock_held_by_live_process',
+      ts: TS,
+      session: 'session-1',
+      gate_payload: {
+        path: '/tmp/repo/.git/index.lock',
+        mtime: TS,
+        age_seconds: 12,
+        holder_pid: 4242,
+        holder_command: 'git',
+      },
+    },
+    drop: 'session',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -619,6 +649,8 @@ test('activity-event-payload: schema defines all registered event type definitio
     'setup_resume_ticket_status_preserved',
     'setup_resume_overrode_ticket_status',
     'head_mismatch_detected',
+    'stale_index_lock_cleaned',
+    'stale_index_lock_held_by_live_process',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.
