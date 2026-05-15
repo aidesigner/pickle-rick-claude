@@ -47,6 +47,16 @@ Heal flow recipe: To make a previously-failed or skipped ticket runnable again:
 
 - `mux-runner.ts` (R-RMBS-1/R-RMBS-3 frontmatter authority) — INVARIANT: `isPendingMuxTicket` is the canonical pendingness check; it MUST read ticket frontmatter via `getTicketStatus(sessionDir, ticketId)` and return `false` only for `done`/`skipped` statuses. NO field in `state.json` may parallel this decision — `state.failed_tickets`, `state.blocked_tickets`, `state.skipped_tickets` are FORBIDDEN field names that would re-introduce the heal-flow papercut (Master Plan Finding #41). Per-iteration `ticket_runnability_resolved` event emits `{ ticket_id, frontmatter_status, runnable, reason }` for observability. BREAKS: reintroducing a parallel set in State means an operator who edits ticket frontmatter back from Skipped to Todo cannot make the ticket runnable again without also clearing the parallel set, defeating the heal flow recipe. ENFORCE: extension/tests/runnability-contract-doc-shape.test.js, extension/tests/integration/runnability-frontmatter-authoritative.test.js. PATTERN_SHAPE: `state\.(failed|blocked|skipped)_tickets` MUST NOT appear in `extension/src/bin/mux-runner.ts` or `extension/src/types/index.ts`.
 
+## R-CCPM-1 codex manager payload scrub
+
+INVARIANT: every codex-manager-subprocess detection path that fires `codex_manager_self_bootstrap_attempted` MUST stamp `ts: new Date().toISOString()` explicitly before calling `writeActivityEntry` (or `logActivity`), because `writeActivityEntry` does NOT auto-stamp `ts`. The `action_taken` field MUST be the literal string `'logged'` (not `'blocked'` or `'aborted'`) — it records what the guard DID, not what it prevented. The `ticket` field is nullable: pass `state.current_ticket ?? null`, never omit the key. The `attempted_argv` field MUST be the actual `process.argv` slice passed to the subprocess, trimmed of the node binary but preserving all flags — never a reconstructed or abbreviated form.
+
+PATTERN_SHAPE: `event: 'codex_manager_self_bootstrap_attempted'` in any emitter MUST be accompanied by `ts: new Date().toISOString()`, `action_taken: 'logged'`, and `ticket: state.current_ticket ?? null`.
+
+BREAKS: omitting `ts` makes the payload schema-non-conformant (same class as R-WSE-2 `worker_partial_lifecycle_exit` iter-9 disconnect). Using `action_taken: 'blocked'` fails the `const: 'logged'` schema constraint. Omitting `ticket` violates the `required` array and fails `activity-event-payload.test.js` drop-field tests.
+
+ENFORCE: `extension/tests/codex-manager-self-bootstrap-attempted-schema-conformance.test.js`, `extension/tests/activity-event-payload.test.js`.
+
 ## Probe vs Measurement Timeout Distinction (R-MJCP-8)
 
 `probeJudgeCliAvailability` is a fail-fast existence check (≥5s default via `PICKLE_JUDGE_PROBE_TIMEOUT_MS`, max 60s). Only `kind: 'missing'` (ENOENT-class) short-circuits to `judge_cli_missing`. `kind: 'timeout'` or `kind: 'failed'` fall through to the measurement loop so a slow cold-start does not kill the convergence run.

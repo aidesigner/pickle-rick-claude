@@ -456,6 +456,43 @@ const EVENT_CASES = [
     },
     drop: 'ticket_id',
   },
+  {
+    type: 'codex_manager_self_bootstrap_attempted',
+    valid: {
+      event: 'codex_manager_self_bootstrap_attempted',
+      ts: TS,
+      ticket: 'abc12345',
+      attempted_argv: ['node', 'spawn-morty.js', '--session', '/tmp/sess'],
+      iteration: 3,
+      action_taken: 'logged',
+    },
+    drop: 'action_taken',
+  },
+  {
+    type: 'orphan_session_detected',
+    valid: {
+      event: 'orphan_session_detected',
+      ts: TS,
+      orphan_session_path: '/tmp/sessions/2026-05-15-abc/2d9f16d7',
+      orphan_started_at: 1747350000,
+      parent_session_hash: 'abc12345',
+      orphan_pid: 9999,
+    },
+    drop: 'parent_session_hash',
+  },
+  {
+    type: 'session_map_collision_blocked',
+    valid: {
+      event: 'session_map_collision_blocked',
+      ts: TS,
+      existing_session_path: '/tmp/sessions/2026-05-15-abc',
+      existing_pid: 1234,
+      attempted_session_path: '/tmp/sessions/2026-05-15-def',
+      attempted_pid: 5678,
+      cwd: '/Users/dev/project',
+    },
+    drop: 'cwd',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -681,6 +718,9 @@ test('activity-event-payload: schema defines all registered event type definitio
     'stale_index_lock_held_by_live_process',
     'setup_resume_chdir_applied',
     'ticket_runnability_resolved',
+    'codex_manager_self_bootstrap_attempted',
+    'orphan_session_detected',
+    'session_map_collision_blocked',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

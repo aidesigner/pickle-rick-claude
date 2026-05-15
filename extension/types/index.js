@@ -255,6 +255,9 @@ export const VALID_ACTIVITY_EVENTS = [
     'stale_index_lock_held_by_live_process',
     'setup_resume_chdir_applied',
     'ticket_runnability_resolved',
+    'codex_manager_self_bootstrap_attempted',
+    'orphan_session_detected',
+    'session_map_collision_blocked',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

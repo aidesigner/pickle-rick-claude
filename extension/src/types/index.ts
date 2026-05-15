@@ -125,6 +125,12 @@ export interface State {
       file: string;
     }>;
   };
+  /** Forward-created by R-CCPM-3: orphan session paths detected at session-map read time. */
+  orphans_detected?: string[];
+  /** Forward-created by R-CCPM-3: hash of the owning parent session for manager-subprocess validation. */
+  parent_session_hash?: string | null;
+  /** Forward-created by R-CCPM-4: how the current session was invoked. */
+  invocation_source?: 'operator' | 'manager_subprocess';
 }
 
 /**
@@ -553,6 +559,9 @@ export const VALID_ACTIVITY_EVENTS = [
   'stale_index_lock_held_by_live_process',
   'setup_resume_chdir_applied',
   'ticket_runnability_resolved',
+  'codex_manager_self_bootstrap_attempted',
+  'orphan_session_detected',
+  'session_map_collision_blocked',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
