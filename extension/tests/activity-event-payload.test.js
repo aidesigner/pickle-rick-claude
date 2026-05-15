@@ -382,6 +382,22 @@ const EVENT_CASES = [
     },
     drop: 'ticket_id',
   },
+  {
+    type: 'head_mismatch_detected',
+    valid: {
+      event: 'head_mismatch_detected',
+      ts: TS,
+      session: 'session-1',
+      gate_payload: {
+        pinned_branch: 'main',
+        observed_branch: 'feature/external',
+        pinned_sha: 'abc1234abc1234',
+        observed_sha: 'def5678def5678',
+        detected_at_phase: 'implement',
+      },
+    },
+    drop: 'session',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -602,6 +618,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'monitor_mode_swapped',
     'setup_resume_ticket_status_preserved',
     'setup_resume_overrode_ticket_status',
+    'head_mismatch_detected',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.
