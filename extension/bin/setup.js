@@ -525,11 +525,42 @@ function validateCommandLine(config) {
         die(`--teams is incompatible with --backend ${backend} (claude backend only)`);
     }
 }
-function validateResumeCompatibility(preState, config) {
+function validateResumeCompatibility(preState, config, sessionRoot) {
     const resumeWorkingDir = resolveWorkingDirOrNull(preState.working_dir);
     const currentWorkingDir = path.resolve(process.cwd());
     if (resumeWorkingDir && resumeWorkingDir !== currentWorkingDir) {
-        die(`--resume session belongs to ${resumeWorkingDir}, not ${currentWorkingDir}. Refusing cross-repo resume.`);
+        // R-PRCR-1: instead of refusing, chdir into the stored working_dir so the
+        // operator can resume from any shell location. Only die when the stored
+        // working_dir no longer exists or is not a directory.
+        let isDir;
+        try {
+            isDir = fs.statSync(resumeWorkingDir).isDirectory();
+        }
+        catch {
+            isDir = false;
+        }
+        if (!isDir) {
+            die(`--resume session's working_dir (${resumeWorkingDir}) no longer exists or is not a directory. ` +
+                `The original checkout was likely moved or removed. Restore it or start a new session.`);
+        }
+        try {
+            process.chdir(resumeWorkingDir);
+        }
+        catch (err) {
+            die(`--resume could not chdir into ${resumeWorkingDir}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        try {
+            logActivity({
+                event: 'setup_resume_chdir_applied',
+                source: 'pickle',
+                session: sessionRoot ? path.basename(sessionRoot) : undefined,
+                gate_payload: {
+                    from: currentWorkingDir,
+                    to: resumeWorkingDir,
+                },
+            });
+        }
+        catch { /* best-effort */ }
     }
     const willHaveTeams = config.explicitFlags.has('teams') ? config.teamsMode : preState.teams_mode === true;
     const willHaveBackend = (config.explicitFlags.has('backend') ? config.backend : preState.backend) || 'claude';
@@ -786,7 +817,7 @@ function resumeSession(config) {
         /* missing/corrupt — sm.update below will surface the right error */
     }
     if (preState)
-        validateResumeCompatibility(preState, config);
+        validateResumeCompatibility(preState, config, fullSessionPath);
     // Claim the session map entry under the live setup PID BEFORE the locked
     // sm.update read can re-trigger recovery. Otherwise a stale dead-mapped-pid
     // from a previous launcher (e.g. the original setup that created this

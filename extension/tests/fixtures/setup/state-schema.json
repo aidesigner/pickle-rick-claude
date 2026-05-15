@@ -31,7 +31,9 @@
     "flags",
     "readiness",
     "codex_version_seen",
-    "start_commit"
+    "start_commit",
+    "pinned_branch",
+    "pinned_sha"
   ],
   "sample_state": {
     "active": true,
@@ -66,6 +68,8 @@
       "cycle_history": []
     },
     "codex_version_seen": null,
-    "start_commit": "abc123"
+    "start_commit": "abc123",
+    "pinned_branch": "main",
+    "pinned_sha": "abc123"
   }
 }

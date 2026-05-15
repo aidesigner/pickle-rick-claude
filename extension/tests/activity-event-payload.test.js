@@ -428,6 +428,19 @@ const EVENT_CASES = [
     },
     drop: 'session',
   },
+  {
+    type: 'setup_resume_chdir_applied',
+    valid: {
+      event: 'setup_resume_chdir_applied',
+      ts: TS,
+      session: 'session-1',
+      gate_payload: {
+        from: '/home/user',
+        to: '/tmp/repo',
+      },
+    },
+    drop: 'gate_payload',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -651,6 +664,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'head_mismatch_detected',
     'stale_index_lock_cleaned',
     'stale_index_lock_held_by_live_process',
+    'setup_resume_chdir_applied',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

@@ -253,6 +253,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'head_mismatch_detected',
     'stale_index_lock_cleaned',
     'stale_index_lock_held_by_live_process',
+    'setup_resume_chdir_applied',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

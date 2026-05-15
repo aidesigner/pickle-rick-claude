@@ -14,14 +14,13 @@ const SPAWN_REFINE_PATH = path.join(repoRoot, 'extension/src/bin/spawn-refinemen
 
 // PIWG-bundle events: all events emitted by R-SRTS-1, R-PIWG-1, R-PIWG-4, R-PRCR-1.
 // Each event MUST satisfy the three-way triangle: schema oneOf + EVENT_CASES + ACTIVITY_EVENT_SCHEMA_SECTION.
-// `setup_resume_chdir_applied` is excluded here because ticket 72f4b3a8 R-PRCR-1 has not shipped at HEAD;
-// when R-PRCR-1 lands it MUST add the event to this list AND wire it across the triangle in the same commit.
 const PIWG_EVENTS = [
   'setup_resume_ticket_status_preserved',
   'setup_resume_overrode_ticket_status',
   'head_mismatch_detected',
   'stale_index_lock_cleaned',
   'stale_index_lock_held_by_live_process',
+  'setup_resume_chdir_applied',
 ];
 
 const schema = JSON.parse(fs.readFileSync(SCHEMA_PATH, 'utf-8'));

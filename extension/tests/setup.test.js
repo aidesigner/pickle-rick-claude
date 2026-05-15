@@ -574,40 +574,34 @@ test('setup: current_sessions map update preserves newer dead-writer tmp entries
     }
 });
 
-test('setup: --resume rejects a session whose recovered working_dir belongs to another repo', () => {
+test('setup: --resume rejects when recovered working_dir no longer exists (R-PRCR-1.c)', () => {
+    // R-PRCR-1 changed cross-cwd resume from die() to process.chdir() when the
+    // stored working_dir exists. The only path that still dies is missing dir.
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-cross-repo-data-'));
     const sessionsRoot = path.join(dataRoot, 'sessions');
-    const foreignRepo = path.join(dataRoot, 'foreign-repo');
     const sessionPath = path.join(sessionsRoot, 'foreign-session');
+    const removedRepo = path.join(dataRoot, 'removed-repo');
 
-    fs.mkdirSync(foreignRepo, { recursive: true });
     fs.mkdirSync(sessionPath, { recursive: true });
     fs.writeFileSync(path.join(sessionPath, 'state.json'), JSON.stringify({
         schema_version: 1,
         active: false,
         backend: 'claude',
         session_dir: sessionPath,
-        working_dir: foreignRepo,
+        working_dir: removedRepo,
         iteration: 4,
         step: 'implement',
-        original_prompt: 'cross-repo resume should fail',
+        original_prompt: 'missing working_dir resume should fail',
     }, null, 2));
 
     try {
         assert.throws(
             () => runSetupWithEnv(['--resume', sessionPath], { PICKLE_DATA_ROOT: dataRoot }),
-            /Refusing cross-repo resume/i,
+            /no longer exists or is not a directory/i,
         );
 
         const resumedState = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
-        assert.equal(resumedState.active, false, 'cross-repo resume must not reactivate the foreign session');
-
-        const sessionsMapPath = path.join(dataRoot, 'current_sessions.json');
-        assert.equal(
-            fs.existsSync(sessionsMapPath),
-            false,
-            'cross-repo resume must not write a current_sessions.json entry for the wrong cwd',
-        );
+        assert.equal(resumedState.active, false, 'missing-working_dir resume must not reactivate the foreign session');
     } finally {
         fs.rmSync(dataRoot, { recursive: true, force: true });
     }

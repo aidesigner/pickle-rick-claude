@@ -145,6 +145,7 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`head_mismatch_detected\` | \`gate_payload.pinned_branch\`, \`gate_payload.observed_branch\`, \`gate_payload.pinned_sha\`, \`gate_payload.observed_sha\`, \`gate_payload.detected_at_phase\` | mux-runner checkHeadPinMismatch path |
 | \`stale_index_lock_cleaned\` | \`gate_payload.path\`, \`gate_payload.mtime\`, \`gate_payload.age_seconds\` | cancel.ts cleanupStaleIndexLock |
 | \`stale_index_lock_held_by_live_process\` | \`gate_payload.path\`, \`gate_payload.mtime\`, \`gate_payload.age_seconds\`, \`gate_payload.holder_pid\`, \`gate_payload.holder_command\` | cancel.ts cleanupStaleIndexLock |
+| \`setup_resume_chdir_applied\` | \`gate_payload.from\`, \`gate_payload.to\` | setup.ts validateResumeCompatibility cross-cwd path |
 
 When writing ACs that assert event emission, include the full event name and required payload fields. Do NOT invent event names — use only the names listed here or already present in \`extension/src/types/index.ts:VALID_ACTIVITY_EVENTS\`.`;
 export const PATH_VERIFICATION_PROMPT_SECTION = `## Path Verification & Forward-reference hygiene
