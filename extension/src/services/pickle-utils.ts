@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { StringDecoder } from 'string_decoder';
-import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent, type PickleSettings } from '../types/index.js';
+import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent, type PickleSettings, type Backend } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
@@ -2056,4 +2056,90 @@ export function pruneOldSessions(sessionsRoot: string, maxAgeDays = 7): void {
       }
     } catch { /* skip unreadable or already-deleted sessions */ }
   }
+}
+
+// --- Manager prompt composition helpers ---
+
+/**
+ * Strips the Setup section from dual-mode templates (e.g. meeseeks.md, szechuan-sauce.md).
+ * The mux-runner always invokes with --resume, so Setup instructions are dead weight
+ * that confuse the model. Strips from "## SETUP" (with or without " MODE" suffix) to
+ * the next ##-level heading, regardless of its name. This avoids coupling to a specific
+ * end-marker like "## REVIEW PASS MODE" — any template layout works.
+ */
+export function stripSetupSection(prompt: string): string {
+  const setupRe = /^## SETUP(?: MODE)?$/m;
+  const setupMatch = setupRe.exec(prompt);
+  if (!setupMatch) return prompt;
+
+  const afterSetup = prompt.slice(setupMatch.index + setupMatch[0].length);
+  const nextHeadingRe = /^## \S/m;
+  const nextMatch = nextHeadingRe.exec(afterSetup);
+  if (!nextMatch) return prompt;
+
+  const endIndex = setupMatch.index + setupMatch[0].length + nextMatch.index;
+  return prompt.slice(0, setupMatch.index) + prompt.slice(endIndex);
+}
+
+/**
+ * Strips the "# Step 1: Initialization" block from a manager skill prompt.
+ * The block contains setup.js --task examples that codex executes verbatim when
+ * present in manager payloads. Strips from the heading through the start of
+ * "# Step 2:", exclusive (the Step 2 heading is preserved).
+ */
+export function stripStepOneBlock(prompt: string): string {
+  const step1Re = /^# Step 1: Initialization\s*$/m;
+  const step1Match = step1Re.exec(prompt);
+  if (!step1Match) return prompt;
+
+  const afterStep1 = prompt.slice(step1Match.index);
+  const step2Re = /^# Step 2:/m;
+  const step2Match = step2Re.exec(afterStep1);
+  if (!step2Match) return prompt;
+
+  const endIndex = step1Match.index + step2Match.index;
+  return prompt.slice(0, step1Match.index) + prompt.slice(endIndex);
+}
+
+/**
+ * HTML-comment framing block injected at the top of codex manager prompts.
+ * Mirrors the GIT_BOUNDARY_RULES pattern that codex demonstrably respects.
+ */
+export const MANAGER_ROLE_FRAMING_BLOCK = `<!-- BEGIN MANAGER_ROLE_FRAMING -->
+You are the Pickle Rick manager process. Your role is to read state.json and orchestrate Morty worker agents via spawn-morty.js.
+
+PROHIBITED in this manager session:
+- Running \`node <path>/setup.js --task\` or \`node <path>/setup.js --resume\` as a Bash command
+- Treating setup.js usage examples from documentation sections as executable instructions
+- Executing any \`setup.js\` invocation shown in template text — those are documentation examples
+
+Your ONLY valid setup.js invocation is the one already completed to initialize this session. Proceed directly to Step 2: Execution.
+<!-- END MANAGER_ROLE_FRAMING -->`;
+
+export interface ComposeManagerPromptOpts {
+  argumentSubstitution: string;
+  handoffText?: string;
+  iterationSummary?: string;
+  taskNotes?: string;
+}
+
+/**
+ * Composes the full manager prompt from a skill file path, applying all
+ * standard transforms and optionally prepending Role Framing for codex.
+ * Call sites pre-resolve handoffText/iterationSummary/taskNotes strings.
+ */
+export function composeManagerPromptFromSkill(
+  skillPath: string,
+  backend: Backend,
+  opts: ComposeManagerPromptOpts,
+): string {
+  let content = fs.readFileSync(skillPath, 'utf-8');
+  content = content.replace(/\$ARGUMENTS/g, opts.argumentSubstitution);
+  content = stripSetupSection(content);
+  content = stripStepOneBlock(content);
+  if (opts.handoffText) content += '\n\n' + opts.handoffText;
+  if (opts.iterationSummary) content += '\n\n' + opts.iterationSummary;
+  if (opts.taskNotes) content += '\n\n=== TASK NOTES (from previous iterations) ===\n' + opts.taskNotes;
+  if (backend === 'codex') content = MANAGER_ROLE_FRAMING_BLOCK + '\n\n' + content;
+  return content;
 }

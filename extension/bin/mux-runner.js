@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, hasCompletionCommit, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, hasCompletionCommit, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, composeManagerPromptFromSkill } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -17,7 +17,7 @@ import { emitCrossTicketRegressionLinearComment } from '../lib/linear-comment.js
 import { evaluateManagerRelaunch, recordManagerRelaunch, } from '../services/manager-relaunch.js';
 import { getHeadBranch } from '../services/git-utils.js';
 export { extractAssistantContent, detectOutputFormat } from '../services/classifier-utils.js';
-export { hasCompletionCommit } from '../services/pickle-utils.js';
+export { hasCompletionCommit, stripSetupSection } from '../services/pickle-utils.js';
 export { evaluateManagerRelaunch, recordManagerRelaunch, } from '../services/manager-relaunch.js';
 export { evaluateManagerRelaunch as evaluateCodexManagerRelaunch, recordManagerRelaunch as recordCodexManagerRelaunch, } from '../services/manager-relaunch.js';
 const sm = new StateManager();
@@ -76,27 +76,6 @@ export function killCurrentChild() {
     if (currentChildProc && !currentChildProc.killed) {
         currentChildProc.kill('SIGTERM');
     }
-}
-/**
- * Strips the Setup section from dual-mode templates (e.g. meeseeks.md, szechuan-sauce.md).
- * The mux-runner always invokes with --resume, so Setup instructions are dead weight
- * that confuse the model. Strips from "## SETUP" (with or without " MODE" suffix) to
- * the next ##-level heading, regardless of its name. This avoids coupling to a specific
- * end-marker like "## REVIEW PASS MODE" — any template layout works.
- */
-export function stripSetupSection(prompt) {
-    const setupRe = /^## SETUP(?: MODE)?$/m;
-    const setupMatch = setupRe.exec(prompt);
-    if (!setupMatch)
-        return prompt;
-    // Find the next ##-level heading after the setup section
-    const afterSetup = prompt.slice(setupMatch.index + setupMatch[0].length);
-    const nextHeadingRe = /^## \S/m;
-    const nextMatch = nextHeadingRe.exec(afterSetup);
-    if (!nextMatch)
-        return prompt; // Setup is the last section — nothing to strip to
-    const endIndex = setupMatch.index + setupMatch[0].length + nextMatch.index;
-    return prompt.slice(0, setupMatch.index) + prompt.slice(endIndex);
 }
 const TASK_NOTE_PRIORITY = {
     'Next': 0,
@@ -1320,15 +1299,14 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
     if (!fs.existsSync(picklePromptPath)) {
         throw new Error(`${templateName} not found in ${templatesDir} or ${commandsDir}. Run install.sh first.`);
     }
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    let managerPrompt = fs.readFileSync(picklePromptPath, 'utf-8')
-        .replace(/\$ARGUMENTS/g, `--resume ${sessionDir}`);
-    managerPrompt = stripSetupSection(managerPrompt);
+    // Pre-compute handoff text (mutually exclusive: handoffText OR iterationSummary)
+    let handoffText;
+    let iterationSummary;
     const handoffPath = path.join(sessionDir, 'handoff.txt');
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (fs.existsSync(handoffPath)) {
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        managerPrompt += '\n\n' + fs.readFileSync(handoffPath, 'utf-8');
+        handoffText = fs.readFileSync(handoffPath, 'utf-8');
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         try {
             fs.unlinkSync(handoffPath);
@@ -1341,12 +1319,12 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
         }
     }
     else {
-        managerPrompt += '\n\n' + buildIterationHandoffSummary(state, sessionDir, iterationNum);
+        iterationSummary = buildIterationHandoffSummary(state, sessionDir, iterationNum);
     }
     const settings = loadSettingsBag(extensionRoot, 'mux-runner:run-iteration:settings');
     // Feature flag: enable_task_notes (default true — missing flag = enabled)
     const enableTaskNotes = settings.enable_task_notes !== false;
-    // Inject TASK_NOTES.md from session directory (persists across iterations)
+    let taskNotes;
     if (enableTaskNotes) {
         const taskNotesPath = path.join(sessionDir, 'TASK_NOTES.md');
         try {
@@ -1355,9 +1333,8 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
                 // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
                 const raw = fs.readFileSync(taskNotesPath, 'utf-8');
                 const truncated = truncateTaskNotes(raw, 2000);
-                if (truncated.trim()) {
-                    managerPrompt += '\n\n=== TASK NOTES (from previous iterations) ===\n' + truncated;
-                }
+                if (truncated.trim())
+                    taskNotes = truncated;
             }
         }
         catch (readErr) {
@@ -1365,12 +1342,20 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
             console.warn(`[mux-runner] WARNING: task notes subsystem failed: ${msg}`);
         }
     }
+    const backend = resolveBackend(state);
+    const managerPrompt = composeManagerPromptFromSkill(picklePromptPath, backend, {
+        argumentSubstitution: `--resume ${sessionDir}`,
+        handoffText,
+        iterationSummary,
+        taskNotes,
+    });
+    if (backend === 'codex')
+        process.env.PICKLE_PARENT_SESSION_HASH = path.basename(sessionDir);
     let maxTurns = Defaults.MANAGER_MAX_TURNS;
     maxTurns = positiveIntegerOrNull(settings.default_tmux_max_turns)
         ?? positiveIntegerOrNull(settings.default_manager_max_turns)
         ?? maxTurns;
     const logFile = path.join(sessionDir, `tmux_iteration_${iterationNum}.log`);
-    const backend = resolveBackend(state);
     const isQualityPassTemplate = templateName === 'meeseeks.md' || templateName === 'szechuan-sauce.md';
     // Quality review passes can run on a selected Claude model. Codex exposes a
     // different model vocabulary, so only apply the override for claude.

@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
-import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, writeStateFile, safeErrorMessage } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, writeStateFile, safeErrorMessage, composeManagerPromptFromSkill } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason } from '../services/state-manager.js';
 import { State, Defaults, type Backend } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -118,14 +118,11 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
   const taskTimeout = loadJarTaskTimeout(extensionRoot, state);
 
   const picklePromptPath = path.join(os.homedir(), '.claude/commands/pickle.md');
-  let prompt = `You are Pickle Rick. Resume the session.\n\nRun:\nnode "${extensionRoot}/extension/bin/setup.js" --resume ${sessionDir}\n\nThen continue the manager lifecycle from the current phase.`;
-  try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    if (fs.existsSync(picklePromptPath)) {
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-      prompt = fs.readFileSync(picklePromptPath, 'utf-8').replace(/\$ARGUMENTS/g, `--resume ${sessionDir}`);
-    }
-  } catch { /* use fallback */ }
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+  if (!fs.existsSync(picklePromptPath)) {
+    process.stderr.write('jar-runner: pickle.md missing; abort\n');
+    process.exit(1);
+  }
 
   const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
   let managerMaxTurns: number = Defaults.MANAGER_MAX_TURNS;
@@ -142,6 +139,9 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
   // concurrent rewrite and silently default to 'claude' on parse failure, even
   // when the first parse above succeeded).
   const backend = resolveBackend(state);
+  const prompt = composeManagerPromptFromSkill(picklePromptPath, backend, {
+    argumentSubstitution: `--resume ${sessionDir}`,
+  });
 
   printMinimalPanel(`Running Jarred Task`, {
     Session: path.basename(sessionDir),
