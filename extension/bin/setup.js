@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus } from '../services/pickle-utils.js';
 import { getHeadSha, getHeadBranch } from '../services/git-utils.js';
 import { Defaults, LockError, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
-import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive, readMappedPid } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
@@ -184,6 +184,27 @@ function updateSessionMap(sessionsMap, cwd, sessionPath) {
         }
         catch {
             /* ignore */
+        }
+        const existing = map[cwd];
+        if (existing) {
+            const existingPid = readMappedPid(existing);
+            const existingPath = typeof existing === 'string' ? existing : existing.sessionPath;
+            if (existingPid && isProcessAlive(existingPid) && existingPath !== sessionPath) {
+                try {
+                    logActivity({
+                        event: 'session_map_collision_blocked',
+                        source: 'pickle',
+                        existing_session_path: existingPath,
+                        existing_pid: existingPid,
+                        attempted_session_path: sessionPath,
+                        attempted_pid: process.pid,
+                        cwd,
+                    });
+                }
+                catch { /* best-effort */ }
+                process.stderr.write(`setup.ts: session-map collision blocked — cwd=${cwd} held by pid=${existingPid}\n`);
+                process.exit(1);
+            }
         }
         map[cwd] = { sessionPath, pid: process.pid };
         const tmpMap = sessionsMap + `.tmp.${process.pid}.${Date.now()}`;

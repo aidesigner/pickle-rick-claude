@@ -56,7 +56,7 @@ const _sleepBuf = new Int32Array(new SharedArrayBuffer(4));
 function sleepSync(ms) {
     Atomics.wait(_sleepBuf, 0, 0, ms);
 }
-function isProcessAlive(pid) {
+export function isProcessAlive(pid) {
     try {
         process.kill(pid, 0);
         return true;
@@ -111,7 +111,7 @@ const V3_STATE_SHAPE_MARKERS = [
 function presentV3StateShapeMarkers(state) {
     return V3_STATE_SHAPE_MARKERS.filter(field => Object.prototype.hasOwnProperty.call(state, field));
 }
-function readMappedPid(entry) {
+export function readMappedPid(entry) {
     if (!isRecord(entry) || typeof entry.pid !== 'number')
         return null;
     const pid = Number(entry.pid);

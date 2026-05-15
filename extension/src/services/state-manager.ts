@@ -82,7 +82,7 @@ function sleepSync(ms: number): void {
   Atomics.wait(_sleepBuf, 0, 0, ms);
 }
 
-function isProcessAlive(pid: number): boolean {
+export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -137,7 +137,7 @@ function presentV3StateShapeMarkers(state: object): string[] {
   return V3_STATE_SHAPE_MARKERS.filter(field => Object.prototype.hasOwnProperty.call(state, field));
 }
 
-function readMappedPid(entry: unknown): number | null {
+export function readMappedPid(entry: unknown): number | null {
   if (!isRecord(entry) || typeof entry.pid !== 'number') return null;
   const pid = Number(entry.pid);
   return Number.isFinite(pid) && pid > 0 ? pid : null;

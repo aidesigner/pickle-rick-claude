@@ -699,6 +699,12 @@ export interface ActivityEvent {
   orphan_started_at?: number;
   orphan_pid?: number;
   parent_session_hash?: string;
+  // R-CCPM-4: session_map_collision_blocked payload fields
+  existing_session_path?: string;
+  existing_pid?: number;
+  attempted_session_path?: string;
+  attempted_pid?: number;
+  cwd?: string;
 }
 
 // ---------------------------------------------------------------------------
