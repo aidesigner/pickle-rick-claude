@@ -626,6 +626,30 @@
         "ts": { "type": "string" },
         "mode": { "type": "string" }
       }
+    },
+    "setup_resume_ticket_status_preserved": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "observed_status", "expected_status", "reason"],
+      "properties": {
+        "event": { "type": "string", "const": "setup_resume_ticket_status_preserved" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "observed_status": { "type": "string" },
+        "expected_status": { "type": "string", "const": "In Progress" },
+        "reason": { "type": "string", "const": "operator_edit" }
+      }
+    },
+    "setup_resume_overrode_ticket_status": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "prior_status", "new_status", "source"],
+      "properties": {
+        "event": { "type": "string", "const": "setup_resume_overrode_ticket_status" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "prior_status": { "type": "string" },
+        "new_status": { "type": "string", "const": "In Progress" },
+        "source": { "type": "string", "const": "force_flag" }
+      }
     }
   },
   "oneOf": [
@@ -671,6 +695,8 @@
     { "$ref": "#/definitions/consecutive_no_progress_warning" },
     { "$ref": "#/definitions/monitor_respawn_started" },
     { "$ref": "#/definitions/monitor_respawn_failed" },
-    { "$ref": "#/definitions/monitor_mode_swapped" }
+    { "$ref": "#/definitions/monitor_mode_swapped" },
+    { "$ref": "#/definitions/setup_resume_ticket_status_preserved" },
+    { "$ref": "#/definitions/setup_resume_overrode_ticket_status" }
   ]
 }

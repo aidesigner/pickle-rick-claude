@@ -15,6 +15,18 @@
 - `mux-runner.ts` (R-WSE-2 worker_partial_lifecycle_exit ts) — INVARIANT: `checkPartialLifecycleExit` emits via `writeActivityEntry`, which validates only the event NAME and does NOT auto-stamp `ts` (unlike `logActivity` in `services/activity-logger.ts`). The producer MUST pass `ts: new Date().toISOString()` explicitly so the JSONL line satisfies schema `required: ['event','ts','ticket','gate_payload']`. BREAKS: removing the explicit `ts` reverts the iter-9 producer/schema disconnect — payload becomes schema-non-conformant, downstream timestamp correlation breaks, and any future Ajv runtime validation on `oneOf` rejects every emission. Same regression class as iter-7 (`ticket_audit_failed`) and iter-8 (`time_cap_disabled_default`). ENFORCE: extension/tests/worker-partial-lifecycle-exit-schema-conformance.test.js, extension/tests/integration/worker-partial-lifecycle-exit.test.js. PATTERN_SHAPE: `event:\s*['"]worker_partial_lifecycle_exit['"]` inside a `writeActivityEntry(...)` call in `checkPartialLifecycleExit` MUST be accompanied by `ts:\s*new Date\(\)\.toISOString\(\)` in the same call.
 - `pipeline-runner.ts` — INVARIANT: persisted phase transitions MUST append canonical `{step,timestamp}` entries to `state.history`, not just stamp `state.step`. BREAKS: `verify-recapture-fired.js` cannot derive the anatomy window, so a real `baseline_recapture_attempted` event is misreported as `phase-window-missing`. ENFORCE: extension/tests/pipeline-runner-phase-history.test.js. PATTERN_SHAPE: `event:\s*['"]phase_transition['"]` or `s\.step = phaseConfig\.name` without a same-transaction `s\.history` append.
 
+## Heal-via-edit-then-resume
+
+Operator workflow to skip or re-classify a ticket mid-session without abandoning the whole epic:
+
+1. Stop the pipeline (Ctrl-C or tmux detach).
+2. Edit the ticket's frontmatter: set `status: "Skipped"` (or `"Done"`), add `skipped_reason: "<reason>"` and `completion_commit: "<sha>"`.
+3. Run `setup.js --resume <SESSION_ROOT>` — WITHOUT `--force-ticket-status-sync`. The resume honors your edit, emits `setup_resume_ticket_status_preserved`, and continues to the next ticket.
+
+If you want the legacy behavior (auto-correct frontmatter to match `state.current_ticket`), add `--force-ticket-status-sync`. This emits `setup_resume_overrode_ticket_status` and is useful after an unexpected desync where `state.current_ticket` is authoritative.
+
+- `setup.ts` (R-SRTS-1 resume status gating) — INVARIANT: `reconcileTicketStateDesyncOnResume` MUST NOT call `writeTicketStatus(winner, 'In Progress')` unless `forceSync === true`. When `forceSync === false` and the winner ticket's frontmatter disagrees with `state.current_ticket` status, the operator edit is preserved and `setup_resume_ticket_status_preserved` is emitted. BREAKS: reverting the flag gate means `setup --resume` silently overwrites operator-edited ticket frontmatter (R-PPPG ship incident). ENFORCE: `extension/tests/setup-resume-ticket-status-preserved.test.js`. PATTERN_SHAPE: `forceSync` guard before `writeTicketStatus(sessionDir, winner, 'In Progress')` in `reconcileTicketStateDesyncOnResume`.
+
 ## Probe vs Measurement Timeout Distinction (R-MJCP-8)
 
 `probeJudgeCliAvailability` is a fail-fast existence check (≥5s default via `PICKLE_JUDGE_PROBE_TIMEOUT_MS`, max 60s). Only `kind: 'missing'` (ENOENT-class) short-circuits to `judge_cli_missing`. `kind: 'timeout'` or `kind: 'failed'` fall through to the measurement loop so a slow cold-start does not kill the convergence run.

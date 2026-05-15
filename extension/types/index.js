@@ -248,6 +248,8 @@ export const VALID_ACTIVITY_EVENTS = [
     'monitor_respawn_started',
     'monitor_respawn_failed',
     'monitor_mode_swapped',
+    'setup_resume_ticket_status_preserved',
+    'setup_resume_overrode_ticket_status',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

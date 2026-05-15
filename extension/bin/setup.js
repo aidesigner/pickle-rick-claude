@@ -80,6 +80,7 @@ function createSetupConfig() {
         throughputBaselines: null,
         acknowledgeUndersized: false,
         managerIdleBackoffFallbackMs: DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS,
+        forceTicketStatusSync: false,
     };
 }
 function applyPositiveIntegerSetting(settings, key, apply) {
@@ -455,6 +456,11 @@ const ARG_HANDLERS = {
         config.explicitFlags.add('acknowledge-undersized');
         return index;
     },
+    '--force-ticket-status-sync': (config, _args, index) => {
+        config.forceTicketStatusSync = true;
+        config.explicitFlags.add('force-ticket-status-sync');
+        return index;
+    },
     '-s': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
     '--session-id': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
 };
@@ -559,7 +565,47 @@ function chooseInProgressWinner(inProgress, currentTicket) {
         return currentTicket;
     return inProgress.find(ticket => !!ticket.id)?.id ?? currentTicket;
 }
-function reconcileTicketStateDesyncOnResume(sessionDir, statePath, currentTicket) {
+// R-SRTS-1: gate the "restore In Progress" write behind --force-ticket-status-sync.
+// winner === currentTicket is invariant here (chooseInProgressWinner falls back to
+// currentTicket when inProgress is empty, which is the only case where the winner
+// is not already in inProgress). Telemetry errors must not block resume.
+function applyWinnerStatusSync(sessionDir, winner, forceSync) {
+    const observedStatus = (() => {
+        try {
+            return getTicketStatus(sessionDir, winner) ?? 'Unknown';
+        }
+        catch {
+            return 'Unknown';
+        }
+    })();
+    if (forceSync) {
+        writeTicketStatus(sessionDir, winner, 'In Progress');
+        try {
+            logActivity({
+                event: 'setup_resume_overrode_ticket_status',
+                source: 'force_flag',
+                ticket_id: winner,
+                prior_status: observedStatus,
+                new_status: 'In Progress',
+            });
+        }
+        catch { /* telemetry must not block resume */ }
+    }
+    else {
+        try {
+            logActivity({
+                event: 'setup_resume_ticket_status_preserved',
+                source: 'pickle',
+                ticket_id: winner,
+                observed_status: observedStatus,
+                expected_status: 'In Progress',
+                reason: 'operator_edit',
+            });
+        }
+        catch { /* telemetry must not block resume */ }
+    }
+}
+function reconcileTicketStateDesyncOnResume(sessionDir, statePath, currentTicket, forceSync) {
     const tickets = collectTickets(sessionDir);
     if (tickets.length === 0) {
         process.stderr.write(`WARN: ticket_state_desync check found no ticket directories in ${sessionDir}\n`);
@@ -577,7 +623,7 @@ function reconcileTicketStateDesyncOnResume(sessionDir, statePath, currentTicket
         reason: `current_ticket=${currentTicket ?? 'none'} in_progress=${inProgress.map(t => t.id || '?').join(',') || 'none'}`,
     });
     if (winner && !inProgress.some(ticket => ticket.id === winner)) {
-        writeTicketStatus(sessionDir, winner, 'In Progress');
+        applyWinnerStatusSync(sessionDir, winner, forceSync);
     }
     for (const ticket of inProgress) {
         if (!ticket.id || ticket.id === winner)
@@ -769,7 +815,7 @@ function resumeSession(config) {
             clearExitReason(statePath);
             state = sm.read(statePath);
         }
-        state = reconcileTicketStateDesyncOnResume(fullSessionPath, statePath, state.current_ticket || null);
+        state = reconcileTicketStateDesyncOnResume(fullSessionPath, statePath, state.current_ticket || null, config.forceTicketStatusSync);
     }
     catch {
         die(`state.json is missing or corrupt in ${fullSessionPath}`);

@@ -208,7 +208,7 @@ export function downloadRelease(tag) {
 function isInstallableReleaseTarball(tarballPath) {
     const tar = spawnSync('tar', ['-tzf', tarballPath], {
         encoding: 'utf-8',
-        timeout: 30000,
+        timeout: 30_000,
     });
     if (tar.status !== 0)
         return false;

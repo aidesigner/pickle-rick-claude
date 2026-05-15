@@ -358,6 +358,30 @@ const EVENT_CASES = [
     valid: { event: 'monitor_mode_swapped', ts: TS, mode: 'microverse' },
     drop: 'mode',
   },
+  {
+    type: 'setup_resume_ticket_status_preserved',
+    valid: {
+      event: 'setup_resume_ticket_status_preserved',
+      ts: TS,
+      ticket_id: 'abc123',
+      observed_status: 'Skipped',
+      expected_status: 'In Progress',
+      reason: 'operator_edit',
+    },
+    drop: 'ticket_id',
+  },
+  {
+    type: 'setup_resume_overrode_ticket_status',
+    valid: {
+      event: 'setup_resume_overrode_ticket_status',
+      ts: TS,
+      ticket_id: 'abc123',
+      prior_status: 'Skipped',
+      new_status: 'In Progress',
+      source: 'force_flag',
+    },
+    drop: 'ticket_id',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -576,6 +600,8 @@ test('activity-event-payload: schema defines all registered event type definitio
     'monitor_respawn_started',
     'monitor_respawn_failed',
     'monitor_mode_swapped',
+    'setup_resume_ticket_status_preserved',
+    'setup_resume_overrode_ticket_status',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

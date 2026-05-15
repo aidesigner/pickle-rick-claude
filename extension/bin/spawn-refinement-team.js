@@ -140,6 +140,9 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`smoke_gate_bypassed\` | \`reason\` | mux-runner smoke-gate path |
 | \`manager_max_turns_relaunch\` | \`backend\`, \`relaunch_count\`, \`cap\`, \`pending_count\`, \`last_ticket_seen\` | manager-relaunch Claude max-turn relaunch path |
 
+| \`setup_resume_ticket_status_preserved\` | \`ticket_id\`, \`observed_status\`, \`expected_status\`, \`reason\` | setup.ts resume path (default, preserves operator edit) |
+| \`setup_resume_overrode_ticket_status\` | \`ticket_id\`, \`prior_status\`, \`new_status\`, \`source\` | setup.ts --force-ticket-status-sync path |
+
 When writing ACs that assert event emission, include the full event name and required payload fields. Do NOT invent event names — use only the names listed here or already present in \`extension/src/types/index.ts:VALID_ACTIVITY_EVENTS\`.`;
 export const PATH_VERIFICATION_PROMPT_SECTION = `## Path Verification & Forward-reference hygiene
 

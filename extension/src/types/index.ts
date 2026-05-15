@@ -542,10 +542,12 @@ export const VALID_ACTIVITY_EVENTS = [
   'monitor_respawn_started',
   'monitor_respawn_failed',
   'monitor_mode_swapped',
+  'setup_resume_ticket_status_preserved',
+  'setup_resume_overrode_ticket_status',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
-export type ActivityEventSource = 'pickle' | 'hook' | 'persona' | BackendResolutionSource | WorkerBackendResolutionSource;
+export type ActivityEventSource = 'pickle' | 'hook' | 'persona' | 'force_flag' | BackendResolutionSource | WorkerBackendResolutionSource;
 
 export enum PipelineRunnerExitCode {
   Success = 0,
@@ -666,6 +668,11 @@ export interface ActivityEvent {
   num_turns?: number;
   max_turns?: number;
   wall_seconds?: number;
+  // setup_resume_ticket_status_preserved / setup_resume_overrode_ticket_status
+  observed_status?: string;
+  expected_status?: string;
+  prior_status?: string;
+  new_status?: string;
 }
 
 // ---------------------------------------------------------------------------
