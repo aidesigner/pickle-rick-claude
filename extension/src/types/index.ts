@@ -523,6 +523,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'orphan_map_entry_pruned',
   'install_sh_parity_check',
   'worker_backend_resolved',
+  'tier_phase_skipped',
   'cross_ticket_regression_detected',
   'worker_gate_failed',
   'worker_lint_gate_passed',

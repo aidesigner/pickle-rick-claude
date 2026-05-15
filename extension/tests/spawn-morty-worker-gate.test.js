@@ -99,7 +99,7 @@ function writeNpmFailShim(binDir, logPath, stdout) {
   writeCommandShim(binDir, 'npm', logPath, { exitCode: 1, stdout });
 }
 
-function writeSession(root, ticketId) {
+function writeSession(root, ticketId, options = {}) {
   const sessionRoot = path.join(root, 'session');
   const ticketDir = path.join(sessionRoot, ticketId);
   fs.mkdirSync(ticketDir, { recursive: true });
@@ -117,6 +117,7 @@ function writeSession(root, ticketId) {
     'title: Worker test gate failure',
     'status: "Todo"',
     'order: 1',
+    ...(options.complexityTier ? [`complexity_tier: ${options.complexityTier}`] : []),
     '---',
     '# Ticket',
   ].join('\n'));
@@ -231,6 +232,56 @@ test('runWorkerGate: narrow tier stops after eslint and tsc and logs the downgra
     ]);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /worker gate tier downgraded to "narrow"/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runWorkerGate: small tier skips test commands and emits tier_phase_skipped', () => {
+  const root = makeTmpRoot();
+  try {
+    initGitRepo(root);
+    fs.mkdirSync(path.join(root, 'extension', 'src', 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 1;\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'base', '--no-gpg-sign'], { cwd: root, stdio: 'ignore' });
+    fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 2;\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'worker change abc12345', '--no-gpg-sign'], { cwd: root, stdio: 'ignore' });
+
+    const statePath = path.join(root, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify({ activity: [] }, null, 2));
+    const shimDir = path.join(root, 'bin');
+    const logPath = path.join(root, 'gate-log.json');
+    writeCommandShim(shimDir, 'npx', logPath);
+    writeCommandShim(shimDir, 'npm', logPath);
+
+    const result = withPathPrefix(shimDir, () => runWorkerGate([
+      'extension/src/demo/one.ts',
+    ], {
+      workingDir: root,
+      ticketId: 'abc12345',
+      ticketTier: 'small',
+      statePath,
+      preWorkerHead: null,
+    }));
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.testFailures, []);
+    const calls = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+    assert.deepEqual(calls, [
+      ['npx', 'eslint', 'src/demo/one.ts', '--max-warnings=-1'],
+      ['npx', 'tsc', '--noEmit'],
+    ]);
+    const state = readState(path.dirname(statePath));
+    const skippedEvent = state.activity.find((entry) => entry.event === 'tier_phase_skipped');
+    assert.deepEqual(skippedEvent, {
+      event: 'tier_phase_skipped',
+      ticket_id: 'abc12345',
+      tier: 'small',
+      skipped_phases: ['test:fast'],
+      ts: skippedEvent.ts,
+    });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -475,6 +526,51 @@ test('spawn-morty: test:fast failure marks ticket Failed, emits failure event, a
 
     const headAfter = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
     assert.equal(headAfter, headBefore);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('spawn-morty: small-tier success skips npm test gate and records tier_phase_skipped', () => {
+  const root = makeTmpRoot();
+  try {
+    initWorkerFixtureRepo(root);
+    const ticketId = '3646c20b';
+    const { sessionRoot, ticketDir } = writeSession(root, ticketId, { complexityTier: 'small' });
+    const binDir = path.join(root, 'bin');
+    writeCodexShim(binDir, 'small-tier-fixture.ts');
+    writeNpxPassShim(binDir, path.join(root, 'npx-calls.json'));
+    writeCommandShim(binDir, 'npm', path.join(sessionRoot, 'npm-calls.json'));
+
+    const result = spawnSync(process.execPath, [
+      SPAWN_MORTY_BIN,
+      'integration replay',
+      '--ticket-id', ticketId,
+      '--ticket-path', ticketDir,
+      '--timeout', '30',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH || ''}`,
+        EXTENSION_DIR: root,
+        PICKLE_DATA_DIR: root,
+        FAKE_TICKET_DIR: ticketDir,
+        FAKE_TICKET_ID: ticketId,
+      },
+      timeout: WORKER_TIMEOUT_MS,
+    });
+
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    const state = readState(sessionRoot);
+    const skippedEvent = state.activity.find((entry) => entry.event === 'tier_phase_skipped');
+    assert.ok(skippedEvent, `missing tier_phase_skipped in ${JSON.stringify(state.activity)}`);
+    assert.equal(skippedEvent.ticket_id, ticketId);
+    assert.equal(skippedEvent.tier, 'small');
+    assert.deepEqual(skippedEvent.skipped_phases, ['test:fast']);
+    const npmCallsPath = path.join(sessionRoot, 'npm-calls.json');
+    assert.equal(fs.existsSync(npmCallsPath), false, 'npm test gate should not run for small-tier tickets');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

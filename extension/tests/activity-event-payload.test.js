@@ -124,6 +124,17 @@ const EVENT_CASES = [
     drop: 'source',
   },
   {
+    type: 'tier_phase_skipped',
+    valid: {
+      event: 'tier_phase_skipped',
+      ts: TS,
+      ticket_id: 'abc12345',
+      tier: 'small',
+      skipped_phases: ['test:fast'],
+    },
+    drop: 'skipped_phases',
+  },
+  {
     type: 'recoverable_phase_failure',
     valid: {
       event: 'recoverable_phase_failure',
@@ -528,6 +539,13 @@ test('activity-event-payload: recoverable_phase_failure registered in VALID_ACTI
   );
 });
 
+test('activity-event-payload: tier_phase_skipped registered in VALID_ACTIVITY_EVENTS', () => {
+  assert.ok(
+    VALID_ACTIVITY_EVENTS.includes('tier_phase_skipped'),
+    'tier_phase_skipped must be present in VALID_ACTIVITY_EVENTS',
+  );
+});
+
 test('activity-event-payload: recoverable_phase_failure schema enforces contract fields', () => {
   const good = validate({
     event: 'recoverable_phase_failure',
@@ -700,6 +718,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'completion_commit_inferred_from_git',
     'phantom_done_detected',
     'worker_lint_gate_passed',
+    'tier_phase_skipped',
     'cross_ticket_regression_detected',
     'worker_gate_failed',
     'worker_lint_gate_failed',

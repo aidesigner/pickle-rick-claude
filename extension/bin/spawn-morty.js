@@ -292,14 +292,17 @@ export function parseAndValidateArgs(argv) {
     const ticketPath = normalizeTicketPath(requireFlagValue(argv, ticketPathIndex));
     if (!/^[a-zA-Z0-9_-]+$/.test(ticketId))
         die('Error: --ticket-id contains invalid characters.');
-    const ticketFile = readTicketFileArg(argv);
+    const explicitTicketFile = readTicketFileArg(argv);
+    const inferredTicketFilePath = explicitTicketFile.ticketFilePath ?? path.join(ticketPath, `linear_ticket_${ticketId}.md`);
+    const ticketFilePath = fs.existsSync(inferredTicketFilePath) ? inferredTicketFilePath : null;
+    const ticketContent = ticketFilePath ? fs.readFileSync(ticketFilePath, 'utf-8') : '';
     fs.mkdirSync(ticketPath, { recursive: true });
     return {
         ticket: argv[0],
         ticketId,
         ticketPath,
-        ticketFilePath: ticketFile.ticketFilePath,
-        ticketContent: ticketFile.ticketContent,
+        ticketFilePath,
+        ticketContent,
         sessionRoot: path.dirname(ticketPath),
         sessionLogPath: path.join(ticketPath, `worker_session_${process.pid}.log`),
         backend: 'claude',
@@ -667,6 +670,18 @@ function runWorkerGateChecks(args) {
             gatePhase,
         };
     }
+    if (args.ticketTier === 'small') {
+        return {
+            lintOk,
+            tscOk: tscResult.ok,
+            testsOk: true,
+            lintErrors,
+            tscErrors,
+            testFailures: [],
+            gateFailures,
+            gatePhase,
+        };
+    }
     const fastTierResult = runWorkerGateTestCommand('test:fast', args.extensionDir, args.workerTestGateTimeoutMs);
     if (!fastTierResult.ok) {
         gatePhase = fastTierResult.gatePhase;
@@ -733,11 +748,24 @@ export function runWorkerGate(changedFiles, args) {
     if (workerGateTier === 'narrow') {
         console.warn('[spawn-morty] worker gate tier downgraded to "narrow"; skipping test:fast and test:integration');
     }
+    const skippedPhases = args.ticketTier === 'small'
+        ? (workerGateTier === 'full' ? ['test:fast', 'test:integration'] : ['test:fast'])
+        : [];
+    if (skippedPhases.length > 0) {
+        writeActivityEntry(args.statePath, {
+            event: 'tier_phase_skipped',
+            ticket_id: args.ticketId,
+            tier: 'small',
+            skipped_phases: skippedPhases,
+            ts: new Date().toISOString(),
+        });
+    }
     let gateResult = runWorkerGateChecks({
         lintTargets,
         extensionDir,
         workerTestGateTimeoutMs,
         workerGateTier,
+        ticketTier: args.ticketTier,
     });
     let { lintOk, tscOk, testsOk } = gateResult;
     if (shouldRetryWorkerGate(lintOk, tscOk, lintTargets.length)) {
@@ -755,6 +783,7 @@ export function runWorkerGate(changedFiles, args) {
             extensionDir,
             workerTestGateTimeoutMs,
             workerGateTier,
+            ticketTier: args.ticketTier,
         });
         ({ lintOk, tscOk, testsOk } = gateResult);
     }
@@ -827,6 +856,7 @@ async function finalizeWorkerTurn(params) {
             statePath: path.join(sessionRoot, 'state.json'),
             preWorkerHead: ctx.preWorkerHead,
             preservePaths: [sessionRoot],
+            ticketTier: readTicketInfo(ctx.args.ticketFilePath)?.complexity_tier,
         });
         isSuccess = workerGate.ok;
         completionCommitSha = workerGate.completionCommitSha;
