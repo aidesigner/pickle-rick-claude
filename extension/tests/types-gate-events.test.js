@@ -5,6 +5,7 @@ import { VALID_ACTIVITY_EVENTS } from '../types/index.js';
 import { GATE_REMEDIATION_EVENT_NAMES } from '../services/convergence-gate.js';
 
 const GATE_EVENTS = [
+  'between_ticket_gate_timeout',
   'gate_baseline_captured',
   'gate_baseline_disk_check',
   'gate_baseline_init_failed',

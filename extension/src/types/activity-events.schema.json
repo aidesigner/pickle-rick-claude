@@ -355,6 +355,24 @@
         }
       }
     },
+    "between_ticket_gate_timeout": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "prior_ticket_id", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "between_ticket_gate_timeout" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "prior_ticket_id": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["command", "timeout_ms"],
+          "properties": {
+            "command": { "type": "string", "const": "npm run test:fast" },
+            "timeout_ms": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
     "worker_gate_failed": {
       "type": "object",
       "required": ["event", "ts", "ticket_id", "gate_phase", "failures", "retry_count"],
@@ -892,6 +910,7 @@
     { "$ref": "#/definitions/phantom_done_detected" },
     { "$ref": "#/definitions/worker_lint_gate_passed" },
     { "$ref": "#/definitions/tier_phase_skipped" },
+    { "$ref": "#/definitions/between_ticket_gate_timeout" },
     { "$ref": "#/definitions/cross_ticket_regression_detected" },
     { "$ref": "#/definitions/worker_gate_failed" },
     { "$ref": "#/definitions/worker_lint_gate_failed" },

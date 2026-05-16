@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, hasCompletionCommit, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, composeManagerPromptFromSkill, type TicketInfo, type TicketTierBudget } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, hasCompletionCommit, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, type TicketInfo, type TicketTierBudget } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -251,6 +251,8 @@ export type BetweenTicketGateFailure = {
 export type BetweenTicketGateResult = {
   ok: boolean;
   failures: BetweenTicketGateFailure[];
+  timed_out: boolean;
+  timeout_ms: number | null;
 };
 
 type RunBetweenTicketFastGateInput = {
@@ -312,17 +314,38 @@ export function parseBetweenTicketFastGateFailures(output: string, workingDir: s
   return [{ name: fallback, file: '' }];
 }
 
-export function runBetweenTicketFastTests(extensionDir: string): BetweenTicketGateResult {
+export function runBetweenTicketFastTests(
+  extensionDir: string,
+  extensionRoot = getExtensionRoot(),
+): BetweenTicketGateResult {
+  const timeoutMs = resolveWorkerTestGateTimeoutMs(extensionRoot);
   const result = spawnSync('npm', ['run', 'test:fast'], {
     cwd: extensionDir,
     encoding: 'utf-8',
+    timeout: timeoutMs,
   });
+  const timedOut =
+    (result.error?.name === 'Error' && result.error.message.includes('ETIMEDOUT')) ||
+    (result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
+  if (timedOut) {
+    return {
+      ok: false,
+      failures: [{
+        name: '__timeout__',
+        file: 'npm run test:fast',
+      }],
+      timed_out: true,
+      timeout_ms: timeoutMs,
+    };
+  }
   const output = `${result.stdout || ''}\n${result.stderr || ''}`;
   return {
     ok: result.status === 0,
     failures: result.status === 0
       ? []
       : parseBetweenTicketFastGateFailures(output, path.dirname(extensionDir)),
+    timed_out: false,
+    timeout_ms: timeoutMs,
   };
 }
 
@@ -342,8 +365,23 @@ export function runBetweenTicketFastGate(input: RunBetweenTicketFastGateInput): 
         name: failure.name,
         file: failure.file,
       })),
+      timed_out: result.timed_out,
+      timeout_ms: result.timeout_ms,
     };
   });
+
+  if (result.timed_out) {
+    writeActivityEntry(input.statePath, {
+      event: 'between_ticket_gate_timeout',
+      ts: new Date(ts).toISOString(),
+      ticket_id: input.nextTicketId || input.completedTicketId,
+      prior_ticket_id: input.completedTicketId,
+      gate_payload: {
+        command: 'npm run test:fast',
+        timeout_ms: result.timeout_ms,
+      },
+    });
+  }
 
   if (!result.ok && normalizedStatus(input.landedStatus) === 'done') {
     writeActivityEntry(input.statePath, {
