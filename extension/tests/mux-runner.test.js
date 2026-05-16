@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMUX_RUNNER_BIN = path.resolve(__dirname, '../bin/mux-runner.js');
+const REPO_ROOT = path.resolve(__dirname, '../..');
 
 /**
  * Create an isolated temp root directory.
@@ -41,6 +42,81 @@ function run(extDir, args = []) {
     delete env.PICKLE_ROLE;
     env.PICKLE_BACKEND = 'claude';
     return spawnSync(process.execPath, [TMUX_RUNNER_BIN, ...args], {
+        env,
+        encoding: 'utf-8',
+        timeout: 60000,
+    });
+}
+
+function readActivityLines(dataRoot) {
+    const activityDir = path.join(dataRoot, 'activity');
+    if (!fs.existsSync(activityDir)) return [];
+    return fs.readdirSync(activityDir)
+        .filter((file) => file.endsWith('.jsonl'))
+        .flatMap((file) => fs.readFileSync(path.join(activityDir, file), 'utf8')
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line)));
+}
+
+function writeClaudeCompletionStub(binDir) {
+    const claudePath = path.join(binDir, 'claude');
+    fs.writeFileSync(claudePath, [
+        '#!/bin/sh',
+        'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"<promise>EPIC_COMPLETED</promise>"}]}}\'',
+        '',
+    ].join('\n'));
+    fs.chmodSync(claudePath, 0o755);
+}
+
+function writeGateSkipTicket(sessionDir, id = 'ok0001', status = 'Done') {
+    const ticketDir = path.join(sessionDir, id);
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.writeFileSync(path.join(ticketDir, `linear_ticket_${id}.md`), [
+        '---',
+        `id: ${id}`,
+        `key: ${id.toUpperCase()}`,
+        `status: ${status}`,
+        'ac_ids: [REQ-1]',
+        '---',
+        '',
+        '# Ticket',
+        '',
+        '## Acceptance Criteria',
+        '- [ ] The workflow should feel intuitive.',
+        '',
+    ].join('\n'));
+}
+
+function writeGateSkipSession(sessionDir, flags) {
+    writeGateSkipTicket(sessionDir);
+    fs.writeFileSync(path.join(sessionDir, 'decomposition_manifest.json'), JSON.stringify({
+        requirements: ['REQ-1'],
+        tickets: [{ id: 'ok0001', key: 'OK-1', ac_ids: ['REQ-1'] }],
+    }, null, 2));
+    fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+        active: true,
+        step: 'research',
+        iteration: 0,
+        max_iterations: 1,
+        worker_timeout_seconds: 1200,
+        original_prompt: 'quality gate skip regression',
+        working_dir: REPO_ROOT,
+        command_template: 'pickle.md',
+        flags,
+    }, null, 2));
+}
+
+function runMuxRunnerWithDataRoot(sessionDir, dataRoot, stubBinDir) {
+    const env = {
+        ...process.env,
+        EXTENSION_DIR: REPO_ROOT,
+        PICKLE_BACKEND: 'claude',
+        PICKLE_DATA_ROOT: dataRoot,
+        PATH: `${stubBinDir}:${process.env.PATH || ''}`,
+    };
+    delete env.PICKLE_ROLE;
+    return spawnSync(process.execPath, [TMUX_RUNNER_BIN, sessionDir], {
         env,
         encoding: 'utf-8',
         timeout: 60000,
@@ -757,6 +833,95 @@ test('mux-runner.audit-bundle-halt: halts before manager spawn on defective tick
         );
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('mux-runner quality-gate skip: unified flag takes precedence over legacy flags', () => {
+    const sessionDir = makeTmpRoot();
+    const dataRoot = makeTmpRoot();
+    const stubBinDir = makeTmpRoot();
+    try {
+        writeClaudeCompletionStub(stubBinDir);
+        writeGateSkipSession(sessionDir, {
+            skip_quality_gates_reason: 'canonical quality gate waiver',
+            skip_readiness_reason: 'legacy readiness waiver',
+            skip_ticket_audit_reason: 'legacy ticket waiver',
+        });
+
+        const result = runMuxRunnerWithDataRoot(sessionDir, dataRoot, stubBinDir);
+        const runnerLog = fs.readFileSync(path.join(sessionDir, 'mux-runner.log'), 'utf-8');
+        const events = readActivityLines(dataRoot);
+
+        assert.ok([0, 3].includes(result.status ?? -1), result.stderr + runnerLog);
+        assert.match(runnerLog, /canonical quality gate waiver/);
+        assert.doesNotMatch(runnerLog, /DEPRECATION: state\.flags\.(skip_readiness_reason|skip_ticket_audit_reason)/);
+        assert.ok(
+            !events.some((entry) => entry.event === 'skip_flag_legacy_used'),
+            `unified flag should suppress legacy event emission, got ${JSON.stringify(events)}`,
+        );
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        fs.rmSync(stubBinDir, { recursive: true, force: true });
+    }
+});
+
+test('mux-runner quality-gate skip: legacy fallback warns once per process and emits per access', () => {
+    const sessionDir = makeTmpRoot();
+    const dataRoot = makeTmpRoot();
+    const stubBinDir = makeTmpRoot();
+    try {
+        writeClaudeCompletionStub(stubBinDir);
+        writeGateSkipSession(sessionDir, {
+            skip_readiness_reason: 'legacy readiness waiver',
+        });
+
+        const result = runMuxRunnerWithDataRoot(sessionDir, dataRoot, stubBinDir);
+        const runnerLog = fs.readFileSync(path.join(sessionDir, 'mux-runner.log'), 'utf-8');
+        const events = readActivityLines(dataRoot).filter((entry) => entry.event === 'skip_flag_legacy_used');
+        const callsites = events.map((entry) => entry.gate_payload?.callsite).sort();
+        const warningCount = (runnerLog.match(/DEPRECATION: state\.flags\.skip_readiness_reason is legacy/g) || []).length;
+
+        assert.ok([0, 3].includes(result.status ?? -1), result.stderr + runnerLog);
+        assert.equal(warningCount, 1, `expected one deprecation warning, got log: ${runnerLog}`);
+        assert.deepEqual(callsites, ['readiness_gate', 'ticket_audit_gate']);
+        for (const event of events) {
+            assert.equal(event.gate_payload?.legacy_field, 'skip_readiness_reason');
+            assert.equal(event.gate_payload?.value, 'legacy readiness waiver');
+        }
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        fs.rmSync(stubBinDir, { recursive: true, force: true });
+    }
+});
+
+test('mux-runner quality-gate skip: suppression flag disables legacy warning and event', () => {
+    const sessionDir = makeTmpRoot();
+    const dataRoot = makeTmpRoot();
+    const stubBinDir = makeTmpRoot();
+    try {
+        writeClaudeCompletionStub(stubBinDir);
+        writeGateSkipSession(sessionDir, {
+            skip_ticket_audit_reason: 'suppressed legacy waiver',
+            skip_quality_gates_deprecation_warning: true,
+        });
+
+        const result = runMuxRunnerWithDataRoot(sessionDir, dataRoot, stubBinDir);
+        const runnerLog = fs.readFileSync(path.join(sessionDir, 'mux-runner.log'), 'utf-8');
+        const events = readActivityLines(dataRoot);
+
+        assert.ok([0, 3].includes(result.status ?? -1), result.stderr + runnerLog);
+        assert.match(runnerLog, /suppressed legacy waiver/);
+        assert.doesNotMatch(runnerLog, /DEPRECATION: state\.flags\./);
+        assert.ok(
+            !events.some((entry) => entry.event === 'skip_flag_legacy_used'),
+            `suppression flag should prevent legacy event emission, got ${JSON.stringify(events)}`,
+        );
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        fs.rmSync(stubBinDir, { recursive: true, force: true });
     }
 });
 

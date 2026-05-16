@@ -165,6 +165,11 @@ export interface CourseCorrectionRecord {
 export interface StateFlags {
   strict_teams?: boolean;
   /**
+   * Canonical quality-gate bypass reason shared by readiness and ticket-audit
+   * gates. When present, mux-runner reads this before any legacy per-gate flag.
+   */
+  skip_quality_gates_reason?: string;
+  /**
    * If set, mux-runner forwards `--skip-readiness <reason>` to check-readiness
    * on iter 0 of every pickle phase, bypassing the readiness gate. The reason
    * is recorded as a `readiness_skipped` activity event for audit. Used when a
@@ -177,6 +182,12 @@ export interface StateFlags {
    * on iter 0 and emits a `ticket_audit_bypassed` activity event with this reason.
    */
   skip_ticket_audit_reason?: string;
+  /**
+   * Suppresses the once-per-process deprecation warning and
+   * `skip_flag_legacy_used` activity event when a legacy per-gate skip flag is
+   * consumed for back-compat.
+   */
+  skip_quality_gates_deprecation_warning?: boolean;
   /**
    * If set to a recognized bundle ID (e.g. "2026-05-08-mega"), and the current
    * session hash is in BUNDLE_BOOTSTRAP_ALLOWLIST for that bundle ID, mux-runner
@@ -514,6 +525,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'subtool_backend_override',
   'pipeline_auto_resumed',
   'smoke_gate_bypassed',
+  'skip_flag_legacy_used',
   'codex_unhealthy_consecutive_failures',
   'ticket_audit_bypassed',
   'ticket_audit_failed',

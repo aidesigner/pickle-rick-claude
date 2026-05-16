@@ -22,6 +22,7 @@ export { evaluateManagerRelaunch, recordManagerRelaunch, } from '../services/man
 export { evaluateManagerRelaunch as evaluateCodexManagerRelaunch, recordManagerRelaunch as recordCodexManagerRelaunch, } from '../services/manager-relaunch.js';
 const sm = new StateManager();
 let currentChildProc = null;
+let qualityGateLegacyWarningLogged = false;
 export function detectOrphanSessions(state, dataRoot, sessionDir) {
     const sessionsRoot = path.join(dataRoot, 'sessions');
     const parentWorkingDir = state.working_dir;
@@ -1799,6 +1800,42 @@ export function runMuxReadinessGate(input) {
         process.stderr.write(result.stderr);
     return result.status ?? 1;
 }
+function resolveQualityGateSkipReason(state, log, sessionName, callsite) {
+    const flags = state.flags;
+    const unifiedRaw = flags?.skip_quality_gates_reason;
+    const unifiedReason = typeof unifiedRaw === 'string' ? unifiedRaw.trim() : '';
+    if (unifiedReason.length > 0) {
+        return { reason: unifiedReason };
+    }
+    const legacyCandidates = [
+        ['skip_readiness_reason', flags?.skip_readiness_reason],
+        ['skip_ticket_audit_reason', flags?.skip_ticket_audit_reason],
+    ];
+    const matchedLegacy = legacyCandidates.find(([, value]) => typeof value === 'string' && value.trim().length > 0);
+    if (!matchedLegacy) {
+        return {};
+    }
+    const [legacyField, legacyValueRaw] = matchedLegacy;
+    const legacyValue = legacyValueRaw.trim();
+    const suppressDeprecation = state.flags?.skip_quality_gates_deprecation_warning === true;
+    if (!suppressDeprecation) {
+        if (!qualityGateLegacyWarningLogged) {
+            qualityGateLegacyWarningLogged = true;
+            log(`DEPRECATION: state.flags.${legacyField} is legacy; prefer state.flags.skip_quality_gates_reason for unified quality-gate bypasses.`);
+        }
+        logActivity({
+            event: 'skip_flag_legacy_used',
+            source: 'pickle',
+            session: sessionName,
+            gate_payload: {
+                legacy_field: legacyField,
+                value: legacyValue,
+                callsite,
+            },
+        });
+    }
+    return { reason: legacyValue, legacyField };
+}
 /**
  * Invokes audit-ticket-bundle.js on the session's ticket files immediately
  * after runMuxReadinessGate exits 0 and BEFORE iteration-0 spawn.
@@ -3281,8 +3318,7 @@ async function runMuxRunnerMain() {
         }
         if (!readinessGateChecked && curIter === 0) {
             readinessGateChecked = true;
-            const skipReasonRaw = state.flags?.skip_readiness_reason;
-            const skipReason = typeof skipReasonRaw === 'string' && skipReasonRaw.length > 0 ? skipReasonRaw : undefined;
+            const skipReason = resolveQualityGateSkipReason(state, log, path.basename(sessionDir), 'readiness_gate').reason;
             const readinessStatus = runMuxReadinessGate({
                 sessionDir,
                 repoRoot: state.working_dir || process.cwd(),
@@ -3303,8 +3339,7 @@ async function runMuxRunnerMain() {
         // Runs once on iteration-0 after readiness gate exits 0.
         if (!ticketAuditGateChecked && curIter === 0) {
             ticketAuditGateChecked = true;
-            const skipAuditReasonRaw = state.flags?.skip_ticket_audit_reason;
-            const skipAuditReason = typeof skipAuditReasonRaw === 'string' && skipAuditReasonRaw.length > 0 ? skipAuditReasonRaw : undefined;
+            const skipAuditReason = resolveQualityGateSkipReason(state, log, path.basename(sessionDir), 'ticket_audit_gate').reason;
             const auditResult = runTicketAuditGate({
                 sessionDir,
                 extensionRoot,

@@ -210,6 +210,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'subtool_backend_override',
     'pipeline_auto_resumed',
     'smoke_gate_bypassed',
+    'skip_flag_legacy_used',
     'codex_unhealthy_consecutive_failures',
     'ticket_audit_bypassed',
     'ticket_audit_failed',

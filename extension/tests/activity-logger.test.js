@@ -159,6 +159,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'subprocess_error',
         'time_cap_disabled_default',
         'bundle_bootstrap_exemption_applied',
+        'skip_flag_legacy_used',
         'signal_received',
         'standup_session_dropped',
         'worker_edit_outside_scope',

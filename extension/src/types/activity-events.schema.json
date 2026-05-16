@@ -152,6 +152,30 @@
         }
       }
     },
+    "skip_flag_legacy_used": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "skip_flag_legacy_used" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["legacy_field", "value", "callsite"],
+          "properties": {
+            "legacy_field": {
+              "type": "string",
+              "enum": ["skip_readiness_reason", "skip_ticket_audit_reason"]
+            },
+            "value": { "type": "string" },
+            "callsite": {
+              "type": "string",
+              "enum": ["readiness_gate", "ticket_audit_gate"]
+            }
+          }
+        }
+      }
+    },
     "ticket_audit_bypassed": {
       "type": "object",
       "required": ["event", "ts", "reason"],
@@ -819,6 +843,7 @@
     { "$ref": "#/definitions/cap_check_skipped_stale_cache" },
     { "$ref": "#/definitions/pipeline_auto_resumed" },
     { "$ref": "#/definitions/bundle_bootstrap_exemption_applied" },
+    { "$ref": "#/definitions/skip_flag_legacy_used" },
     { "$ref": "#/definitions/ticket_audit_bypassed" },
     { "$ref": "#/definitions/ticket_audit_failed" },
     { "$ref": "#/definitions/ticket_audit_manual_edit" },
