@@ -734,6 +734,8 @@ test('activity-event-payload: schema defines all registered event type definitio
     'phantom_done_detected',
     'worker_lint_gate_passed',
     'tier_phase_skipped',
+    'between_ticket_gate_timeout',
+    'mux_runner_stall_detected',
     'cross_ticket_regression_detected',
     'worker_gate_failed',
     'worker_lint_gate_failed',

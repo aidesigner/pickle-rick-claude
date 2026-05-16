@@ -64,6 +64,8 @@ export const Defaults = {
     MAX_ITERATION_SECONDS: 14_400,
     /** Separate guard for subprocesses that stop producing stdout/stderr progress (30m). */
     OUTPUT_STALL_SECONDS: 1800,
+    /** Startup stale-state guard for wedged mux-runner sessions (30m). */
+    MUX_RUNNER_STALL_SECONDS: 1800,
     MANAGER_MAX_TURNS: 50,
     RATE_LIMIT_POLL_MS: 10_000,
     /**
@@ -195,6 +197,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'phantom_done_backfilled',
     'ticket_state_desync_detected',
     'stall_classified',
+    'mux_runner_stall_detected',
     'readiness_delta_requested',
     'phase_transition',
     'extension_dir_fallback',
