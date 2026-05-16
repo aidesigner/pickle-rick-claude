@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, resolveWorkerTestGateTimeoutMs, } from '../services/pickle-utils.js';
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS } from '../types/index.js';
 import { isRecord } from '../lib/is-record.js';
 import { getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
@@ -451,21 +451,92 @@ export function resolveWorkerGateTier(extensionRoot, settings) {
     }
     return 'fast';
 }
-function runCommand(cmd, args, cwd, opts = {}) {
-    const result = spawnSync(cmd, args, {
-        cwd,
-        encoding: 'utf8',
-        timeout: opts.timeoutMs ?? 120_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
+function killProcessTree(proc, signal) {
+    const pid = proc.pid;
+    if (!pid)
+        return false;
+    if (process.platform !== 'win32') {
+        try {
+            process.kill(-pid, signal);
+            return true;
+        }
+        catch {
+            // Fall back to the direct child if the process group is already gone.
+        }
+    }
+    try {
+        proc.kill(signal);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+async function runCommand(cmd, args, cwd, opts = {}) {
+    const timeoutMs = opts.timeoutMs ?? 120_000;
+    return await new Promise((resolve) => {
+        const child = spawn(cmd, args, {
+            cwd,
+            detached: process.platform !== 'win32',
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        const stdoutChunks = [];
+        const stderrChunks = [];
+        let timedOut = false;
+        let settled = false;
+        let sigtermSent = false;
+        let sigkillSent = false;
+        let killEscalation = null;
+        const finalize = (status, signal, extraStderr = '') => {
+            if (settled)
+                return;
+            settled = true;
+            clearTimeout(timeoutHandle);
+            if (killEscalation)
+                clearTimeout(killEscalation);
+            const stdout = stdoutChunks.join('');
+            const stderr = `${stderrChunks.join('')}${extraStderr}`;
+            const timeoutMessage = timedOut
+                ? [
+                    `timed out after ${timeoutMs}ms`,
+                    sigkillSent
+                        ? 'sent SIGTERM to process tree and escalated to SIGKILL after 2000ms'
+                        : sigtermSent
+                            ? 'sent SIGTERM to process tree'
+                            : 'failed to signal process tree',
+                ].join('; ')
+                : null;
+            resolve({
+                ok: status === 0 && !timedOut,
+                status,
+                stdout,
+                stderr,
+                signal,
+                timedOut,
+                timeoutMessage,
+            });
+        };
+        child.stdout?.setEncoding('utf8');
+        child.stderr?.setEncoding('utf8');
+        child.stdout?.on('data', chunk => stdoutChunks.push(chunk));
+        child.stderr?.on('data', chunk => stderrChunks.push(chunk));
+        const timeoutHandle = setTimeout(() => {
+            timedOut = true;
+            sigtermSent = killProcessTree(child, 'SIGTERM');
+            killEscalation = setTimeout(() => {
+                sigkillSent = killProcessTree(child, 'SIGKILL');
+            }, 2000);
+            killEscalation.unref();
+        }, timeoutMs);
+        timeoutHandle.unref();
+        child.on('error', (error) => {
+            const message = safeErrorMessage(error);
+            finalize(null, null, message ? `${message}\n` : '');
+        });
+        child.on('close', (status, signal) => {
+            finalize(status, signal);
+        });
     });
-    const timedOut = result.error?.code === 'ETIMEDOUT';
-    return {
-        ok: (result.status ?? 1) === 0 && !timedOut,
-        stdout: result.stdout ?? '',
-        stderr: result.stderr ?? '',
-        signal: result.signal ?? null,
-        timedOut,
-    };
 }
 function countLintErrors(output) {
     return (output.match(/\berror\b/gi) ?? []).length;
@@ -567,16 +638,16 @@ function parseWorkerGateTscFailures(output, extensionDir) {
     const fallbackMessage = output.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? 'tsc failed';
     return buildFallbackGateFailure('tsc', '', fallbackMessage);
 }
-function runWorkerGateTestCommand(scriptName, extensionDir, workerTestGateTimeoutMs) {
+async function runWorkerGateTestCommand(scriptName, extensionDir, workerTestGateTimeoutMs) {
     const commandName = `npm run ${scriptName}`;
-    const testResult = runCommand('npm', ['run', scriptName], extensionDir, { timeoutMs: workerTestGateTimeoutMs });
+    const testResult = await runCommand('npm', ['run', scriptName], extensionDir, { timeoutMs: workerTestGateTimeoutMs });
     const failures = testResult.ok
         ? []
         : testResult.timedOut
             ? [{
                     name: '__timeout__',
                     file: commandName,
-                    message: `killed after ${workerTestGateTimeoutMs}ms`,
+                    message: testResult.timeoutMessage ?? `killed after ${workerTestGateTimeoutMs}ms`,
                 }]
             : parseWorkerGateTestFailures(`${testResult.stdout}\n${testResult.stderr}`, extensionDir);
     return {
@@ -624,13 +695,13 @@ function stageAndCommitLintAutofix(workingDir, ticketId, fileList) {
     runCmd(['git', 'commit', '-m', `fix(${ticketId}): worker lint autofix`, '--no-gpg-sign'], { cwd: workingDir });
     return getHeadSha(workingDir);
 }
-function runWorkerGateChecks(args) {
+async function runWorkerGateChecks(args) {
     let lintOk = true;
     let lintErrors = 0;
     let gateFailures = [];
     let gatePhase = null;
     if (args.lintTargets.length > 0) {
-        const lintResult = runCommand('npx', ['eslint', ...args.lintTargets, '--max-warnings=-1'], args.extensionDir);
+        const lintResult = await runCommand('npx', ['eslint', ...args.lintTargets, '--max-warnings=-1'], args.extensionDir);
         const lintOutput = `${lintResult.stdout}\n${lintResult.stderr}`;
         lintErrors = countLintErrors(lintOutput);
         lintOk = lintResult.ok;
@@ -639,7 +710,7 @@ function runWorkerGateChecks(args) {
             gateFailures = parseWorkerGateLintFailures(lintOutput, args.extensionDir);
         }
     }
-    const tscResult = runCommand('npx', ['tsc', '--noEmit'], args.extensionDir);
+    const tscResult = await runCommand('npx', ['tsc', '--noEmit'], args.extensionDir);
     const tscOutput = `${tscResult.stdout}\n${tscResult.stderr}`;
     const tscErrors = countTscErrors(tscOutput);
     if (lintOk && !tscResult.ok) {
@@ -682,7 +753,7 @@ function runWorkerGateChecks(args) {
             gatePhase,
         };
     }
-    const fastTierResult = runWorkerGateTestCommand('test:fast', args.extensionDir, args.workerTestGateTimeoutMs);
+    const fastTierResult = await runWorkerGateTestCommand('test:fast', args.extensionDir, args.workerTestGateTimeoutMs);
     if (!fastTierResult.ok) {
         gatePhase = fastTierResult.gatePhase;
         gateFailures = fastTierResult.failures;
@@ -699,7 +770,7 @@ function runWorkerGateChecks(args) {
             gatePhase,
         };
     }
-    const integrationTierResult = runWorkerGateTestCommand('test:integration', args.extensionDir, args.workerTestGateTimeoutMs);
+    const integrationTierResult = await runWorkerGateTestCommand('test:integration', args.extensionDir, args.workerTestGateTimeoutMs);
     if (!integrationTierResult.ok) {
         gatePhase = integrationTierResult.gatePhase;
         gateFailures = integrationTierResult.failures;
@@ -724,7 +795,7 @@ function didWorkerGateFail(lintOk, tscOk, testsOk) {
 // TODO(R-LINT): refactor — pre-existing 123 lines / complexity 16 introduced
 // 2026-05-11 (c5e7f92a7); extract per-phase helpers in a focused PR.
 // eslint-disable-next-line max-lines-per-function, complexity
-export function runWorkerGate(changedFiles, args) {
+export async function runWorkerGate(changedFiles, args) {
     const fileList = [...changedFiles];
     const extensionDir = path.join(args.workingDir, 'extension');
     if (!fs.existsSync(extensionDir)) {
@@ -763,7 +834,7 @@ export function runWorkerGate(changedFiles, args) {
             ts: new Date().toISOString(),
         });
     }
-    let gateResult = runWorkerGateChecks({
+    let gateResult = await runWorkerGateChecks({
         lintTargets,
         extensionDir,
         workerTestGateTimeoutMs,
@@ -774,14 +845,14 @@ export function runWorkerGate(changedFiles, args) {
     if (shouldRetryWorkerGate(lintOk, tscOk, lintTargets.length)) {
         autofixApplied = true;
         retryCount = 1;
-        runCommand('npx', ['eslint', '--fix', ...lintTargets, '--max-warnings=-1'], extensionDir);
+        await runCommand('npx', ['eslint', '--fix', ...lintTargets, '--max-warnings=-1'], extensionDir);
         writeActivityEntry(args.statePath, {
             event: 'worker_lint_autofix_applied',
             ticket_id: args.ticketId,
             file_list: reportedFileList,
             ts: new Date().toISOString(),
         });
-        gateResult = runWorkerGateChecks({
+        gateResult = await runWorkerGateChecks({
             lintTargets,
             extensionDir,
             workerTestGateTimeoutMs,
@@ -853,7 +924,7 @@ async function finalizeWorkerTurn(params) {
     let completionCommitSha = null;
     if (isSuccess) {
         const changedFiles = collectChangedFilesForLintGate(sessionWorkingDir, ctx.preWorkerHead);
-        const workerGate = runWorkerGate(changedFiles, {
+        const workerGate = await runWorkerGate(changedFiles, {
             workingDir: sessionWorkingDir,
             ticketId,
             statePath: path.join(sessionRoot, 'state.json'),
@@ -888,7 +959,10 @@ async function finalizeWorkerTurn(params) {
     }
     printMinimalPanel('Worker Report', { status: ctx.mutableState.timedOut ? 'timeout' : `exit:${exitCode}`, validation: isSuccess ? 'successful' : 'failed' }, isSuccess ? 'GREEN' : 'RED', '🥒');
     if (!isSuccess) {
-        await flushAndExit(sessionLog, 1);
+        // The worker log stream has already been ended in the proc.close path, so
+        // waiting for flushAndExit() here can miss the close event and let Node
+        // fall through with exit 0 after a failed worker gate.
+        process.exit(1);
     }
     resolve({ exitCode: exitCode ?? 0, isSuccess });
 }

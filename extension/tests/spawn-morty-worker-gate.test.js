@@ -128,17 +128,76 @@ function readState(sessionRoot) {
   return JSON.parse(fs.readFileSync(path.join(sessionRoot, 'state.json'), 'utf8'));
 }
 
-function withPathPrefix(prefix, fn) {
+async function withPathPrefix(prefix, fn) {
   const prev = process.env.PATH;
   process.env.PATH = `${prefix}${path.delimiter}${prev || ''}`;
   try {
-    return fn();
+    return await fn();
   } finally {
     process.env.PATH = prev;
   }
 }
 
-test('runWorkerGate: lints changed extension/src files, runs tsc, then runs test:fast', () => {
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+async function waitFor(fn, timeoutMs, label) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (fn()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+function writeNpmTimeoutTreeShim(binDir, logPath, options = {}) {
+  fs.mkdirSync(binDir, { recursive: true });
+  const shimPath = path.join(binDir, 'npm');
+  fs.writeFileSync(shimPath, `#!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
+
+const logPath = ${JSON.stringify(logPath)};
+const pidPath = ${JSON.stringify(options.pidPath ?? '')};
+const signalPath = ${JSON.stringify(options.signalPath ?? '')};
+const readyPath = ${JSON.stringify(options.readyPath ?? '')};
+const existing = fs.existsSync(logPath) ? JSON.parse(fs.readFileSync(logPath, 'utf8')) : [];
+existing.push(['npm', ...process.argv.slice(2)]);
+fs.writeFileSync(logPath, JSON.stringify(existing, null, 2));
+
+process.on('SIGTERM', () => {
+  if (signalPath) fs.appendFileSync(signalPath, 'npm:SIGTERM\\n');
+});
+
+const child = spawn(process.execPath, ['-e', \`
+  const fs = require('fs');
+  const pidPath = \${JSON.stringify(pidPath)};
+  const signalPath = \${JSON.stringify(signalPath)};
+  const readyPath = \${JSON.stringify(readyPath)};
+  fs.writeFileSync(pidPath, String(process.pid));
+  if (readyPath) fs.writeFileSync(readyPath, 'ready\\n');
+  process.on('SIGTERM', () => {
+    if (signalPath) fs.appendFileSync(signalPath, 'child:SIGTERM\\\\n');
+  });
+  setInterval(() => {}, 1000);
+\`], { stdio: 'ignore' });
+
+if (pidPath && child.pid) fs.writeFileSync(pidPath, String(child.pid));
+if (readyPath) fs.writeFileSync(readyPath, 'ready\\n');
+if (!pidPath && child.pid) process.stdout.write(String(child.pid));
+setInterval(() => {}, 1000);
+`);
+  fs.chmodSync(shimPath, 0o755);
+}
+
+test('runWorkerGate: lints changed extension/src files, runs tsc, then runs test:fast', async () => {
   const root = makeTmpRoot();
   try {
     initGitRepo(root);
@@ -161,7 +220,7 @@ test('runWorkerGate: lints changed extension/src files, runs tsc, then runs test
     writeCommandShim(shimDir, 'npx', logPath);
     writeCommandShim(shimDir, 'npm', logPath);
 
-    const result = withPathPrefix(shimDir, () => runWorkerGate([
+    const result = await withPathPrefix(shimDir, () => runWorkerGate([
       'extension/src/demo/one.ts',
       'extension/src/demo/two.ts',
     ], {
@@ -183,7 +242,7 @@ test('runWorkerGate: lints changed extension/src files, runs tsc, then runs test
   }
 });
 
-test('runWorkerGate: narrow tier stops after eslint and tsc and logs the downgrade warning', () => {
+test('runWorkerGate: narrow tier stops after eslint and tsc and logs the downgrade warning', async () => {
   const root = makeTmpRoot();
   try {
     initGitRepo(root);
@@ -212,7 +271,7 @@ test('runWorkerGate: narrow tier stops after eslint and tsc and logs the downgra
     };
     let result;
     try {
-      result = withPathPrefix(shimDir, () => runWorkerGate([
+      result = await withPathPrefix(shimDir, () => runWorkerGate([
         'extension/src/demo/one.ts',
       ], {
         workingDir: root,
@@ -237,7 +296,7 @@ test('runWorkerGate: narrow tier stops after eslint and tsc and logs the downgra
   }
 });
 
-test('runWorkerGate: small tier skips test commands and emits tier_phase_skipped', () => {
+test('runWorkerGate: small tier skips test commands and emits tier_phase_skipped', async () => {
   const root = makeTmpRoot();
   try {
     initGitRepo(root);
@@ -256,7 +315,7 @@ test('runWorkerGate: small tier skips test commands and emits tier_phase_skipped
     writeCommandShim(shimDir, 'npx', logPath);
     writeCommandShim(shimDir, 'npm', logPath);
 
-    const result = withPathPrefix(shimDir, () => runWorkerGate([
+    const result = await withPathPrefix(shimDir, () => runWorkerGate([
       'extension/src/demo/one.ts',
     ], {
       workingDir: root,
@@ -287,7 +346,7 @@ test('runWorkerGate: small tier skips test commands and emits tier_phase_skipped
   }
 });
 
-test('runWorkerGate: returns parsed testFailures when npm run test:fast fails after clean lint and tsc', () => {
+test('runWorkerGate: returns parsed testFailures when npm run test:fast fails after clean lint and tsc', async () => {
   const root = makeTmpRoot();
   try {
     initGitRepo(root);
@@ -309,7 +368,7 @@ test('runWorkerGate: returns parsed testFailures when npm run test:fast fails af
       stdout: `not ok 1 - fast tier fails\n  ---\n  location: '${path.join(root, 'extension', 'tests', 'demo.test.js')}:12:4'\n  error: 'boom'\n  ...\n`,
     });
 
-    const result = withPathPrefix(shimDir, () => runWorkerGate([
+    const result = await withPathPrefix(shimDir, () => runWorkerGate([
       'extension/src/demo/one.ts',
     ], {
       workingDir: root,
@@ -354,7 +413,7 @@ test('runWorkerGate: returns parsed testFailures when npm run test:fast fails af
   }
 });
 
-test('runWorkerGate: full tier runs test:fast and then test:integration', () => {
+test('runWorkerGate: full tier runs test:fast and then test:integration', async () => {
   const root = makeTmpRoot();
   try {
     initGitRepo(root);
@@ -376,7 +435,7 @@ test('runWorkerGate: full tier runs test:fast and then test:integration', () => 
     writeCommandShim(shimDir, 'npx', logPath);
     writeCommandShim(shimDir, 'npm', logPath);
 
-    const result = withPathPrefix(shimDir, () => runWorkerGate([
+    const result = await withPathPrefix(shimDir, () => runWorkerGate([
       'extension/src/demo/one.ts',
     ], {
       workingDir: root,
@@ -398,7 +457,7 @@ test('runWorkerGate: full tier runs test:fast and then test:integration', () => 
   }
 });
 
-test('runWorkerGate: full tier integration failure emits worker_gate_failed with test:integration phase', () => {
+test('runWorkerGate: full tier integration failure emits worker_gate_failed with test:integration phase', async () => {
   const root = makeTmpRoot();
   try {
     initGitRepo(root);
@@ -432,7 +491,7 @@ exit 0
     fs.writeFileSync(path.join(shimDir, 'npm'), npmShim);
     fs.chmodSync(path.join(shimDir, 'npm'), 0o755);
 
-    const result = withPathPrefix(shimDir, () => runWorkerGate([
+    const result = await withPathPrefix(shimDir, () => runWorkerGate([
       'extension/src/demo/one.ts',
     ], {
       workingDir: root,
@@ -585,12 +644,12 @@ test.skip('runWorkerGate: skips test:fast when SKIP_WORKER_TEST_GATE=1 and logs 
   assert.match('SKIP_WORKER_TEST_GATE', /SKIP_WORKER_TEST_GATE/);
 });
 
-test('runWorkerGate: honors worker_test_gate_timeout_ms and reports a synthetic timeout failure', () => {
+test('runWorkerGate: honors worker_test_gate_timeout_ms, reports timeout details, and kills npm descendants', { timeout: 15_000 }, async () => {
   const root = makeTmpRoot();
   try {
     initGitRepo(root);
     fs.writeFileSync(path.join(root, 'pickle_settings.json'), JSON.stringify({
-      worker_test_gate_timeout_ms: 100,
+      worker_test_gate_timeout_ms: 250,
     }, null, 2));
     fs.mkdirSync(path.join(root, 'extension', 'src', 'demo'), { recursive: true });
     fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 1;\n');
@@ -605,12 +664,12 @@ test('runWorkerGate: honors worker_test_gate_timeout_ms and reports a synthetic 
     const shimDir = path.join(root, 'bin');
     const logPath = path.join(root, 'gate-log.json');
     writeCommandShim(shimDir, 'npx', logPath);
-    writeCommandShim(shimDir, 'npm', logPath, {
-      sleepMs: 250,
-      stdout: 'partial output should not matter\n',
-    });
+    const pidPath = path.join(root, 'timed-out-child.pid');
+    const signalPath = path.join(root, 'timed-out-signals.log');
+    const readyPath = path.join(root, 'timed-out-child.ready');
+    writeNpmTimeoutTreeShim(shimDir, logPath, { pidPath, signalPath, readyPath });
 
-    const result = withPathPrefix(shimDir, () => runWorkerGate([
+    const resultPromise = withPathPrefix(shimDir, () => runWorkerGate([
       'extension/src/demo/one.ts',
     ], {
       workingDir: root,
@@ -618,17 +677,33 @@ test('runWorkerGate: honors worker_test_gate_timeout_ms and reports a synthetic 
       statePath,
       preWorkerHead: null,
     }));
+    await waitFor(() => fs.existsSync(readyPath), 5_000, 'timed-out child readiness');
+    const childPid = Number(fs.readFileSync(pidPath, 'utf8').trim());
+    assert.equal(Number.isInteger(childPid), true);
+
+    const result = await resultPromise;
 
     assert.equal(result.ok, false);
-    assert.deepEqual(result.testFailures, [{
+    assert.equal(result.testFailures.length, 1);
+    assert.deepEqual({
+      name: result.testFailures[0]?.name,
+      file: result.testFailures[0]?.file,
+    }, {
       name: '__timeout__',
       file: 'npm run test:fast',
-      message: 'killed after 100ms',
-    }]);
+    });
+    assert.match(
+      result.testFailures[0]?.message ?? '',
+      /^timed out after 250ms; sent SIGTERM to process tree(?: and escalated to SIGKILL after 2000ms)?$/,
+    );
+    assert.equal(isPidAlive(childPid), false, `descendant pid ${childPid} should be dead after timeout cleanup`);
+    const signals = fs.readFileSync(signalPath, 'utf8');
+    assert.match(signals, /npm:SIGTERM/);
     const calls = JSON.parse(fs.readFileSync(logPath, 'utf8'));
     assert.deepEqual(calls, [
       ['npx', 'eslint', 'src/demo/one.ts', '--max-warnings=-1'],
       ['npx', 'tsc', '--noEmit'],
+      ['npm', 'run', 'test:fast'],
     ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
