@@ -1,6 +1,6 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-05-16 AM (CDT). Historical narrative pre-2026-05-15 → `prds/MASTER_PLAN-archive.md`.
+**Last updated**: 2026-05-16 PM (CDT) — v1.75.0 R-WSRC shipped, B-MRWG queued next. Historical narrative pre-2026-05-15 → `prds/MASTER_PLAN-archive.md`.
 
 ## State of the world (for /clear resume)
 
@@ -82,7 +82,7 @@ Closed-finding detail → `MASTER_PLAN-archive.md`. Open findings carry a one-li
 | 27 | R-MMRT | Monitor respawn uses temp-dir/empty sessionDir → 4-pane window collapse cascade. **Biting B2 NOW.** | `prds/p2-mux-runner-monitor-respawn-uses-temp-dir-not-session-root.md` (R-MMRT-1..6). Promoted P3→P2 2026-05-15 PM. **B-MONITOR co-bundle target with R-MWCL after B2 closes.** |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse | R-ICDM-1 ✅ shipped today (verify-then-close, `mux-runner.ts:1466` `eventTurns >= maxTurns`). R-ICDM-2..7 audit needed |
 | 42 | R-MRWG | mux-runner wedges indefinitely on unbounded `spawnSync('npm', ['run', 'test:fast'])` in `runBetweenTicketFastTests`; npm grandchildren leak as launchd orphans on worker-gate timeout. **Observed twice in 24h on B2.** | `prds/p1-mux-runner-wedges-13h-on-unbounded-between-ticket-gate-spawnsync.md` (R-MRWG-1..6). Filed 2026-05-16 post-13h-wedge. **B-MRWG queue priority HIGH — promote ahead of B-MONITOR.** |
-| 43 | R-WSRC | Worker source/state recursion contamination: a worker on R-QGSK-3 (schema migration) bumped `state.json.schema_version` to 5 in the live session, wedging the deployed v4 mux-runner in a 1-warn/sec retry loop. Separately, a leaked `claude --dangerously-skip-permissions --add-dir <real-repo>` subprocess from `mux-runner.test.js:782` audit-bundle-halt test fixture (`deadbeef`/phantom file) was found alive post-SIGTERM-fail (R-MRWG-2 ladder), with write access to operator's real working tree. | `prds/p1-worker-source-state-recursion-contamination.md` (R-WSRC-1..6). Filed 2026-05-16 via 4-agent debate analysis. **B-WSRC bundle ship in same window as B-MRWG (overlapping incident classes).** |
+_(43 R-WSRC closed in v1.75.0 — see Closed table below)_
 
 ### Open (P2)
 
@@ -113,7 +113,7 @@ Closed-finding detail → `MASTER_PLAN-archive.md`. Open findings carry a one-li
 
 ### Closed (full detail in `MASTER_PLAN-archive.md`)
 
-✅ #1 R-CCPL/R-CCPM (2026-05-15) · #2 codex Done-without-commit · #3 R-APBS · #4 R-ICM · #6 /pickle-standup · #8 test:fast fork-bomb · #9 spawn-morty readdir-hang · #10 R-APBN baseline fresh-init · #13 R-MJCP probe · #14 R-CCNW citadel wiring (2026-05-14) · #15 R-MDS monitor dashboard (2026-05-15) · #16 R-PRJT (absorbed by R-MBLE 2026-05-15) · #17 R-SLLJ (2026-05-15) · #20 R-SOA (2026-05-15) · #21 R-PTG · #22 R-PHC · #23 R-APMW (2026-05-15) · #24 R-SAOV · #26 R-MBLE (2026-05-15) · #31 R-POD (2026-05-15) · #36 R-SRTS (R-RHGS 2026-05-15) · #37(a-d) R-PIWG sub-claims (R-RHGS 2026-05-15) · #38 R-PRCR (R-RHGS 2026-05-15) · #41 R-RMBS (R-RHGS 2026-05-15)
+✅ #1 R-CCPL/R-CCPM (2026-05-15) · #2 codex Done-without-commit · #3 R-APBS · #4 R-ICM · #6 /pickle-standup · #8 test:fast fork-bomb · #9 spawn-morty readdir-hang · #10 R-APBN baseline fresh-init · #13 R-MJCP probe · #14 R-CCNW citadel wiring (2026-05-14) · #15 R-MDS monitor dashboard (2026-05-15) · #16 R-PRJT (absorbed by R-MBLE 2026-05-15) · #17 R-SLLJ (2026-05-15) · #20 R-SOA (2026-05-15) · #21 R-PTG · #22 R-PHC · #23 R-APMW (2026-05-15) · #24 R-SAOV · #26 R-MBLE (2026-05-15) · #31 R-POD (2026-05-15) · #36 R-SRTS (R-RHGS 2026-05-15) · #37(a-d) R-PIWG sub-claims (R-RHGS 2026-05-15) · #38 R-PRCR (R-RHGS 2026-05-15) · #41 R-RMBS (R-RHGS 2026-05-15) · **#43 R-WSRC (v1.75.0 2026-05-16: B-WSRC R-WSRC-1..5 shipped; R-WSRC-6 closer merged into v1.75.0 release; 47/47 regression tests pass; bug class definitively closed via StateManager schema-ceiling + mux-runner schema-ahead exit + PreToolUse hook + bash-scanner + test-harness add-dir containment + CLAUDE.md/AGENTS.md/send-to-morty.md forbidden-ops sections)**
 
 ---
 
@@ -127,7 +127,7 @@ Closed-finding detail → `MASTER_PLAN-archive.md`. Open findings carry a one-li
 |---|---|---|---|---|
 | **B2-RSU** (active) | 🟡 IN-FLIGHT | R-MWCL + R-WTB + R-QGSK + R-RSU | 22+4 | Operational tax trifecta + refinement unblock. **Wedged 13h overnight 2026-05-15→2026-05-16 on R-MRWG (see Finding #42).** R-MWCL-1 ✅ `3ac31602`; R-MWCL-2 deferred `dfaf9dcc`; R-MWCL-6 ✅ `189d4d2f` (healed); R-QGSK-2 ✅ `b2ddf584` (healed). **Closes Findings #29/#30/#34 + slot #29 on success.** |
 | **B-MRWG** | 🔴 NEXT (P1) | R-MRWG (Finding #42) | ~6 | **Highest priority post-B2.** PRD `prds/p1-mux-runner-wedges-13h-on-unbounded-between-ticket-gate-spawnsync.md`. Addresses 13h-wedge bug class: timeout on `runBetweenTicketFastTests` (mux-runner.ts:257), descendant-tree kill in `runCommand` (spawn-morty.ts:599), mux-runner stall detector, orphan reaper, pipeline-runner child-stall heartbeat. **Every future codex-backend bundle is at risk without this.** |
-| **B-WSRC** | 🔴 NEXT (P1, co-ship with B-MRWG) | R-WSRC (Finding #43) | ~6 | **Co-ship with B-MRWG.** PRD `prds/p1-worker-source-state-recursion-contamination.md`. Addresses worker contamination of runtime state: schema-ceiling check at `StateManager.update()` write site (~5-30 LOC), schema-ahead graceful exit at `sm.read()` sites in mux-runner, PreToolUse hook + bash-scanner blocking writes to `state.json`/`circuit_breaker.json`/`pickle_settings.json`/`~/.claude/pickle-rick/**`, test-harness `--add-dir` containment assertion. Also lands CLAUDE.md + AGENTS.md + send-to-morty.md prose updates (defense-in-depth). 4-agent debate consensus: 80% value with the StateManager.update() ceiling alone. |
+| **B-WSRC** | ✅ SHIPPED v1.75.0 | R-WSRC (Finding #43) | 6 | Shipped 2026-05-16 in v1.75.0. R-WSRC-1..4 via 4-agent parallel team (commit `e0d37d1c`); R-WSRC-5 docs in `ce41ce3e` (slimmed in `718a2af2`); R-WSRC-6 closer merged into v1.75.0 release. 47/47 regression tests pass. Plus R-QGSK-2 followup fix for `resolveQualityGateSkipReason` legacy-flag bug discovered during R-WSRC-4 implementation. **Closes Finding #43.** |
 | **B-MONITOR** | 🟢 QUEUED | R-MMRT + R-MWCL residuals | ~6-10 | R-MMRT (Finding #27, P2, PRD filed 2026-05-15) fixes monitor sessionDir validation; cascade-killed the B2 monitor mid-run. Co-bundle with any R-MWCL residuals not absorbed by B2 (R-MWCL-3..7). Shared `pickle-utils.ts` + `monitor.ts` surface. **Demoted from NEXT in favor of B-MRWG (P1 pipeline-bricking).** |
 | **B-R-MMTR** | 🟢 QUEUED | R-ICDM-2..7 + R-MMTRH heal + R-MMTR-7 closer | ~6-8 | R-ICDM-1 shipped today. Audit R-ICDM-2..7 against HEAD (likely verify-then-close); heal R-MMTR-2/3/4 Skipped→Done; closer writes version-bump + parity. **Closes Findings #19 + #28.** |
 | **B-E2E** | 🟢 QUEUED | R-MMTR6S | 4 sub | E2E re-attempt of force-skipped R-MMTR-6: fixture / harness / cases / CI wiring. Ships after B-R-MMTR closer. |
@@ -166,7 +166,7 @@ The operational queue is `## 🔔 Active Queue` above. This section lists open P
 
 | Path | Status | Notes |
 |---|---|---|
-| `p1-worker-source-state-recursion-contamination.md` | **Refined (P1, NEXT bundle B-WSRC co-ship)** | R-WSRC-1..6. Filed 2026-05-16 via 4-agent debate. Worker writes to live runtime state + leaked subprocess with `--dangerously-skip-permissions --add-dir <real-repo>`. Single-PRD bundle, 6 tickets. 80% value with the StateManager.update() schema-ceiling alone. |
+| `p1-worker-source-state-recursion-contamination.md` | **✅ SHIPPED v1.75.0 2026-05-16** | R-WSRC-1..6 all shipped. Single-PRD bundle delivered via 4-agent parallel team + 4-agent debate analysis. 47/47 regression tests pass. |
 | `p1-mux-runner-wedges-13h-on-unbounded-between-ticket-gate-spawnsync.md` | **Refined (P1, NEXT bundle B-MRWG)** | R-MRWG-1..6. Filed 2026-05-16 post-13h-wedge on B2. Single-PRD bundle, 6 tickets. Pipeline-bricking, recurrence-observed-twice-in-24h. |
 | `p1-codex-manager-prompt-pollution.md` | **Refined (P1)** | R-CCPM Phase 1a-bis successor to R-CCPL. Stage 1 forensic at `prds/research-r-ccpl-7fe6da60-2026-05-15.md` selects hypothesis H-D (codex executes operator-facing setup.js examples as actions). 5 atomic tickets, single-PRD bundle. Filed 2026-05-15 at commit `6f635a8d`. |
 | `p1-deployed-pkgjson-version-only-revert.md` | **Diagnosis-only (P1)** | Deploy-revert bug class: pkg.json:version reverts while file content-hashes match. Research at `prds/research-slot-K-pjv-writer-2026-05-07.md`. |
