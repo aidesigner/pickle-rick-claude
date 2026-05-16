@@ -580,6 +580,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'setup_resume_chdir_applied',
   'ticket_runnability_resolved',
   'codex_manager_self_bootstrap_attempted',
+  'orphan_test_runner_reaped',
   'orphan_session_detected',
   'session_map_collision_blocked',
   'state_write_override_used',
@@ -716,6 +717,8 @@ export interface ActivityEvent {
   // R-CCPM-2: codex_manager_self_bootstrap_attempted payload fields
   attempted_argv?: string[];
   action_taken?: string;
+  etime_seconds?: number;
+  argv_summary?: string;
   // R-CCPM-3: orphan_session_detected payload fields
   orphan_session_path?: string;
   orphan_started_at?: number;

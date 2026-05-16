@@ -848,6 +848,17 @@
         "action_taken": { "type": "string", "const": "logged" }
       }
     },
+    "orphan_test_runner_reaped": {
+      "type": "object",
+      "required": ["event", "ts", "pid", "etime_seconds", "argv_summary"],
+      "properties": {
+        "event": { "type": "string", "const": "orphan_test_runner_reaped" },
+        "ts": { "type": "string" },
+        "pid": { "type": "integer" },
+        "etime_seconds": { "type": "integer", "minimum": 0 },
+        "argv_summary": { "type": "string" }
+      }
+    },
     "orphan_session_detected": {
       "type": "object",
       "required": ["event", "ts", "orphan_session_path", "orphan_started_at", "parent_session_hash", "orphan_pid"],
@@ -967,6 +978,7 @@
     { "$ref": "#/definitions/setup_resume_chdir_applied" },
     { "$ref": "#/definitions/ticket_runnability_resolved" },
     { "$ref": "#/definitions/codex_manager_self_bootstrap_attempted" },
+    { "$ref": "#/definitions/orphan_test_runner_reaped" },
     { "$ref": "#/definitions/orphan_session_detected" },
     { "$ref": "#/definitions/session_map_collision_blocked" },
     { "$ref": "#/definitions/state_write_override_used" },

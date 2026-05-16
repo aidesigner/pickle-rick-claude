@@ -148,6 +148,7 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`setup_resume_chdir_applied\` | \`gate_payload.from\`, \`gate_payload.to\` | setup.ts validateResumeCompatibility cross-cwd path |
 | \`ticket_runnability_resolved\` | \`ticket_id\`, \`gate_payload.frontmatter_status\`, \`gate_payload.runnable\`, \`gate_payload.reason\` | mux-runner per-iteration ticket-selection path |
 | \`codex_manager_self_bootstrap_attempted\` | \`ticket\`, \`attempted_argv\`, \`iteration\`, \`action_taken\` | codex-manager self-bootstrap guard (R-CCPM-1) |
+| \`orphan_test_runner_reaped\` | \`pid\`, \`etime_seconds\`, \`argv_summary\` | mux-runner startup orphan fast-test reaper |
 | \`orphan_session_detected\` | \`orphan_session_path\`, \`orphan_started_at\`, \`parent_session_hash\`, \`orphan_pid\` | session-map orphan detection (R-CCPM-3) |
 | \`session_map_collision_blocked\` | \`existing_session_path\`, \`existing_pid\`, \`attempted_session_path\`, \`attempted_pid\`, \`cwd\` | session-map collision guard (R-CCPM-4) |
 

@@ -215,6 +215,89 @@ function parseTaskNoteSections(content) {
 function priorityFor(name) {
     return TASK_NOTE_PRIORITY[name] ?? 3;
 }
+function parsePsElapsedSeconds(raw) {
+    const value = raw.trim();
+    if (!value)
+        return null;
+    const [dayPart, clockPart] = value.includes('-') ? value.split('-', 2) : [null, value];
+    const segments = clockPart.split(':').map(segment => Number(segment));
+    if (segments.some(segment => !Number.isFinite(segment) || segment < 0))
+        return null;
+    const days = dayPart === null ? 0 : Number(dayPart);
+    if (!Number.isFinite(days) || days < 0)
+        return null;
+    if (segments.length === 2) {
+        const [minutes, seconds] = segments;
+        return (days * 86400) + (minutes * 60) + seconds;
+    }
+    if (segments.length === 3) {
+        const [hours, minutes, seconds] = segments;
+        return (days * 86400) + (hours * 3600) + (minutes * 60) + seconds;
+    }
+    return null;
+}
+function isFastTestRunnerCommand(command, extensionDir) {
+    if (!command.includes(extensionDir))
+        return false;
+    const normalized = command.replace(/\s+/g, ' ').trim();
+    const isNpmFastTest = /\bnpm(?:\s|$)/.test(normalized) && normalized.includes('run test:fast');
+    const isNodeTestChild = /\bnode(?:\s|$)/.test(normalized) && normalized.includes('--test');
+    return isNpmFastTest || isNodeTestChild;
+}
+export function parseOrphanedFastTestRunnersFromPs(psOutput, extensionDir, minAgeSeconds = 600) {
+    const results = [];
+    for (const rawLine of psOutput.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line)
+            continue;
+        const match = line.match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
+        if (!match)
+            continue;
+        const pid = Number(match[1]);
+        const ppid = Number(match[2]);
+        const etimeSeconds = parsePsElapsedSeconds(match[3]);
+        const command = match[4].trim();
+        if (!Number.isInteger(pid) || !Number.isInteger(ppid) || etimeSeconds === null)
+            continue;
+        if (ppid !== 1)
+            continue;
+        if (etimeSeconds <= minAgeSeconds)
+            continue;
+        if (!isFastTestRunnerCommand(command, extensionDir))
+            continue;
+        results.push({
+            pid,
+            ppid,
+            etime_seconds: etimeSeconds,
+            argv_summary: command,
+        });
+    }
+    return results;
+}
+export function reapOrphanedFastTestRunnersOnStartup(statePath, extensionDir, log, opts = {}) {
+    const scan = opts.scan ?? (() => execFileSync('ps', ['-axo', 'pid=,ppid=,etime=,command='], {
+        encoding: 'utf-8',
+        timeout: 5000,
+        maxBuffer: 1024 * 1024 * 8,
+    }));
+    const kill = opts.kill ?? ((pid) => {
+        process.kill(pid, 'SIGKILL');
+    });
+    const psOutput = opts.psOutput ?? scan(extensionDir);
+    const orphans = parseOrphanedFastTestRunnersFromPs(psOutput, extensionDir);
+    for (const orphan of orphans) {
+        kill(orphan.pid);
+        writeActivityEntry(statePath, {
+            event: 'orphan_test_runner_reaped',
+            ts: new Date().toISOString(),
+            pid: orphan.pid,
+            etime_seconds: orphan.etime_seconds,
+            argv_summary: orphan.argv_summary,
+        });
+        log(`reaped orphan fast-test runner pid=${orphan.pid} etime_seconds=${orphan.etime_seconds}`);
+    }
+    return orphans;
+}
 function normalizeBetweenTicketFailureFile(rawFile, workingDir) {
     const trimmed = rawFile.trim();
     if (!trimmed)
@@ -2885,6 +2968,13 @@ async function runMuxRunnerMain() {
             console.error(`Invalid state at ${statePath}:\n  - ${issues.join('\n  - ')}`);
             process.exit(2);
         }
+    }
+    try {
+        const extensionDir = path.join(extensionRoot, 'extension');
+        reapOrphanedFastTestRunnersOnStartup(statePath, extensionDir, log);
+    }
+    catch (err) {
+        log(`startup orphan fast-test reaper failed (ignored): ${safeErrorMessage(err)}`);
     }
     if (ownerState.tmux_mode === true &&
         (ownerState.active !== true || ownerState.pid !== process.pid)) {

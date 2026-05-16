@@ -506,6 +506,17 @@ const EVENT_CASES = [
     drop: 'action_taken',
   },
   {
+    type: 'orphan_test_runner_reaped',
+    valid: {
+      event: 'orphan_test_runner_reaped',
+      ts: TS,
+      pid: 4242,
+      etime_seconds: 901,
+      argv_summary: '/usr/local/bin/node --test /tmp/repo/extension/tests/example.test.js',
+    },
+    drop: 'argv_summary',
+  },
+  {
     type: 'orphan_session_detected',
     valid: {
       event: 'orphan_session_detected',
@@ -768,6 +779,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'setup_resume_chdir_applied',
     'ticket_runnability_resolved',
     'codex_manager_self_bootstrap_attempted',
+    'orphan_test_runner_reaped',
     'orphan_session_detected',
     'session_map_collision_blocked',
     'state_write_override_used',
