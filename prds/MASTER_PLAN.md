@@ -1,6 +1,6 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-05-15 PM (CDT). Historical narrative pre-2026-05-15 → `prds/MASTER_PLAN-archive.md`.
+**Last updated**: 2026-05-16 AM (CDT). Historical narrative pre-2026-05-15 → `prds/MASTER_PLAN-archive.md`.
 
 ## State of the world (for /clear resume)
 
@@ -81,6 +81,8 @@ Closed-finding detail → `MASTER_PLAN-archive.md`. Open findings carry a one-li
 | 25 | R-CSI | Concurrent claude-session destructive-command interference; 3 SIGINT incidents in 36h | `prds/p1-concurrent-claude-session-interference-with-running-pipelines.md`. Phase 1 forensics deferred per operator 2026-05-15 PM ("wait for next incident") |
 | 27 | R-MMRT | Monitor respawn uses temp-dir/empty sessionDir → 4-pane window collapse cascade. **Biting B2 NOW.** | `prds/p2-mux-runner-monitor-respawn-uses-temp-dir-not-session-root.md` (R-MMRT-1..6). Promoted P3→P2 2026-05-15 PM. **B-MONITOR co-bundle target with R-MWCL after B2 closes.** |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse | R-ICDM-1 ✅ shipped today (verify-then-close, `mux-runner.ts:1466` `eventTurns >= maxTurns`). R-ICDM-2..7 audit needed |
+| 42 | R-MRWG | mux-runner wedges indefinitely on unbounded `spawnSync('npm', ['run', 'test:fast'])` in `runBetweenTicketFastTests`; npm grandchildren leak as launchd orphans on worker-gate timeout. **Observed twice in 24h on B2.** | `prds/p1-mux-runner-wedges-13h-on-unbounded-between-ticket-gate-spawnsync.md` (R-MRWG-1..6). Filed 2026-05-16 post-13h-wedge. **B-MRWG queue priority HIGH — promote ahead of B-MONITOR.** |
+| 43 | R-WSRC | Worker source/state recursion contamination: a worker on R-QGSK-3 (schema migration) bumped `state.json.schema_version` to 5 in the live session, wedging the deployed v4 mux-runner in a 1-warn/sec retry loop. Separately, a leaked `claude --dangerously-skip-permissions --add-dir <real-repo>` subprocess from `mux-runner.test.js:782` audit-bundle-halt test fixture (`deadbeef`/phantom file) was found alive post-SIGTERM-fail (R-MRWG-2 ladder), with write access to operator's real working tree. | `prds/p1-worker-source-state-recursion-contamination.md` (R-WSRC-1..6). Filed 2026-05-16 via 4-agent debate analysis. **B-WSRC bundle ship in same window as B-MRWG (overlapping incident classes).** |
 
 ### Open (P2)
 
@@ -119,12 +121,14 @@ Closed-finding detail → `MASTER_PLAN-archive.md`. Open findings carry a one-li
 
 **Operator directive 2026-05-15 PM**: drain bug queue before features. Features deferred to `## Future epics` (R-MFW, R-GBK, R-MBSR, Hermes/Deepseek/OpenRouter, methodology PRDs). Sanctioned multi-PRD shared-file-surface bundles permitted at ≤14 tickets/bundle (Phase 1b precedent).
 
-**In-flight**: B2-RSU `pipeline-c543d227` (composes R-MWCL + R-WTB + R-QGSK + R-RSU; 22 atomic impl + 4 hardening; codex backend; iter 5 at last check).
+**In-flight**: B2-RSU `pipeline-c543d227` resumed 2026-05-16 09:37 CDT post-wedge recovery. 12 Done / 1 Skipped / 12 Todo / 1 In Progress (`22c36bf6` iter 1). Healed tickets `8240fdca` (`189d4d2f` 2026-05-15 PM) + `1d385443` (`b2ddf584` 2026-05-16 AM) — both via heal-via-edit-then-resume after R-MRWG wedges.
 
 | Bundle | Status | Composes | Tickets | Notes |
 |---|---|---|---|---|
-| **B2-RSU** (active) | 🟡 IN-FLIGHT | R-MWCL + R-WTB + R-QGSK + R-RSU | 22+4 | Operational tax trifecta + refinement unblock. R-MWCL-1 ✅ `3ac31602`; R-MWCL-2 deferred `dfaf9dcc` (contradictory AC — R-MDS-3 already wires checkAndSwapMode); R-MWCL-3 currently in progress. **Closes Findings #29/#30/#34 + slot #29 on success.** |
-| **B-MONITOR** | 🔴 NEXT | R-MMRT + R-MWCL residuals | ~6-10 | **Highest priority post-B2.** R-MMRT (Finding #27, P2, PRD filed today) fixes monitor sessionDir validation; cascade-killed the B2 monitor mid-run. Co-bundle with any R-MWCL residuals not absorbed by B2 (R-MWCL-3..7). Shared `pickle-utils.ts` + `monitor.ts` surface. |
+| **B2-RSU** (active) | 🟡 IN-FLIGHT | R-MWCL + R-WTB + R-QGSK + R-RSU | 22+4 | Operational tax trifecta + refinement unblock. **Wedged 13h overnight 2026-05-15→2026-05-16 on R-MRWG (see Finding #42).** R-MWCL-1 ✅ `3ac31602`; R-MWCL-2 deferred `dfaf9dcc`; R-MWCL-6 ✅ `189d4d2f` (healed); R-QGSK-2 ✅ `b2ddf584` (healed). **Closes Findings #29/#30/#34 + slot #29 on success.** |
+| **B-MRWG** | 🔴 NEXT (P1) | R-MRWG (Finding #42) | ~6 | **Highest priority post-B2.** PRD `prds/p1-mux-runner-wedges-13h-on-unbounded-between-ticket-gate-spawnsync.md`. Addresses 13h-wedge bug class: timeout on `runBetweenTicketFastTests` (mux-runner.ts:257), descendant-tree kill in `runCommand` (spawn-morty.ts:599), mux-runner stall detector, orphan reaper, pipeline-runner child-stall heartbeat. **Every future codex-backend bundle is at risk without this.** |
+| **B-WSRC** | 🔴 NEXT (P1, co-ship with B-MRWG) | R-WSRC (Finding #43) | ~6 | **Co-ship with B-MRWG.** PRD `prds/p1-worker-source-state-recursion-contamination.md`. Addresses worker contamination of runtime state: schema-ceiling check at `StateManager.update()` write site (~5-30 LOC), schema-ahead graceful exit at `sm.read()` sites in mux-runner, PreToolUse hook + bash-scanner blocking writes to `state.json`/`circuit_breaker.json`/`pickle_settings.json`/`~/.claude/pickle-rick/**`, test-harness `--add-dir` containment assertion. Also lands CLAUDE.md + AGENTS.md + send-to-morty.md prose updates (defense-in-depth). 4-agent debate consensus: 80% value with the StateManager.update() ceiling alone. |
+| **B-MONITOR** | 🟢 QUEUED | R-MMRT + R-MWCL residuals | ~6-10 | R-MMRT (Finding #27, P2, PRD filed 2026-05-15) fixes monitor sessionDir validation; cascade-killed the B2 monitor mid-run. Co-bundle with any R-MWCL residuals not absorbed by B2 (R-MWCL-3..7). Shared `pickle-utils.ts` + `monitor.ts` surface. **Demoted from NEXT in favor of B-MRWG (P1 pipeline-bricking).** |
 | **B-R-MMTR** | 🟢 QUEUED | R-ICDM-2..7 + R-MMTRH heal + R-MMTR-7 closer | ~6-8 | R-ICDM-1 shipped today. Audit R-ICDM-2..7 against HEAD (likely verify-then-close); heal R-MMTR-2/3/4 Skipped→Done; closer writes version-bump + parity. **Closes Findings #19 + #28.** |
 | **B-E2E** | 🟢 QUEUED | R-MMTR6S | 4 sub | E2E re-attempt of force-skipped R-MMTR-6: fixture / harness / cases / CI wiring. Ships after B-R-MMTR closer. |
 | **B-GATE** | 🟢 QUEUED | R-FGNC + R-PVTA + R-VSGE | ≤8 | P2 gate classifier + verification command robustness. **R-PVTA + R-VSGE need PRDs drafted** (sketches in Findings #39/#40). **Closes Findings #18/#39/#40.** |
@@ -162,7 +166,9 @@ The operational queue is `## 🔔 Active Queue` above. This section lists open P
 
 | Path | Status | Notes |
 |---|---|---|
-| `p1-codex-manager-prompt-pollution.md` | **Refined (P1, NEXT bundle)** | R-CCPM Phase 1a-bis successor to R-CCPL. Stage 1 forensic at `prds/research-r-ccpl-7fe6da60-2026-05-15.md` selects hypothesis H-D (codex executes operator-facing setup.js examples as actions). 5 atomic tickets, single-PRD bundle. Filed 2026-05-15 at commit `6f635a8d`. |
+| `p1-worker-source-state-recursion-contamination.md` | **Refined (P1, NEXT bundle B-WSRC co-ship)** | R-WSRC-1..6. Filed 2026-05-16 via 4-agent debate. Worker writes to live runtime state + leaked subprocess with `--dangerously-skip-permissions --add-dir <real-repo>`. Single-PRD bundle, 6 tickets. 80% value with the StateManager.update() schema-ceiling alone. |
+| `p1-mux-runner-wedges-13h-on-unbounded-between-ticket-gate-spawnsync.md` | **Refined (P1, NEXT bundle B-MRWG)** | R-MRWG-1..6. Filed 2026-05-16 post-13h-wedge on B2. Single-PRD bundle, 6 tickets. Pipeline-bricking, recurrence-observed-twice-in-24h. |
+| `p1-codex-manager-prompt-pollution.md` | **Refined (P1)** | R-CCPM Phase 1a-bis successor to R-CCPL. Stage 1 forensic at `prds/research-r-ccpl-7fe6da60-2026-05-15.md` selects hypothesis H-D (codex executes operator-facing setup.js examples as actions). 5 atomic tickets, single-PRD bundle. Filed 2026-05-15 at commit `6f635a8d`. |
 | `p1-deployed-pkgjson-version-only-revert.md` | **Diagnosis-only (P1)** | Deploy-revert bug class: pkg.json:version reverts while file content-hashes match. Research at `prds/research-slot-K-pjv-writer-2026-05-07.md`. |
 | `p1-strip-excessive-defense-deploy-reversion.md` | **Partial** | Cron sampler stripped (`c2ec3cf1`); ~480 LOC of mux pre-flight, scheduled finalizer, launch-gate verifier still queued. |
 | `multi-repo-task-state-drift.md` | **Refined draft** | T1-T4 partially shipped pre-v1.63.0; remainder TBD. Queued in follow-up bundle. |

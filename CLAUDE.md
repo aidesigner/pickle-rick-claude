@@ -2,6 +2,27 @@
 
 PRD → Breakdown → Research → Plan → Implement → Verify → Review → Simplify.
 
+## ⛔ Worker Forbidden Operations (R-WSRC)
+
+**This codebase is a meta-tool that develops itself.** Workers run with full filesystem access to the running runtime. Certain operations corrupt the runtime mid-flight and MUST NEVER be performed by any worker (claude OR codex backend). Read this section before touching any file.
+
+| Operation | Why forbidden | Override | Runtime trap door |
+|---|---|---|---|
+| Write to `<session>/state.json` or any `.tmp.<pid>` snapshot | A worker write trips `StateManager.recoverOrphanTmpFiles` promotion → the running mux-runner reads corrupted state and wedges (R-QGSK-3 incident 2026-05-16). The orphan-tmp promotion auto-renames any `.tmp.<dead-pid>` over `state.json`. | `state.flags.allow_state_writes_reason` (non-empty string) for schema-migration tickets only; emits `state_write_override_used` event per bypass | `extension/src/services/state-manager.ts` (R-WSRC-1 ceiling check at `update()` / `forceWrite()`) + `extension/src/hooks/handlers/config-protection.ts` (R-WSRC-3 PreToolUse hook) |
+| Write to `circuit_breaker.json`, `pipeline-status.json`, or their `.tmp.*` snapshots | Worker writes change the circuit breaker state of the running pipeline; the breaker controls halt behavior. Pipeline-status corruption races the monitor's liveness probe. | none — hard prohibition | `extension/src/hooks/handlers/config-protection.ts` (R-WSRC-3) |
+| Write to `pickle_settings.json` or its `.tmp.*` snapshots | Settings control tier budgets, timeout caps, and feature flags GLOBALLY. A worker write changes the behavior of every subsequent ticket and session. | `state.flags.allow_settings_writes_reason` (non-empty string); emits `state_write_override_used` event per bypass | `extension/src/hooks/handlers/config-protection.ts` (R-WSRC-3) |
+| Bump `LATEST_SCHEMA_VERSION` in `extension/src/types/index.ts` (or its compiled mirror) | Source bump without coordinated deploy causes `assertSchemaVersionDeployParity()` to throw on every fresh-process state read. Compiled-mirror bump bypasses the install.sh parity gate. | Schema-migration ticket only, paired with the `_internalSchemaBump` migration helper in `StateManager`; coordinated `bash install.sh` deploy required in the same commit | `extension/src/services/state-manager.ts` (R-WSRC-1) + `install.sh` AC-RVN-08 parity gate |
+| Run `bash install.sh` from inside a worker subprocess | Redeploys the running runtime mid-session. Any process holding `require()`-cached modules then runs torn code. The schema parity check is a startup-only invariant. | none — hard prohibition | (none yet; ship in R-WSRC-3 extended bash-scanner) |
+| Write to `~/.claude/pickle-rick/**` (deployed runtime path) | Mid-session edits to deployed binaries invalidate in-memory module cache. `getExtensionRoot()` resolves to this path; it's passed in every worker's `--add-dir`, granting write access. | none — hard prohibition | `extension/src/hooks/handlers/config-protection.ts` (R-WSRC-3) |
+| Spawn `claude --dangerously-skip-permissions --add-dir <real-repo>` from a test | Leaked subprocesses (R-MRWG-2 SIGTERM non-propagation) retain unrestricted write access to the operator's real working tree indefinitely. | none — test harness must use `os.tmpdir()`-rooted working_dir | `extension/src/services/backend-spawn.ts` (R-WSRC-4 PICKLE_TEST_MODE assertion) + `extension/scripts/audit-test-add-dir-containment.sh` |
+| Write into another ticket's directory (`<session>/<other-ticket-hash>/`) | Cross-ticket writes corrupt sibling research/plan/conformance artifacts. The corrupted ticket may then be promoted to Done on stale evidence. | none — hard prohibition | `extension/src/bin/check-scope-diff.ts` (existing scope preflight) |
+| Spawn child processes without a finite `timeout` option | Unbounded subprocesses outlive the worker's SIGTERM (R-MRWG-2 root cause). Hung child processes accumulate as launchd orphans. | none — pattern enforced per-callsite | Per-file trap doors (e.g., `src/bin/plumbus-frame-analyzer.ts`, `src/services/ac-phase-gate.ts`); B-MRWG bundle adds general-purpose check |
+| Emit orchestrator promise tokens (`EPIC_COMPLETED`, `TASK_COMPLETED`, `PRD_COMPLETE`, `TICKET_SELECTED`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, `ANALYSIS_DONE`) | Workers have no authority to claim epic-done, ticket-selected, review-clean, or analysis-done. Premature tokens advance pipeline state before work is real. Worker's ONLY valid completion is `<promise>I AM DONE</promise>`. | none — hard prohibition | `extension/src/services/promise-tokens.ts` `scrubForbiddenWorkerTokens` (runtime-blocked) |
+
+**Defense-in-depth note**: prose alone is worthless (the existing `NEVER modify state.json` in `send-to-morty.md:61` was already there and was violated by R-QGSK-3). This table is paired with runtime trap doors that enforce the rules at the write site / read site / spawn site. The prose's job is to (a) make workers self-aware, (b) cite the runtime check so workers know it's real and not bypassable, (c) provide override discoverability for legitimate use cases.
+
+**See**: `prds/p1-worker-source-state-recursion-contamination.md` for full bug class analysis and atomic ticket breakdown.
+
 ## Documentation Rule
 
 When adding, removing, or modifying commands (`.claude/commands/*.md`), update `README.md`. Docs drift = bugs.
