@@ -2145,16 +2145,16 @@ function resolveQualityGateSkipReason(
     return { reason: unifiedReason };
   }
 
-  const legacyCandidates: Array<['skip_readiness_reason' | 'skip_ticket_audit_reason', unknown]> = [
-    ['skip_readiness_reason', flags?.skip_readiness_reason],
-    ['skip_ticket_audit_reason', flags?.skip_ticket_audit_reason],
-  ];
-  const matchedLegacy = legacyCandidates.find(([, value]) => typeof value === 'string' && value.trim().length > 0);
-  if (!matchedLegacy) {
+  // R-QGSK-2 followup: scope the legacy fallback to the callsite's OWN legacy
+  // field. Previous implementation took the first set legacy flag regardless of
+  // callsite, which silently bypassed ticket_audit_gate whenever
+  // skip_readiness_reason was set (broke mux-runner.audit-bundle-halt test).
+  const legacyField: 'skip_readiness_reason' | 'skip_ticket_audit_reason' =
+    callsite === 'readiness_gate' ? 'skip_readiness_reason' : 'skip_ticket_audit_reason';
+  const legacyValueRaw = flags?.[legacyField];
+  if (typeof legacyValueRaw !== 'string' || legacyValueRaw.trim().length === 0) {
     return {};
   }
-
-  const [legacyField, legacyValueRaw] = matchedLegacy;
   const legacyValue = (legacyValueRaw as string).trim();
   const suppressDeprecation =
     state.flags?.skip_quality_gates_deprecation_warning === true;
