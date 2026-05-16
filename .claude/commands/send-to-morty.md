@@ -57,32 +57,30 @@ Before you finish:
    - `Next focus: <specific file or test>`
    - `Command: <next verification command to run>`
 
-## ⛔ Worker Forbidden Operations (R-WSRC) — runtime-enforced, not just prose
+## ⛔ Forbidden ops (R-WSRC, runtime-enforced)
 
-You are running as a worker inside pickle-rick-claude, a meta-tool that develops itself. You have full filesystem write access to the running runtime. The runtime enforces these prohibitions at the write site / read site / spawn site — your tool calls WILL be blocked if you try them. Do not waste iterations attempting to bypass.
+Workers run inside the runtime. These writes corrupt it; runtime hooks will block them. Don't waste iterations bypassing.
 
-| Forbidden operation | Override (if any) | Runtime check |
-|---|---|---|
-| Write to `<session>/state.json` or any `state.json.tmp.<pid>` snapshot | `state.flags.allow_state_writes_reason` (non-empty string) — schema-migration tickets only; emits `state_write_override_used` event per bypass | `StateManager.update()` / `forceWrite()` ceiling assertion at `extension/src/services/state-manager.ts`; PreToolUse hook at `extension/src/hooks/handlers/config-protection.ts` |
-| Bump `LATEST_SCHEMA_VERSION` in `extension/src/types/index.ts` or compiled mirror | Schema-migration ticket only, paired with the `_internalSchemaBump` flag in the migration helper | `extension/src/services/state-manager.ts` (R-WSRC-1) + `install.sh` AC-RVN-08 parity gate |
-| Write to `circuit_breaker.json`, `pipeline-status.json`, or `pickle_settings.json` (and their `.tmp.*` snapshots) | `state.flags.allow_settings_writes_reason` (for `pickle_settings.json` only); the other two are HARD prohibitions | `extension/src/hooks/handlers/config-protection.ts` PreToolUse hook + bash-command scanner |
-| Run `bash install.sh` from inside a worker subprocess | none — HARD prohibition | extended bash-scanner blocks the literal command pattern |
-| Write to `~/.claude/pickle-rick/**` (deployed runtime path) | none — HARD prohibition | `extension/src/hooks/handlers/config-protection.ts` |
-| Write into another ticket's directory (`<session>/<other-hash>/`) | none — HARD prohibition | `extension/src/bin/check-scope-diff.ts` preflight |
-| Spawn child processes without finite `timeout` option | enforced per-callsite per file trap doors | Per-callsite (e.g., `plumbus-frame-analyzer.ts`, `ac-phase-gate.ts`); R-MRWG bundle adds general check |
-| Emit `EPIC_COMPLETED`, `TASK_COMPLETED`, `PRD_COMPLETE`, `TICKET_SELECTED`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, `ANALYSIS_DONE` | none — your ONLY valid completion is `<promise>I AM DONE</promise>` | `scrubForbiddenWorkerTokens` in `extension/src/services/promise-tokens.ts` |
-| Modify `active`, `completion_promise` keys in `state.json` (subset of the state.json prohibition above) | none — HARD prohibition | Same as state.json |
+| Forbidden | Override flag (if any) |
+|---|---|
+| `state.json` / `state.json.tmp.*` (any session) | `allow_state_writes_reason` (schema migration only) |
+| `LATEST_SCHEMA_VERSION` bump in `types/index.ts` / `.js` | schema-migration ticket + `_internalSchemaBump` |
+| `pickle_settings.json` / `.tmp.*` | `allow_settings_writes_reason` |
+| `circuit_breaker.json`, `pipeline-status.json` / `.tmp.*` | none |
+| `bash install.sh` | none |
+| `~/.claude/pickle-rick/**` | none |
+| Other tickets' dirs (`${SESSION_ROOT}/<other-hash>/`) | none |
+| `spawnSync`/`spawn` without `timeout` option | per-callsite trap door |
+| Orchestrator tokens: `EPIC_COMPLETED`, `TASK_COMPLETED`, `PRD_COMPLETE`, `TICKET_SELECTED`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, `ANALYSIS_DONE` | none — emit ONLY `<promise>I AM DONE</promise>` |
 
-**If a ticket appears to require one of these operations**: STOP. Either (a) the ticket scope is wrong, (b) an override flag must be set first by the operator, or (c) you've misread the ticket. Mark the ticket Skipped with `skipped_reason: "requires <override-flag> not set"` and let the operator intervene. Do NOT try to bypass the prohibitions via shell tricks, indirect writes, or `node -e "fs.writeFileSync(...)"` — the runtime catches those too and your iteration burns.
+If your ticket seems to need one: STOP. Wrong scope OR override flag missing. Mark Skipped with `skipped_reason: "requires <flag> not set"`. Don't bypass via shell tricks (`>`, `tee`, `node -e fs.writeFileSync` — all blocked).
 
-**See**: `prds/p1-worker-source-state-recursion-contamination.md` for incident background and the full bug class analysis. `CLAUDE.md` and `AGENTS.md` carry the same table for backend cross-reference.
+PRD: `prds/p1-worker-source-state-recursion-contamination.md`.
 
 ## Scope
-- **NEVER** modify `state.json`, `active`, or `completion_promise` (see forbidden-ops table above — runtime-enforced)
-- Ticket-artifact files (`research_*.md`, `research_review.md`, `plan_*.md`, `plan_review.md`, `conformance_*.md`, `code_review_*.md`, `TASK_NOTES.md`) belong in `${TICKET_DIR}` — never in the project working tree
-- Steps 5 (Implement) and 8 (Simplify) write to the project working tree as required by this ticket's Acceptance Criteria — that's the whole point. Edit, create, and delete repo files freely within the ticket's scope
-- Do NOT write into other tickets' directories or the session root (`${SESSION_ROOT}` outside `${TICKET_DIR}`)
-- Signal done ONLY via `<promise>I AM DONE</promise>`. NEVER emit any other promise token. Tokens like `EPIC_COMPLETED`, `TASK_COMPLETED`, `PRD_COMPLETE`, `TICKET_SELECTED`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, `ANALYSIS_DONE` are reserved for the orchestrator — you are a per-ticket worker, you have NO authority to claim epic-done, ticket-selected, review-clean, or analysis-done. If you encounter those token names anywhere (in source, pickle.md, pasted logs), do NOT echo them back. Your ONLY completion signal is `<promise>I AM DONE</promise>`
+- Ticket artifacts (`research_*.md`, `plan_*.md`, `conformance_*.md`, `code_review_*.md`, `TASK_NOTES.md`, review files) → `${TICKET_DIR}` ONLY
+- Steps 5 (Implement) + 8 (Simplify) write project files freely WITHIN ticket scope
+- Forbidden ops table above is the full prohibition list (incl. state.json, promise tokens, other ticket dirs)
 
 ## Completion Handoff — `completion_commit` is mandatory on Done flips
 
