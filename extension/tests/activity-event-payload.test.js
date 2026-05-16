@@ -768,6 +768,8 @@ test('activity-event-payload: schema defines all registered event type definitio
     'codex_manager_self_bootstrap_attempted',
     'orphan_session_detected',
     'session_map_collision_blocked',
+    'state_write_override_used',
+    'state_write_schema_version_violation',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

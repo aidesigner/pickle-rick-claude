@@ -261,6 +261,8 @@ export const VALID_ACTIVITY_EVENTS = [
     'codex_manager_self_bootstrap_attempted',
     'orphan_session_detected',
     'session_map_collision_blocked',
+    'state_write_override_used',
+    'state_write_schema_version_violation',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {
@@ -281,6 +283,16 @@ const MICROVERSE_FAILURE_REASONS = new Set([
 export function isMicroverseFailureExit(reason) {
     return MICROVERSE_FAILURE_REASONS.has(reason);
 }
+/**
+ * R-WSRC-2 — Forward-schema state.json exit reason consumed by mux-runner.
+ * Written by `recordExitReason(statePath, STATE_SCHEMA_VERSION_AHEAD_EXIT_REASON)`
+ * when `sm.read()` throws `SchemaVersionAheadError`/`SCHEMA_MISMATCH`. Listed
+ * in the mux-runner `ExitReason` union and `isFailureExit` set, but
+ * intentionally NOT in `MICROVERSE_FAILURE_REASONS` above (it is a fatal-but-
+ * operator-recoverable state, not a microverse-class failure). auto-resume.sh
+ * R-CNAR-4(c) stops on this exit reason because it is in `isFailureExit`.
+ */
+export const STATE_SCHEMA_VERSION_AHEAD_EXIT_REASON = 'state_schema_version_ahead';
 // ---------------------------------------------------------------------------
 // DOT Builder Types
 // ---------------------------------------------------------------------------

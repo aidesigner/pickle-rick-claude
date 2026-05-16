@@ -1,0 +1,447 @@
+// @tier: fast
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const HANDLER = path.resolve(__dirname, '../hooks/handlers/config-protection.js');
+
+function writeExtensionSentinel(extensionDir) {
+  const sentinelDir = path.join(extensionDir, 'extension', 'bin');
+  fs.mkdirSync(sentinelDir, { recursive: true });
+  fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+}
+
+function baseState(overrides = {}) {
+  return {
+    active: true,
+    working_dir: process.cwd(),
+    step: 'implement',
+    iteration: 1,
+    max_iterations: 5,
+    max_time_minutes: 60,
+    worker_timeout_seconds: 1200,
+    start_time_epoch: Math.floor(Date.now() / 1000) - 30,
+    completion_promise: null,
+    original_prompt: 'test task',
+    current_ticket: null,
+    history: [],
+    started_at: new Date().toISOString(),
+    session_dir: '/tmp/pickle-test',
+    tmux_mode: false,
+    ...overrides,
+  };
+}
+
+/**
+ * Bootstrap a temp pickle-rick data root with an active session and an
+ * extension sentinel. Returns { tmpDir, sessionDir, stateFile, dataRoot }.
+ * `flags` (optional) is merged into state.flags.
+ */
+function bootstrapSession({ flags } = {}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-state-'));
+  writeExtensionSentinel(tmpDir);
+  const sessionDir = path.join(tmpDir, 'sessions', 'session');
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const stateFile = path.join(sessionDir, 'state.json');
+  const state = baseState({ session_dir: sessionDir });
+  if (flags) state.flags = flags;
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+  fs.writeFileSync(
+    path.join(tmpDir, 'current_sessions.json'),
+    JSON.stringify({ [process.cwd()]: sessionDir }),
+  );
+  return { tmpDir, sessionDir, stateFile, dataRoot: tmpDir };
+}
+
+function runHandler({ tmpDir, stateFile, toolName, toolInput, extraEnv = {} }) {
+  const env = {
+    ...process.env,
+    EXTENSION_DIR: tmpDir,
+    PICKLE_DATA_ROOT: tmpDir,
+    PICKLE_STATE_FILE: stateFile,
+    FORCE_COLOR: '0',
+    ...extraEnv,
+  };
+  const input = JSON.stringify({ tool_name: toolName, tool_input: toolInput });
+  const stdout = execFileSync(process.execPath, [HANDLER], {
+    input,
+    encoding: 'utf-8',
+    env,
+  });
+  return JSON.parse(stdout.trim());
+}
+
+// ---------------------------------------------------------------------------
+// R-WSRC-3: Write/Edit gate
+// ---------------------------------------------------------------------------
+
+test('R-WSRC-3: blocks Write to <session>/state.json without override', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: path.join(sessionDir, 'state.json') },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /state file protected/i);
+});
+
+test('R-WSRC-3: blocks Edit to <session>/state.json without override', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Edit',
+    toolInput: { file_path: path.join(sessionDir, 'state.json') },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Write to state.json.tmp.<pid> snapshot', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: path.join(sessionDir, 'state.json.tmp.12345') },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Write to circuit_breaker.json', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: path.join(sessionDir, 'circuit_breaker.json') },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Write to circuit_breaker.json.tmp.<pid>', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: path.join(sessionDir, 'circuit_breaker.json.tmp.999') },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Write to pipeline-status.json', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: path.join(sessionDir, 'pipeline-status.json') },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Write to pipeline-status.json.tmp.<pid>', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: path.join(sessionDir, 'pipeline-status.json.tmp.777') },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Edit to ~/.claude/pickle-rick/** runtime file', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Edit',
+    toolInput: {
+      file_path: path.resolve(os.homedir(), '.claude/pickle-rick/extension/services/state-manager.js'),
+    },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Write to pickle_settings.json', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: path.join(tmpDir, 'pickle_settings.json') },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Write to pickle_settings.json.tmp.<pid>', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: path.join(tmpDir, 'pickle_settings.json.tmp.1234') },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+// ---------------------------------------------------------------------------
+// Override flags
+// ---------------------------------------------------------------------------
+
+function readActivityEvents(dataRoot) {
+  const activityDir = path.join(dataRoot, 'activity');
+  if (!fs.existsSync(activityDir)) return [];
+  const events = [];
+  for (const file of fs.readdirSync(activityDir)) {
+    if (!file.endsWith('.jsonl')) continue;
+    const content = fs.readFileSync(path.join(activityDir, file), 'utf-8');
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      try { events.push(JSON.parse(line)); } catch { /* skip */ }
+    }
+  }
+  return events;
+}
+
+test('R-WSRC-3: allow_state_writes_reason bypasses Write block and emits state_write_override_used', () => {
+  const { tmpDir, sessionDir, stateFile, dataRoot } = bootstrapSession({
+    flags: { allow_state_writes_reason: 'R-QGSK-3 schema migration' },
+  });
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: target },
+  });
+  assert.equal(result.decision, 'approve');
+
+  const events = readActivityEvents(dataRoot).filter((e) => e.event === 'state_write_override_used');
+  assert.equal(events.length, 1, 'expected exactly one state_write_override_used event');
+  assert.equal(events[0].gate_payload.blocked_path, target);
+  assert.equal(events[0].gate_payload.override_reason, 'R-QGSK-3 schema migration');
+  assert.equal(events[0].gate_payload.tool_name, 'Write');
+  assert.equal(typeof events[0].gate_payload.callsite_pid, 'number');
+});
+
+test('R-WSRC-3: empty/whitespace allow_state_writes_reason does NOT bypass', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession({
+    flags: { allow_state_writes_reason: '   ' },
+  });
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: path.join(sessionDir, 'state.json') },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: allow_settings_writes_reason bypasses pickle_settings.json only', () => {
+  const { tmpDir, stateFile, dataRoot } = bootstrapSession({
+    flags: { allow_settings_writes_reason: 'settings tuning' },
+  });
+  const settingsTarget = path.join(tmpDir, 'pickle_settings.json');
+  const settingsResult = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: settingsTarget },
+  });
+  assert.equal(settingsResult.decision, 'approve');
+
+  // But state.json writes still blocked.
+  const stateResult = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: path.join(path.dirname(stateFile), 'state.json') },
+  });
+  assert.equal(stateResult.decision, 'block');
+
+  const events = readActivityEvents(dataRoot).filter((e) => e.event === 'state_write_override_used');
+  assert.equal(events.length, 1);
+  assert.equal(events[0].gate_payload.blocked_path, settingsTarget);
+});
+
+// ---------------------------------------------------------------------------
+// Bash output-redirect gate
+// ---------------------------------------------------------------------------
+
+test('R-WSRC-3: blocks Bash `echo {} > <session>/state.json`', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo '{}' > ${target}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Bash `cat /etc/hosts > <session>/state.json`', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `cat /etc/hosts > ${target}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Bash `>>` append to state.json', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo extra >> ${target}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Bash `tee` writing to circuit_breaker.json', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'circuit_breaker.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo '{}' | tee ${target}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Bash `cp src state.json`', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `cp /tmp/src.json ${target}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Bash `mv src state.json`', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `mv /tmp/src.json ${target}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Bash `rsync ... pipeline-status.json`', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'pipeline-status.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `rsync -a /tmp/src.json ${target}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: allow_state_writes_reason bypasses Bash redirect block', () => {
+  const { tmpDir, sessionDir, stateFile, dataRoot } = bootstrapSession({
+    flags: { allow_state_writes_reason: 'schema migration' },
+  });
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo '{}' > ${target}` },
+  });
+  assert.equal(result.decision, 'approve');
+  const events = readActivityEvents(dataRoot).filter((e) => e.event === 'state_write_override_used');
+  assert.equal(events.length, 1);
+  assert.equal(events[0].gate_payload.tool_name, 'Bash');
+});
+
+test('R-WSRC-3: approves Bash with no protected destination', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo hi > ${path.join(sessionDir, 'note.txt')}` },
+  });
+  assert.equal(result.decision, 'approve');
+});
+
+// ---------------------------------------------------------------------------
+// Fail-open: scanner crash must approve, not block
+// ---------------------------------------------------------------------------
+
+test('R-WSRC-3: hook fails open on scanner crash (malformed hook input)', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const env = {
+    ...process.env,
+    EXTENSION_DIR: tmpDir,
+    PICKLE_DATA_ROOT: tmpDir,
+    PICKLE_STATE_FILE: stateFile,
+    FORCE_COLOR: '0',
+  };
+  // Force a parse failure by passing non-JSON; the handler treats it as "no
+  // input" (approve). This guarantees that a scanner-side exception cannot
+  // leak through as a "block" — the wrapper's try/catch around main() is the
+  // last line of defense and approves on any throw.
+  const stdout = execFileSync(process.execPath, [HANDLER], {
+    input: 'not-json-at-all',
+    encoding: 'utf-8',
+    env,
+  });
+  assert.equal(JSON.parse(stdout.trim()).decision, 'approve');
+});
+
+test('R-WSRC-3: hook approves Write to unrelated file even when active session', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Write',
+    toolInput: { file_path: '/tmp/some-other-file.ts' },
+  });
+  assert.equal(result.decision, 'approve');
+});
+
+test('R-WSRC-3: no active session approves protected state writes (fail-open)', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-state-noactive-'));
+  writeExtensionSentinel(tmpDir);
+  const env = {
+    ...process.env,
+    EXTENSION_DIR: tmpDir,
+    PICKLE_DATA_ROOT: tmpDir,
+    FORCE_COLOR: '0',
+  };
+  delete env.PICKLE_STATE_FILE;
+  const stdout = execFileSync(process.execPath, [HANDLER], {
+    input: JSON.stringify({
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/foo/state.json' },
+    }),
+    encoding: 'utf-8',
+    env,
+  });
+  assert.equal(JSON.parse(stdout.trim()).decision, 'approve');
+});

@@ -77,8 +77,61 @@ export function detectOrphanSessions(
   return results;
 }
 
-function readRunnerState(statePath: string): State {
-  return sm.read(statePath);
+/**
+ * R-WSRC-2: schema-ahead graceful exit at the top-of-loop state read.
+ *
+ * `sm.read()` throws `SchemaVersionAheadError` (R-WSRC-1) or a raw
+ * `SCHEMA_MISMATCH` `StateError` when `state.json` carries a `schema_version`
+ * newer than the currently-deployed runtime supports (e.g., a worker writes a
+ * forward-schema state in violation of `send-to-morty.md:61`, or a mid-deploy
+ * schema bump leaves the on-disk file ahead of the running binary). Before
+ * R-WSRC-2, only the cap-check site routed SCHEMA_MISMATCH to `'continue'`;
+ * every other read site threw upward, the outer loop retried, and the runner
+ * wedged at 1 warn/sec indefinitely (R-QGSK-3 incident class).
+ *
+ * The wrapper catches both error shapes and forces a graceful, attributable
+ * exit: stamp `exit_reason = 'state_schema_version_ahead'`, deactivate, then
+ * `process.exit(3)` (PipelineRunnerExitCode.PhaseIncomplete) so auto-resume.sh
+ * R-CNAR-4(c) stops the loop instead of running the operator's budget down.
+ */
+export function readRunnerState(statePath: string): State {
+  try {
+    return sm.read(statePath);
+  } catch (err) {
+    if (isSchemaVersionAheadError(err)) {
+      handleSchemaVersionAhead(statePath, err);
+    }
+    throw err;
+  }
+}
+
+export function isSchemaVersionAheadError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: string; name?: string };
+  return e.code === 'SCHEMA_MISMATCH' || e.name === 'SchemaVersionAheadError';
+}
+
+function handleSchemaVersionAhead(statePath: string, err: unknown): never {
+  const msg = safeErrorMessage(err);
+  try {
+    process.stderr.write(
+      `[FATAL] state.json schema is ahead of this runtime: ${msg}. ` +
+      `Exiting with state_schema_version_ahead (code 3).\n`,
+    );
+  } catch { /* stderr write must not crash the exit path */ }
+  // recordExitReason + safeDeactivate go through forceWriteMutate, which itself
+  // calls sm.read(); on a schema-ahead state.json those reads also fail and the
+  // forensic stamp is dropped. Bypass via a direct forceWrite of the minimal
+  // forensic envelope. The on-disk forward-schema state is sacrificed (it was
+  // unreadable anyway) in favor of a parseable {active:false, exit_reason:...}
+  // record so dead-pid recovery, stop-hook, and auto-resume.sh R-CNAR-4(c) all
+  // see the exit attribution.
+  try {
+    sm.forceWrite(statePath, { active: false, exit_reason: 'state_schema_version_ahead' });
+  } catch { /* never throw on forensic stamp */ }
+  try { recordExitReason(statePath, 'state_schema_version_ahead'); } catch { /* never throw on forensic stamp */ }
+  try { safeDeactivate(statePath); } catch { /* never throw on deactivate */ }
+  process.exit(3);
 }
 
 function removeRunnerSessionMapEntry(statePath: string, log: (msg: string) => void): void {
@@ -2175,10 +2228,10 @@ export function appendPipelineRunnerMarker(sessionDir: string, message: string):
   } catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
 
-export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally';
+export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally' | 'state_schema_version_ahead';
 
 const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat';
-const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally';
+const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead';
 
 // ---------------------------------------------------------------------------
 // R-CNAR-6 — Spark codex smoke-run gate
@@ -3640,7 +3693,7 @@ async function runMuxRunnerMain() {
 
     iteration++;
     {
-      const checkState = sm.read(statePath);
+      const checkState = readRunnerState(statePath);
       const checkDir = checkState.working_dir || process.cwd();
       if (checkHeadPinMismatch(checkState, checkDir, sessionDir, statePath, log)) {
         exitReason = 'working_tree_modified_externally';

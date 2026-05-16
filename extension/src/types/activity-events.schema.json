@@ -831,6 +831,42 @@
         "attempted_pid": { "type": "integer" },
         "cwd": { "type": "string" }
       }
+    },
+    "state_write_override_used": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "state_write_override_used" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["blocked_path", "override_reason", "tool_name", "callsite_pid"],
+          "properties": {
+            "blocked_path": { "type": "string" },
+            "override_reason": { "type": "string" },
+            "tool_name": { "type": "string" },
+            "callsite_pid": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "state_write_schema_version_violation": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "state_write_schema_version_violation" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["written_value", "max_supported", "statePath", "caller_pid"],
+          "properties": {
+            "written_value": { "type": "integer" },
+            "max_supported": { "type": "integer" },
+            "statePath": { "type": "string" },
+            "caller_pid": { "type": "integer" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -889,6 +925,8 @@
     { "$ref": "#/definitions/ticket_runnability_resolved" },
     { "$ref": "#/definitions/codex_manager_self_bootstrap_attempted" },
     { "$ref": "#/definitions/orphan_session_detected" },
-    { "$ref": "#/definitions/session_map_collision_blocked" }
+    { "$ref": "#/definitions/session_map_collision_blocked" },
+    { "$ref": "#/definitions/state_write_override_used" },
+    { "$ref": "#/definitions/state_write_schema_version_violation" }
   ]
 }

@@ -1,7 +1,64 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { BACKENDS } from '../types/index.js';
 import { StateManager } from './state-manager.js';
+/**
+ * R-WSRC-4 — Test-harness sandbox assertion.
+ *
+ * Thrown by `buildClaudeWorkerInvocation` when `process.env.PICKLE_TEST_MODE === '1'`
+ * AND any `addDirs[i]` resolves (via `fs.realpathSync`) outside the canonical
+ * `os.tmpdir()`. Catches the leak class where a test fixture sets
+ * `working_dir: REPO_ROOT` (or `EXTENSION_DIR: REPO_ROOT`), spawns a worker,
+ * and the spawn timeout fires (R-MRWG-2) — the orphaned
+ * `claude --dangerously-skip-permissions --add-dir <real-repo>` subprocess
+ * then retains write access to the operator's real working tree.
+ */
+export class AddDirOutsideSandboxError extends Error {
+    offendingDirs;
+    tmpdirRealpath;
+    constructor(offendingDirs, tmpdirRealpath) {
+        super(`R-WSRC-4: PICKLE_TEST_MODE=1 but addDirs contain paths outside os.tmpdir() (${tmpdirRealpath}): ${offendingDirs.join(', ')}. ` +
+            `Test fixtures must root working_dir/EXTENSION_DIR under os.tmpdir() to prevent leaked claude subprocesses ` +
+            `retaining --add-dir <real-repo> write access.`);
+        this.name = 'AddDirOutsideSandboxError';
+        this.offendingDirs = offendingDirs;
+        this.tmpdirRealpath = tmpdirRealpath;
+    }
+}
+function realpathOrSelf(p) {
+    try {
+        return fs.realpathSync(p);
+    }
+    catch {
+        return p;
+    }
+}
+function isUnderTmpdirRealpath(dir, tmpdirRealpath) {
+    const resolved = realpathOrSelf(dir);
+    if (resolved === tmpdirRealpath)
+        return true;
+    return resolved.startsWith(tmpdirRealpath + path.sep);
+}
+/**
+ * R-WSRC-4: assert each addDir resolves under os.tmpdir() when PICKLE_TEST_MODE=1.
+ * No-op in production (env var unset). Returns silently on pass; throws
+ * `AddDirOutsideSandboxError` listing every offender on fail.
+ */
+export function assertAddDirsUnderTmpdirIfTestMode(addDirs) {
+    if (process.env.PICKLE_TEST_MODE !== '1')
+        return;
+    const tmpdirRealpath = realpathOrSelf(os.tmpdir());
+    const offenders = [];
+    for (const dir of addDirs) {
+        if (!dir)
+            continue;
+        if (!isUnderTmpdirRealpath(dir, tmpdirRealpath))
+            offenders.push(dir);
+    }
+    if (offenders.length > 0)
+        throw new AddDirOutsideSandboxError(offenders, tmpdirRealpath);
+}
 export function isBackend(value) {
     return typeof value === 'string' && BACKENDS.includes(value);
 }
@@ -210,6 +267,8 @@ export function buildManagerInvocation(backend, opts) {
     return buildClaudeManagerInvocation(opts);
 }
 function buildClaudeWorkerInvocation(opts) {
+    // R-WSRC-4: test-harness sandbox assertion. No-op unless PICKLE_TEST_MODE=1.
+    assertAddDirsUnderTmpdirIfTestMode(opts.addDirs);
     const args = ['--dangerously-skip-permissions'];
     for (const dir of opts.addDirs) {
         if (dir && existsSilently(dir))

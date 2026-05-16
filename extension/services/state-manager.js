@@ -11,7 +11,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { isRecord } from '../lib/is-record.js';
 import { STATE_MANAGER_DEFAULTS, LATEST_SCHEMA_VERSION, StateError, LockError, TransactionError, SchemaVersionMismatchError, VALID_ACTIVITY_EVENTS, } from '../types/index.js';
-import { writeStateFile, safeErrorMessage } from './pickle-utils.js';
+import { writeStateFile, safeErrorMessage, getDataRoot, formatLocalDateKey } from './pickle-utils.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 // ---------------------------------------------------------------------------
 // Deploy-parity self-check
@@ -42,6 +42,83 @@ export class SchemaVersionDeployDriftError extends StateError {
 export function assertSchemaVersionDeployParity() {
     if (STATE_MANAGER_DEFAULTS.schemaVersion !== LATEST_SCHEMA_VERSION) {
         throw new SchemaVersionDeployDriftError(STATE_MANAGER_DEFAULTS.schemaVersion, LATEST_SCHEMA_VERSION);
+    }
+}
+// ---------------------------------------------------------------------------
+// R-WSRC-1: Schema-version ceiling at write sites
+// ---------------------------------------------------------------------------
+/**
+ * Thrown by `StateManager.update()` and `StateManager.forceWrite()` when a
+ * mutator produces `state.schema_version > LATEST_SCHEMA_VERSION`. Defends the
+ * runtime against a worker subprocess writing a forward-schema state that the
+ * running binary cannot parse (R-QGSK-3 incident class). Bypass available via
+ * `{ _internalSchemaBump: true }` in opts — reserved for legitimate
+ * `migrateSchema` path only.
+ */
+export class SchemaVersionAheadError extends StateError {
+    writtenValue;
+    maxSupported;
+    statePath;
+    callerPid;
+    constructor(statePath, writtenValue, maxSupported) {
+        super('SCHEMA_MISMATCH', `[state-manager] FATAL: refusing to write state ${statePath} with ` +
+            `schema_version=${writtenValue} — exceeds max supported ${maxSupported}. ` +
+            `This usually indicates a worker subprocess wrote a forward-schema state. ` +
+            `R-WSRC-1 guard refuses the write to prevent runtime wedge.`);
+        this.name = 'SchemaVersionAheadError';
+        this.writtenValue = writtenValue;
+        this.maxSupported = maxSupported;
+        this.statePath = statePath;
+        this.callerPid = process.pid;
+    }
+}
+/**
+ * Append a `state_write_schema_version_violation` event to the activity JSONL
+ * file. Inline (no import of activity-logger.ts) to avoid a circular import
+ * with `backend-spawn.ts`. Best-effort — never throws.
+ */
+function emitSchemaVersionViolationActivity(statePath, writtenValue, maxSupported) {
+    try {
+        const ts = new Date();
+        const activityDir = path.join(getDataRoot(), 'activity');
+        fs.mkdirSync(activityDir, { recursive: true });
+        const event = {
+            ts: ts.toISOString(),
+            event: 'state_write_schema_version_violation',
+            source: 'pickle',
+            gate_payload: {
+                written_value: writtenValue,
+                max_supported: maxSupported,
+                statePath,
+                caller_pid: process.pid,
+            },
+        };
+        fs.appendFileSync(path.join(activityDir, `${formatLocalDateKey(ts)}.jsonl`), `${JSON.stringify(event)}\n`, { mode: 0o600 });
+    }
+    catch (err) {
+        try {
+            process.stderr.write(`[state-manager] failed to log state_write_schema_version_violation: ${safeErrorMessage(err)}\n`);
+        }
+        catch { /* stderr closed */ }
+    }
+}
+/**
+ * R-WSRC-1: refuse forward-schema writes. Called AFTER the mutator returns
+ * and BEFORE any `writeStateFile` invocation in both `update()` and
+ * `forceWrite()`. Bypassed only when `opts._internalSchemaBump === true`.
+ */
+function assertSchemaVersionWithinCeiling(statePath, state, opts) {
+    if (opts && opts._internalSchemaBump === true)
+        return;
+    const v = state.schema_version;
+    if (v === undefined || v === null)
+        return;
+    const num = Number(v);
+    if (!Number.isFinite(num))
+        return;
+    if (num > LATEST_SCHEMA_VERSION) {
+        emitSchemaVersionViolationActivity(statePath, num, LATEST_SCHEMA_VERSION);
+        throw new SchemaVersionAheadError(statePath, num, LATEST_SCHEMA_VERSION);
     }
 }
 // ---------------------------------------------------------------------------
@@ -424,11 +501,14 @@ export class StateManager {
     // -----------------------------------------------------------------------
     // update — lock, read, mutate, write, unlock
     // -----------------------------------------------------------------------
-    update(statePath, mutator) {
+    update(statePath, mutator, opts) {
         this.acquireLock(statePath);
         try {
             const state = this.read(statePath);
             mutator(state);
+            // R-WSRC-1: refuse forward-schema writes from workers. EXEMPTION via
+            // opts._internalSchemaBump for the legitimate migrateSchema path only.
+            assertSchemaVersionWithinCeiling(statePath, state, opts);
             writeStateFile(statePath, state);
             return state;
         }
@@ -513,7 +593,21 @@ export class StateManager {
     // -----------------------------------------------------------------------
     // forceWrite — best-effort, no lock, never throws
     // -----------------------------------------------------------------------
-    forceWrite(statePath, state) {
+    forceWrite(statePath, state, opts) {
+        // R-WSRC-1: refuse forward-schema writes BEFORE any tmp-rename in
+        // writeStateFile. EXEMPTION via opts._internalSchemaBump for legitimate
+        // migrateSchema path only. The assertion throws SchemaVersionAheadError
+        // which propagates out of forceWrite — callers (signal handlers, halt
+        // paths) MUST be prepared to surface this as a forensic failure. Other
+        // write errors continue to be swallowed per the existing contract.
+        try {
+            assertSchemaVersionWithinCeiling(statePath, state, opts);
+        }
+        catch (err) {
+            if (err instanceof SchemaVersionAheadError)
+                throw err;
+            // unreachable — assertSchemaVersionWithinCeiling only throws SchemaVersionAheadError
+        }
         try {
             writeStateFile(statePath, state);
         }

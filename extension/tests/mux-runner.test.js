@@ -1,6 +1,7 @@
 // @tier: fast
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -9,6 +10,9 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMUX_RUNNER_BIN = path.resolve(__dirname, '../bin/mux-runner.js');
+// @add-dir-safe: REPO_ROOT is referenced only by `runWithRealExtension` and
+// two gate-halt tests that short-circuit before any worker spawn — no
+// --add-dir REPO_ROOT can ever propagate into a spawned claude subprocess.
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
 /**
@@ -17,6 +21,16 @@ const REPO_ROOT = path.resolve(__dirname, '../..');
  */
 function makeTmpRoot() {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mux-runner-')));
+}
+
+/**
+ * R-WSRC-4: per-call tmpdir EXTENSION_DIR so a leaked claude subprocess
+ * (spawn timeout per R-MRWG-2) cannot inherit `--add-dir <real-repo>` write
+ * access. NEVER use REPO_ROOT here.
+ */
+function makeSandboxedExtensionDir() {
+    const name = 'pickle-mux-runner-test-' + crypto.randomBytes(4).toString('hex');
+    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), name + '-')));
 }
 
 async function waitFor(predicate, timeoutMs = 5000) {
@@ -29,8 +43,14 @@ async function waitFor(predicate, timeoutMs = 5000) {
 }
 
 /**
- * Run mux-runner.js as a subprocess with isolated EXTENSION_DIR.
- * @param {string} extDir - the EXTENSION_DIR to use
+ * Run mux-runner.js as a subprocess with a sandboxed (tmpdir-rooted) EXTENSION_DIR.
+ *
+ * R-WSRC-4: this helper MUST NOT accept REPO_ROOT. Tests that legitimately
+ * need the real extension binaries use `runWithRealExtension` instead (those
+ * tests halt at a gate BEFORE any worker spawn).
+ *
+ * @param {string|null} extDir - sandboxed extension dir under os.tmpdir();
+ *   when null/undefined, a fresh per-call tmpdir is allocated.
  * @param {string[]} args - additional arguments to pass
  */
 function run(extDir, args = []) {
@@ -38,7 +58,39 @@ function run(extDir, args = []) {
     // codex/tmux work. Fast-path tests (no-args, missing state.json, etc.)
     // exit in <100ms; the budget exists so node spawn + module load under
     // load doesn't blow the wall-clock and SIGKILL the subprocess.
-    const env = { ...process.env, EXTENSION_DIR: extDir };
+    const effectiveExtDir = extDir || makeSandboxedExtensionDir();
+    const realTmp = fs.realpathSync(os.tmpdir());
+    const resolvedExtDir = fs.realpathSync(effectiveExtDir);
+    if (resolvedExtDir !== realTmp && !resolvedExtDir.startsWith(realTmp + path.sep)) {
+        throw new Error(
+            `run(): extDir must be under os.tmpdir() (R-WSRC-4); got ${effectiveExtDir}. ` +
+            `Use runWithRealExtension for tests that need REPO_ROOT.`,
+        );
+    }
+    const env = { ...process.env, EXTENSION_DIR: effectiveExtDir };
+    delete env.PICKLE_ROLE;
+    env.PICKLE_BACKEND = 'claude';
+    return spawnSync(process.execPath, [TMUX_RUNNER_BIN, ...args], {
+        env,
+        encoding: 'utf-8',
+        timeout: 60000,
+    });
+}
+
+/**
+ * Run mux-runner.js with EXTENSION_DIR=REPO_ROOT so the real readiness/audit
+ * gate binaries resolve. ONLY for tests whose gate halts BEFORE any worker
+ * spawn (no `claude --add-dir <real-repo>` subprocess is ever constructed).
+ *
+ * @add-dir-safe: gate-halt tests never reach buildClaudeWorkerInvocation; no
+ * --add-dir propagation occurs because no worker is spawned.
+ */
+function runWithRealExtension(args = []) {
+    // @add-dir-safe: REPO_ROOT here drives EXTENSION_DIR for resolving real
+    // gate binaries; callers halt at the readiness or ticket-audit gate
+    // before any spawn-morty call, so no worker --add-dir arguments are
+    // ever constructed from REPO_ROOT.
+    const env = { ...process.env, EXTENSION_DIR: REPO_ROOT };
     delete env.PICKLE_ROLE;
     env.PICKLE_BACKEND = 'claude';
     return spawnSync(process.execPath, [TMUX_RUNNER_BIN, ...args], {
@@ -88,7 +140,10 @@ function writeGateSkipTicket(sessionDir, id = 'ok0001', status = 'Done') {
     ].join('\n'));
 }
 
-function writeGateSkipSession(sessionDir, flags) {
+function writeGateSkipSession(sessionDir, flags, workingDir) {
+    // R-WSRC-4: workingDir must be tmpdir-rooted, never REPO_ROOT. Caller
+    // owns sessionDir's tmpdir; we default to it when no override is passed.
+    const wd = workingDir || sessionDir;
     writeGateSkipTicket(sessionDir);
     fs.writeFileSync(path.join(sessionDir, 'decomposition_manifest.json'), JSON.stringify({
         requirements: ['REQ-1'],
@@ -101,16 +156,22 @@ function writeGateSkipSession(sessionDir, flags) {
         max_iterations: 1,
         worker_timeout_seconds: 1200,
         original_prompt: 'quality gate skip regression',
-        working_dir: REPO_ROOT,
+        working_dir: wd,
         command_template: 'pickle.md',
         flags,
     }, null, 2));
 }
 
 function runMuxRunnerWithDataRoot(sessionDir, dataRoot, stubBinDir) {
+    // R-WSRC-4: EXTENSION_DIR is a fresh tmpdir-rooted sandbox so the worker's
+    // getExtensionRoot() never resolves to REPO_ROOT and --add-dir REPO_ROOT
+    // can never propagate into the spawned (stubbed) claude subprocess. The
+    // quality-gate-skip tests SKIP readiness + ticket-audit gates, so the real
+    // gate binaries are unused.
+    const sandboxedExtensionDir = makeSandboxedExtensionDir();
     const env = {
         ...process.env,
-        EXTENSION_DIR: REPO_ROOT,
+        EXTENSION_DIR: sandboxedExtensionDir,
         PICKLE_BACKEND: 'claude',
         PICKLE_DATA_ROOT: dataRoot,
         PATH: `${stubBinDir}:${process.env.PATH || ''}`,
@@ -763,7 +824,9 @@ test('mux-runner: runs readiness gate at iteration 0 before manager spawn', () =
             command_template: 'pickle.md',
         }, null, 2));
 
-        const result = run(path.resolve(__dirname, '../..'), [sessionDir]);
+        // @add-dir-safe: readiness gate halts before any worker spawn — no
+        // --add-dir REPO_ROOT propagates into a claude subprocess.
+        const result = runWithRealExtension([sessionDir]);
         const runnerLog = fs.readFileSync(path.join(sessionDir, 'mux-runner.log'), 'utf-8');
         const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
 
@@ -817,7 +880,10 @@ test('mux-runner.audit-bundle-halt: halts before manager spawn on defective tick
             },
         }, null, 2));
 
-        const result = run(path.resolve(__dirname, '../..'), [sessionDir]);
+        // @add-dir-safe: audit-bundle-halt fires BEFORE any worker spawn —
+        // mux-runner halts at the ticket-audit gate, so no claude subprocess
+        // is constructed with --add-dir REPO_ROOT (the R-WSRC-4 leak vector).
+        const result = runWithRealExtension([sessionDir]);
         const runnerLog = fs.readFileSync(path.join(sessionDir, 'mux-runner.log'), 'utf-8');
         const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
 
