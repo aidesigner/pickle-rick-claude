@@ -46,6 +46,7 @@ PAUSED mode — normal chat. Interrogate:
 | Priority | Requirement | User Story | Verification |
 |:---|:---|:---|:---|
 Every requirement needs a machine-checkable Verification (test/typecheck/lint/curl/llm-conformance).
+When a later closer/release ticket will contain both implementation checks and operator-only release steps, label the future acceptance criteria explicitly as `[worker]` and `[manager]`. Manager-only deploy/install/release actions must never be left implied inside worker-owned criteria.
 ## Interface Contracts
 Exact shapes at module/service boundaries. N/A with justification if no boundaries crossed.
 ### API Contracts
@@ -65,6 +66,7 @@ Automated conformance (no human review):
 - **LLM**: Agent reads impl, quotes code, PASS/FAIL per requirement. For behavioral/UX reqs only.
 
 N/A sections allowed with justification. Small features (<3 files) may consolidate into Acceptance Criteria.
+For closer-style follow-up work, the consolidated acceptance-criteria list must preserve the `[worker]` / `[manager]` ownership tags so worker conformance can defer manager-only actions into handoff instead of failing execution.
 ### Verification Commands
 | Check | Command | Expected |
 |:---|:---|:---|

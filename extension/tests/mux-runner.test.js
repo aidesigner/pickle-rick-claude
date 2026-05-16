@@ -1142,7 +1142,7 @@ test('mux-runner: creates mux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, applyAutoTicketCompletionValidation, correctPhantomDoneTickets, hasCompletionCommit, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo, writeHandoffAtomic } from '../bin/mux-runner.js';
+import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, applyAutoTicketCompletionValidation, correctPhantomDoneTickets, hasCompletionCommit, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo, validateAutoTicketCompletion, writeHandoffAtomic } from '../bin/mux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
@@ -2465,6 +2465,15 @@ function writeAutoMarkTicket(sessionDir, ticketId, checked = true) {
 }
 
 function writeAutoMarkTicketWithStatus(sessionDir, ticketId, status, checked = true) {
+    return writeAutoMarkTicketWithCriteria(
+        sessionDir,
+        ticketId,
+        status,
+        [`- [${checked ? 'x' : ' '}] criterion met`],
+    );
+}
+
+function writeAutoMarkTicketWithCriteria(sessionDir, ticketId, status, criteriaLines) {
     const ticketDir = path.join(sessionDir, ticketId);
     fs.mkdirSync(ticketDir, { recursive: true });
     fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
@@ -2477,7 +2486,7 @@ function writeAutoMarkTicketWithStatus(sessionDir, ticketId, status, checked = t
         '# Description',
         '',
         '## Acceptance Criteria',
-        `- [${checked ? 'x' : ' '}] criterion met`,
+        ...criteriaLines,
         '',
     ].join('\n'));
 }
@@ -2538,6 +2547,62 @@ test('auto-mark-done.with-commit: transition marks checked ticket Done with refe
 
         assert.equal(verdict.action, 'done');
         assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Done');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('auto-mark-done.manager-tagged-ac: unchecked manager criteria do not block worker completion', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'auto-manager-tagged-ticket';
+        writeAutoMarkTicketWithCriteria(sessionDir, ticketId, 'In Progress', [
+            '- [x] [worker] implementation complete',
+            '- [ ] [manager] publish release',
+        ]);
+        fs.writeFileSync(path.join(tmpDir, 'work.txt'), 'ticket work');
+        spawnSync('git', ['add', 'work.txt'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', `complete ${ticketId}`, '--no-gpg-sign'], { cwd: tmpDir });
+
+        const verdict = applyAutoTicketCompletionValidation({
+            sessionDir,
+            ticketId,
+            workingDir: tmpDir,
+            startCommit,
+            iteration: 1,
+        });
+
+        assert.equal(verdict.action, 'done');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Done');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('auto-mark-done.worker-tagged-ac: unchecked worker criteria still block completion', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'auto-worker-tagged-ticket';
+        writeAutoMarkTicketWithCriteria(sessionDir, ticketId, 'In Progress', [
+            '- [ ] [worker] implementation complete',
+            '- [x] [manager] publish release',
+        ]);
+
+        const verdict = validateAutoTicketCompletion(
+            sessionDir,
+            ticketId,
+            tmpDir,
+            startCommit,
+        );
+
+        assert.deepEqual(verdict, { action: 'skip', reason: 'acceptance_criteria_not_checked' });
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'In Progress');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

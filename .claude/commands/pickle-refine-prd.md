@@ -189,6 +189,7 @@ links:
 **Inputs**: [types] | **Outputs**: [types] | **Errors**: [shapes] | **Invariants**: [conditions]
 ## Acceptance Criteria
 - [ ] [Criterion] — Verify: `[command]` — Type: [test|typecheck|lint|curl|llm-conformance]
+- For closer/release/hardening tickets, prefix each criterion with `[worker]` or `[manager]` when ownership differs. Manager-only deploy/install/release steps MUST stay tagged `[manager]` rather than being folded into worker-owned execution criteria.
 - Use `verify_pre:` only for criteria that must be checked before implementation and are expected to pass at readiness time.
 - Default criteria are `verify_post` and are checked after implementation; omit the prefix unless a pre-flight check is intentional.
 ## Test Expectations
@@ -304,6 +305,7 @@ After all implementation and wiring tickets, create **four** hardening tickets. 
 Collect the union of all `Files to modify/create` from every implementation + wiring ticket → `MODIFIED_FILES`. Collect unique parent directories of MODIFIED_FILES → `AFFECTED_SUBSYSTEMS`.
 
 **Derive verify commands**: Use the same `${TC_CMD}`, `${TEST_CMD}`, `${BUILD_CMD}` detected in Step 2 tech stack analysis. Replace ALL bracketed placeholders (`[MODIFIED_FILES...]`, `[AFFECTED_SUBSYSTEMS...]`, `[feature area]`) and `${...}` template variables with concrete values before writing the ticket file. No unresolved placeholders may survive into the written ticket.
+If any closer ticket includes release/install/tag/publish work that only the manager can perform, keep those acceptance criteria tagged `[manager]` and keep worker-executable verification tagged `[worker]`.
 
 **Ticket 1: Code Quality Hardening**
 

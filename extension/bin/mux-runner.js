@@ -253,8 +253,10 @@ export function parseOrphanedFastTestRunnersFromPs(psOutput, extensionDir, minAg
         const match = line.match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
         if (!match)
             continue;
-        const pid = Number(match[1]);
-        const ppid = Number(match[2]);
+        const rawPid = Number(match[1]);
+        const rawPpid = Number(match[2]);
+        const pid = Number.isFinite(rawPid) ? rawPid : 0;
+        const ppid = Number.isFinite(rawPpid) ? rawPpid : 0;
         const etimeSeconds = parsePsElapsedSeconds(match[3]);
         const command = match[4].trim();
         if (!Number.isInteger(pid) || !Number.isInteger(ppid) || etimeSeconds === null)
@@ -1127,10 +1129,30 @@ function acceptanceCriteriaSection(content) {
     const next = /^## \S.*$/m.exec(rest);
     return next ? rest.slice(0, next.index) : rest;
 }
-function hasCheckedAcceptanceCriteria(content) {
+function acceptanceCriteriaCheckboxes(content) {
     const section = acceptanceCriteriaSection(content);
-    const boxes = [...section.matchAll(/^\s*-\s*\[([ xX])\]/gm)];
-    return boxes.length > 0 && boxes.every(match => match[1].toLowerCase() === 'x');
+    const checkboxes = [];
+    for (const match of section.matchAll(/^\s*-\s*\[([ xX])\]\s*(.+?)\s*$/gm)) {
+        const criterion = match[2].trim();
+        const owner = /^\[manager\](?:\s|$)/i.test(criterion)
+            ? 'manager'
+            : /^\[worker\](?:\s|$)/i.test(criterion)
+                ? 'worker'
+                : 'unassigned';
+        checkboxes.push({
+            checked: match[1].toLowerCase() === 'x',
+            owner,
+        });
+    }
+    return checkboxes;
+}
+function hasCheckedAcceptanceCriteria(content) {
+    const boxes = acceptanceCriteriaCheckboxes(content);
+    if (boxes.length === 0)
+        return false;
+    return boxes
+        .filter((box) => box.owner !== 'manager')
+        .every((box) => box.checked);
 }
 function readHeadCommit(workingDir) {
     try {

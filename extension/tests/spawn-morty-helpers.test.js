@@ -121,6 +121,17 @@ test('buildWorkerPrompt: injects project context before ticket content when avai
   }
 });
 
+test('buildWorkerPrompt: includes acceptance-criteria ownership guidance', () => {
+  const repoRoot = makeTmpDir();
+  try {
+    const prompt = buildWorkerPrompt({ ticket: baseTicket(repoRoot), model: 'sonnet', repoRoot });
+    assert.ok(prompt.includes('Treat `[worker]` criteria and untagged criteria as worker-owned.'));
+    assert.ok(prompt.includes('Manager Handoff'));
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('buildWorkerPrompt: injects active persona between template and project context when enabled', () => {
   const repoRoot = makeTmpDir();
   const extensionRoot = makeTmpDir('pickle-spawn-morty-extension-');
