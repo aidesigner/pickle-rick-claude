@@ -172,6 +172,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'judge_legacy_shape_inferred',
         'judge_json_parse_failed',
         'consecutive_no_progress_warning',
+        'child_mux_runner_wedge_detected',
         'monitor_respawn_started',
         'monitor_respawn_failed',
         'monitor_mode_swapped',

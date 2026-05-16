@@ -64,6 +64,8 @@ interface PipelineConfig {
   target: string;
   szechuan_domain?: string;
   szechuan_focus?: string;
+  child_mux_runner_heartbeat_ms: number;
+  child_mux_runner_stall_seconds: number;
   anatomy_stall_limit: number;
   szechuan_stall_limit: number;
   anatomy_max_iterations: number;
@@ -124,6 +126,8 @@ export type SpawnRunnerFn = (
 interface PhaseRunnerContext {
   sessionDir: string;
   extensionRoot: string;
+  childMuxRunnerHeartbeatMs: number;
+  childMuxRunnerStallSeconds: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +138,13 @@ interface PhaseRunnerContext {
 function parsePositiveInteger(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseHeartbeatInteger(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (!Number.isInteger(parsed)) return fallback;
+  return parsed > 0 ? parsed : 0;
 }
 
 export function parsePipelineConfig(raw: Record<string, unknown>): PipelineConfig {
@@ -151,6 +162,8 @@ export function parsePipelineConfig(raw: Record<string, unknown>): PipelineConfi
     target: (raw.target as string) || '',
     szechuan_domain: raw.szechuan_domain as string | undefined,
     szechuan_focus: raw.szechuan_focus as string | undefined,
+    child_mux_runner_heartbeat_ms: parseHeartbeatInteger(raw.child_mux_runner_heartbeat_ms, 60_000),
+    child_mux_runner_stall_seconds: parsePositiveInteger(raw.child_mux_runner_stall_seconds, 1800),
     anatomy_stall_limit: parsePositiveInteger(raw.anatomy_stall_limit, 3),
     szechuan_stall_limit: parsePositiveInteger(raw.szechuan_stall_limit, 5),
     anatomy_max_iterations: parsePositiveInteger(raw.anatomy_max_iterations, 100),
@@ -466,6 +479,107 @@ let activeChild: ChildProcess | null = null;
 let spawnRunnerOverride: SpawnRunnerFn | null = null;
 let phaseRunnerContext: PhaseRunnerContext | null = null;
 
+type StallHeartbeatChild = Pick<ChildProcess, 'pid' | 'kill' | 'killed'>;
+
+interface ChildMuxRunnerHeartbeatOpts {
+  child: StallHeartbeatChild;
+  sessionDir: string;
+  heartbeatMs: number;
+  stallSeconds: number;
+}
+
+interface ChildMuxRunnerHeartbeatDeps {
+  statSync?: typeof fs.statSync;
+  setInterval?: typeof global.setInterval;
+  clearInterval?: typeof global.clearInterval;
+  now?: () => number;
+  isProcessAlive?: (pid: number) => boolean;
+  emitActivity?: typeof logActivity;
+}
+
+export interface ChildMuxRunnerHeartbeatHandle {
+  stop: () => void;
+}
+
+function isMuxRunnerInvocation(args: string[]): boolean {
+  return path.basename(args[0] ?? '') === 'mux-runner.js';
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function armChildMuxRunnerHeartbeat(
+  opts: ChildMuxRunnerHeartbeatOpts,
+  deps: ChildMuxRunnerHeartbeatDeps = {},
+): ChildMuxRunnerHeartbeatHandle {
+  if (opts.heartbeatMs <= 0) {
+    return { stop: () => {} };
+  }
+  const statePath = path.join(opts.sessionDir, 'state.json');
+  const statSyncFn = deps.statSync ?? fs.statSync;
+  const setIntervalFn = deps.setInterval ?? global.setInterval;
+  const clearIntervalFn = deps.clearInterval ?? global.clearInterval;
+  const nowFn = deps.now ?? Date.now;
+  const isAliveFn = deps.isProcessAlive ?? isProcessAlive;
+  const emitActivity = deps.emitActivity ?? logActivity;
+  const childPid = opts.child.pid ?? null;
+  if (typeof childPid !== 'number' || childPid <= 0) {
+    return { stop: () => {} };
+  }
+
+  let stopped = false;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    clearIntervalFn(timer);
+  };
+
+  const tick = () => {
+    if (stopped || opts.child.killed) return;
+    let stat: fs.Stats;
+    try {
+      stat = statSyncFn(statePath);
+    } catch {
+      return;
+    }
+    const elapsedSeconds = Math.floor((nowFn() - stat.mtimeMs) / 1000);
+    if (elapsedSeconds <= opts.stallSeconds) return;
+    if (!isAliveFn(childPid)) {
+      stop();
+      return;
+    }
+    try {
+      emitActivity({
+        event: 'child_mux_runner_wedge_detected',
+        source: 'pickle',
+        session: path.basename(opts.sessionDir),
+        gate_payload: {
+          child_pid: childPid,
+          last_state_mtime_iso: stat.mtime.toISOString(),
+          elapsed_seconds: elapsedSeconds,
+        },
+      });
+    } catch {
+      // best-effort telemetry only
+    }
+    try {
+      opts.child.kill('SIGTERM');
+    } catch {
+      // best-effort termination
+    }
+    stop();
+  };
+
+  const timer = setIntervalFn(tick, opts.heartbeatMs);
+  return { stop };
+}
+
 function spawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<SpawnRunnerResult> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -476,6 +590,15 @@ function spawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Prom
       env: env ?? process.env,
     });
     activeChild = child;
+    const heartbeat = (
+      phaseRunnerContext &&
+      isMuxRunnerInvocation(args)
+    ) ? armChildMuxRunnerHeartbeat({
+      child,
+      sessionDir: phaseRunnerContext.sessionDir,
+      heartbeatMs: phaseRunnerContext.childMuxRunnerHeartbeatMs,
+      stallSeconds: phaseRunnerContext.childMuxRunnerStallSeconds,
+    }) : null;
     child.stdout?.on('data', (chunk: Buffer | string) => {
       const text = chunk.toString();
       stdout += text;
@@ -489,11 +612,19 @@ function spawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Prom
     child.on('exit', (code) => {
       if (!settled) {
         settled = true;
+        heartbeat?.stop();
         activeChild = null;
         resolve({ exitCode: code ?? 1, stdout, stderr });
       }
     });
-    child.on('error', (err) => { if (!settled) { settled = true; activeChild = null; reject(err); } });
+    child.on('error', (err) => {
+      if (!settled) {
+        settled = true;
+        heartbeat?.stop();
+        activeChild = null;
+        reject(err);
+      }
+    });
   });
 }
 
@@ -2212,7 +2343,12 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
   const cleanupShutdownHandlers = installShutdownHandlers(runtime, counters, cancelMarker);
   const startTime = Date.now();
   let phaseIncomplete = false;
-  phaseRunnerContext = { sessionDir, extensionRoot: runtime.extensionRoot };
+  phaseRunnerContext = {
+    sessionDir,
+    extensionRoot: runtime.extensionRoot,
+    childMuxRunnerHeartbeatMs: runtime.config.child_mux_runner_heartbeat_ms,
+    childMuxRunnerStallSeconds: runtime.config.child_mux_runner_stall_seconds,
+  };
   writeRunningStatus(runtime, counters, null);
 
   try {

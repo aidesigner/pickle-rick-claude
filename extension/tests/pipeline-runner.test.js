@@ -20,6 +20,7 @@ import {
   installShutdownHandlers,
   applyEpochResetOnReconstruction,
   claimPipelineRunnerActive,
+  armChildMuxRunnerHeartbeat,
   writeWatcherLivenessArtifact,
   runBundlePreflight,
   BundlePreflightError,
@@ -904,6 +905,8 @@ describe('parsePipelineConfig', () => {
 
   test('defaults numeric fields when missing', () => {
     const config = parsePipelineConfig({ phases: ['pickle'], target: '/tmp' });
+    assert.equal(config.child_mux_runner_heartbeat_ms, 60_000);
+    assert.equal(config.child_mux_runner_stall_seconds, 1800);
     assert.equal(config.anatomy_stall_limit, 3);
     assert.equal(config.szechuan_stall_limit, 5);
     assert.equal(config.anatomy_max_iterations, 100);
@@ -923,11 +926,13 @@ describe('parsePipelineConfig', () => {
   test('defaults numeric fields when null or non-positive', () => {
     const config = parsePipelineConfig({
       phases: [], target: '',
+      child_mux_runner_stall_seconds: 0,
       anatomy_stall_limit: null,
       szechuan_stall_limit: 0,
       anatomy_max_iterations: -1,
       szechuan_max_iterations: '',
     });
+    assert.equal(config.child_mux_runner_stall_seconds, 1800);
     assert.equal(config.anatomy_stall_limit, 3);
     assert.equal(config.szechuan_stall_limit, 5);
     assert.equal(config.anatomy_max_iterations, 100);
@@ -947,15 +952,24 @@ describe('parsePipelineConfig', () => {
   test('defaults numeric fields when fractional', () => {
     const config = parsePipelineConfig({
       phases: [], target: '',
+      child_mux_runner_heartbeat_ms: '2.5',
       anatomy_stall_limit: 0.5,
       szechuan_stall_limit: '2.5',
       anatomy_max_iterations: 10.25,
       szechuan_max_iterations: '4.75',
     });
+    assert.equal(config.child_mux_runner_heartbeat_ms, 60_000);
     assert.equal(config.anatomy_stall_limit, 3);
     assert.equal(config.szechuan_stall_limit, 5);
     assert.equal(config.anatomy_max_iterations, 100);
     assert.equal(config.szechuan_max_iterations, 50);
+  });
+
+  test('disables child heartbeat when configured with a non-positive integer', () => {
+    const zeroConfig = parsePipelineConfig({ phases: [], target: '', child_mux_runner_heartbeat_ms: 0 });
+    const negativeConfig = parsePipelineConfig({ phases: [], target: '', child_mux_runner_heartbeat_ms: -5 });
+    assert.equal(zeroConfig.child_mux_runner_heartbeat_ms, 0);
+    assert.equal(negativeConfig.child_mux_runner_heartbeat_ms, 0);
   });
 
   test('defaults phases to empty array when not array', () => {
@@ -1032,6 +1046,70 @@ describe('parsePipelineConfig', () => {
   test('falls back to default when ignore_dirty_paths contains non-strings', () => {
     const config = parsePipelineConfig({ phases: [], target: '', ignore_dirty_paths: ['prds', 42] });
     assert.deepEqual(config.ignore_dirty_paths, ['prds', 'docs']);
+  });
+});
+
+describe('armChildMuxRunnerHeartbeat', () => {
+  test('kills a stale live mux-runner child and emits activity', () => {
+    const dir = tmpDir();
+    const statePath = path.join(dir, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify({ active: true }, null, 2));
+    const staleAt = new Date(Date.now() - 31 * 60 * 1000);
+    fs.utimesSync(statePath, staleAt, staleAt);
+
+    const events = [];
+    const child = {
+      pid: 4242,
+      killed: false,
+      signal: null,
+      kill(signal) {
+        this.killed = true;
+        this.signal = signal;
+      },
+    };
+    let tick = null;
+    let cleared = false;
+
+    const handle = armChildMuxRunnerHeartbeat({
+      child,
+      sessionDir: dir,
+      heartbeatMs: 60_000,
+      stallSeconds: 1800,
+    }, {
+      setInterval: (fn, ms) => {
+        assert.equal(ms, 60_000);
+        tick = fn;
+        return 123;
+      },
+      clearInterval: (timer) => {
+        assert.equal(timer, 123);
+        cleared = true;
+      },
+      now: () => staleAt.getTime() + 31 * 60 * 1000,
+      isProcessAlive: (pid) => {
+        assert.equal(pid, 4242);
+        return true;
+      },
+      emitActivity: (event) => {
+        events.push(event);
+      },
+    });
+
+    assert.equal(typeof tick, 'function');
+    tick();
+
+    assert.equal(child.signal, 'SIGTERM');
+    assert.equal(child.killed, true);
+    assert.equal(cleared, true);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].event, 'child_mux_runner_wedge_detected');
+    assert.equal(events[0].session, path.basename(dir));
+    assert.equal(events[0].gate_payload.child_pid, 4242);
+    assert.equal(events[0].gate_payload.elapsed_seconds, 1860);
+    assert.equal(events[0].gate_payload.last_state_mtime_iso, staleAt.toISOString());
+
+    handle.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
 

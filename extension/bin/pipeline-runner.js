@@ -42,6 +42,14 @@ function parsePositiveInteger(value, fallback) {
     const parsed = Number(value);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
+function parseHeartbeatInteger(value, fallback) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed))
+        return fallback;
+    if (!Number.isInteger(parsed))
+        return fallback;
+    return parsed > 0 ? parsed : 0;
+}
 export function parsePipelineConfig(raw) {
     const rawBackend = raw.backend;
     const backend = typeof rawBackend === 'string' && BACKENDS.includes(rawBackend)
@@ -56,6 +64,8 @@ export function parsePipelineConfig(raw) {
         target: raw.target || '',
         szechuan_domain: raw.szechuan_domain,
         szechuan_focus: raw.szechuan_focus,
+        child_mux_runner_heartbeat_ms: parseHeartbeatInteger(raw.child_mux_runner_heartbeat_ms, 60_000),
+        child_mux_runner_stall_seconds: parsePositiveInteger(raw.child_mux_runner_stall_seconds, 1800),
         anatomy_stall_limit: parsePositiveInteger(raw.anatomy_stall_limit, 3),
         szechuan_stall_limit: parsePositiveInteger(raw.szechuan_stall_limit, 5),
         anatomy_max_iterations: parsePositiveInteger(raw.anatomy_max_iterations, 100),
@@ -353,6 +363,83 @@ export function runBundlePreflight(sessionRoot) {
 let activeChild = null;
 let spawnRunnerOverride = null;
 let phaseRunnerContext = null;
+function isMuxRunnerInvocation(args) {
+    return path.basename(args[0] ?? '') === 'mux-runner.js';
+}
+function isProcessAlive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+export function armChildMuxRunnerHeartbeat(opts, deps = {}) {
+    if (opts.heartbeatMs <= 0) {
+        return { stop: () => { } };
+    }
+    const statePath = path.join(opts.sessionDir, 'state.json');
+    const statSyncFn = deps.statSync ?? fs.statSync;
+    const setIntervalFn = deps.setInterval ?? global.setInterval;
+    const clearIntervalFn = deps.clearInterval ?? global.clearInterval;
+    const nowFn = deps.now ?? Date.now;
+    const isAliveFn = deps.isProcessAlive ?? isProcessAlive;
+    const emitActivity = deps.emitActivity ?? logActivity;
+    const childPid = opts.child.pid ?? null;
+    if (typeof childPid !== 'number' || childPid <= 0) {
+        return { stop: () => { } };
+    }
+    let stopped = false;
+    const stop = () => {
+        if (stopped)
+            return;
+        stopped = true;
+        clearIntervalFn(timer);
+    };
+    const tick = () => {
+        if (stopped || opts.child.killed)
+            return;
+        let stat;
+        try {
+            stat = statSyncFn(statePath);
+        }
+        catch {
+            return;
+        }
+        const elapsedSeconds = Math.floor((nowFn() - stat.mtimeMs) / 1000);
+        if (elapsedSeconds <= opts.stallSeconds)
+            return;
+        if (!isAliveFn(childPid)) {
+            stop();
+            return;
+        }
+        try {
+            emitActivity({
+                event: 'child_mux_runner_wedge_detected',
+                source: 'pickle',
+                session: path.basename(opts.sessionDir),
+                gate_payload: {
+                    child_pid: childPid,
+                    last_state_mtime_iso: stat.mtime.toISOString(),
+                    elapsed_seconds: elapsedSeconds,
+                },
+            });
+        }
+        catch {
+            // best-effort telemetry only
+        }
+        try {
+            opts.child.kill('SIGTERM');
+        }
+        catch {
+            // best-effort termination
+        }
+        stop();
+    };
+    const timer = setIntervalFn(tick, opts.heartbeatMs);
+    return { stop };
+}
 function spawnRunner(cmd, args, env) {
     return new Promise((resolve, reject) => {
         let settled = false;
@@ -363,6 +450,13 @@ function spawnRunner(cmd, args, env) {
             env: env ?? process.env,
         });
         activeChild = child;
+        const heartbeat = (phaseRunnerContext &&
+            isMuxRunnerInvocation(args)) ? armChildMuxRunnerHeartbeat({
+            child,
+            sessionDir: phaseRunnerContext.sessionDir,
+            heartbeatMs: phaseRunnerContext.childMuxRunnerHeartbeatMs,
+            stallSeconds: phaseRunnerContext.childMuxRunnerStallSeconds,
+        }) : null;
         child.stdout?.on('data', (chunk) => {
             const text = chunk.toString();
             stdout += text;
@@ -376,15 +470,19 @@ function spawnRunner(cmd, args, env) {
         child.on('exit', (code) => {
             if (!settled) {
                 settled = true;
+                heartbeat?.stop();
                 activeChild = null;
                 resolve({ exitCode: code ?? 1, stdout, stderr });
             }
         });
-        child.on('error', (err) => { if (!settled) {
-            settled = true;
-            activeChild = null;
-            reject(err);
-        } });
+        child.on('error', (err) => {
+            if (!settled) {
+                settled = true;
+                heartbeat?.stop();
+                activeChild = null;
+                reject(err);
+            }
+        });
     });
 }
 async function runSpawnRunner(cmd, args, env) {
@@ -1849,7 +1947,12 @@ export async function main(sessionDir, opts = {}) {
     const cleanupShutdownHandlers = installShutdownHandlers(runtime, counters, cancelMarker);
     const startTime = Date.now();
     let phaseIncomplete = false;
-    phaseRunnerContext = { sessionDir, extensionRoot: runtime.extensionRoot };
+    phaseRunnerContext = {
+        sessionDir,
+        extensionRoot: runtime.extensionRoot,
+        childMuxRunnerHeartbeatMs: runtime.config.child_mux_runner_heartbeat_ms,
+        childMuxRunnerStallSeconds: runtime.config.child_mux_runner_stall_seconds,
+    };
     writeRunningStatus(runtime, counters, null);
     try {
         for (let i = 0; i < runtime.config.phases.length; i++) {

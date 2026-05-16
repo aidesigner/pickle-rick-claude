@@ -515,6 +515,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'ticket_state_desync_detected',
   'stall_classified',
   'mux_runner_stall_detected',
+  'child_mux_runner_wedge_detected',
   'readiness_delta_requested',
   'phase_transition',
   'extension_dir_fallback',

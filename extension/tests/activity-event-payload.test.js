@@ -124,6 +124,20 @@ const EVENT_CASES = [
     drop: 'source',
   },
   {
+    type: 'child_mux_runner_wedge_detected',
+    valid: {
+      event: 'child_mux_runner_wedge_detected',
+      ts: TS,
+      session: 'session-1',
+      gate_payload: {
+        child_pid: 4242,
+        last_state_mtime_iso: TS,
+        elapsed_seconds: 1860,
+      },
+    },
+    drop: 'gate_payload',
+  },
+  {
     type: 'tier_phase_skipped',
     valid: {
       event: 'tier_phase_skipped',
@@ -767,6 +781,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'judge_violation_ledger_advanced',
     'judge_legacy_shape_inferred',
     'judge_json_parse_failed',
+    'child_mux_runner_wedge_detected',
     'monitor_respawn_started',
     'monitor_respawn_failed',
     'monitor_mode_swapped',

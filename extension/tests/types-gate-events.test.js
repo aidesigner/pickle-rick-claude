@@ -85,6 +85,7 @@ const HALT_EVENTS = ['halt'];
 const PIPELINE_OBSERVABILITY_EVENTS = [
   'phase_transition',
   'extension_dir_fallback',
+  'child_mux_runner_wedge_detected',
 ];
 
 const MICROVERSE_RUNNER_EVENTS = ['judge_unreachable', 'judge_timeout', 'baseline_attempt_timeout', 'baseline_unmeasurable', 'judge_cli_missing'];

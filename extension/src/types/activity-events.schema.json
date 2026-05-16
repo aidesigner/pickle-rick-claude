@@ -664,6 +664,24 @@
         }
       }
     },
+    "child_mux_runner_wedge_detected": {
+      "type": "object",
+      "required": ["event", "ts", "session", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "child_mux_runner_wedge_detected" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["child_pid", "last_state_mtime_iso", "elapsed_seconds"],
+          "properties": {
+            "child_pid": { "type": "integer", "minimum": 0 },
+            "last_state_mtime_iso": { "type": "string" },
+            "elapsed_seconds": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
     "monitor_respawn_started": {
       "type": "object",
       "required": ["event", "ts", "gate_payload"],
@@ -966,6 +984,7 @@
     { "$ref": "#/definitions/judge_json_parse_failed" },
     { "$ref": "#/definitions/consecutive_no_progress_warning" },
     { "$ref": "#/definitions/mux_runner_stall_detected" },
+    { "$ref": "#/definitions/child_mux_runner_wedge_detected" },
     { "$ref": "#/definitions/monitor_respawn_started" },
     { "$ref": "#/definitions/monitor_respawn_failed" },
     { "$ref": "#/definitions/monitor_mode_swapped" },
