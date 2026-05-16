@@ -10,7 +10,7 @@ import type { ErrorRecord } from '../types/index.js';
 import {
   resolveBackend,
   resolveWorkerBackendFromState,
-  resolveWorkerBackendFromStateFile,
+  resolveWorkerBackendFromStateFile as _resolveWorkerBackendFromStateFile,
   buildJudgeInvocation,
   buildWorkerInvocation,
   backendEnvOverrides,

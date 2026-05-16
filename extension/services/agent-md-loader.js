@@ -73,7 +73,7 @@ function parseFlatFrontmatter(frontmatter) {
         if (colon === -1)
             continue;
         const key = line.slice(0, colon).trim();
-        let value = line.slice(colon + 1).trim();
+        const value = line.slice(colon + 1).trim();
         if (!key)
             continue;
         if (value === '') {

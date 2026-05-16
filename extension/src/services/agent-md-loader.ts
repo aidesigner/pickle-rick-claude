@@ -106,7 +106,7 @@ function parseFlatFrontmatter(frontmatter: string): Record<string, string> {
     const colon = line.indexOf(':');
     if (colon === -1) continue;
     const key = line.slice(0, colon).trim();
-    let value = line.slice(colon + 1).trim();
+    const value = line.slice(colon + 1).trim();
     if (!key) continue;
     if (value === '') {
       const items: string[] = [];

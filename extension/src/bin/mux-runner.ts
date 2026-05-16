@@ -127,6 +127,11 @@ function handleSchemaVersionAhead(statePath: string, err: unknown): never {
   // record so dead-pid recovery, stop-hook, and auto-resume.sh R-CNAR-4(c) all
   // see the exit attribution.
   try {
+    // R-WSRC-2: lock cannot be acquired because the lock-protected path
+    // (StateManager.update → sm.read) fails on SCHEMA_MISMATCH; the whole
+    // point of this handler is to replace the unreadable state with a
+    // minimal forensic envelope so subsequent reads work.
+    // eslint-disable-next-line pickle/no-raw-state-write
     sm.forceWrite(statePath, { active: false, exit_reason: 'state_schema_version_ahead' });
   } catch { /* never throw on forensic stamp */ }
   try { recordExitReason(statePath, 'state_schema_version_ahead'); } catch { /* never throw on forensic stamp */ }

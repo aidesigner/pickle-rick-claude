@@ -11,6 +11,9 @@ export function auditTrapDoorCoverage(diff) {
             .map((file) => file.path),
     });
 }
+// TODO(R-LINT): refactor — pre-existing complexity 23 introduced 2026-05-10
+// (882b48818); extract per-finding-class helpers in a focused PR.
+// eslint-disable-next-line complexity
 export function runT6TrapDoorCoverage(context) {
     const { projectRoot } = context;
     const findings = [];

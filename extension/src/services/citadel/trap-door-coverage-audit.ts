@@ -31,6 +31,9 @@ export function auditTrapDoorCoverage(diff: DiffSummary): TrapDoorCoverageResult
   });
 }
 
+// TODO(R-LINT): refactor — pre-existing complexity 23 introduced 2026-05-10
+// (882b48818); extract per-finding-class helpers in a focused PR.
+// eslint-disable-next-line complexity
 export function runT6TrapDoorCoverage(context: CitadelContext): AnalyzerResult {
   const { projectRoot } = context;
   const findings: CitadelFinding[] = [];
