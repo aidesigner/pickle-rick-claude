@@ -123,6 +123,19 @@ fs.writeFileSync(process.argv[2] + '/state.json', JSON.stringify(s));
 `;
 }
 
+function singleExitReasonRunner(exitReason) {
+  return `const fs = require('fs');
+const counterFile = process.argv[2] + '/.n';
+let n = 0;
+try { n = parseInt(fs.readFileSync(counterFile, 'utf8'), 10) || 0; } catch {}
+n++;
+fs.writeFileSync(counterFile, String(n));
+const s = JSON.parse(fs.readFileSync(process.argv[2] + '/state.json', 'utf8'));
+s.exit_reason = '${exitReason}';
+fs.writeFileSync(process.argv[2] + '/state.json', JSON.stringify(s));
+`;
+}
+
 describe('auto-resume.stop-conditions', () => {
   test('--help exits 0', () => {
     const result = spawnSync('bash', [AUTO_RESUME_SH, '--help'], { encoding: 'utf8' });
@@ -133,11 +146,7 @@ describe('auto-resume.stop-conditions', () => {
 
   test('halts on non-pipeline_phase_incomplete exit_reason', () => {
     runFixtureTest((fixture) => {
-      writeMuxRunner(fixture, `const fs = require('fs');
-const s = JSON.parse(fs.readFileSync(process.argv[2] + '/state.json', 'utf8'));
-s.exit_reason = 'ticket_audit_failed';
-fs.writeFileSync(process.argv[2] + '/state.json', JSON.stringify(s));
-`);
+      writeMuxRunner(fixture, singleExitReasonRunner('ticket_audit_failed'));
       const result = runScript(fixture);
       assertCompleted(result);
       assert.ok(
@@ -145,6 +154,35 @@ fs.writeFileSync(process.argv[2] + '/state.json', JSON.stringify(s));
         `expected stop on non-incomplete reason\n${formatResultDiagnostics(result)}`,
       );
     });
+  });
+
+  test('halts immediately on manager handoff exit reasons without consuming retries', () => {
+    for (const exitReason of ['closer_handoff_terminal', 'manager_handoff_pending']) {
+      runFixtureTest((fixture) => {
+        writeMuxRunner(fixture, singleExitReasonRunner(exitReason));
+        const result = runScript(fixture, { PICKLE_AUTO_RESUME_MAX_RETRIES: '5' });
+        assertCompleted(result);
+        assert.ok(
+          result.stderr.includes(`manager handoff required (exit_reason='${exitReason}')`),
+          `expected manager-handoff stop banner\n${formatResultDiagnostics(result)}`,
+        );
+        assert.equal(
+          readIfExists(fixture.counterFile),
+          '1',
+          `expected manager handoff to stop after first launch\n${formatResultDiagnostics(result)}`,
+        );
+        assert.equal(
+          result.stderrLines.some(line => /\[auto-resume\] retry \d+\//.test(line)),
+          false,
+          `expected manager handoff to avoid retry consumption\n${formatResultDiagnostics(result)}`,
+        );
+        assert.equal(
+          result.stderr.includes('[warn] auto-resume retry'),
+          false,
+          `expected no retry warning banner on manager handoff stop\n${formatResultDiagnostics(result)}`,
+        );
+      });
+    }
   });
 
   test('halts when MAX_RETRIES exhausted', () => {
