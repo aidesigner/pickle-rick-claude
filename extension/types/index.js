@@ -143,6 +143,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
     'judge_unreachable',
     'judge_timeout',
+    'judge_measurement_attempted',
     'baseline_attempt_timeout',
     'baseline_unmeasurable',
     'judge_cli_missing',
