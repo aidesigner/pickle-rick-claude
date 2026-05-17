@@ -1,3 +1,4 @@
+<!-- R-CTSF retroactive (shipped pre-R-CTSF) -->
 # P1: mux-runner wedges 13h on unbounded between-ticket gate spawnSync
 
 **Bundle code**: `R-MRWG` (Mux Runner Wedge Gate)
@@ -164,12 +165,13 @@ function runCommand(cmd: string, args: string[], cwd: string, opts: { timeoutMs?
 
 ### R-MRWG-6 — Closer: version bump + release-gate verify + deploy + MASTER_PLAN update
 
-**Atomic closer ticket** (large tier, worker_timeout_seconds 4800):
-- (a) Patch bump `extension/package.json` (3 of 5 changes are pure additions; behavior change is the timeout default — not a schema change, so patch is appropriate)
-- (b) Run full release gate from `extension/`: `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh && bash scripts/audit-fix-commits.sh && bash scripts/audit-bundle-thesis.sh && bash scripts/audit-quarantine.sh && bash scripts/audit-trap-door-enforcement.sh && npm run test:fast && npm run test:integration && RUN_EXPENSIVE_TESTS=1 npm run test:expensive`
-- (c) Deploy via `bash install.sh --closer-context --no-confirm`
-- (d) MD5 parity verify on the 5 most-trafficked compiled files per AC-RVN-08
-- (e) Update `prds/MASTER_PLAN.md`: move R-MRWG row from `### Open (P1)` to `### Closed`; bump `## Recently Shipped` table; close any related slots in `### Open (P3)` (R-TFP may partially overlap)
+**Atomic closer ticket** (large tier, worker_timeout_seconds 4800, retroactive R-CTSF split):
+- [worker] Run the source-scope verification pass from `extension/`: `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh && bash scripts/audit-fix-commits.sh && bash scripts/audit-bundle-thesis.sh && bash scripts/audit-quarantine.sh && bash scripts/audit-trap-door-enforcement.sh && npm run test:fast && npm run test:integration && RUN_EXPENSIVE_TESTS=1 npm run test:expensive`; record whether failures are inherited vs newly introduced.
+- [worker] Prepare the manager handoff package: touched compiled-file parity targets, Finding #42 closeout summary, and the exact shipped-table rows to update once manager-only steps complete.
+- [manager] Patch bump `extension/package.json` (3 of 5 changes are pure additions; behavior change is the timeout default — not a schema change, so patch is appropriate).
+- [manager] Deploy via `bash install.sh --closer-context --no-confirm`.
+- [manager] MD5 parity verify on the 5 most-trafficked compiled files per AC-RVN-08.
+- [manager] Update `prds/MASTER_PLAN.md`: move R-MRWG row from `### Open (P1)` to `### Closed`; bump `## Recently Shipped` table; close any related slots in `### Open (P3)` (R-TFP may partially overlap).
 
 ## Out of Scope
 

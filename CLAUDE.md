@@ -20,6 +20,7 @@ Meta-tool: workers run inside the runtime they're modifying. Runtime hooks enfor
 | Orchestrator tokens (`EPIC_COMPLETED`, etc.) | none — workers emit only `<promise>I AM DONE</promise>` | `promise-tokens.ts` scrubber |
 
 PRD: `prds/p1-worker-source-state-recursion-contamination.md`.
+Closer manager handoff runbook: `docs/closer-ticket-manager-handoff.md` for manager-owned closer residuals after `closer_handoff_terminal` or `manager_handoff_pending`.
 
 ## Documentation Rule
 

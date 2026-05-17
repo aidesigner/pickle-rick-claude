@@ -1,3 +1,4 @@
+<!-- R-CTSF retroactive (shipped pre-R-CTSF) -->
 # P1: Worker Source/State Recursion Contamination
 
 **Bundle code**: `R-WSRC` (Worker Source/State Recursion Contamination)
@@ -140,12 +141,13 @@ Override available via session-level flag `state.flags.allow_state_writes_reason
 
 ### R-WSRC-6 — Closer: version bump + release-gate + deploy + MASTER_PLAN update
 
-**Atomic closer ticket** (large tier):
-- (a) Bump `extension/package.json`: minor bump (new `state_write_*` activity events + schema fields = state schema_version bump candidate; needs migration if existing sessions carry pre-R-WSRC flag absence)
-- (b) Full release gate from `extension/`: standard chain plus `bash scripts/audit-test-add-dir-containment.sh`
-- (c) Deploy via `bash install.sh --closer-context --no-confirm`
-- (d) MD5 parity verify on 5 most-trafficked files per AC-RVN-08
-- (e) Update `prds/MASTER_PLAN.md`: move R-WSRC row from `### Open (P1)` to `### Closed`; close Finding #43
+**Atomic closer ticket** (large tier, retroactive R-CTSF split):
+- [worker] Run source-scope verification and prepare handoff evidence: full release gate from `extension/` plus `bash scripts/audit-test-add-dir-containment.sh`; if residual failures are pre-existing or manager-only work remains, record them in the closer handoff instead of failing the ticket on deploy/release ownership.
+- [worker] Prepare the manager handoff package: expected compiled-file parity set, the Finding #43 closeout note, and the exact closeout rows the manager must update once handoff begins.
+- [manager] Bump `extension/package.json`: minor bump (new `state_write_*` activity events + schema fields = state schema_version bump candidate; needs migration if existing sessions carry pre-R-WSRC flag absence).
+- [manager] Deploy via `bash install.sh --closer-context --no-confirm`.
+- [manager] MD5 parity verify on 5 most-trafficked files per AC-RVN-08.
+- [manager] Update `prds/MASTER_PLAN.md`: move R-WSRC row from `### Open (P1)` to `### Closed`; close Finding #43.
 
 ## Out of Scope
 

@@ -15,6 +15,8 @@ recurrence:
   - "2026-05-16 14:53 CDT — auto-resume.sh re-spawned mux-runner post-kill; worker rollback (`resetToSha`) wiped manager-only version-bump commit AND the in-progress PRD untracked file. Operator commit lost to git reflog; PRD lost to filesystem."
 ---
 
+<!-- R-CTSF compliant -->
+
 # Problem
 
 When the B-MRWG closer ticket `8dd7774e` (R-MRWG-6) reached its final iteration the worker self-declared `status: "Failed"` in `linear_ticket_8dd7774e.md` because two of its ACs are now structurally impossible from worker scope:
@@ -132,7 +134,14 @@ Add `docs/closer-ticket-manager-handoff.md` covering:
 
 ## R-CTSF-6 — Closer ticket for R-CTSF bundle
 
-Same as every other closer — version bump, parity verify, MASTER_PLAN edit, release. **Authored per R-CTSF-1**: ACs partitioned, manager-owned work explicitly tagged.
+Authored per R-CTSF-1 with explicit ownership tags:
+
+- [worker] Run the R-CTSF source-scope validation bundle: `bash scripts/audit-test-tiers.sh`, `bash scripts/audit-test-isolation.sh`, `bash extension/scripts/audit-closer-template-compliance.sh`, and the targeted closer audit integration test. If residual release-gate failures are inherited, capture them in the handoff instead of failing on manager-only work.
+- [worker] Prepare the manager handoff package: exact PRDs swept for compliance, the runbook/doc links landed, and the expected parity/bookkeeping commands for closeout.
+- [manager] Bump `extension/package.json` for the R-CTSF ship if the operator chooses to release this bundle.
+- [manager] Deploy via `bash install.sh --closer-context --no-confirm`.
+- [manager] MD5 parity verify on the compiled files touched by the R-CTSF bundle.
+- [manager] Update `prds/MASTER_PLAN.md` and perform release/bookkeeping steps, including any optional `gh release create vX.Y.Z` action.
 
 # Out of scope
 

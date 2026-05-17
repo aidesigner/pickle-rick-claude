@@ -6,6 +6,8 @@
 
 **Active**: none. B-MRWG just shipped as v1.75.1. B2-RSU `pipeline-c543d227` PARTIAL-SHIP-HALTED at 57% (11 R-codes shipped, R-QGSK + R-RSU residuals deferred to **B-QSRC** queue slot — DO NOT relaunch B2 session). B-CTSF (Finding #44 closer-spin) queued ahead of B-QSRC per operator approval.
 
+Closer manager handoff runbook: `docs/closer-ticket-manager-handoff.md`.
+
 **Shipped today (2026-05-15)**:
 - AM: **R-RHGS** bundle (8 tickets) — closed Findings #36 R-SRTS / #38 R-PRCR / #41 R-RMBS; partial-closed #37 R-PIWG (R-PIWG-3 worktree + R-PIWG-5 lsof deferred). Commits `81861358..6f635a8d`.
 - AM: **R-CCPM** (5/10 substantive) — closed Finding #1 (R-CCPL successor via H-D codex-setup.js-as-actions). Commits `f915b821`/`690e5c5c`/`e955ce4d`/`39a660e4`/`73657d27`. R-CCPM-WH wiring + 4 hardening parked as P3 follow-up (slot 38).
