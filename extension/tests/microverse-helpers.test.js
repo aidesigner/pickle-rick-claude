@@ -1,6 +1,7 @@
 // @tier: fast
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -140,6 +141,52 @@ test('measureAndClassifyIteration returns unchanged for held score and increment
     assert.equal(mv.convergence.history[0].classification, 'held');
     assert.equal(mv.convergence.stall_counter, 1);
   } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    fs.rmSync(workingDir, { recursive: true, force: true });
+  }
+});
+
+test('measureAndClassifyIteration returns failed judge_timeout for command metric timeouts', async () => {
+  const { sessionDir, workingDir, runnerState, mv } = makeSession(60);
+  mv.key_metric.validation = 'sleep 10 && echo 60';
+  mv.key_metric.timeout_seconds = 1;
+  try {
+    const ctx = makeContext(sessionDir, workingDir, runnerState);
+    const result = await measureAndClassifyIteration(mv, { raw: '50', score: 50 }, ctx);
+    assert.deepEqual(result, { kind: 'failed', exitReason: 'judge_timeout' });
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    fs.rmSync(workingDir, { recursive: true, force: true });
+  }
+});
+
+test('measureAndClassifyIteration returns failed baseline_unmeasurable_unrecoverable on command metric spawn failure', async () => {
+  const { sessionDir, workingDir, runnerState, mv } = makeSession(60);
+  const originalSpawn = _deps.spawn;
+  const originalSleep = _deps.sleep;
+  try {
+    _deps.sleep = async () => {};
+    _deps.spawn = () => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stdout.setEncoding = () => {};
+      child.stderr = new EventEmitter();
+      child.stderr.setEncoding = () => {};
+      child.stdin = { end() {} };
+      child.kill = () => true;
+      queueMicrotask(() => {
+        const err = new Error('spawn /bin/sh EACCES');
+        err.code = 'EACCES';
+        child.emit('error', err);
+      });
+      return child;
+    };
+    const ctx = makeContext(sessionDir, workingDir, runnerState);
+    const result = await measureAndClassifyIteration(mv, { raw: '50', score: 50 }, ctx);
+    assert.deepEqual(result, { kind: 'failed', exitReason: 'baseline_unmeasurable_unrecoverable' });
+  } finally {
+    _deps.spawn = originalSpawn;
+    _deps.sleep = originalSleep;
     fs.rmSync(sessionDir, { recursive: true, force: true });
     fs.rmSync(workingDir, { recursive: true, force: true });
   }

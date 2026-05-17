@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { execFileSync, spawnSync } from 'child_process';
+import { execFileSync, spawn, spawnSync } from 'child_process';
 import { pathToFileURL } from 'node:url';
 import { State, Defaults, MicroverseExitReason } from '../types/index.js';
 import type { ActivityEventType, Backend, IterationExitType, MicroverseSessionState, MicroverseHistoryEntry, ViolationLedger, FailureClass, GateResult, StallClassification, StallRecoveryAction, JudgeResult, Violation } from '../types/index.js';
@@ -72,6 +72,7 @@ type ClassifiedIterationExit = ReturnType<typeof classifyIterationExit>;
 export type MetricSnapshot = { raw: string; score: number };
 type JudgeFailureExitReason = Extract<ExitReason, 'judge_timeout' | 'judge_cli_missing'>;
 type JudgeMeasurementFailureExitReason = Extract<ExitReason, 'judge_timeout' | 'judge_cli_missing' | 'baseline_unmeasurable_unrecoverable'>;
+type CommandMeasurementFailureKind = 'timeout' | 'cli_missing' | 'spawn_failure' | 'failed';
 export type IterationClassification =
   | { kind: 'improved'; metric: MetricSnapshot }
   | { kind: 'regressed'; rollback: true }
@@ -984,35 +985,14 @@ export function measureMetric(
   validation: string,
   timeoutSeconds: number,
   cwd: string,
-): { raw: string; score: number } | null {
-  if (!validation || typeof validation !== 'string') return null;
-  try {
-    // Use execFileSync with explicit /bin/sh to avoid direct shell interpretation
-    // of the validation string. The command is user-authored in microverse.json.
-    const output = execFileSync('/bin/sh', ['-c', validation], {
-      cwd,
-      timeout: timeoutSeconds * 1000,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    const lines = output.split('\n');
-    const lastLine = lines[lines.length - 1].trim();
-    const score = parseFloat(lastLine);
-    if (!Number.isFinite(score)) {
-      process.stderr.write(`[microverse] measureMetric: non-numeric output (last line: "${lastLine}")\n`);
-      return null;
-    }
-    return { raw: output, score };
-  } catch (err) {
-    const msg = safeErrorMessage(err);
-    process.stderr.write(`[microverse] measureMetric failed: ${msg}\n`);
-    return null;
-  }
+): Promise<{ raw: string; score: number } | null> {
+  return measureMetricAttempt(validation, timeoutSeconds, cwd).then((result) => result.metric);
 }
 
 /** @internal test seam — do not use outside tests */
 export const _deps = {
   execFileSync: execFileSync as typeof execFileSync,
+  spawn: spawn as typeof spawn,
   spawnSync: spawnSync as typeof spawnSync,
   displayMacNotification: displayMacNotification as typeof displayMacNotification,
   runIteration: runIteration as typeof runIteration,
@@ -1530,6 +1510,21 @@ type JudgeMeasurementAttempt = {
   message?: string;
 };
 
+type CommandMeasurementAttempt = {
+  metric: MetricSnapshot | null;
+  failureKind?: CommandMeasurementFailureKind;
+  message?: string;
+};
+
+type CommandMeasurementResult =
+  | { metric: MetricSnapshot; attempts: number }
+  | {
+    metric: null;
+    failureKind: CommandMeasurementFailureKind;
+    attempts: number;
+    lastError: string | null;
+  };
+
 type JudgeMeasurementExhaustedFailureKind = Exclude<JudgeMeasurementAttempt['failureKind'], 'cli_missing' | undefined>;
 
 type JudgeMeasurementResult =
@@ -1553,6 +1548,175 @@ export function classifyJudgeError(err: unknown): 'missing' | 'timeout' | 'faile
   if (isMissingCliError(err)) return 'missing';
   if (/\bETIMEDOUT\b/i.test(safeErrorMessage(err))) return 'timeout';
   return 'failed';
+}
+
+const COMMAND_METRIC_KILL_GRACE_MS = 1000;
+
+function summarizeCommandFailure(
+  base: string,
+  stdout: string,
+  stderr: string,
+): string {
+  const trimmedStdout = stdout.trim();
+  const trimmedStderr = stderr.trim();
+  if (trimmedStderr.length > 0) return `${base}: ${trimmedStderr}`;
+  if (trimmedStdout.length > 0) return `${base}: ${trimmedStdout}`;
+  return base;
+}
+
+function isMissingCommandExit(
+  code: number | null,
+  stdout: string,
+  stderr: string,
+): boolean {
+  if (code !== 127) return false;
+  return /not found/i.test(`${stderr}\n${stdout}`);
+}
+
+async function measureMetricAttempt(
+  validation: string,
+  timeoutSeconds: number,
+  cwd: string,
+): Promise<CommandMeasurementAttempt> {
+  if (!validation || typeof validation !== 'string') {
+    return {
+      metric: null,
+      failureKind: 'failed',
+      message: 'validation command missing',
+    };
+  }
+
+  const timeoutMs = Math.max(1, timeoutSeconds) * 1000;
+  return await new Promise<CommandMeasurementAttempt>((resolve) => {
+    let settled = false;
+    let timedOut = false;
+    let stdout = '';
+    let stderr = '';
+    let killTimer: NodeJS.Timeout | undefined;
+    const child = _deps.spawn('/bin/sh', ['-c', validation], {
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    const finish = (result: CommandMeasurementAttempt): void => {
+      if (settled) return;
+      settled = true;
+      if (killTimer) clearTimeout(killTimer);
+      if (result.metric === null && result.message) {
+        process.stderr.write(`[microverse] measureMetric failed: ${result.message}\n`);
+      }
+      resolve(result);
+    };
+
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // Best-effort cleanup.
+      }
+      killTimer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // Best-effort cleanup.
+        }
+      }, COMMAND_METRIC_KILL_GRACE_MS);
+    }, timeoutMs);
+
+    const clearTimers = (): void => {
+      clearTimeout(timeoutHandle);
+      if (killTimer) clearTimeout(killTimer);
+    };
+
+    child.stdout?.setEncoding('utf-8');
+    child.stderr?.setEncoding('utf-8');
+    child.stdout?.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr?.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on('spawn', () => {
+      child.stdin?.end();
+    });
+    child.on('error', (err) => {
+      clearTimers();
+      const message = safeErrorMessage(err);
+      finish({
+        metric: null,
+        failureKind: isMissingCliError(err) ? 'cli_missing' : 'spawn_failure',
+        message,
+      });
+    });
+    child.on('close', (code, signal) => {
+      clearTimers();
+      if (timedOut) {
+        finish({
+          metric: null,
+          failureKind: 'timeout',
+          message: summarizeCommandFailure(`command timed out after ${timeoutMs}ms`, stdout, stderr),
+        });
+        return;
+      }
+      if (code !== 0) {
+        const failureKind: CommandMeasurementFailureKind = isMissingCommandExit(code, stdout, stderr)
+          ? 'cli_missing'
+          : 'failed';
+        finish({
+          metric: null,
+          failureKind,
+          message: summarizeCommandFailure(
+            `command exited with code ${code}${signal ? ` (signal ${signal})` : ''}`,
+            stdout,
+            stderr,
+          ),
+        });
+        return;
+      }
+
+      const output = stdout.trim();
+      const lines = output.split('\n');
+      const lastLine = lines[lines.length - 1]?.trim() ?? '';
+      const score = parseFloat(lastLine);
+      if (!Number.isFinite(score)) {
+        finish({
+          metric: null,
+          failureKind: 'failed',
+          message: `non-numeric output (last line: "${lastLine}")`,
+        });
+        return;
+      }
+      finish({ metric: { raw: output, score } });
+    });
+  });
+}
+
+async function measureMetricWithRetry(
+  validation: string,
+  timeoutSeconds: number,
+  cwd: string,
+): Promise<CommandMeasurementResult> {
+  const first = await measureMetricAttempt(validation, timeoutSeconds, cwd);
+  if (first.metric) return { metric: first.metric, attempts: 1 };
+  if (first.failureKind && first.failureKind !== 'failed') {
+    return {
+      metric: null,
+      failureKind: first.failureKind,
+      attempts: 1,
+      lastError: first.message ?? null,
+    };
+  }
+
+  await _deps.sleep(Defaults.RATE_LIMIT_POLL_MS);
+  const second = await measureMetricAttempt(validation, timeoutSeconds, cwd);
+  if (second.metric) return { metric: second.metric, attempts: 2 };
+  return {
+    metric: null,
+    failureKind: second.failureKind ?? 'failed',
+    attempts: 2,
+    lastError: second.message ?? first.message ?? null,
+  };
 }
 
 function measureLlmMetricAttempt(
@@ -2007,11 +2171,11 @@ function clearRateLimitWaitFile(sessionDir: string): void {
   try { fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json')); } catch { /* ok */ }
 }
 
-function measureCurrentMetric(
+async function measureCurrentMetric(
   state: MicroverseState,
   ctx: RunContext,
   backend: Backend,
-): MetricSnapshot | null {
+): Promise<MetricSnapshot | null> {
   if (state.key_metric.type === 'command') {
     return measureMetric(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir);
   }
@@ -2069,6 +2233,22 @@ function mapJudgeMeasurementFailure(
       return measured.exhaustedFailureKind === 'timeout'
         ? 'judge_timeout'
         : 'baseline_unmeasurable_unrecoverable';
+    default:
+      return 'baseline_unmeasurable_unrecoverable';
+  }
+}
+
+function mapCommandMeasurementFailure(
+  measured: CommandMeasurementResult,
+): JudgeMeasurementFailureExitReason {
+  if ('metric' in measured && measured.metric) {
+    throw new Error('mapCommandMeasurementFailure requires a failed command measurement');
+  }
+  switch (measured.failureKind) {
+    case 'cli_missing':
+      return 'judge_cli_missing';
+    case 'timeout':
+      return 'judge_timeout';
     default:
       return 'baseline_unmeasurable_unrecoverable';
   }
@@ -2177,6 +2357,40 @@ async function measureLlmBaseline(
   throw new MicroverseExitError(exitReason, error);
 }
 
+async function measureCommandBaseline(
+  state: MicroverseState,
+  ctx: RunContext,
+): Promise<MetricSnapshot | null> {
+  if (state.key_metric.type !== 'command') return null;
+  const measured = await measureMetricWithRetry(
+    state.key_metric.validation,
+    state.key_metric.timeout_seconds,
+    ctx.workingDir,
+  );
+  if (measured.metric) return measured.metric;
+  const exitReason: ExitReason = mapCommandMeasurementFailure(measured);
+  const activityEvent: ActivityEventType = exitReason === 'baseline_unmeasurable_unrecoverable'
+    ? 'baseline_unmeasurable'
+    : exitReason;
+  const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
+  ctx.log(`ERROR: Could not measure baseline metric (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
+  logActivity({
+    event: activityEvent,
+    source: 'pickle',
+    session: path.basename(ctx.sessionDir),
+    iteration: ctx.iteration,
+    error,
+    gate_payload: {
+      attempts: measured.attempts,
+      failure_kind: measured.failureKind,
+    },
+  });
+  state.status = 'stopped';
+  state.exit_reason = exitReason;
+  writeMicroverseState(ctx.sessionDir, state);
+  throw new MicroverseExitError(exitReason, error);
+}
+
 export async function executeGapAnalysis(
   state: MicroverseState,
   ctx: RunContext,
@@ -2214,7 +2428,9 @@ export async function executeGapAnalysis(
   const backend = resolveBackend(ctx.currentRunnerState);
   const baseline: MetricSnapshot | null = state.key_metric.type === 'llm'
     ? await measureLlmBaseline(state, ctx, backend)
-    : measureCurrentMetric(state, ctx, backend);
+    : state.key_metric.type === 'command'
+      ? await measureCommandBaseline(state, ctx)
+      : await measureCurrentMetric(state, ctx, backend);
   if (baseline) {
     state.baseline_score = baseline.score;
     ctx.log(`${state.key_metric.type === 'llm' ? 'LLM baseline' : 'Baseline'} metric: ${baseline.score}${state.key_metric.type === 'command' ? ` (raw: ${baseline.raw})` : ''}`);
@@ -2393,6 +2609,36 @@ async function measureLlmIteration(
   return { kind: 'failed', exitReason };
 }
 
+async function measureCommandIteration(
+  state: MicroverseState,
+  ctx: RunContext,
+): Promise<{ kind: 'ok'; metric: MetricSnapshot } | { kind: 'failed'; exitReason: JudgeMeasurementFailureExitReason }> {
+  if (state.key_metric.type !== 'command') {
+    throw new Error('measureCommandIteration requires command metric');
+  }
+  const measured = await measureMetricWithRetry(
+    state.key_metric.validation,
+    state.key_metric.timeout_seconds,
+    ctx.workingDir,
+  );
+  if (measured.metric) return { kind: 'ok', metric: measured.metric };
+  const exitReason = mapCommandMeasurementFailure(measured);
+  const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
+  ctx.log(`ERROR: Metric measurement failed (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
+  logActivity({
+    event: exitReason === 'baseline_unmeasurable_unrecoverable' ? 'baseline_unmeasurable' : exitReason,
+    source: 'pickle',
+    session: path.basename(ctx.sessionDir),
+    iteration: ctx.iteration,
+    error,
+    gate_payload: {
+      attempts: measured.attempts,
+      failure_kind: measured.failureKind,
+    },
+  });
+  return { kind: 'failed', exitReason };
+}
+
 export async function measureAndClassifyIteration(
   state: MicroverseState,
   baseline: MetricSnapshot,
@@ -2416,17 +2662,13 @@ export async function measureAndClassifyIteration(
         remaining: judgeResult.remaining,
       };
     }
+  } else if (state.key_metric.type === 'command') {
+    const commandOutcome = await measureCommandIteration(state, ctx);
+    if (commandOutcome.kind === 'failed') return { kind: 'failed', exitReason: commandOutcome.exitReason };
+    metricResult = commandOutcome.metric;
   } else {
-    let measured = measureCurrentMetric(state, ctx, backend);
-    if (!measured) {
-      ctx.log('WARNING: Metric measurement failed — retrying once after 10s');
-      await _deps.sleep(Defaults.RATE_LIMIT_POLL_MS);
-      measured = measureCurrentMetric(state, ctx, backend);
-    }
-
-    if (!measured) {
-      return recordMetricMeasurementFailure(state, ctx);
-    }
+    const measured = await measureCurrentMetric(state, ctx, backend);
+    if (!measured) return recordMetricMeasurementFailure(state, ctx);
     metricResult = measured;
   }
 

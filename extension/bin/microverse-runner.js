@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { execFileSync, spawnSync } from 'child_process';
+import { execFileSync, spawn, spawnSync } from 'child_process';
 import { pathToFileURL } from 'node:url';
 import { Defaults } from '../types/index.js';
 import { resolveBackend, resolveWorkerBackendFromState, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
@@ -672,35 +672,12 @@ export function stageAutoCommitPaths(workingDir, excludePrefixes = []) {
     }
 }
 export function measureMetric(validation, timeoutSeconds, cwd) {
-    if (!validation || typeof validation !== 'string')
-        return null;
-    try {
-        // Use execFileSync with explicit /bin/sh to avoid direct shell interpretation
-        // of the validation string. The command is user-authored in microverse.json.
-        const output = execFileSync('/bin/sh', ['-c', validation], {
-            cwd,
-            timeout: timeoutSeconds * 1000,
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-        }).trim();
-        const lines = output.split('\n');
-        const lastLine = lines[lines.length - 1].trim();
-        const score = parseFloat(lastLine);
-        if (!Number.isFinite(score)) {
-            process.stderr.write(`[microverse] measureMetric: non-numeric output (last line: "${lastLine}")\n`);
-            return null;
-        }
-        return { raw: output, score };
-    }
-    catch (err) {
-        const msg = safeErrorMessage(err);
-        process.stderr.write(`[microverse] measureMetric failed: ${msg}\n`);
-        return null;
-    }
+    return measureMetricAttempt(validation, timeoutSeconds, cwd).then((result) => result.metric);
 }
 /** @internal test seam — do not use outside tests */
 export const _deps = {
     execFileSync: execFileSync,
+    spawn: spawn,
     spawnSync: spawnSync,
     displayMacNotification: displayMacNotification,
     runIteration: runIteration,
@@ -1105,6 +1082,153 @@ export function classifyJudgeError(err) {
         return 'timeout';
     return 'failed';
 }
+const COMMAND_METRIC_KILL_GRACE_MS = 1000;
+function summarizeCommandFailure(base, stdout, stderr) {
+    const trimmedStdout = stdout.trim();
+    const trimmedStderr = stderr.trim();
+    if (trimmedStderr.length > 0)
+        return `${base}: ${trimmedStderr}`;
+    if (trimmedStdout.length > 0)
+        return `${base}: ${trimmedStdout}`;
+    return base;
+}
+function isMissingCommandExit(code, stdout, stderr) {
+    if (code !== 127)
+        return false;
+    return /not found/i.test(`${stderr}\n${stdout}`);
+}
+async function measureMetricAttempt(validation, timeoutSeconds, cwd) {
+    if (!validation || typeof validation !== 'string') {
+        return {
+            metric: null,
+            failureKind: 'failed',
+            message: 'validation command missing',
+        };
+    }
+    const timeoutMs = Math.max(1, timeoutSeconds) * 1000;
+    return await new Promise((resolve) => {
+        let settled = false;
+        let timedOut = false;
+        let stdout = '';
+        let stderr = '';
+        let killTimer;
+        const child = _deps.spawn('/bin/sh', ['-c', validation], {
+            cwd,
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        const finish = (result) => {
+            if (settled)
+                return;
+            settled = true;
+            if (killTimer)
+                clearTimeout(killTimer);
+            if (result.metric === null && result.message) {
+                process.stderr.write(`[microverse] measureMetric failed: ${result.message}\n`);
+            }
+            resolve(result);
+        };
+        const timeoutHandle = setTimeout(() => {
+            timedOut = true;
+            try {
+                child.kill('SIGTERM');
+            }
+            catch {
+                // Best-effort cleanup.
+            }
+            killTimer = setTimeout(() => {
+                try {
+                    child.kill('SIGKILL');
+                }
+                catch {
+                    // Best-effort cleanup.
+                }
+            }, COMMAND_METRIC_KILL_GRACE_MS);
+        }, timeoutMs);
+        const clearTimers = () => {
+            clearTimeout(timeoutHandle);
+            if (killTimer)
+                clearTimeout(killTimer);
+        };
+        child.stdout?.setEncoding('utf-8');
+        child.stderr?.setEncoding('utf-8');
+        child.stdout?.on('data', (chunk) => {
+            stdout += chunk;
+        });
+        child.stderr?.on('data', (chunk) => {
+            stderr += chunk;
+        });
+        child.on('spawn', () => {
+            child.stdin?.end();
+        });
+        child.on('error', (err) => {
+            clearTimers();
+            const message = safeErrorMessage(err);
+            finish({
+                metric: null,
+                failureKind: isMissingCliError(err) ? 'cli_missing' : 'spawn_failure',
+                message,
+            });
+        });
+        child.on('close', (code, signal) => {
+            clearTimers();
+            if (timedOut) {
+                finish({
+                    metric: null,
+                    failureKind: 'timeout',
+                    message: summarizeCommandFailure(`command timed out after ${timeoutMs}ms`, stdout, stderr),
+                });
+                return;
+            }
+            if (code !== 0) {
+                const failureKind = isMissingCommandExit(code, stdout, stderr)
+                    ? 'cli_missing'
+                    : 'failed';
+                finish({
+                    metric: null,
+                    failureKind,
+                    message: summarizeCommandFailure(`command exited with code ${code}${signal ? ` (signal ${signal})` : ''}`, stdout, stderr),
+                });
+                return;
+            }
+            const output = stdout.trim();
+            const lines = output.split('\n');
+            const lastLine = lines[lines.length - 1]?.trim() ?? '';
+            const score = parseFloat(lastLine);
+            if (!Number.isFinite(score)) {
+                finish({
+                    metric: null,
+                    failureKind: 'failed',
+                    message: `non-numeric output (last line: "${lastLine}")`,
+                });
+                return;
+            }
+            finish({ metric: { raw: output, score } });
+        });
+    });
+}
+async function measureMetricWithRetry(validation, timeoutSeconds, cwd) {
+    const first = await measureMetricAttempt(validation, timeoutSeconds, cwd);
+    if (first.metric)
+        return { metric: first.metric, attempts: 1 };
+    if (first.failureKind && first.failureKind !== 'failed') {
+        return {
+            metric: null,
+            failureKind: first.failureKind,
+            attempts: 1,
+            lastError: first.message ?? null,
+        };
+    }
+    await _deps.sleep(Defaults.RATE_LIMIT_POLL_MS);
+    const second = await measureMetricAttempt(validation, timeoutSeconds, cwd);
+    if (second.metric)
+        return { metric: second.metric, attempts: 2 };
+    return {
+        metric: null,
+        failureKind: second.failureKind ?? 'failed',
+        attempts: 2,
+        lastError: second.message ?? first.message ?? null,
+    };
+}
 function measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = []) {
     // The judge always runs via the claude binary, even when state.backend=codex.
     // codex on ChatGPT accounts rejects claude-sonnet-4-6 as unsupported, causing
@@ -1468,7 +1592,7 @@ function clearRateLimitWaitFile(sessionDir) {
     }
     catch { /* ok */ }
 }
-function measureCurrentMetric(state, ctx, backend) {
+async function measureCurrentMetric(state, ctx, backend) {
     if (state.key_metric.type === 'command') {
         return measureMetric(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir);
     }
@@ -1511,6 +1635,19 @@ function mapJudgeMeasurementFailure(measured) {
             return measured.exhaustedFailureKind === 'timeout'
                 ? 'judge_timeout'
                 : 'baseline_unmeasurable_unrecoverable';
+        default:
+            return 'baseline_unmeasurable_unrecoverable';
+    }
+}
+function mapCommandMeasurementFailure(measured) {
+    if ('metric' in measured && measured.metric) {
+        throw new Error('mapCommandMeasurementFailure requires a failed command measurement');
+    }
+    switch (measured.failureKind) {
+        case 'cli_missing':
+            return 'judge_cli_missing';
+        case 'timeout':
+            return 'judge_timeout';
         default:
             return 'baseline_unmeasurable_unrecoverable';
     }
@@ -1607,6 +1744,34 @@ async function measureLlmBaseline(state, ctx, backend) {
     writeMicroverseState(ctx.sessionDir, state);
     throw new MicroverseExitError(exitReason, error);
 }
+async function measureCommandBaseline(state, ctx) {
+    if (state.key_metric.type !== 'command')
+        return null;
+    const measured = await measureMetricWithRetry(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir);
+    if (measured.metric)
+        return measured.metric;
+    const exitReason = mapCommandMeasurementFailure(measured);
+    const activityEvent = exitReason === 'baseline_unmeasurable_unrecoverable'
+        ? 'baseline_unmeasurable'
+        : exitReason;
+    const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
+    ctx.log(`ERROR: Could not measure baseline metric (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
+    logActivity({
+        event: activityEvent,
+        source: 'pickle',
+        session: path.basename(ctx.sessionDir),
+        iteration: ctx.iteration,
+        error,
+        gate_payload: {
+            attempts: measured.attempts,
+            failure_kind: measured.failureKind,
+        },
+    });
+    state.status = 'stopped';
+    state.exit_reason = exitReason;
+    writeMicroverseState(ctx.sessionDir, state);
+    throw new MicroverseExitError(exitReason, error);
+}
 export async function executeGapAnalysis(state, ctx) {
     ctx.log('Starting gap analysis phase');
     ctx.iteration++;
@@ -1632,7 +1797,9 @@ export async function executeGapAnalysis(state, ctx) {
     const backend = resolveBackend(ctx.currentRunnerState);
     const baseline = state.key_metric.type === 'llm'
         ? await measureLlmBaseline(state, ctx, backend)
-        : measureCurrentMetric(state, ctx, backend);
+        : state.key_metric.type === 'command'
+            ? await measureCommandBaseline(state, ctx)
+            : await measureCurrentMetric(state, ctx, backend);
     if (baseline) {
         state.baseline_score = baseline.score;
         ctx.log(`${state.key_metric.type === 'llm' ? 'LLM baseline' : 'Baseline'} metric: ${baseline.score}${state.key_metric.type === 'command' ? ` (raw: ${baseline.raw})` : ''}`);
@@ -1772,6 +1939,29 @@ async function measureLlmIteration(state, ctx, backend) {
     });
     return { kind: 'failed', exitReason };
 }
+async function measureCommandIteration(state, ctx) {
+    if (state.key_metric.type !== 'command') {
+        throw new Error('measureCommandIteration requires command metric');
+    }
+    const measured = await measureMetricWithRetry(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir);
+    if (measured.metric)
+        return { kind: 'ok', metric: measured.metric };
+    const exitReason = mapCommandMeasurementFailure(measured);
+    const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
+    ctx.log(`ERROR: Metric measurement failed (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
+    logActivity({
+        event: exitReason === 'baseline_unmeasurable_unrecoverable' ? 'baseline_unmeasurable' : exitReason,
+        source: 'pickle',
+        session: path.basename(ctx.sessionDir),
+        iteration: ctx.iteration,
+        error,
+        gate_payload: {
+            attempts: measured.attempts,
+            failure_kind: measured.failureKind,
+        },
+    });
+    return { kind: 'failed', exitReason };
+}
 export async function measureAndClassifyIteration(state, baseline, ctx) {
     const backend = resolveBackend(ctx.currentRunnerState);
     let metricResult;
@@ -1793,13 +1983,14 @@ export async function measureAndClassifyIteration(state, baseline, ctx) {
             };
         }
     }
+    else if (state.key_metric.type === 'command') {
+        const commandOutcome = await measureCommandIteration(state, ctx);
+        if (commandOutcome.kind === 'failed')
+            return { kind: 'failed', exitReason: commandOutcome.exitReason };
+        metricResult = commandOutcome.metric;
+    }
     else {
-        let measured = measureCurrentMetric(state, ctx, backend);
-        if (!measured) {
-            ctx.log('WARNING: Metric measurement failed — retrying once after 10s');
-            await _deps.sleep(Defaults.RATE_LIMIT_POLL_MS);
-            measured = measureCurrentMetric(state, ctx, backend);
-        }
+        const measured = await measureCurrentMetric(state, ctx, backend);
         if (!measured) {
             return recordMetricMeasurementFailure(state, ctx);
         }

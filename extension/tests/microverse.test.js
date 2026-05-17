@@ -1156,10 +1156,10 @@ test('microverse-runner fatal path promotes newer microverse tmp before marking 
 
 // --- measureMetric tests ---
 
-test('measureMetric parses numeric output from command', () => {
+test('measureMetric parses numeric output from command', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metric-'));
     try {
-        const result = measureMetric('echo 42.5', 5, dir);
+        const result = await measureMetric('echo 42.5', 5, dir);
         assert.ok(result, 'expected non-null result');
         assert.equal(result.score, 42.5);
         assert.ok(result.raw.includes('42.5'));
@@ -1168,40 +1168,40 @@ test('measureMetric parses numeric output from command', () => {
     }
 });
 
-test('measureMetric returns null for non-numeric output', () => {
+test('measureMetric returns null for non-numeric output', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metric-'));
     try {
-        const result = measureMetric('echo "not a number"', 5, dir);
+        const result = await measureMetric('echo "not a number"', 5, dir);
         assert.equal(result, null);
     } finally {
         fs.rmSync(dir, { recursive: true });
     }
 });
 
-test('measureMetric returns null on timeout', () => {
+test('measureMetric returns null on timeout', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metric-'));
     try {
-        const result = measureMetric('sleep 10 && echo 50', 1, dir);
+        const result = await measureMetric('sleep 10 && echo 50', 1, dir);
         assert.equal(result, null);
     } finally {
         fs.rmSync(dir, { recursive: true });
     }
 });
 
-test('measureMetric returns null on command failure', () => {
+test('measureMetric returns null on command failure', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metric-'));
     try {
-        const result = measureMetric('exit 1', 5, dir);
+        const result = await measureMetric('exit 1', 5, dir);
         assert.equal(result, null);
     } finally {
         fs.rmSync(dir, { recursive: true });
     }
 });
 
-test('measureMetric parses last line when multi-line output', () => {
+test('measureMetric parses last line when multi-line output', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metric-'));
     try {
-        const result = measureMetric('echo "info line" && echo 99', 5, dir);
+        const result = await measureMetric('echo "info line" && echo 99', 5, dir);
         assert.ok(result, 'expected non-null result');
         assert.equal(result.score, 99);
     } finally {
@@ -2357,6 +2357,78 @@ test('LLM baseline ETIMEDOUT exits judge_timeout instead of defaulting to 0', as
     } finally {
         _deps.execFileSync = origExec;
         _deps.sleep = origSleep;
+        _deps.runIteration = origRunIteration;
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('command baseline timeout exits judge_timeout instead of defaulting to 0', async () => {
+    const origRunIteration = _deps.runIteration;
+    const dir = createTempGitRepo();
+    const { dir: sessionDir } = createSessionDir(dir, {
+        status: 'gap_analysis',
+        key_metric: {
+            description: 'code quality',
+            validation: 'sleep 10 && echo 50',
+            type: 'command',
+            timeout_seconds: 1,
+            tolerance: 2,
+        },
+        baseline_score: 0,
+    });
+    const ctx = makeMicroverseLoopContext({ dir: sessionDir, state: JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8')) }, dir, path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'));
+    _deps.runIteration = async () => ({
+        completion: 'success',
+        timedOut: false,
+        exitCode: 0,
+        wallSeconds: 1,
+    });
+    try {
+        await assert.rejects(
+            executeGapAnalysis(readMicroverseState(sessionDir), ctx),
+            (err) => err?.name === 'MicroverseExitError' && err?.exitReason === 'judge_timeout',
+        );
+        const persisted = readMicroverseState(sessionDir);
+        assert.equal(persisted.exit_reason, 'judge_timeout');
+        assert.equal(persisted.status, 'stopped');
+    } finally {
+        _deps.runIteration = origRunIteration;
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('command baseline missing CLI exits judge_cli_missing instead of defaulting to 0', async () => {
+    const origRunIteration = _deps.runIteration;
+    const dir = createTempGitRepo();
+    const { dir: sessionDir } = createSessionDir(dir, {
+        status: 'gap_analysis',
+        key_metric: {
+            description: 'code quality',
+            validation: 'definitely-not-a-real-command-6147a21f',
+            type: 'command',
+            timeout_seconds: 1,
+            tolerance: 2,
+        },
+        baseline_score: 0,
+    });
+    const ctx = makeMicroverseLoopContext({ dir: sessionDir, state: JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8')) }, dir, path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'));
+    _deps.runIteration = async () => ({
+        completion: 'success',
+        timedOut: false,
+        exitCode: 0,
+        wallSeconds: 1,
+    });
+    try {
+        await assert.rejects(
+            executeGapAnalysis(readMicroverseState(sessionDir), ctx),
+            (err) => err?.name === 'MicroverseExitError' && err?.exitReason === 'judge_cli_missing',
+        );
+        const persisted = readMicroverseState(sessionDir);
+        assert.equal(persisted.exit_reason, 'judge_cli_missing');
+        assert.equal(persisted.status, 'stopped');
+    } finally {
         _deps.runIteration = origRunIteration;
         fs.rmSync(sessionDir, { recursive: true, force: true });
         fs.rmSync(dir, { recursive: true, force: true });
