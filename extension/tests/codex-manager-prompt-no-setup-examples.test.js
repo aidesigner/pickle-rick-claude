@@ -39,6 +39,15 @@ test('codex-manager-prompt-no-setup-examples: codex mux payload has zero setup.j
   assertNoSetupTaskOutsideFraming(payload);
 });
 
+test('codex-manager-prompt-no-setup-examples: codex payload includes mux no-signal and no-bypass guardrails', { skip: !pickleExists }, () => {
+  const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', {
+    argumentSubstitution: '--resume /fake/session',
+  });
+  assert.ok(payload.includes('DO NOT send SIGTERM/SIGINT/SIGKILL to the mux-runner subprocess.'));
+  assert.ok(payload.includes('DO NOT decide that mux-runner is wedged based on session-directory observation.'));
+  assert.ok(payload.includes('DO NOT attempt to bypass mux-runner by spawning spawn-morty.js directly.'));
+});
+
 // --- jar-runner surface: codex ---
 test('codex-manager-prompt-no-setup-examples: codex jar payload has framing markers', { skip: !pickleExists }, () => {
   const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', {

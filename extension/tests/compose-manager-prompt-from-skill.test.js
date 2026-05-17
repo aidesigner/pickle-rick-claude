@@ -153,6 +153,16 @@ test('composeManagerPromptFromSkill: codex mode PROHIBITED content present', () 
   } finally { cleanup(); }
 });
 
+test('composeManagerPromptFromSkill: codex mode includes no-signal and no-bypass directives', () => {
+  const { skillPath, cleanup } = makeTempSkill('Manager body.');
+  try {
+    const result = composeManagerPromptFromSkill(skillPath, 'codex', { argumentSubstitution: 'x' });
+    assert.ok(result.includes('DO NOT send SIGTERM/SIGINT/SIGKILL to the mux-runner subprocess.'));
+    assert.ok(result.includes('DO NOT decide that mux-runner is wedged based on session-directory observation.'));
+    assert.ok(result.includes('DO NOT attempt to bypass mux-runner by spawning spawn-morty.js directly.'));
+  } finally { cleanup(); }
+});
+
 // --- stripStepOneBlock unit ---
 test('stripStepOneBlock: strips from # Step 1: Initialization through # Step 2:', () => {
   const input = `Preamble.
@@ -194,6 +204,12 @@ test('MANAGER_ROLE_FRAMING_BLOCK: contains PROHIBITED keyword', () => {
 
 test('MANAGER_ROLE_FRAMING_BLOCK: mentions setup.js in prohibited list', () => {
   assert.ok(MANAGER_ROLE_FRAMING_BLOCK.includes('setup.js'));
+});
+
+test('MANAGER_ROLE_FRAMING_BLOCK: includes codex mux safety guardrails', () => {
+  assert.ok(MANAGER_ROLE_FRAMING_BLOCK.includes('DO NOT send SIGTERM/SIGINT/SIGKILL to the mux-runner subprocess.'));
+  assert.ok(MANAGER_ROLE_FRAMING_BLOCK.includes('DO NOT decide that mux-runner is wedged based on session-directory observation.'));
+  assert.ok(MANAGER_ROLE_FRAMING_BLOCK.includes('DO NOT attempt to bypass mux-runner by spawning spawn-morty.js directly.'));
 });
 
 // --- Snapshot pins ---
