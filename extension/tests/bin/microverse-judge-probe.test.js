@@ -142,4 +142,62 @@ describe('measureLlmMetricWithBackoff — probe classification behavior', () => 
       _deps.sleep = origSleep;
     }
   });
+
+  test('codex session emits fallback telemetry when claude judge measurement succeeds', async () => {
+    const orig = {
+      execFileSync: _deps.execFileSync,
+      logActivity: _deps.logActivity,
+    };
+    const events = [];
+    let measurementCalls = 0;
+    _deps.execFileSync = (_cmd, args) => {
+      if (Array.isArray(args) && args[0] === '--version') return 'claude/2.1.0';
+      measurementCalls++;
+      return '8';
+    };
+    _deps.logActivity = (event) => {
+      events.push({ ts: new Date().toISOString(), ...event });
+    };
+    try {
+      const result = await measureLlmMetricWithBackoff(
+        'fix bugs',
+        30,
+        '/tmp',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'codex',
+        [],
+        { session: 'session-1', iteration: 3, spawnContext: 'iteration' },
+      );
+      assert.deepEqual(result.metric, { raw: '8', score: 8 });
+      assert.equal(measurementCalls, 1);
+      assert.equal(events.length, 1);
+      assert.deepEqual(events[0], {
+        ts: events[0].ts,
+        event: 'judge_measurement_attempted',
+        source: 'pickle',
+        session: 'session-1',
+        iteration: 3,
+        backend: 'codex',
+        judge_backend: 'claude',
+        model: 'claude-sonnet-4-6',
+        fallback_activated: true,
+        spawn_context: 'iteration',
+        gate_payload: {
+          attempt: 1,
+          elapsed_ms: events[0].gate_payload.elapsed_ms,
+          outcome: 'success',
+          timeout_class: null,
+          probe_kind: 'ok',
+        },
+      });
+      assert.equal(Number.isInteger(events[0].gate_payload.elapsed_ms), true);
+      assert.equal(events[0].gate_payload.elapsed_ms >= 0, true);
+    } finally {
+      _deps.execFileSync = orig.execFileSync;
+      _deps.logActivity = orig.logActivity;
+    }
+  });
 });

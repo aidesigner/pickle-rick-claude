@@ -126,6 +126,55 @@
         }
       }
     },
+    "judge_measurement_attempted": {
+      "type": "object",
+      "required": [
+        "event",
+        "ts",
+        "session",
+        "iteration",
+        "backend",
+        "judge_backend",
+        "model",
+        "fallback_activated",
+        "spawn_context",
+        "gate_payload"
+      ],
+      "properties": {
+        "event": { "type": "string", "const": "judge_measurement_attempted" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "iteration": { "type": "integer", "minimum": 0 },
+        "backend": { "$ref": "#/definitions/backendEnum" },
+        "judge_backend": { "$ref": "#/definitions/backendEnum" },
+        "model": { "type": "string" },
+        "fallback_activated": { "type": "boolean" },
+        "spawn_context": {
+          "type": "string",
+          "enum": ["baseline", "iteration"]
+        },
+        "gate_payload": {
+          "type": "object",
+          "required": ["attempt", "elapsed_ms", "outcome", "timeout_class", "probe_kind"],
+          "properties": {
+            "attempt": { "type": "integer", "minimum": 1 },
+            "elapsed_ms": { "type": "integer", "minimum": 0 },
+            "outcome": {
+              "type": "string",
+              "enum": ["success", "timeout", "failed", "cli_missing"]
+            },
+            "timeout_class": {
+              "type": ["string", "null"],
+              "enum": ["attempt_timeout", "probe_timeout", null]
+            },
+            "probe_kind": {
+              "type": "string",
+              "enum": ["ok", "missing", "timeout", "failed"]
+            }
+          }
+        }
+      }
+    },
     "cap_check_skipped_stale_cache": {
       "type": "object",
       "required": ["event", "ts", "gate_payload"],
@@ -976,6 +1025,7 @@
     { "$ref": "#/definitions/subtool_backend_override" },
     { "$ref": "#/definitions/signal_received" },
     { "$ref": "#/definitions/worker_partial_lifecycle_exit" },
+    { "$ref": "#/definitions/judge_measurement_attempted" },
     { "$ref": "#/definitions/baseline_attempt_timeout" },
     { "$ref": "#/definitions/cap_check_skipped_stale_cache" },
     { "$ref": "#/definitions/pipeline_auto_resumed" },

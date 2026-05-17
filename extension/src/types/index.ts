@@ -466,6 +466,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
   'judge_unreachable',
   'judge_timeout',
+  'judge_measurement_attempted',
   'baseline_attempt_timeout',
   'baseline_unmeasurable',
   'judge_cli_missing',
@@ -665,7 +666,10 @@ export interface ActivityEvent {
   original_prompt?: string;
   model?: string;
   backend?: Backend;
+  judge_backend?: Backend;
   worker_backend?: Backend | null;
+  fallback_activated?: boolean;
+  spawn_context?: string;
   ticket_id?: string;
   project_type?: string;
   bytes_out_utf8?: number;

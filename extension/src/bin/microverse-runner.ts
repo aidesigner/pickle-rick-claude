@@ -1778,6 +1778,8 @@ function measureLlmMetricAttempt(
 
 type ProbeJudgeResult = { kind: 'ok' } | { kind: 'missing' | 'timeout' | 'failed'; message: string };
 
+type JudgeMeasurementSpawnContext = 'baseline' | 'iteration';
+
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 const MAX_PROBE_TIMEOUT_MS = 60000;
 
@@ -1824,7 +1826,7 @@ export async function measureLlmMetricWithBackoff(
   judgeContextPath?: string,
   backend: Backend = 'claude',
   priorViolations: ViolationLedger[] = [],
-  attemptTimeoutActivity?: { session: string; iteration: number },
+  attemptActivity?: { session: string; iteration: number; spawnContext: JudgeMeasurementSpawnContext },
 ): Promise<JudgeMeasurementResult> {
   const probe = probeJudgeCliAvailability(cwd);
   if (probe.kind === 'missing') {
@@ -1854,6 +1856,40 @@ export async function measureLlmMetricWithBackoff(
       priorViolations,
     );
     const elapsedMs = Math.max(0, Date.now() - startedAt);
+    if (attemptActivity) {
+      const outcome = result.metric
+        ? 'success'
+        : result.failureKind === 'cli_missing'
+          ? 'cli_missing'
+          : result.failureKind;
+      const timeoutClass = result.failureKind === 'timeout'
+        ? probe.kind === 'timeout'
+          ? 'probe_timeout'
+          : 'attempt_timeout'
+        : null;
+      try {
+        _deps.logActivity({
+          event: 'judge_measurement_attempted',
+          source: 'pickle',
+          session: attemptActivity.session,
+          iteration: attemptActivity.iteration,
+          backend,
+          judge_backend: 'claude',
+          model: judgeModel || DEFAULT_JUDGE_MODEL,
+          fallback_activated: backend !== 'claude' || probe.kind === 'timeout',
+          spawn_context: attemptActivity.spawnContext,
+          gate_payload: {
+            attempt: attempt + 1,
+            elapsed_ms: elapsedMs,
+            outcome,
+            timeout_class: timeoutClass,
+            probe_kind: probe.kind,
+          },
+        });
+      } catch {
+        // Best-effort telemetry; measurement retries must continue even if logging fails.
+      }
+    }
     if (result.metric) {
       return { metric: result.metric, attempts: attempt + 1 };
     }
@@ -1871,13 +1907,13 @@ export async function measureLlmMetricWithBackoff(
       exhaustedFailureKind = 'failed';
     } else if (result.failureKind === 'timeout' && exhaustedFailureKind !== 'failed') {
       exhaustedFailureKind = 'timeout';
-      if (attemptTimeoutActivity) {
+      if (attemptActivity) {
         try {
           _deps.logActivity({
             event: 'baseline_attempt_timeout',
             source: 'pickle',
-            session: attemptTimeoutActivity.session,
-            iteration: attemptTimeoutActivity.iteration,
+            session: attemptActivity.session,
+            iteration: attemptActivity.iteration,
             gate_payload: {
               attempt: attempt + 1,
               elapsed_ms: elapsedMs,
@@ -2331,7 +2367,7 @@ async function measureLlmBaseline(
     state.judge_context_path,
     backend,
     [],
-    { session: path.basename(ctx.sessionDir), iteration: ctx.iteration },
+    { session: path.basename(ctx.sessionDir), iteration: ctx.iteration, spawnContext: 'baseline' },
   );
   if (measured.metric) return measured.metric;
   const exitReason: ExitReason = mapJudgeMeasurementFailure(measured);
@@ -2589,7 +2625,7 @@ async function measureLlmIteration(
     state.judge_context_path,
     backend,
     state.violation_ledger ?? [],
-    { session: path.basename(ctx.sessionDir), iteration: ctx.iteration },
+    { session: path.basename(ctx.sessionDir), iteration: ctx.iteration, spawnContext: 'iteration' },
   );
   if (measured.metric) return { kind: 'ok', metric: measured.metric };
   const exitReason = mapJudgeMeasurementFailure(measured);

@@ -22,7 +22,7 @@ function makeEtimedoutError() {
   return err;
 }
 
-test('baseline_attempt_timeout emits per attempt', async () => {
+test('judge_measurement_attempted and baseline_attempt_timeout emit per attempt', async () => {
   const origExecFileSync = _deps.execFileSync;
   const origSleep = _deps.sleep;
   const origLogActivity = _deps.logActivity;
@@ -47,15 +47,36 @@ test('baseline_attempt_timeout emits per attempt', async () => {
       undefined,
       'claude',
       [],
-      { session: 'session-1', iteration: 7 },
+      { session: 'session-1', iteration: 7, spawnContext: 'baseline' },
     );
 
     assert.equal(result.metric, null);
     assert.equal(result.exitReason, 'judge_timeout');
     assert.equal(result.attempts, 4);
 
-    assert.equal(events.length, 4, 'ETIMEDOUT attempts should emit four timeout events');
-    events.forEach((event, index) => {
+    const attemptedEvents = events.filter((event) => event.event === 'judge_measurement_attempted');
+    const timeoutEvents = events.filter((event) => event.event === 'baseline_attempt_timeout');
+
+    assert.equal(attemptedEvents.length, 4, 'ETIMEDOUT attempts should emit four measurement-attempt events');
+    attemptedEvents.forEach((event, index) => {
+      assert.equal(typeof event.ts, 'string');
+      assert.equal(event.session, 'session-1');
+      assert.equal(event.iteration, 7);
+      assert.equal(event.backend, 'claude');
+      assert.equal(event.judge_backend, 'claude');
+      assert.equal(event.model, 'claude-sonnet-4-6');
+      assert.equal(event.fallback_activated, true);
+      assert.equal(event.spawn_context, 'baseline');
+      assert.equal(event.gate_payload.attempt, index + 1);
+      assert.equal(Number.isInteger(event.gate_payload.elapsed_ms), true);
+      assert.equal(event.gate_payload.elapsed_ms >= 0, true);
+      assert.equal(event.gate_payload.outcome, 'timeout');
+      assert.equal(event.gate_payload.timeout_class, 'probe_timeout');
+      assert.equal(event.gate_payload.probe_kind, 'timeout');
+    });
+
+    assert.equal(timeoutEvents.length, 4, 'ETIMEDOUT attempts should emit four timeout events');
+    timeoutEvents.forEach((event, index) => {
       assert.equal(event.event, 'baseline_attempt_timeout');
       assert.equal(typeof event.ts, 'string');
       assert.equal(event.session, 'session-1');
@@ -68,9 +89,11 @@ test('baseline_attempt_timeout emits per attempt', async () => {
 
     const definitionKeys = Object.keys(schema.definitions);
     assert.equal(definitionKeys.includes('baseline_attempt_timeout'), true);
+    assert.equal(definitionKeys.includes('judge_measurement_attempted'), true);
 
     const oneOfRefs = schema.oneOf.map((entry) => entry.$ref);
     assert.equal(oneOfRefs.includes('#/definitions/baseline_attempt_timeout'), true);
+    assert.equal(oneOfRefs.includes('#/definitions/judge_measurement_attempted'), true);
   } finally {
     _deps.execFileSync = origExecFileSync;
     _deps.sleep = origSleep;
@@ -83,6 +106,14 @@ test('VALID_ACTIVITY_EVENTS includes baseline_attempt_timeout', () => {
     VALID_ACTIVITY_EVENTS.includes('baseline_attempt_timeout'),
     true,
     'baseline_attempt_timeout must be registered in VALID_ACTIVITY_EVENTS',
+  );
+});
+
+test('VALID_ACTIVITY_EVENTS includes judge_measurement_attempted', () => {
+  assert.equal(
+    VALID_ACTIVITY_EVENTS.includes('judge_measurement_attempted'),
+    true,
+    'judge_measurement_attempted must be registered in VALID_ACTIVITY_EVENTS',
   );
 });
 
@@ -100,6 +131,37 @@ test('spawn-refinement-team documents baseline_attempt_timeout schema fields', (
       row,
       new RegExp(String.raw`\`${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\``),
       `baseline_attempt_timeout row missing required field ${field}`,
+    );
+  }
+});
+
+test('spawn-refinement-team documents judge_measurement_attempted schema fields', () => {
+  const rowMatch = ACTIVITY_EVENT_SCHEMA_SECTION.match(
+    /\|\s*`judge_measurement_attempted`\s*\|\s*([^|]+)\|/,
+  );
+  assert.ok(
+    rowMatch,
+    'ACTIVITY_EVENT_SCHEMA_SECTION must include judge_measurement_attempted',
+  );
+  const row = rowMatch[1];
+  for (const field of [
+    'session',
+    'iteration',
+    'backend',
+    'judge_backend',
+    'model',
+    'fallback_activated',
+    'spawn_context',
+    'gate_payload.attempt',
+    'gate_payload.elapsed_ms',
+    'gate_payload.outcome',
+    'gate_payload.timeout_class',
+    'gate_payload.probe_kind',
+  ]) {
+    assert.match(
+      row,
+      new RegExp(String.raw`\`${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\``),
+      `judge_measurement_attempted row missing required field ${field}`,
     );
   }
 });

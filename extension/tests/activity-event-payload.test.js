@@ -198,6 +198,28 @@ const EVENT_CASES = [
     drop: 'ticket',
   },
   {
+    type: 'judge_measurement_attempted',
+    valid: {
+      event: 'judge_measurement_attempted',
+      ts: TS,
+      session: 'session-1',
+      iteration: 3,
+      backend: 'codex',
+      judge_backend: 'claude',
+      model: 'claude-sonnet-4-6',
+      fallback_activated: true,
+      spawn_context: 'iteration',
+      gate_payload: {
+        attempt: 1,
+        elapsed_ms: 1500,
+        outcome: 'success',
+        timeout_class: null,
+        probe_kind: 'ok',
+      },
+    },
+    drop: 'judge_backend',
+  },
+  {
     type: 'cap_check_skipped_stale_cache',
     valid: {
       event: 'cap_check_skipped_stale_cache',
@@ -768,6 +790,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'subtool_backend_override',
     'worker_partial_lifecycle_exit',
     'signal_received',
+    'judge_measurement_attempted',
     'baseline_attempt_timeout',
     'cap_check_skipped_stale_cache',
     'pipeline_auto_resumed',

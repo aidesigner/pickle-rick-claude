@@ -297,4 +297,64 @@ describe('microverse-baseline-classification', () => {
       fs.rmSync(workingDir, { recursive: true, force: true });
     }
   });
+
+  test('successful codex-session measurement emits fallback telemetry and preserves late-baseline behavior', async () => {
+    const original = {
+      execFileSync: _deps.execFileSync,
+      sleep: _deps.sleep,
+      logActivity: _deps.logActivity,
+    };
+    const workingDir = createTempGitRepo();
+    const session = createSessionDir(workingDir);
+    const ctx = makeContext(session.dir, { ...session.runnerState, backend: 'codex' }, workingDir);
+    const events = [];
+
+    _deps.sleep = async () => {};
+    _deps.execFileSync = (_cmd, args) => {
+      if (Array.isArray(args) && args[0] === '--version') return 'Claude Code 2.1.126';
+      return '7';
+    };
+    _deps.logActivity = (event) => {
+      events.push({ ts: new Date().toISOString(), ...event });
+    };
+
+    try {
+      const state = readMicroverseState(session.dir);
+      state.status = 'iterating';
+      state.baseline_score = 0;
+      state.key_metric = {
+        description: 'judge quality gate',
+        validation: 'improve code quality',
+        type: 'llm',
+        timeout_seconds: 60,
+        tolerance: 0,
+        judge_model: 'claude-sonnet-4-6',
+      };
+      state.convergence = { stall_limit: 3, stall_counter: 0, history: [] };
+
+      const result = await measureAndClassifyIteration(state, { raw: '', score: 0 }, ctx);
+      assert.deepEqual(result, { kind: 'unchanged' });
+      assert.equal(state.baseline_score, 7, 'late baseline should still be adopted on success');
+
+      const attemptedEvents = events.filter((event) => event.event === 'judge_measurement_attempted');
+      assert.equal(attemptedEvents.length, 1);
+      assert.equal(attemptedEvents[0].backend, 'codex');
+      assert.equal(attemptedEvents[0].judge_backend, 'claude');
+      assert.equal(attemptedEvents[0].fallback_activated, true);
+      assert.equal(attemptedEvents[0].spawn_context, 'iteration');
+      assert.equal(attemptedEvents[0].gate_payload.attempt, 1);
+      assert.equal(attemptedEvents[0].gate_payload.outcome, 'success');
+      assert.equal(attemptedEvents[0].gate_payload.timeout_class, null);
+      assert.equal(attemptedEvents[0].gate_payload.probe_kind, 'ok');
+
+      const timeoutEvents = events.filter((event) => event.event === 'baseline_attempt_timeout');
+      assert.equal(timeoutEvents.length, 0);
+    } finally {
+      _deps.execFileSync = original.execFileSync;
+      _deps.sleep = original.sleep;
+      _deps.logActivity = original.logActivity;
+      fs.rmSync(session.dir, { recursive: true, force: true });
+      fs.rmSync(workingDir, { recursive: true, force: true });
+    }
+  });
 });
