@@ -2397,10 +2397,138 @@ export function appendPipelineRunnerMarker(sessionDir: string, message: string):
   } catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
 
-export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally' | 'state_schema_version_ahead';
+export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally' | 'state_schema_version_ahead' | 'closer_handoff_terminal' | 'manager_handoff_pending';
 
-const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat';
+const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat' || r === 'closer_handoff_terminal' || r === 'manager_handoff_pending';
 const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead';
+
+interface CloserHandoffTracker {
+  ticket_id: string;
+  head_sha: string;
+  consecutive_failed_iterations: number;
+}
+
+type MuxRunnerStateWithCloserTracker = State & {
+  closer_handoff_tracker?: CloserHandoffTracker | null;
+};
+
+interface TicketConformanceSnapshot {
+  file: string | null;
+  hasManagerHandoff: boolean;
+}
+
+type CloserTerminalDecision =
+  | { action: 'continue'; tracker: CloserHandoffTracker | null }
+  | { action: 'exit'; reason: Extract<ExitReason, 'closer_handoff_terminal' | 'manager_handoff_pending'>; tracker: CloserHandoffTracker | null; detail: string };
+
+function readLatestTicketConformanceSnapshot(ticketDir: string): TicketConformanceSnapshot {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(ticketDir);
+  } catch {
+    return { file: null, hasManagerHandoff: false };
+  }
+  const latest = entries
+    .filter(file => /^conformance_.*\.md$/.test(file))
+    .sort()
+    .at(-1);
+  if (!latest) return { file: null, hasManagerHandoff: false };
+  try {
+    const content = fs.readFileSync(path.join(ticketDir, latest), 'utf-8');
+    return {
+      file: latest,
+      hasManagerHandoff: /^##\s+Manager Handoff\b/m.test(content),
+    };
+  } catch {
+    return { file: latest, hasManagerHandoff: false };
+  }
+}
+
+function readCloserHandoffBudget(extensionRoot: string): number {
+  const settings = loadSettingsBag(extensionRoot, 'mux-runner:closer-handoff-budget:settings');
+  return positiveIntegerOrNull(settings.closer_handoff_iteration_budget) ?? 2;
+}
+
+export function evaluateCloserTerminalState(args: {
+  state: State;
+  sessionDir: string;
+  workingDir: string;
+  headSha: string | null;
+  failedBudget: number;
+}): CloserTerminalDecision {
+  const ticketId = args.state.current_ticket;
+  if (!ticketId) return { action: 'continue', tracker: null };
+  let status: string;
+  try {
+    status = normalizeTicketStatus(getTicketStatus(args.sessionDir, ticketId));
+  } catch {
+    return { action: 'continue', tracker: null };
+  }
+  const ticketDir = path.join(args.sessionDir, ticketId);
+  const conformance = readLatestTicketConformanceSnapshot(ticketDir);
+  if (status === 'done' && conformance.hasManagerHandoff) {
+    return {
+      action: 'exit',
+      reason: 'manager_handoff_pending',
+      tracker: null,
+      detail: `ticket ${ticketId} is Done and ${conformance.file ?? 'latest conformance artifact'} contains a Manager Handoff section`,
+    };
+  }
+  if (status !== 'failed') return { action: 'continue', tracker: null };
+
+  const headSha = args.headSha ?? observeCurrentHead(args.workingDir)?.sha ?? null;
+  if (!headSha) {
+    return { action: 'continue', tracker: null };
+  }
+  const prior = (args.state as MuxRunnerStateWithCloserTracker).closer_handoff_tracker;
+  const consecutive = prior && prior.ticket_id === ticketId && prior.head_sha === headSha
+    ? prior.consecutive_failed_iterations + 1
+    : 1;
+  const tracker: CloserHandoffTracker = {
+    ticket_id: ticketId,
+    head_sha: headSha,
+    consecutive_failed_iterations: consecutive,
+  };
+  if (consecutive >= args.failedBudget) {
+    return {
+      action: 'exit',
+      reason: 'closer_handoff_terminal',
+      tracker,
+      detail: `ticket ${ticketId} remained Failed on HEAD ${headSha} for ${consecutive}/${args.failedBudget} consecutive iterations`,
+    };
+  }
+  return { action: 'continue', tracker };
+}
+
+function persistCloserHandoffTracker(statePath: string, tracker: CloserHandoffTracker | null): void {
+  sm.update(statePath, rawState => {
+    const state = rawState as MuxRunnerStateWithCloserTracker;
+    if (tracker) state.closer_handoff_tracker = tracker;
+    else delete state.closer_handoff_tracker;
+  });
+}
+
+function exitForCloserTerminalState(
+  statePath: string,
+  sessionDir: string,
+  iteration: number,
+  decision: Extract<CloserTerminalDecision, { action: 'exit' }>,
+  log: (msg: string) => void,
+): ExitReason {
+  recordExitReason(statePath, decision.reason);
+  safeDeactivate(statePath);
+  writeActivityEntry(statePath, {
+    event: 'session_end',
+    source: 'pickle',
+    session: path.basename(sessionDir),
+    iteration,
+    ticket: decision.tracker?.ticket_id,
+    reason: decision.detail,
+    terminal_exit_reason: decision.reason,
+  });
+  log(`${decision.reason}: ${decision.detail}. Exiting at iteration ${iteration}.`);
+  return decision.reason;
+}
 
 // ---------------------------------------------------------------------------
 // R-CNAR-6 — Spark codex smoke-run gate
@@ -3137,6 +3265,17 @@ function processTaskCompleted(state: State, ctx: LoopContext): LoopAction {
     const handoffSummary = buildIterationHandoffSummary(state, ctx.sessionDir, ctx.iteration + 1);
     (ctx.writeHandoff || writeHandoffAtomic)(ctx.sessionDir, handoffSummary, process.pid, ctx.log);
     return { kind: 'continue', resetStall: true };
+  }
+  const closerDecision = evaluateCloserTerminalState({
+    state: curState,
+    sessionDir: ctx.sessionDir,
+    workingDir: curState.working_dir || state.working_dir || process.cwd(),
+    headSha: observeCurrentHead(curState.working_dir || state.working_dir || process.cwd())?.sha ?? null,
+    failedBudget: readCloserHandoffBudget(ctx.extensionRoot),
+  });
+  if (closerDecision.action === 'exit' && closerDecision.reason === 'manager_handoff_pending') {
+    exitForCloserTerminalState(ctx.statePath, ctx.sessionDir, ctx.iteration, closerDecision, ctx.log);
+    return { kind: 'break', reason: closerDecision.reason };
   }
   if (curState.current_ticket) {
     markTicketDone(ctx.sessionDir, curState.current_ticket);
@@ -3921,6 +4060,21 @@ async function runMuxRunnerMain() {
         applyTicketTierBudget(s, sessionDir);
       });
     }
+    if (templateName !== 'meeseeks.md') {
+      const closerDecision = evaluateCloserTerminalState({
+        state,
+        sessionDir,
+        workingDir: state.working_dir || process.cwd(),
+        headSha: observeCurrentHead(state.working_dir || process.cwd())?.sha ?? null,
+        failedBudget: readCloserHandoffBudget(extensionRoot),
+      });
+      if (closerDecision.action === 'exit') {
+        exitReason = exitForCloserTerminalState(statePath, sessionDir, iteration, closerDecision, log);
+        break;
+      }
+      persistCloserHandoffTracker(statePath, closerDecision.tracker);
+      state = readRunnerState(statePath);
+    }
     if (previousTicket === null) {
       previousTicket = state.current_ticket || null;
       if (previousTicket) {
@@ -4583,6 +4737,17 @@ async function runMuxRunnerMain() {
         if (markTicketDone(sessionDir, curState.current_ticket)) {
           log(`Marked final ticket ${curState.current_ticket} as Done`);
         }
+      }
+      const closerDecision = evaluateCloserTerminalState({
+        state: curState,
+        sessionDir,
+        workingDir: curState.working_dir || state.working_dir || process.cwd(),
+        headSha: observeCurrentHead(curState.working_dir || state.working_dir || process.cwd())?.sha ?? null,
+        failedBudget: readCloserHandoffBudget(extensionRoot),
+      });
+      if (closerDecision.action === 'exit' && closerDecision.reason === 'manager_handoff_pending') {
+        exitReason = exitForCloserTerminalState(statePath, sessionDir, iteration, closerDecision, log);
+        break;
       }
       if (curState.chain_meeseeks === true) {
         sm.update(statePath, s => { Object.assign(s, transitionToMeeseeks(s, extensionRoot)); });

@@ -1806,6 +1806,23 @@ test('classifyIterationExit: continue with rate_limit_event JSON returns api_lim
     }
 });
 
+test('mux-runner source: closer handoff exit reasons are part of the runner contract', () => {
+    const source = fs.readFileSync(path.resolve(__dirname, '../src/bin/mux-runner.ts'), 'utf-8');
+    assert.match(source, /closer_handoff_terminal/);
+    assert.match(source, /manager_handoff_pending/);
+    assert.match(source, /const isHaltExit = \(r: ExitReason\).*closer_handoff_terminal.*manager_handoff_pending/s);
+});
+
+test('mux-runner source: closer handoff tracker persists ticket id, head sha, and consecutive budget', () => {
+    const source = fs.readFileSync(path.resolve(__dirname, '../src/bin/mux-runner.ts'), 'utf-8');
+    assert.match(source, /interface CloserHandoffTracker/);
+    assert.match(source, /ticket_id:\s*string/);
+    assert.match(source, /head_sha:\s*string/);
+    assert.match(source, /consecutive_failed_iterations:\s*number/);
+    assert.match(source, /readCloserHandoffBudget/);
+    assert.match(source, /closer_handoff_iteration_budget/);
+});
+
 test('classifyIterationExit: continue with rate limit text pattern returns api_limit', () => {
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
     try {
