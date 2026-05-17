@@ -702,6 +702,132 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
     }
 });
 
+test('mux-runner: SIGTERM shutdown emits signal_received with sender attribution when parent command is inspectable', async () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        const statePath = path.join(sessionDir, 'state.json');
+        const baseState = {
+            schema_version: 1,
+            active: false,
+            tmux_mode: true,
+            backend: 'claude',
+            step: 'implement',
+            iteration: 1,
+            max_iterations: 10,
+            max_time_minutes: 0,
+            worker_timeout_seconds: 1200,
+            start_time_epoch: 0,
+            current_ticket: 'T-SIGNAL',
+            original_prompt: 'Signal attribution fixture',
+            working_dir: tmpRoot,
+            session_dir: sessionDir,
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+        };
+        fs.writeFileSync(statePath, JSON.stringify(baseState, null, 2));
+
+        const templatesDir = path.join(tmpRoot, 'templates');
+        fs.mkdirSync(templatesDir, { recursive: true });
+        fs.writeFileSync(path.join(templatesDir, 'pickle.md'), '# Pickle\n\nResume: $ARGUMENTS\n');
+        fs.writeFileSync(
+            path.join(tmpRoot, 'current_sessions.json'),
+            JSON.stringify({ [tmpRoot]: { sessionPath: sessionDir, pid: 12345 } }, null, 2),
+        );
+
+        const fakeBin = path.join(tmpRoot, 'fake-bin');
+        fs.mkdirSync(fakeBin, { recursive: true });
+        const fakeClaude = path.join(fakeBin, 'claude');
+        fs.writeFileSync(fakeClaude, '#!/bin/sh\n/bin/sleep 30\n');
+        fs.chmodSync(fakeClaude, 0o755);
+
+        const senderScript = path.join(tmpRoot, 'codex-signal-sender.js');
+        fs.writeFileSync(senderScript, `
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { spawn } from 'node:child_process';
+
+const [runnerBin, sessionDir] = process.argv.slice(2);
+const child = spawn(process.execPath, [runnerBin, sessionDir], {
+  env: process.env,
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+child.stdout.on('data', (chunk) => process.stdout.write(chunk));
+child.stderr.on('data', (chunk) => process.stderr.write(chunk));
+const iterLog = path.join(sessionDir, 'tmux_iteration_1.log');
+const deadline = Date.now() + 30000;
+const timer = setInterval(() => {
+  if (fs.existsSync(iterLog)) {
+    clearInterval(timer);
+    child.kill('SIGTERM');
+    return;
+  }
+  if (Date.now() >= deadline) {
+    clearInterval(timer);
+    child.kill('SIGKILL');
+    process.exit(124);
+  }
+}, 25);
+child.on('exit', (code, signal) => {
+  clearInterval(timer);
+  if (signal) process.exit(1);
+  process.exit(code ?? 0);
+});
+        `.trimStart());
+
+        const parent = spawn(process.execPath, [senderScript, TMUX_RUNNER_BIN, sessionDir], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpRoot,
+                PICKLE_DATA_ROOT: tmpRoot,
+                PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ''}`,
+                PICKLE_BACKEND: 'claude',
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        parent.stdout.on('data', chunk => { stdout += chunk.toString(); });
+        parent.stderr.on('data', chunk => { stderr += chunk.toString(); });
+
+        await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                parent.kill('SIGKILL');
+                reject(new Error('signal attribution wrapper did not exit'));
+            }, 30000);
+            parent.on('exit', () => {
+                clearTimeout(timer);
+                resolve(undefined);
+            });
+            parent.on('error', (err) => {
+                clearTimeout(timer);
+                reject(err);
+            });
+        });
+
+        const signalEvent = readActivityLines(tmpRoot).find((entry) => entry.event === 'signal_received');
+        assert.ok(signalEvent, `expected signal_received activity event; stdout=${stdout} stderr=${stderr}`);
+        assert.equal(signalEvent.signal, 'SIGTERM');
+        assert.equal(signalEvent.source, 'pickle');
+        assert.equal(signalEvent.session, path.basename(sessionDir));
+        assert.equal(signalEvent.gate_payload?.signal_sender_pid, parent.pid);
+        assert.match(
+            signalEvent.gate_payload?.signal_sender_cmd ?? '',
+            /codex-signal-sender\.js/,
+            `expected sender command to reference wrapper script, got ${signalEvent.gate_payload?.signal_sender_cmd ?? '(missing)'}`,
+        );
+
+        const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        const stateSignalEvent = (finalState.activity || []).find((entry) => entry.event === 'signal_received');
+        assert.ok(stateSignalEvent, 'state.json activity should preserve the signal_received entry');
+        assert.equal(stateSignalEvent.gate_payload?.signal_sender_pid, parent.pid);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 test('mux-runner: NaN max_time_minutes and start_time_epoch do not crash', () => {
     const tmpRoot = makeTmpRoot();
     try {

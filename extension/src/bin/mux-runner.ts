@@ -2948,7 +2948,13 @@ export function validateStartupState(state: State, statePath: string): void {
 export function setupSignalHandlers(statePath: string, log: (msg: string) => void): void {
   const handleShutdownSignal = (signal: string) => {
     const backend = readBackendForActivity(statePath);
+    const signalEvent = buildSignalReceivedEvent(statePath, path.dirname(statePath), signal);
+    writeActivityEntry(statePath, signalEvent);
+    try {
+      logActivity(signalEvent);
+    } catch { /* telemetry best effort */ }
     log(`Received ${signal} — deactivating session`);
+    log(`signal_received ${JSON.stringify(signalEvent)}`);
     recordExitReason(statePath, 'signal');
     safeDeactivate(statePath);
     removeRunnerSessionMapEntry(statePath, log);
@@ -2967,6 +2973,75 @@ function readBackendForActivity(statePath: string): Backend {
   } catch {
     return resolveBackend(null);
   }
+}
+
+function getProcessGroupId(pid: number): number | null {
+  const pgidFn = (process as NodeJS.Process & { getpgid?: (targetPid: number) => number }).getpgid;
+  if (typeof pgidFn !== 'function') return null;
+  try {
+    return pgidFn(pid);
+  } catch {
+    return null;
+  }
+}
+
+function getHandlerStackFrames(): string[] {
+  return new Error('signal received').stack
+    ?.split('\n')
+    .slice(1, 6)
+    .map((line) => line.trim()) ?? [];
+}
+
+function lookupCommandForPid(pid: number): string | null {
+  try {
+    const out = execFileSync('ps', ['-p', String(pid), '-o', 'args='], {
+      encoding: 'utf-8',
+      timeout: 5_000,
+    });
+    const command = out.trim();
+    return command.length > 0 ? command : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveSignalSenderAttribution(): { signal_sender_pid: number | null; signal_sender_cmd: string | null } {
+  if (!Number.isInteger(process.ppid) || process.ppid <= 1) {
+    return { signal_sender_pid: null, signal_sender_cmd: null };
+  }
+  return {
+    signal_sender_pid: process.ppid,
+    signal_sender_cmd: lookupCommandForPid(process.ppid),
+  };
+}
+
+function buildSignalReceivedEvent(statePath: string, sessionDir: string, signal: string) {
+  const sender = resolveSignalSenderAttribution();
+  const receivedAt = new Date().toISOString();
+  let currentPhase: string | null = null;
+  try {
+    const state = readRunnerState(statePath);
+    currentPhase = typeof state.step === 'string' ? state.step : null;
+  } catch {
+    currentPhase = null;
+  }
+  return {
+    event: 'signal_received' as const,
+    ts: receivedAt,
+    source: 'pickle' as const,
+    session: path.basename(sessionDir),
+    signal,
+    pid: process.pid,
+    ppid: process.ppid,
+    is_tty: Boolean(process.stdin.isTTY || process.stdout.isTTY),
+    pgid: getProcessGroupId(process.pid),
+    active_child_pid: currentChildProc?.pid ?? null,
+    active_child_cmd: currentChildProc?.spawnargs?.join(' ') ?? null,
+    current_phase: currentPhase,
+    received_at_iso: receivedAt,
+    handler_stack: getHandlerStackFrames(),
+    gate_payload: sender,
+  };
 }
 
 /**
@@ -3847,7 +3922,13 @@ async function runMuxRunnerMain() {
   // remain orphaned with active: true when the tmux pane is closed.
   const handleShutdownSignal = (signal: string) => {
     const backend = readBackendForActivity(statePath);
+    const signalEvent = buildSignalReceivedEvent(statePath, sessionDir, signal);
+    writeActivityEntry(statePath, signalEvent);
+    try {
+      logActivity(signalEvent);
+    } catch { /* telemetry best effort */ }
     log(`Received ${signal} — deactivating session`);
+    log(`signal_received ${JSON.stringify(signalEvent)}`);
     recordExitReason(statePath, 'signal');
     safeDeactivate(statePath);
     removeRunnerSessionMapEntry(statePath, log);

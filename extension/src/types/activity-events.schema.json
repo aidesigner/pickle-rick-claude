@@ -58,6 +58,36 @@
         "backend": { "$ref": "#/definitions/backendEnum" }
       }
     },
+    "signal_received": {
+      "type": "object",
+      "required": ["event", "ts", "source", "session", "signal", "pid", "ppid", "is_tty", "received_at_iso", "handler_stack"],
+      "properties": {
+        "event": { "type": "string", "const": "signal_received" },
+        "ts": { "type": "string" },
+        "source": { "type": "string" },
+        "session": { "type": "string" },
+        "signal": { "type": "string" },
+        "pid": { "type": "integer" },
+        "ppid": { "type": "integer" },
+        "is_tty": { "type": "boolean" },
+        "pgid": { "type": "integer" },
+        "active_child_pid": { "type": "integer" },
+        "active_child_cmd": { "type": "string" },
+        "current_phase": { "type": "string" },
+        "received_at_iso": { "type": "string" },
+        "handler_stack": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "gate_payload": {
+          "type": "object",
+          "properties": {
+            "signal_sender_pid": { "type": "integer" },
+            "signal_sender_cmd": { "type": "string" }
+          }
+        }
+      }
+    },
     "worker_partial_lifecycle_exit": {
       "type": "object",
       "required": ["event", "ts", "ticket", "gate_payload"],
@@ -944,6 +974,7 @@
     { "$ref": "#/definitions/worker_spawn_backend_mismatch" },
     { "$ref": "#/definitions/worker_spawn_backend_override" },
     { "$ref": "#/definitions/subtool_backend_override" },
+    { "$ref": "#/definitions/signal_received" },
     { "$ref": "#/definitions/worker_partial_lifecycle_exit" },
     { "$ref": "#/definitions/baseline_attempt_timeout" },
     { "$ref": "#/definitions/cap_check_skipped_stale_cache" },

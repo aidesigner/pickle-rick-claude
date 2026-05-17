@@ -169,6 +169,7 @@ test('spawn-refinement-team: activity event schema reference stays aligned with 
     const schema = JSON.parse(fs.readFileSync(ACTIVITY_EVENT_SCHEMA_PATH, 'utf-8'));
     const documentedEvents = [
         'worker_spawn_backend_resolved',
+        'signal_received',
         'worker_partial_lifecycle_exit',
         'pipeline_auto_resumed',
         'bundle_bootstrap_exemption_applied',

@@ -35,44 +35,45 @@ function validateAgainstDefinition(payload, def) {
   for (const [field, rawPropSchema] of Object.entries(props)) {
     if (!(field in payload)) continue;
     const propSchema = resolveSchema(rawPropSchema);
+    const allowedTypes = Array.isArray(propSchema.type) ? propSchema.type : [propSchema.type].filter(Boolean);
+    const value = payload[field];
     if (propSchema.enum) {
-      if (!propSchema.enum.includes(payload[field])) {
-        return { valid: false, error: `${field} value '${payload[field]}' not in enum [${propSchema.enum.join(', ')}]` };
+      if (!propSchema.enum.includes(value)) {
+        return { valid: false, error: `${field} value '${value}' not in enum [${propSchema.enum.join(', ')}]` };
       }
     }
     if (Object.prototype.hasOwnProperty.call(propSchema, 'const')) {
-      if (payload[field] !== propSchema.const) {
+      if (value !== propSchema.const) {
         return { valid: false, error: `${field} must equal ${String(propSchema.const)}` };
       }
     }
-    if (propSchema.type === 'object' && propSchema.required) {
-      const val = payload[field];
-      if (typeof val !== 'object' || val === null) {
+    if (allowedTypes.includes('object') && propSchema.required) {
+      if (typeof value !== 'object' || value === null) {
         return { valid: false, error: `${field} must be an object` };
       }
-      const nested = validateAgainstDefinition(val, propSchema);
+      const nested = validateAgainstDefinition(value, propSchema);
       if (!nested.valid) return { valid: false, error: `${field}.${nested.error}` };
     }
-    if (propSchema.type === 'integer') {
-      if (!Number.isInteger(payload[field])) {
+    if (allowedTypes.includes('integer') && value !== null) {
+      if (!Number.isInteger(value)) {
         return { valid: false, error: `${field} must be an integer` };
       }
     }
-    if (propSchema.type === 'boolean') {
-      if (typeof payload[field] !== 'boolean') {
+    if (allowedTypes.includes('boolean')) {
+      if (typeof value !== 'boolean') {
         return { valid: false, error: `${field} must be a boolean` };
       }
     }
-    if (propSchema.type === 'string') {
-      if (typeof payload[field] !== 'string') {
+    if (allowedTypes.includes('string') && value !== null) {
+      if (typeof value !== 'string') {
         return { valid: false, error: `${field} must be a string` };
       }
     }
-    if (propSchema.type === 'array') {
-      if (!Array.isArray(payload[field])) {
+    if (allowedTypes.includes('array')) {
+      if (!Array.isArray(value)) {
         return { valid: false, error: `${field} must be an array` };
       }
-      if (propSchema.items?.type === 'string' && payload[field].some((item) => typeof item !== 'string')) {
+      if (propSchema.items?.type === 'string' && value.some((item) => typeof item !== 'string')) {
         return { valid: false, error: `${field} items must be strings` };
       }
     }
@@ -122,6 +123,30 @@ const EVENT_CASES = [
     type: 'worker_backend_resolved',
     valid: { event: 'worker_backend_resolved', ts: TS, backend: 'claude', worker_backend: 'codex', source: 'worker_backend' },
     drop: 'source',
+  },
+  {
+    type: 'signal_received',
+    valid: {
+      event: 'signal_received',
+      ts: TS,
+      source: 'pickle',
+      session: 'session-1',
+      signal: 'SIGTERM',
+      pid: 4242,
+      ppid: 3131,
+      is_tty: false,
+      pgid: null,
+      active_child_pid: 5252,
+      active_child_cmd: 'codex exec worker',
+      current_phase: 'implement',
+      received_at_iso: TS,
+      handler_stack: ['at handleShutdown (mux-runner.js:1:1)'],
+      gate_payload: {
+        signal_sender_pid: 3131,
+        signal_sender_cmd: 'codex-manager --session test',
+      },
+    },
+    drop: 'signal',
   },
   {
     type: 'child_mux_runner_wedge_detected',
@@ -742,6 +767,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'worker_spawn_backend_override',
     'subtool_backend_override',
     'worker_partial_lifecycle_exit',
+    'signal_received',
     'baseline_attempt_timeout',
     'cap_check_skipped_stale_cache',
     'pipeline_auto_resumed',

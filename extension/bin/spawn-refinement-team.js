@@ -130,6 +130,7 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | Event | Key Payload Fields | Primary Emitter |
 |-------|-------------------|-----------------|
 | \`worker_spawn_backend_resolved\` | \`backend\`, \`source\`, \`pid\` | spawn-morty, spawn-refinement-team, microverse-runner, mux-runner |
+| \`signal_received\` | \`source\`, \`session\`, \`signal\`, \`pid\`, \`ppid\`, \`is_tty\`, \`received_at_iso\`, \`handler_stack\`, \`gate_payload.signal_sender_pid\`, \`gate_payload.signal_sender_cmd\` | mux-runner, pipeline-runner shutdown path |
 | \`worker_partial_lifecycle_exit\` | \`ticket\`, \`gate_payload.artifacts_missing\`, \`gate_payload.session_log_size\` | spawn-morty worker exit path |
 | \`baseline_attempt_timeout\` | \`session\`, \`gate_payload.attempt\`, \`gate_payload.elapsed_ms\`, \`gate_payload.classifier\` | microverse-runner LLM timeout retry loop |
 | \`pipeline_auto_resumed\` | \`gate_payload.retry_index\`, \`gate_payload.ticket_id\`, \`gate_payload.session_done_count_at_retry\` | mux-runner auto-resume path |

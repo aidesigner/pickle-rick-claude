@@ -248,6 +248,12 @@ export interface ActivityLogEntry {
   [key: string]: unknown;
 }
 
+export interface ActivityGatePayload {
+  signal_sender_pid?: number | null;
+  signal_sender_cmd?: string | null;
+  [key: string]: unknown;
+}
+
 // ---------------------------------------------------------------------------
 // StateManager Types & Errors
 // ---------------------------------------------------------------------------
@@ -673,7 +679,7 @@ export interface ActivityEvent {
   pending_count?: number;
   cap?: number;
   last_ticket_seen?: string | null;
-  gate_payload?: Record<string, unknown>;
+  gate_payload?: ActivityGatePayload;
   // AC-LPB-05: emitted by setup.ts/pipeline-runner.ts on session reconstruction
   // (resume) so monitor/standup consumers can distinguish a fresh launch from a
   // resumed run and reason about wall-clock budgets correctly.
@@ -699,6 +705,8 @@ export interface ActivityEvent {
   current_phase?: string | null;
   received_at_iso?: string;
   handler_stack?: string[];
+  signal_sender_pid?: number | null;
+  signal_sender_cmd?: string | null;
   phase?: string;
   exit_code?: number;
   fatal?: boolean;
