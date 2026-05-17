@@ -41,6 +41,14 @@ node "$HOME/.claude/pickle-rick/extension/bin/setup.js" <FLAGS> --task "<TASK_TE
 No flags: `setup.js --task "$ARGUMENTS"`. Extension root: `$HOME/.claude/pickle-rick` (`${EXTENSION_ROOT}`).
 Backend example: `setup.js --backend codex --task "refactor auth"` routes worker spawns through `codex exec`; `setup.js --backend hermes --task "scaffold CLI smoke tests"` routes through `hermes chat -q`. Backend persists in `state.json` and survives resume.
 
+## Codex Backend
+
+If `--backend codex` is selected, keep `/pickle` for shorter interactive sessions and prefer `/pickle-tmux` for anything likely to run longer than about 30 minutes.
+
+The safe codex workflow is tmux-direct: start `/pickle-tmux` from the shell, let the tmux pane run `node .../mux-runner.js` directly, and let mux-runner spawn `codex exec` manager/worker children as needed.
+
+Do NOT run a long codex-backed pipeline in the risky "codex is the parent of mux-runner" arrangement. For long codex sessions, the parent process should be the tmux pane's shell, not an already-running codex session supervising mux-runner for hours.
+
 Extract `SESSION_ROOT=<path>` from output.
 
 **Flags**: `--task "TEXT"` | `--max-iterations <N>` | `--max-time <MIN>` | `--worker-timeout <SEC>` | `--completion-promise <TEXT>` | `--resume [PATH]` | `--reset` | `--backend <claude|codex|hermes>`

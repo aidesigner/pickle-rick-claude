@@ -61,6 +61,14 @@ Print attach command immediately: `tmux attach -t <name>` (Window 1 "monitor" = 
 tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js <SESSION_ROOT>; echo ''; echo 'Runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
 ```
 
+### Codex Backend
+
+For `--backend codex`, this tmux-direct launch path is the safety boundary: the tmux pane runs `mux-runner` directly under the shell, and `codex exec` appears only as a child process spawned by mux-runner.
+
+Target process tree: `zsh -> tmux pane -> node .../mux-runner.js -> codex exec`.
+
+Do NOT keep a long-lived codex session as the parent of mux-runner, and do NOT treat "codex launches /pickle-tmux and then watches it for hours" as an equivalent setup. The safe arrangement is mux-runner in pane 0 directly under the shell; codex is the worker child, not the parent of mux-runner.
+
 ## Step 5: Monitor (4-pane)
 mux-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
 

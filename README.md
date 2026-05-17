@@ -109,6 +109,8 @@ If you can define a measurable goal — test coverage, response time, bundle siz
 
 <a id="backends"></a>**Backends** — `/pickle`, `/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`, and `/pickle-microverse` accept `--backend codex` to route spawns through `codex exec`, or `--backend hermes` to route spawns through `hermes chat -q ... -Q --ignore-rules --ignore-user-config`. The choice is persisted in `state.json` and survives resume; omit the flag to keep the default `claude` backend. Set `PICKLE_BACKEND=codex` or `PICKLE_BACKEND=hermes` for a session-independent alternative that persists across commands. Precedence: CLI flag > env var > session state > default `claude`. **Incompatible with `--teams`** — agent-teams mode is claude-harness-native; setup rejects non-claude backends at session creation and on `--resume`.
 
+For codex-backed runs, keep `/pickle` for short interactive work and prefer `/pickle-tmux` for longer sessions. The safe workaround is tmux-direct: the shell/tmux pane owns `mux-runner`, and `codex exec` is only a child spawned by mux-runner. Avoid the risky arrangement where a long-lived codex session becomes the parent of mux-runner and supervises the whole pipeline.
+
 ```bash
 /pickle --backend codex "refactor the auth middleware"
 /pickle-tmux --backend codex "refactor the auth middleware"
