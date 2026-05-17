@@ -919,7 +919,7 @@ async function finalizeWorkerTurn(params) {
         return;
     ctx.mutableState.finalized = true;
     clearTimeout(flushTimeout);
-    const { ticketId, sessionRoot, sessionLog, sessionLogPath, sessionWorkingDir } = ctx;
+    const { ticketId, sessionRoot, sessionLogPath, sessionWorkingDir } = ctx;
     const logContent = scrubWorkerLog(sessionLogPath, readWorkerLog(sessionLogPath));
     let { isSuccess } = evaluateWorkerOutcome({ ctx, logContent, startTime });
     let completionCommitSha = null;
