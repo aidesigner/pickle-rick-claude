@@ -653,9 +653,26 @@ function reconcileTicketStateDesync(
 
   const inProgress = tickets.filter(ticket => isInProgressTicket(sessionDir, ticket));
   const winner = chooseInProgressWinner(inProgress, currentTicket);
+  let currentStatus: string | null = null;
+  if (currentTicket) {
+    try {
+      currentStatus = getTicketStatus(sessionDir, currentTicket);
+    } catch {
+      currentStatus = null;
+    }
+  }
   const winnerMatchesState = winner === currentTicket;
   const alreadySynced = inProgress.length === 1 && winnerMatchesState;
   if (alreadySynced) return readRunnerState(statePath);
+  if (inProgress.length === 0 && normalizedStatus(currentStatus) === 'failed') {
+    return readRunnerState(statePath);
+  }
+  if (inProgress.length === 0 && normalizedStatus(currentStatus) === 'done' && currentTicket) {
+    const conformance = readLatestTicketConformanceSnapshot(path.join(sessionDir, currentTicket));
+    if (conformance.hasManagerHandoff) {
+      return readRunnerState(statePath);
+    }
+  }
 
   logActivity({
     event: 'ticket_state_desync_detected',
@@ -729,6 +746,8 @@ export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput)
     if (!ticket.id || status !== 'done') continue;
 
     const workingDir = ticket.working_dir || input.workingDir || process.cwd();
+    const conformance = readLatestTicketConformanceSnapshot(path.join(input.sessionDir, ticket.id));
+    if (conformance.hasManagerHandoff) continue;
     // R-CCC-5: completion_commit frontmatter is the FIRST gate. Bundle commits
     // use R-* codes in the subject (not ticket hashes) so the legacy git-log
     // scan in hasCommitReferencingTicketSince misses 100% of them. The watcher
@@ -2517,7 +2536,7 @@ function exitForCloserTerminalState(
 ): ExitReason {
   recordExitReason(statePath, decision.reason);
   safeDeactivate(statePath);
-  writeActivityEntry(statePath, {
+  const activityEntry = {
     event: 'session_end',
     source: 'pickle',
     session: path.basename(sessionDir),
@@ -2525,7 +2544,9 @@ function exitForCloserTerminalState(
     ticket: decision.tracker?.ticket_id,
     reason: decision.detail,
     terminal_exit_reason: decision.reason,
-  });
+  } as const;
+  writeActivityEntry(statePath, activityEntry);
+  logActivity(activityEntry);
   log(`${decision.reason}: ${decision.detail}. Exiting at iteration ${iteration}.`);
   return decision.reason;
 }

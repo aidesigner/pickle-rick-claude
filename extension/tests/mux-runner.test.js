@@ -10,10 +10,12 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMUX_RUNNER_BIN = path.resolve(__dirname, '../bin/mux-runner.js');
+let compiledMuxRunnerBin = null;
 // @add-dir-safe: REPO_ROOT is referenced only by `runWithRealExtension` and
 // two gate-halt tests that short-circuit before any worker spawn — no
 // --add-dir REPO_ROOT can ever propagate into a spawned claude subprocess.
 const REPO_ROOT = path.resolve(__dirname, '../..');
+const EXTENSION_ROOT = path.resolve(__dirname, '..');
 
 /**
  * Create an isolated temp root directory.
@@ -100,6 +102,24 @@ function runWithRealExtension(args = []) {
     });
 }
 
+function getCompiledMuxRunnerBin() {
+    if (compiledMuxRunnerBin) return compiledMuxRunnerBin;
+
+    const outDir = makeTmpRoot();
+    const compile = spawnSync('npx', ['tsc', '--project', 'tsconfig.json', '--outDir', outDir], {
+        cwd: EXTENSION_ROOT,
+        encoding: 'utf-8',
+        timeout: 120000,
+    });
+    assert.equal(
+        compile.status,
+        0,
+        `Expected temporary mux-runner build to succeed.\nstdout:\n${compile.stdout}\nstderr:\n${compile.stderr}`,
+    );
+    compiledMuxRunnerBin = path.join(outDir, 'bin', 'mux-runner.js');
+    return compiledMuxRunnerBin;
+}
+
 function readActivityLines(dataRoot) {
     const activityDir = path.join(dataRoot, 'activity');
     if (!fs.existsSync(activityDir)) return [];
@@ -140,6 +160,63 @@ function writeGateSkipTicket(sessionDir, id = 'ok0001', status = 'Done') {
     ].join('\n'));
 }
 
+function initCloserTerminalGitRepo(tmpRoot) {
+    const repoDir = path.join(tmpRoot, 'worktree');
+    fs.mkdirSync(repoDir, { recursive: true });
+    assert.equal(spawnSync('git', ['init'], { cwd: repoDir, encoding: 'utf-8' }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'user.email', 'tests@example.com'], { cwd: repoDir, encoding: 'utf-8' }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'user.name', 'Pickle Tests'], { cwd: repoDir, encoding: 'utf-8' }).status, 0);
+    fs.writeFileSync(path.join(repoDir, 'ticket.txt'), 'closer handoff fixture\n');
+    assert.equal(spawnSync('git', ['add', 'ticket.txt'], { cwd: repoDir, encoding: 'utf-8' }).status, 0);
+    assert.equal(spawnSync('git', ['commit', '-m', 'seed fixture'], { cwd: repoDir, encoding: 'utf-8' }).status, 0);
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoDir, encoding: 'utf-8' });
+    assert.equal(head.status, 0);
+    return {
+        repoDir,
+        headSha: head.stdout.trim(),
+    };
+}
+
+function writeCloserTerminalSession(sessionDir, workingDir, options) {
+    const ticketId = options.ticketId || 'close01';
+    writeGateSkipTicket(sessionDir, ticketId, options.status);
+    fs.writeFileSync(path.join(sessionDir, 'decomposition_manifest.json'), JSON.stringify({
+        requirements: ['REQ-1'],
+        tickets: [{ id: ticketId, key: ticketId.toUpperCase(), ac_ids: ['REQ-1'] }],
+    }, null, 2));
+    if (options.conformanceBody) {
+        fs.writeFileSync(path.join(sessionDir, ticketId, 'conformance_2026-05-17.md'), options.conformanceBody);
+    }
+    fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+        active: true,
+        step: 'implement',
+        iteration: 0,
+        max_iterations: 5,
+        worker_timeout_seconds: 1200,
+        start_time_epoch: Math.floor(Date.now() / 1000),
+        original_prompt: 'closer handoff regression',
+        working_dir: workingDir,
+        command_template: 'pickle.md',
+        current_ticket: ticketId,
+        flags: {
+            skip_quality_gates_reason: 'closer handoff regression fixture',
+        },
+        closer_handoff_tracker: options.closerTracker || undefined,
+    }, null, 2));
+    return ticketId;
+}
+
+function writeUnexpectedSpawnStub(binDir, markerPath) {
+    const claudePath = path.join(binDir, 'claude');
+    fs.writeFileSync(claudePath, [
+        '#!/bin/sh',
+        `echo invoked > "${markerPath}"`,
+        'exit 99',
+        '',
+    ].join('\n'));
+    fs.chmodSync(claudePath, 0o755);
+}
+
 function writeGateSkipSession(sessionDir, flags, workingDir) {
     // R-WSRC-4: workingDir must be tmpdir-rooted, never REPO_ROOT. Caller
     // owns sessionDir's tmpdir; we default to it when no override is passed.
@@ -177,7 +254,7 @@ function runMuxRunnerWithDataRoot(sessionDir, dataRoot, stubBinDir) {
         PATH: `${stubBinDir}:${process.env.PATH || ''}`,
     };
     delete env.PICKLE_ROLE;
-    return spawnSync(process.execPath, [TMUX_RUNNER_BIN, sessionDir], {
+    return spawnSync(process.execPath, [getCompiledMuxRunnerBin(), sessionDir], {
         env,
         encoding: 'utf-8',
         timeout: 60000,
@@ -1821,6 +1898,85 @@ test('mux-runner source: closer handoff tracker persists ticket id, head sha, an
     assert.match(source, /consecutive_failed_iterations:\s*number/);
     assert.match(source, /readCloserHandoffBudget/);
     assert.match(source, /closer_handoff_iteration_budget/);
+});
+
+test('mux-runner: exits before manager spawn when a failed closer handoff repeats on the same ticket and head', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        const dataRoot = path.join(tmpRoot, 'data-root');
+        const stubBinDir = path.join(tmpRoot, 'bin');
+        const spawnMarker = path.join(tmpRoot, 'claude-invoked.txt');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.mkdirSync(dataRoot, { recursive: true });
+        fs.mkdirSync(stubBinDir, { recursive: true });
+        writeUnexpectedSpawnStub(stubBinDir, spawnMarker);
+
+        const { repoDir, headSha } = initCloserTerminalGitRepo(tmpRoot);
+        const ticketId = writeCloserTerminalSession(sessionDir, repoDir, {
+            status: 'Failed',
+            closerTracker: {
+                ticket_id: 'close01',
+                head_sha: headSha,
+                consecutive_failed_iterations: 1,
+            },
+        });
+
+        const result = runMuxRunnerWithDataRoot(sessionDir, dataRoot, stubBinDir);
+        assert.equal(result.status, 0, `Expected clean terminal exit, got ${result.status} stderr=${result.stderr}`);
+        assert.equal(fs.existsSync(spawnMarker), false, 'manager subprocess should not spawn after closer terminal detection');
+
+        const finalState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        assert.equal(finalState.active, false, 'session should deactivate on terminal closer handoff');
+        assert.equal(finalState.exit_reason, 'closer_handoff_terminal');
+        assert.equal(finalState.current_ticket, ticketId);
+
+        const activity = readActivityLines(dataRoot).filter((entry) => entry.terminal_exit_reason === 'closer_handoff_terminal');
+        assert.equal(activity.length > 0, true, 'expected a session_end activity for closer_handoff_terminal');
+        assert.match(activity.at(-1).reason || '', /remained Failed on HEAD/);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('mux-runner: exits before manager spawn when a done closer ticket carries manager handoff work', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        const dataRoot = path.join(tmpRoot, 'data-root');
+        const stubBinDir = path.join(tmpRoot, 'bin');
+        const spawnMarker = path.join(tmpRoot, 'claude-invoked.txt');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.mkdirSync(dataRoot, { recursive: true });
+        fs.mkdirSync(stubBinDir, { recursive: true });
+        writeUnexpectedSpawnStub(stubBinDir, spawnMarker);
+
+        const { repoDir } = initCloserTerminalGitRepo(tmpRoot);
+        writeCloserTerminalSession(sessionDir, repoDir, {
+            status: 'Done',
+            conformanceBody: [
+                'ALL_PASS',
+                '',
+                '## Manager Handoff',
+                '- operator-owned release work remains',
+                '',
+            ].join('\n'),
+        });
+
+        const result = runMuxRunnerWithDataRoot(sessionDir, dataRoot, stubBinDir);
+        assert.equal(result.status, 0, `Expected clean terminal exit, got ${result.status} stderr=${result.stderr}`);
+        assert.equal(fs.existsSync(spawnMarker), false, 'manager subprocess should not spawn when manager handoff is pending');
+
+        const finalState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        assert.equal(finalState.active, false, 'session should deactivate on manager handoff pending');
+        assert.equal(finalState.exit_reason, 'manager_handoff_pending');
+
+        const activity = readActivityLines(dataRoot).filter((entry) => entry.terminal_exit_reason === 'manager_handoff_pending');
+        assert.equal(activity.length > 0, true, 'expected a session_end activity for manager_handoff_pending');
+        assert.match(activity.at(-1).reason || '', /Manager Handoff section/);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
 });
 
 test('classifyIterationExit: continue with rate limit text pattern returns api_limit', () => {
