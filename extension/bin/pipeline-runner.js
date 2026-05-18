@@ -1716,6 +1716,71 @@ function reportPhaseIncomplete(runtime, phase) {
     }
     recordExitReason(runtime.statePath, 'pipeline_phase_incomplete');
 }
+/**
+ * R-PIPE-2: collect Done-ticket count + commits-since-start_commit for the
+ * pickle-phase progress gate. Used by `runPhaseIteration` to detect the
+ * hallucinated-completion class where mux-runner exits clean (code 0) but
+ * no ticket reached markTicketDone AND no commit landed since session start.
+ *
+ * Both reads are best-effort: a missing/unreadable state file or a `git log`
+ * failure collapses to `commitCount: 0` so the gate still fires when
+ * tickets are also empty. This matches the B-PIPE-FIX R-PIPE-2 contract:
+ * the gate is a safety net for the manager-ran-out-of-turns case observed
+ * across the 2026-05-18 PM B-SJET-2 attempts (4 consecutive 31m+ runs at
+ * exit_reason='completed' with 0 Done, 0 commits).
+ */
+/**
+ * R-PIPE-2: gate helper extracted from `runPhaseIteration` to keep that
+ * function under the cyclomatic-complexity ceiling. Returns a break outcome
+ * iff the pickle phase exited clean with 0 Done + 0 commits; otherwise null
+ * (caller continues to the existing success path).
+ */
+function maybeStampPhaseNoProgress(runtime, rawPhase, exitCode, log) {
+    if (rawPhase !== 'pickle' || exitCode !== 0)
+        return null;
+    const progress = collectPicklePhaseProgress(runtime);
+    // Sessions without tickets (dispatch-only smoke tests, codex-required PRD
+    // bundles that never decompose) have no progress contract to enforce —
+    // preserve the existing clean-exit success path. The gate targets the
+    // "tickets exist but none completed AND no commits landed" class.
+    if (progress.ticketCount === 0)
+        return null;
+    if (progress.doneCount !== 0 || progress.commitCount !== 0)
+        return null;
+    const shortStart = progress.startCommit
+        ? progress.startCommit.slice(0, 8)
+        : 'session start';
+    log(`Phase ${rawPhase} exited with no progress (0 Done of ${progress.ticketCount} tickets, 0 commits since ${shortStart})`);
+    recordExitReason(runtime.statePath, 'phase_no_progress');
+    return { action: 'break', phaseIncomplete: true };
+}
+function collectPicklePhaseProgress(runtime) {
+    const tickets = collectTickets(runtime.sessionDir);
+    const doneCount = tickets.filter(t => (t.status || '').toLowerCase() === 'done').length;
+    let commitCount = 0;
+    let startCommit = null;
+    try {
+        const state = sm.read(runtime.statePath);
+        if (typeof state.start_commit === 'string' && state.start_commit.length > 0) {
+            startCommit = state.start_commit;
+        }
+    }
+    catch { /* best-effort */ }
+    if (startCommit) {
+        try {
+            const out = execFileSync('git', ['log', '--oneline', `${startCommit}..HEAD`], {
+                cwd: runtime.workingDir,
+                encoding: 'utf8',
+                timeout: 10_000,
+            });
+            if (typeof out === 'string') {
+                commitCount = out.split('\n').filter(line => line.trim().length > 0).length;
+            }
+        }
+        catch { /* git failure → treat as 0 commits */ }
+    }
+    return { doneCount, commitCount, ticketCount: tickets.length, startCommit };
+}
 function finalizePipeline(runtime, counters, cancelMarker, startTime, phaseIncomplete) {
     const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
     const pipelineFailed = (counters.completed + counters.skipped) < runtime.config.phases.length;
@@ -1889,9 +1954,19 @@ async function runPhaseIteration(runtime, counters, cancelMarker, rawPhase, inde
         log(`Phase ${rawPhase} AC gate failed — stopping pipeline`);
         return { action: 'break' };
     }
+    return finalizePhaseSuccess(runtime, counters, cancelMarker, rawPhase, exitCode, log);
+}
+/**
+ * R-PIPE-2: post-AC-gate success path extracted from `runPhaseIteration` so
+ * the no-progress gate, counter increment, cancel-marker check, and success
+ * log do not push `runPhaseIteration` past the cyclomatic-complexity ceiling.
+ */
+function finalizePhaseSuccess(runtime, counters, cancelMarker, rawPhase, exitCode, log) {
+    const noProgressBreak = maybeStampPhaseNoProgress(runtime, rawPhase, exitCode, log);
+    if (noProgressBreak)
+        return noProgressBreak;
     counters.completed++;
     writeRunningStatus(runtime, counters, null);
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (fs.existsSync(cancelMarker)) {
         log('Pipeline cancelled (cancel marker found) — stopping');
         return { action: 'break' };
