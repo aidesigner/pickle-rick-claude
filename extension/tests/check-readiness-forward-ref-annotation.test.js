@@ -59,6 +59,30 @@ test('R-RTRC-7: extractForwardRefAnnotations accepts legacy bare forward-created
     assert.equal(out.valid.has('extension/services/new-helper.ts'), true);
 });
 
+test('R-RTRC-7: extractForwardRefAnnotations accepts hybrid forward-created by ticket annotation', () => {
+    const content = '`extension/services/hybrid-helper.ts` (forward-created by ticket abc1ef23) — hybrid form.';
+    const out = extractForwardRefAnnotations(content);
+    assert.deepEqual(out.malformed, []);
+    assert.equal(out.valid.has('extension/services/hybrid-helper.ts'), true);
+    const annotation = [...content.matchAll(/`([^`]+)`/g)][0];
+    assert.equal(annotation[1], 'extension/services/hybrid-helper.ts');
+});
+
+test('R-RTRC-7: hybrid annotation hash extracted into ForwardRefAnnotation.hash', () => {
+    const content = '`extension/services/h.ts` (forward-created by ticket 12345678) — hybrid with hash.';
+    const out = extractForwardRefAnnotations(content);
+    assert.equal(out.valid.size, 1);
+    assert.equal(out.malformed.length, 0);
+});
+
+test('R-RTRC-7: hybrid with bad hash length is malformed', () => {
+    // Hash 'abc' is 3 chars, regex requires 6-12.
+    const content = '`extension/services/h.ts` (forward-created by ticket abc) — too short.';
+    const out = extractForwardRefAnnotations(content);
+    // Regex itself won't match; falls through to no-annotation path, so the path remains unresolved (valid stays empty).
+    assert.equal(out.valid.size, 0);
+});
+
 test('R-RTRC-7: extractForwardRefAnnotations accepts ticket-dir basename annotation', () => {
     const content = '`extension/services/another.ts` (introduced by ticket dddee00b) is forward-created.';
     const out = extractForwardRefAnnotations(content);

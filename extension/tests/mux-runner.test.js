@@ -2065,6 +2065,141 @@ test('mux-runner: exits before manager spawn when a failed closer handoff repeat
     }
 });
 
+// Helper: unset PICKLE_TEST_MODE for the duration of a callback so the F3
+// guard's production behavior is exercised, then restore.
+function withProductionGuard(fn) {
+    const prev = process.env.PICKLE_TEST_MODE;
+    delete process.env.PICKLE_TEST_MODE;
+    try {
+        return fn();
+    } finally {
+        if (prev !== undefined) process.env.PICKLE_TEST_MODE = prev;
+    }
+}
+
+test('guardCompletionCommitBeforeDone: rejects ticket with no completion_commit', async () => {
+    const { guardCompletionCommitBeforeDone } = await import('../bin/mux-runner.js');
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        const workingDir = path.join(tmpRoot, 'work');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.mkdirSync(workingDir, { recursive: true });
+        const ticketId = 'aaaa1111';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+        // Ticket with NO completion_commit field — the f00097e8 attack vector.
+        fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`),
+          `---\nid: ${ticketId}\ntitle: "test"\nstatus: Done\n---\n# T\n`);
+        const result = withProductionGuard(() =>
+            guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir })
+        );
+        assert.equal(result.ok, false, 'guard should reject ticket with no commit');
+        assert.equal(result.source, 'absent');
+        assert.match(result.reason, /cannot flip Done/);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('guardCompletionCommitBeforeDone: bypass flag accepts inferred when set', async () => {
+    const { guardCompletionCommitBeforeDone } = await import('../bin/mux-runner.js');
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        const workingDir = path.join(tmpRoot, 'work');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.mkdirSync(workingDir, { recursive: true });
+        const ticketId = 'bbbb2222';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+        fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`),
+          `---\nid: ${ticketId}\ntitle: "test"\nstatus: Done\n---\n# T\n`);
+        withProductionGuard(() => {
+            // No bypass: reject
+            const r1 = guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir, flags: {} });
+            assert.equal(r1.ok, false);
+            // With bypass flag: also reject because there's no sha at all (bypass requires inferred sha, not absent)
+            const r2 = guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir, flags: { allow_inferred_completion_commit: true } });
+            assert.equal(r2.ok, false, 'bypass alone without any sha still rejects (absent source)');
+        });
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('guardCompletionCommitBeforeDone: PICKLE_TEST_MODE=1 bypasses entire guard (R-WSRC-4 parity)', async () => {
+    const { guardCompletionCommitBeforeDone } = await import('../bin/mux-runner.js');
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        const workingDir = path.join(tmpRoot, 'work');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.mkdirSync(workingDir, { recursive: true });
+        const ticketId = 'cccc3333';
+        const prev = process.env.PICKLE_TEST_MODE;
+        process.env.PICKLE_TEST_MODE = '1';
+        try {
+            const result = guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir });
+            assert.equal(result.ok, true, 'guard should bypass under PICKLE_TEST_MODE=1');
+            assert.equal(result.sha, 'pickle-test-mode-bypass');
+        } finally {
+            if (prev === undefined) delete process.env.PICKLE_TEST_MODE;
+            else process.env.PICKLE_TEST_MODE = prev;
+        }
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('hasSubstantiveManagerHandoff: substantive body returns true', async () => {
+    const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
+    const content = '## Manager Handoff\n- operator-owned release work remains\n';
+    assert.equal(hasSubstantiveManagerHandoff(content), true);
+});
+
+test('hasSubstantiveManagerHandoff: body "None" returns false (no halt)', async () => {
+    const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
+    const content = '## Manager Handoff\n\nNone.\n';
+    assert.equal(hasSubstantiveManagerHandoff(content), false);
+});
+
+test('hasSubstantiveManagerHandoff: body "None. The ticket file contains no [manager]-tagged acceptance items." (f00097e8 fixture) returns false', async () => {
+    const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
+    const content = '## Manager Handoff\n\nNone. The ticket file contains no `[manager]`-tagged acceptance items.\n\n## Verdict\nALL_PASS\n';
+    assert.equal(hasSubstantiveManagerHandoff(content), false);
+});
+
+test('hasSubstantiveManagerHandoff: body "- none" with list marker returns false', async () => {
+    const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
+    const content = '## Manager Handoff\n- none\n';
+    assert.equal(hasSubstantiveManagerHandoff(content), false);
+});
+
+test('hasSubstantiveManagerHandoff: body "N/A" returns false', async () => {
+    const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
+    const content = '## Manager Handoff\nN/A\n';
+    assert.equal(hasSubstantiveManagerHandoff(content), false);
+});
+
+test('hasSubstantiveManagerHandoff: body "Nothing." returns false', async () => {
+    const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
+    const content = '## Manager Handoff\nNothing.\n';
+    assert.equal(hasSubstantiveManagerHandoff(content), false);
+});
+
+test('hasSubstantiveManagerHandoff: empty body returns false', async () => {
+    const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
+    const content = '## Manager Handoff\n\n\n## Verdict\nPASS\n';
+    assert.equal(hasSubstantiveManagerHandoff(content), false);
+});
+
+test('hasSubstantiveManagerHandoff: section absent returns false', async () => {
+    const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
+    const content = '## Verdict\nPASS\n';
+    assert.equal(hasSubstantiveManagerHandoff(content), false);
+});
+
 test('mux-runner: exits before manager spawn when a done closer ticket carries manager handoff work', () => {
     const tmpRoot = makeTmpRoot();
     try {

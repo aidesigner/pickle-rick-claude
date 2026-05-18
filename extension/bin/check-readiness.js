@@ -20,14 +20,15 @@ const PURE_PROSE_RE = /\b(must|should)\s+(?:be|feel)\s+(?:intuitive|performant|f
 const PATH_RE = /\b(?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)\b/g;
 const SYMBOL_RE = /\b[A-Z][A-Za-z0-9]*(?:\.[A-Za-z_$][\w$]*)+\b|\b[A-Za-z_$][\w$]*\(\)/g;
 // R-RTRC-7 forward-reference annotation: backticked token followed by exactly
-// one ASCII space and either a legacy `(forward-created)` marker, a canonical
+// one ASCII space and either a legacy `(forward-created)` marker, the hybrid
+// `(forward-created by ticket <hash>)` marker, a canonical
 // `(created|introduced) by ticket <hash>` parenthetical, or the symbol-audit
 // compatibility alias `(created by R-<CODE>-N)`. Hash format = 8-char short
 // SHA OR ticket-dir basename. Resolver matches 6-12 alphanumeric to give some
 // flexibility while remaining strict.
 const FORWARD_REF_ANNOTATION_HASH_RE = /^[A-Za-z0-9]{6,12}$/;
 const FORWARD_REF_REQUIREMENT_RE = /^R-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+$/;
-const FORWARD_REF_ANNOTATION_RE = /`([^`]+)`(\s*)\((forward-created|((created|introduced) by ticket ([^)]+))|(created by (R-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)))\)/g;
+const FORWARD_REF_ANNOTATION_RE = /`([^`]+)`(\s*)\((forward-created(?:\s+by\s+ticket\s+[A-Za-z0-9]{6,12})?|((created|introduced) by ticket ([^)]+))|(created by (R-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)))\)/g;
 const ALLOWLIST_FILE_REL = 'extension/.readiness-allowlist.json';
 const GIT_LS_FILES_TIMEOUT_MS = 30_000;
 const DOC_EXTENSION_ALLOWLIST = new Set([
@@ -160,7 +161,8 @@ function isPathLikeForwardRefToken(token) {
  *   - position OUTSIDE backticks
  *   - separated by EXACTLY one ASCII space (no-space, two-space, tab → malformed)
  *   - canonical form: `(created|introduced) by ticket <hash>`
- *   - compatibility aliases: `(forward-created)` for bundle-authored paths and
+ *   - compatibility aliases: `(forward-created)` for bundle-authored paths,
+ *     `(forward-created by ticket <hash>)` for the hybrid bundle+attribution form, and
  *     `(created by R-<CODE>-N)` for symbol-audit-authored forward references
  *   - hash = 8-char short SHA OR ticket-dir basename (resolver normalizes by length)
  *
@@ -170,6 +172,28 @@ function isPathLikeForwardRefToken(token) {
  *   - `malformed`: annotations whose separator/hash format is wrong; resolver
  *                  emits an `annotation_format` finding for each.
  */
+function classifyForwardRefVerb(annotationBody, verbRaw) {
+    if (annotationBody.startsWith('forward-created'))
+        return 'forward-created';
+    if (verbRaw === 'introduced')
+        return 'introduced';
+    return 'created';
+}
+function extractHybridForwardRefHash(annotationBody) {
+    if (annotationBody === 'forward-created')
+        return undefined;
+    if (!annotationBody.startsWith('forward-created'))
+        return undefined;
+    const m = /^forward-created\s+by\s+ticket\s+([A-Za-z0-9]{6,12})$/.exec(annotationBody);
+    return m?.[1];
+}
+function isAnnotationCanonicalHashValid(isForwardCreated, requirementCode, hash) {
+    if (isForwardCreated)
+        return true;
+    if (requirementCode)
+        return FORWARD_REF_REQUIREMENT_RE.test(requirementCode);
+    return Boolean(hash) && FORWARD_REF_ANNOTATION_HASH_RE.test(hash);
+}
 export function extractForwardRefAnnotations(content) {
     const valid = new Set();
     const malformed = [];
@@ -178,22 +202,18 @@ export function extractForwardRefAnnotations(content) {
         const [raw, token, separator, annotationBody, _canonicalBody, verbRaw, hashRaw, requirementAlias] = match;
         const hash = hashRaw?.trim();
         const requirementCode = requirementAlias?.trim().replace(/^created by\s+/, '');
-        const verbTyped = annotationBody === 'forward-created'
-            ? 'forward-created'
-            : verbRaw === 'introduced'
-                ? 'introduced'
-                : 'created';
+        const isForwardCreated = annotationBody.startsWith('forward-created');
+        const verbTyped = classifyForwardRefVerb(annotationBody, verbRaw);
         const annotation = { token: token.trim(), separator, verb: verbTyped, raw };
         if (hash)
             annotation.hash = hash;
         if (requirementCode)
             annotation.hash = requirementCode;
+        const hybridHash = extractHybridForwardRefHash(annotationBody);
+        if (hybridHash)
+            annotation.hash = hybridHash;
         const invalidRequirementAliasTarget = Boolean(requirementCode) && isPathLikeForwardRefToken(annotation.token);
-        const invalidCanonicalHash = annotationBody === 'forward-created'
-            ? false
-            : requirementCode
-                ? !FORWARD_REF_REQUIREMENT_RE.test(requirementCode)
-                : !hash || !FORWARD_REF_ANNOTATION_HASH_RE.test(hash);
+        const invalidCanonicalHash = !isAnnotationCanonicalHashValid(isForwardCreated, requirementCode, hash);
         if (separator !== ' ' || invalidCanonicalHash || invalidRequirementAliasTarget) {
             malformed.push(annotation);
             continue;

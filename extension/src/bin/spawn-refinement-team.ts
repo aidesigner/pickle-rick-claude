@@ -428,7 +428,7 @@ export interface PathVerificationWarning {
 }
 
 const PATH_FORWARD_REF_ANNOTATION_RE =
-  /^ \((?:forward-created|(?:created|introduced) by ticket [A-Za-z0-9]{6,12})\)(?:\b|$|[\s,.;:])/;
+  /^ \((?:forward-created(?:\s+by\s+ticket\s+[A-Za-z0-9]{6,12})?|(?:created|introduced) by ticket [A-Za-z0-9]{6,12})\)(?:\b|$|[\s,.;:])/;
 
 // Parses analyst output for backtick file paths, checks each via git ls-files,
 // and emits path_not_verified breadcrumbs for unclaimed non-existent paths.
@@ -1908,16 +1908,64 @@ function readCrossDocDriftWarnings(sessionDir: string): TicketQualityWarning[] {
     }));
 }
 
+/**
+ * F5 / R-APV-1: scan analyst output files for backticked paths that do not
+ * resolve at HEAD and are not forward-ref-annotated. Surfaces unverified
+ * citations in the manifest BEFORE readiness gate fires; analyst-level
+ * provenance helps operators discover which cycle/role introduced a phantom
+ * path so refinement can re-run with corrective guidance instead of halting
+ * downstream.
+ */
+export function scanAnalystOutputsForUnverifiedPaths(refinementDir: string, workingDir: string): TicketQualityWarning[] {
+  const warnings: TicketQualityWarning[] = [];
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(refinementDir);
+  } catch {
+    return warnings;
+  }
+  // Prefer canonical cycle-final outputs (analysis_<role>.md) over per-cycle
+  // copies; canonical files are what synthesis consumes.
+  const canonicalRe = /^analysis_([a-z-]+)\.md$/;
+  for (const entry of entries) {
+    const m = canonicalRe.exec(entry);
+    if (!m) continue;
+    const filePath = path.join(refinementDir, entry);
+    let content: string;
+    try {
+      content = fs.readFileSync(filePath, 'utf-8');
+    } catch {
+      continue;
+    }
+    const pathWarnings = checkAnalystOutputPaths(content, workingDir);
+    for (const w of pathWarnings) {
+      warnings.push({
+        ticket_id: '',
+        defect_class: 'analyst_path_not_verified',
+        evidence: `analyst=${m[1]} path=${w.path}`,
+        source: 'analyst',
+        file_line: `${entry}`,
+      });
+    }
+  }
+  return warnings;
+}
+
 async function main() {
   const args = parseAndValidateArgs(process.argv.slice(2));
   const settings = loadRefinementSettings();
   const prdContent = await fs.promises.readFile(args.prdPath, 'utf-8');
   const cycleResults = await orchestrateCycles(args, settings, prdContent);
-  const manifestPath = path.join(args.sessionDir, 'refinement_manifest.json');
-  const qualityWarnings = readCrossDocDriftWarnings(args.sessionDir);
-  const manifest = buildRefinementManifest(args, cycleResults, qualityWarnings.length > 0 ? qualityWarnings : undefined);
-  await writeManifestAtomic(manifestPath, manifest);
   const runtime = resolveRuntime(args, settings);
+  const manifestPath = path.join(args.sessionDir, 'refinement_manifest.json');
+  const crossDocWarnings = readCrossDocDriftWarnings(args.sessionDir);
+  const analystPathWarnings = scanAnalystOutputsForUnverifiedPaths(cycleResults.refinementDir, runtime.workingDir);
+  const combinedWarnings = [...crossDocWarnings, ...analystPathWarnings];
+  if (analystPathWarnings.length > 0) {
+    process.stderr.write(`[pickle-rick] analyst_path_not_verified count=${analystPathWarnings.length} (see refinement_manifest.json ticket_quality_warnings)\n`);
+  }
+  const manifest = buildRefinementManifest(args, cycleResults, combinedWarnings.length > 0 ? combinedWarnings : undefined);
+  await writeManifestAtomic(manifestPath, manifest);
   const symbolAudit = await writeSymbolAudit(cycleResults.refinementDir, prdContent, runtime.workingDir, manifest, args.prdPath);
   const symbolAuditStatus = runSymbolAuditEnforcement(symbolAudit);
   if (symbolAuditStatus !== 0) process.exit(symbolAuditStatus);

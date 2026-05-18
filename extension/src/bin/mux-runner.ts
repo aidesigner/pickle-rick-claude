@@ -2416,10 +2416,10 @@ export function appendPipelineRunnerMarker(sessionDir: string, message: string):
   } catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
 
-export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally' | 'state_schema_version_ahead' | 'closer_handoff_terminal' | 'manager_handoff_pending';
+export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally' | 'state_schema_version_ahead' | 'closer_handoff_terminal' | 'manager_handoff_pending' | 'done_without_commit_evidence';
 
-const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat' || r === 'closer_handoff_terminal' || r === 'manager_handoff_pending';
-const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead';
+const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat' || r === 'closer_handoff_terminal' || r === 'manager_handoff_pending' || r === 'done_without_commit_evidence';
+const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead' || r === 'done_without_commit_evidence';
 
 interface CloserHandoffTracker {
   ticket_id: string;
@@ -2440,6 +2440,77 @@ type CloserTerminalDecision =
   | { action: 'continue'; tracker: CloserHandoffTracker | null }
   | { action: 'exit'; reason: Extract<ExitReason, 'closer_handoff_terminal' | 'manager_handoff_pending'>; tracker: CloserHandoffTracker | null; detail: string };
 
+/**
+ * Returns true only when the conformance has a `## Manager Handoff` section AND
+ * its body is substantive (not "None", "N/A", "Nothing", empty, etc.).
+ * Workers commonly write the section header with body "None" as the standard
+ * no-handoff-needed boilerplate; treating that as a halt trigger produced a
+ * recurring false-positive `manager_handoff_pending` exit on clean tickets
+ * (e.g., session 2026-05-17-6ff53ea2/f00097e8).
+ */
+/**
+ * Guards the worker Done-flip transition. Returns true when the ticket's
+ * `completion_commit` evidence is `'explicit'` (i.e., worker shipped a real
+ * git commit attributable to the ticket). Returns false otherwise — caller
+ * should halt mux-runner with `done_without_commit_evidence` exit_reason.
+ *
+ * Bypass: `state.flags.allow_inferred_completion_commit === true` accepts
+ * inferred/absent evidence (operator-only edit; surfaces in audit trail).
+ *
+ * Rationale: workers in B-CCPM-1b (2/3 tickets) and B-SJET (1/3 ticket
+ * f00097e8) shipped ticket status=Done with prose-only verdict and no
+ * attributable commit. mux-runner trusted the prose; the bundle bookkeeping
+ * shipped while the actual fix never landed. This is the surgical guard.
+ */
+export function guardCompletionCommitBeforeDone(args: {
+  sessionDir: string;
+  ticketId: string;
+  workingDir: string;
+  flags?: Record<string, unknown> | null;
+}): { ok: true; sha: string } | { ok: false; reason: string; source: 'explicit' | 'inferred' | 'absent' } {
+  // R-WSRC-4 parity: PICKLE_TEST_MODE=1 bypasses for sandboxed test fixtures
+  // whose workingDir is a synthetic temp dir without a real git repo.
+  // Production sessions never set this env var; production guard is intact.
+  if (process.env.PICKLE_TEST_MODE === '1') {
+    return { ok: true, sha: 'pickle-test-mode-bypass' };
+  }
+  const allowInferred = (args.flags ?? {})['allow_inferred_completion_commit'] === true;
+  const evidence = hasCompletionCommit({
+    sessionDir: args.sessionDir,
+    ticketId: args.ticketId,
+    workingDir: args.workingDir,
+  });
+  if (evidence.source === 'explicit' && evidence.sha) {
+    return { ok: true, sha: evidence.sha };
+  }
+  if (allowInferred && evidence.sha) {
+    // Operator bypass — proceed but record the source for audit.
+    return { ok: true, sha: evidence.sha };
+  }
+  return {
+    ok: false,
+    source: evidence.source,
+    reason: `ticket ${args.ticketId} cannot flip Done: hasCompletionCommit().source === '${evidence.source}' (expected 'explicit'); ` +
+      `worker did not produce an attributable git commit. Set state.flags.allow_inferred_completion_commit=true to bypass, ` +
+      `or edit ticket frontmatter to include completion_commit: <sha>.`,
+  };
+}
+
+export function hasSubstantiveManagerHandoff(content: string): boolean {
+  const match = /^##\s+Manager Handoff\b[ \t]*\n?([\s\S]*?)(?=^##\s+|$(?![\s\S]))/m.exec(content);
+  if (!match) return false;
+  const body = match[1].trim();
+  if (!body) return false;
+  const firstNonEmptyLine = body
+    .split(/\n/)
+    .map(l => l.replace(/^[-*+]\s+/, '').trim())
+    .find(l => l.length > 0) ?? '';
+  // First non-empty line starting with "none", "n/a", "na", "nothing" → no handoff,
+  // regardless of any explanatory text on subsequent lines or on the same line.
+  if (/^(none|n\/a|na|nothing)\b/i.test(firstNonEmptyLine)) return false;
+  return true;
+}
+
 function readLatestTicketConformanceSnapshot(ticketDir: string): TicketConformanceSnapshot {
   let entries: string[];
   try {
@@ -2456,7 +2527,7 @@ function readLatestTicketConformanceSnapshot(ticketDir: string): TicketConforman
     const content = fs.readFileSync(path.join(ticketDir, latest), 'utf-8');
     return {
       file: latest,
-      hasManagerHandoff: /^##\s+Manager Handoff\b/m.test(content),
+      hasManagerHandoff: hasSubstantiveManagerHandoff(content),
     };
   } catch {
     return { file: latest, hasManagerHandoff: false };
@@ -3342,6 +3413,7 @@ export async function processCompletionBranch(state: State, result: IterationOut
   return { kind: 'noop' };
 }
 
+// eslint-disable-next-line complexity -- F3 R-DWC: completion_commit guard adds branches to an already-large completion handler; refactoring the surrounding flow is out of scope for the surgical sweep
 function processTaskCompleted(state: State, ctx: LoopContext): LoopAction {
   let curState: State;
   try { curState = ctxReadState(ctx); } catch (err) {
@@ -3374,6 +3446,20 @@ function processTaskCompleted(state: State, ctx: LoopContext): LoopAction {
     return { kind: 'break', reason: closerDecision.reason };
   }
   if (curState.current_ticket) {
+    const guard = guardCompletionCommitBeforeDone({
+      sessionDir: ctx.sessionDir,
+      ticketId: curState.current_ticket,
+      workingDir: curState.working_dir || state.working_dir || process.cwd(),
+      flags: (curState.flags as Record<string, unknown> | undefined) ?? null,
+    });
+    if (!guard.ok) {
+      const msg = `[fatal] ${new Date().toISOString()} ${guard.reason}`;
+      ctx.log(msg);
+      process.stderr.write(`${msg}\n`);
+      recordExitReason(ctx.statePath, 'done_without_commit_evidence');
+      safeDeactivate(ctx.statePath);
+      return { kind: 'break', reason: 'done_without_commit_evidence' };
+    }
     markTicketDone(ctx.sessionDir, curState.current_ticket);
     try {
       runBetweenTicketFastGate({
@@ -4431,7 +4517,23 @@ async function runMuxRunnerMain() {
         const tickets = collectTickets(sessionDir);
         const prevTicketInfo = tickets.find(t => t.id === previousTicket);
         if (prevTicketInfo?.id && normalizedStatus(getTicketStatus(sessionDir, prevTicketInfo.id)) === 'done') {
-          log(`Ticket ${previousTicket} already marked Done by model — skipping validation`);
+          // F3 / R-DWC: worker-self-attested Done must have explicit completion_commit.
+          // Recurring failure class — Finding #2 (codex Done-without-commit).
+          const guard = guardCompletionCommitBeforeDone({
+            sessionDir,
+            ticketId: prevTicketInfo.id,
+            workingDir: prevTicketInfo.working_dir || state.working_dir || process.cwd(),
+            flags: (state.flags as Record<string, unknown> | undefined) ?? null,
+          });
+          if (!guard.ok) {
+            const msg = `[fatal] ${new Date().toISOString()} ${guard.reason}`;
+            log(msg);
+            process.stderr.write(`${msg}\n`);
+            recordExitReason(statePath, 'done_without_commit_evidence');
+            safeDeactivate(statePath);
+            return;
+          }
+          log(`Ticket ${previousTicket} already marked Done by model — skipping validation (completion_commit: ${guard.sha})`);
         } else {
           // Drift scenario: model changed current_ticket without following protocol
           const ticketWorkingDir = prevTicketInfo?.working_dir || state.working_dir || process.cwd();
@@ -4777,6 +4879,20 @@ async function runMuxRunnerMain() {
           // iteration picks the next non-Done ticket. Counter persists at the
           // CURRENT ticket so a subsequent false epic on the SAME current
           // ticket doesn't get a fresh budget.
+          const guard = guardCompletionCommitBeforeDone({
+            sessionDir,
+            ticketId: curState.current_ticket,
+            workingDir: curState.working_dir || process.cwd(),
+            flags: (curState.flags as Record<string, unknown> | undefined) ?? null,
+          });
+          if (!guard.ok) {
+            const msg = `[fatal] ${new Date().toISOString()} ${guard.reason}`;
+            log(msg);
+            process.stderr.write(`${msg}\n`);
+            recordExitReason(statePath, 'done_without_commit_evidence');
+            safeDeactivate(statePath);
+            return;
+          }
           if (markTicketDone(sessionDir, curState.current_ticket)) {
             log(`Marked ticket ${curState.current_ticket} as Done (recover_advance)`);
           }
@@ -4836,6 +4952,20 @@ async function runMuxRunnerMain() {
 
       // Mark final ticket as Done before exiting or chaining
       if (curState.current_ticket) {
+        const guard = guardCompletionCommitBeforeDone({
+          sessionDir,
+          ticketId: curState.current_ticket,
+          workingDir: curState.working_dir || state.working_dir || process.cwd(),
+          flags: (curState.flags as Record<string, unknown> | undefined) ?? null,
+        });
+        if (!guard.ok) {
+          const msg = `[fatal] ${new Date().toISOString()} ${guard.reason}`;
+          log(msg);
+          process.stderr.write(`${msg}\n`);
+          recordExitReason(statePath, 'done_without_commit_evidence');
+          safeDeactivate(statePath);
+          return;
+        }
         if (markTicketDone(sessionDir, curState.current_ticket)) {
           log(`Marked final ticket ${curState.current_ticket} as Done`);
         }

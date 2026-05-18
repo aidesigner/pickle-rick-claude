@@ -4,6 +4,11 @@
 // the documented completion-value union. The hang-guard and spawn-error resolve
 // paths require a live `claude` subprocess and are covered by integration runs.
 
+// F3 / R-DWC: this test file uses synthetic temp-dir sessions whose workingDir
+// is not a real git repo. The F3 completion_commit guard bypasses on
+// PICKLE_TEST_MODE=1 per R-WSRC-4 sandbox parity; set it module-wide.
+process.env.PICKLE_TEST_MODE = '1';
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
