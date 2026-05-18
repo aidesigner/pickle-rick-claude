@@ -1,11 +1,21 @@
 ---
-title: P1 — szechuan-sauce judge baseline-measurement deterministically ETIMEDOUTs on `spawnSync claude` × 4, breaks szechuan/plumbus/microverse iteration loops
-status: Draft
+title: P1 — szechuan-sauce judge baseline-measurement deterministically ETIMEDOUTs on `spawnSync claude` × 4, breaks szechuan/plumbus/microverse iteration loops (B-SJET-2 scope; R-SJET-1/3/4/6 unshipped)
+status: Active (B-SJET-2, partial-ship cleanup from v1.75.4)
 filed: 2026-05-17
 priority: P1
 type: bug-infrastructure
 finding: 47
 code: R-SJET
+bundle: B-SJET-2
+already_shipped:
+  - "R-SJET-2 (command-metric path async) — v1.75.4 commit 66e187e8 — converted measureMetric to async spawn for the *command* metric path; DOES NOT cover the LLM judge path (measureLlmMetricAttempt at microverse-runner.ts:1722 is still synchronous execFileSync)"
+  - "R-SJET-5 (judge_measurement_attempted telemetry) — v1.75.4 commit 4bf68232 — per-attempt structured events with backend/model/fallback/spawn_context"
+b_sjet_2_scope:
+  - "R-SJET-1 (stdin-close on judge spawn, 1-line × 2 sites)"
+  - "R-SJET-3 (nested-claude env isolation OR Anthropic API direct OR codex fallback)"
+  - "R-SJET-4 (judge_backend: auto config + codex fallback on typed timeout)"
+  - "R-SJET-6 (integration test against fake-hanging-claude binary)"
+  - "Note: the async pivot from R-SJET-2 must ALSO be applied to the LLM judge path (measureLlmMetricAttempt). The v1.75.4 R-SJET-2 only landed it for measureMetric (command metric)."
 related:
   - prds/p1-bug-fix-bundle-2026-05-08-mega.md  # R-MJCP origin (Finding #14, closed v1.73.0) — same family, different code path
   - prds/p1-szechuan-sauce-session-dir-firewall-conflict.md  # R-SSDF (Finding #46, filed 2026-05-17 AM) — sibling on same session, different layer
@@ -188,6 +198,20 @@ node --input-type=module -e "
 
 Expected on broken environment: hangs 180s, then ETIMEDOUT. Expected after R-SJET-1: returns within 30s with a real score, OR errors cleanly within the configured timeout.
 
+## B-SJET-2 bundle scope (2026-05-18 partial-ship cleanup)
+
+After v1.75.4 B-SJET partial-shipped:
+- ✅ **R-SJET-2 (command-metric path)** — shipped commit `66e187e8`. Async pivot for `measureMetric` (command metric only); does NOT cover the LLM judge path.
+- ✅ **R-SJET-5 (telemetry)** — shipped commit `4bf68232`. `judge_measurement_attempted` events with full payload.
+
+**B-SJET-2 implements the remaining 4 items below, all targeting the LLM judge spawn path (`measureLlmMetricAttempt`, `probeJudgeCliAvailability`, `measureLlmMetricWithBackoff`)**:
+- R-SJET-1 — `stdio: ['ignore', 'pipe', 'pipe']` × 2 sites
+- R-SJET-3 — nested-claude env isolation OR Anthropic API direct OR codex fallback path
+- R-SJET-4 — `judge_backend: 'auto'` config + codex fallback on typed timeout
+- R-SJET-6 — integration test against fake-hanging-claude binary
+
+**ALSO required (folded into R-SJET-1 or R-SJET-3)**: apply the async-pivot from R-SJET-2 to the LLM judge path (`measureLlmMetricAttempt`). The v1.75.4 commit only landed it for `measureMetric` (command metric path), NOT the LLM judge path. The LLM judge spawn at `microverse-runner.ts:1722` is still synchronous `execFileSync`.
+
 ## Proposed fix (R-SJET-1..6, ranked bandage → structural)
 
 ### R-SJET-1 — Close stdin on the judge spawn (`stdio: ['ignore', 'pipe', 'pipe']`)
@@ -198,7 +222,7 @@ Edit `microverse-runner.ts:1594` and `microverse-runner.ts:1638` to use `stdio: 
 **Class**: bandage. Doesn't fix the structural design of using sync spawn for a 180-second LLM call, but if hypothesis 1 is correct it ends the production failure today.
 **Risk**: Low. If hypothesis 1 is wrong, this is a no-op; the call still ETIMEDOUTs. Worth shipping regardless because `['pipe', 'pipe', 'pipe']` with no writer is a footgun and should not be in the codebase.
 
-### R-SJET-2 — Replace `execFileSync` with async `execFile` + Promise.race against a hard timer
+### R-SJET-2 — Replace `execFileSync` with async `execFile` + Promise.race against a hard timer  *(✅ SHIPPED v1.75.4 commit `66e187e8` for the COMMAND metric path; LLM judge path STILL synchronous — see B-SJET-2 scope note)*
 
 `execFileSync` is the wrong primitive for a multi-minute LLM call. Switch to `execFile` (Node's promisified `child_process.execFile`) and race the resulting promise against a hard timer. On timer expiry, send SIGTERM, then SIGKILL after a 2s grace, and reject with a `JudgeMeasurementTimeout` typed error that is distinct from `JudgeCliMissing` (R-MJCP's residual ambiguity).
 
@@ -253,7 +277,7 @@ Update:
 **Effort**: ≤1h.
 **Class**: structural escape hatch. Operators can route around environment-specific claude-spawn brokenness without code changes.
 
-### R-SJET-5 — Improve telemetry on the judge spawn
+### R-SJET-5 — Improve telemetry on the judge spawn  *(✅ SHIPPED v1.75.4 commit `4bf68232`)*
 
 Today the only diagnostic on failure is the single stderr line `[microverse] measureLlmMetric failed (judge_backend=claude, session_backend=X, model=Y): spawnSync claude ETIMEDOUT`. That tells the operator *what* failed but nothing about *why*. Future occurrences should be diagnosable in seconds, not by re-reading a 22-minute log.
 
