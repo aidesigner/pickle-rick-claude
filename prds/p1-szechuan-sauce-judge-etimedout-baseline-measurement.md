@@ -1,453 +1,404 @@
 ---
-title: P1 — szechuan-sauce judge baseline-measurement deterministically ETIMEDOUTs on `spawnSync claude` × 4, breaks szechuan/plumbus/microverse iteration loops (B-SJET-2 scope; R-SJET-1/3/4/6 unshipped)
+title: P1 — szechuan-sauce judge baseline-measurement deterministically ETIMEDOUTs on `spawnSync claude` × 4 (B-SJET-2 scope; refined 2026-05-18)
 status: Active (B-SJET-2, partial-ship cleanup from v1.75.4)
 filed: 2026-05-17
+refined: 2026-05-18
 priority: P1
 type: bug-infrastructure
 finding: 47
 code: R-SJET
 bundle: B-SJET-2
 already_shipped:
-  - "R-SJET-2 (command-metric path async) — v1.75.4 commit 66e187e8 — converted measureMetric to async spawn for the *command* metric path; DOES NOT cover the LLM judge path (measureLlmMetricAttempt at microverse-runner.ts:1722 is still synchronous execFileSync)"
+  - "R-SJET-2 (command-metric path async) — v1.75.4 commit 66e187e8 — converted measureMetric to async spawn for the COMMAND metric path; LLM judge path still synchronous at HEAD"
   - "R-SJET-5 (judge_measurement_attempted telemetry) — v1.75.4 commit 4bf68232 — per-attempt structured events with backend/model/fallback/spawn_context"
 b_sjet_2_scope:
-  - "R-SJET-1 (stdin-close on judge spawn, 1-line × 2 sites)"
-  - "R-SJET-3 (nested-claude env isolation OR Anthropic API direct OR codex fallback)"
-  - "R-SJET-4 (judge_backend: auto config + codex fallback on typed timeout)"
-  - "R-SJET-6 (integration test against fake-hanging-claude binary)"
-  - "Note: the async pivot from R-SJET-2 must ALSO be applied to the LLM judge path (measureLlmMetricAttempt). The v1.75.4 R-SJET-2 only landed it for measureMetric (command metric)."
-related:
-  - prds/p1-bug-fix-bundle-2026-05-08-mega.md  # R-MJCP origin (Finding #14, closed v1.73.0) — same family, different code path
-  - prds/p1-szechuan-sauce-session-dir-firewall-conflict.md  # R-SSDF (Finding #46, filed 2026-05-17 AM) — sibling on same session, different layer
-  - prds/p1-codex-manager-hallucinated-wedge-self-terminate.md  # R-CCPM-1b (Finding #45, filed 2026-05-17 AM)
-  - prds/p1-closer-ticket-spins-on-r-wsrc-forbidden-acs.md  # R-CTSF (Finding #44, closed v1.75.2)
+  - "R-SJET-1 — stdin-close (2 sites) + async pivot + typed errors (LLM judge path) + Math.max floor removal + PICKLE_JUDGE_LEGACY_SPAWN kill-switch"
+  - "R-SJET-3 — nested-claude env isolation via judge-spawn-env.ts helper"
+  - "R-SJET-4 — judge_backend config + sticky fallback (no new event; reuses judge_measurement_attempted)"
+  - "R-SJET-6 — integration tests + forward-created fixtures"
+  - "T-HARDEN-AUTORESUME — pipeline-runner exit-reason mapping for all_judge_backends_exhausted"
+  - "T-HARDEN-DOCS — docs/judge-spawn-troubleshooting.md + activity event catalog updates"
+  - "T-HARDEN-PROBE — three-probe pre-validation script repro-judge-timeout.sh"
+  - "T-HARDEN-CONFORMANCE — per-R-code conformance_*.md docs + lint/typecheck/test:fast gates"
+  - "C-SJET-CLOSER — [manager] version bump 1.75.6, compiled-JS rebuild, install.sh parity, gh release, MASTER_PLAN.md"
+deferred:
+  - "R-SJET-7 (continue-on-judge-unmeasurable) — DROPPED from B-SJET-2 entirely per 3-analyst consensus. Conflicts with R-PRJT-2 + R-MBLE-2 live trap doors. File B-SJET-3 with explicit interaction-matrix design PRD before reconsidering."
+tickets:
+  R-SJET-1: { tier: medium, effort_max: "2h" }
+  R-SJET-3: { tier: medium, effort_max: "2h" }
+  R-SJET-4: { tier: medium, effort_max: "2h" }
+  R-SJET-6: { tier: small, effort_max: "1h" }
+  T-HARDEN-AUTORESUME: { tier: small, effort_max: "1h" }
+  T-HARDEN-DOCS: { tier: small, effort_max: "1h" }
+  T-HARDEN-PROBE: { tier: small, effort_max: "1h" }
+  T-HARDEN-CONFORMANCE: { tier: small, effort_max: "1h" }
+  C-SJET-CLOSER: { tier: small, effort_max: "30m", owner: manager }
 recurrence:
-  - "2026-05-17 15:09:17Z — session 2026-05-17-0fca029f, szechuan-sauce run 1 on loanlight-api LOA-753 deslop. `measureLlmMetric` ETIMEDOUT × 4 attempts. 22m 4s wall, 1 iteration, exit_reason=judge_timeout. Worker DID iterate before the failure — produced partial `gap_analysis.md` (30 lines) and committed one slop fix `a6abeb8d1` on the LOA-753 branch (`payload.error` vs `payload.status` parsing in `comment-chat-panel.tsx`)."
-  - "2026-05-17 15:42:35Z — same session relaunched after R-SSDF unblock. Same exact failure shape: `Resuming from failed state — resetting status to gap_analysis` → 4 attempts → ETIMEDOUT. 27m 0s wall, 1 iteration, exit_reason=judge_timeout. 27m vs 22m is per-attempt timing variance, not a different error class."
+  - "2026-05-17 15:09:17Z — session 2026-05-17-0fca029f run 1, codex worker, iter-1 ETIMEDOUT × 4, 22m 4s wall, exit_reason=judge_timeout. Worker landed 1 commit a6abeb8d1 before judge died."
+  - "2026-05-17 15:42:35Z — same session run 2, codex worker, iter-1 ETIMEDOUT × 4, 27m 0s wall, exit_reason=judge_timeout."
+  - "2026-05-17 19:00:06Z — session 2026-05-17-902b9155, claude worker, iter-1 baseline SUCCEEDED in 28m 50s (anomalous slow-not-timeout), iter-3 ETIMEDOUT × 4 at 20:02:20Z, 62m 13s wall, 1 commit a9c0038eb landed."
+related:
+  - prds/p1-bug-fix-bundle-2026-05-08-mega.md  # R-MJCP origin (Finding #14, closed v1.73.0)
+  - prds/p1-szechuan-sauce-session-dir-firewall-conflict.md  # R-SSDF (Finding #46)
+  - prds/p1-codex-manager-hallucinated-wedge-self-terminate.md  # R-CCPM-1b (Finding #45)
+  - prds/p1-closer-ticket-spins-on-r-wsrc-forbidden-acs.md  # R-CTSF (Finding #44)
+  - prds/p1-hallucinated-conformance-attestation-gate.md  # B-HCAG (closes Finding #2, deferred F4)
 ---
 
-<!-- R-CTSF compliant -->
+<!-- R-CTSF compliant: workers own R-SJET-1/3/4/6 + T-HARDEN-* ; closer C-SJET-CLOSER owns [manager] residuals (version bump, install.sh, MASTER_PLAN, release) -->
 
-# R-SJET — szechuan-sauce judge baseline-measurement deterministically ETIMEDOUTs on `spawnSync claude` × 4
+# R-SJET (B-SJET-2) — szechuan-sauce judge baseline-measurement deterministically ETIMEDOUTs on `spawnSync claude`
 
-**Author**: pickle-rick session 2026-05-17 PM
+**Author**: pickle-rick session 2026-05-17 PM; refined 2026-05-18
 **Project**: pickle-rick-claude
 **Repo**: `/Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude`
+**HEAD verified at refinement**: `7a280bdb`
 
-## Symptom
+## Symptom (revised — backend-modulated, not deterministic)
 
-szechuan-sauce / plumbus / microverse all share the same baseline-measurement path: after the worker completes its first iteration (gap-analysis), the runner calls `measureLlmMetricWithBackoff` → `measureLlmMetricAttempt` → `execFileSync('claude', [...])` to score the codebase against the goal. On this environment (2026-05-17, gregory@loanlight.com, macOS arm64, claude CLI installed and responding to `--version`), that spawn deterministically hangs and ETIMEDOUTs at the 180-second per-attempt cap, four times in a row, exhausting the backoff schedule and exiting with `exit_reason=judge_timeout`.
+On the codex worker backend, the LLM judge baseline-measurement deterministically hangs at iter-1 across both observed runs. On the claude worker backend, iter-1 baseline succeeds (slowly, 28+ min — itself anomalous), then hangs deterministically at iter-3+. The bug is **intermittent within a single backend's traces but deterministic across observed traces of either backend**. Three sessions in §recurrence confirm.
 
-Two consecutive launches in the same session hit it identically — same 4 attempts, same exit reason, ~22-27 min wasted each.
+The structural location: `extension/src/bin/microverse-runner.ts:1745-1759` (measurement) and `:1797-1817` (probe). Both call `_deps.execFileSync('claude', …, { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...backendEnvOverrides('claude') } })`. Probe path was hardened by R-MJCP (Finding #14, v1.73.0) for misclassification but the measurement spawn-hang was left for a successor (this PRD).
 
-### Verbatim runner log — run 1 (session `2026-05-17-0fca029f`, 22m 4s)
+## Root cause hypothesis stack (3-analyst consensus)
 
-```
-[2026-05-17T15:09:17.464Z] microverse-runner started
-[2026-05-17T15:09:17.590Z] Starting gap analysis phase
-[microverse] measureLlmMetric failed (judge_backend=claude, session_backend=codex, model=claude-sonnet-4-6): spawnSync claude ETIMEDOUT
-[microverse] measureLlmMetric failed (judge_backend=claude, session_backend=codex, model=claude-sonnet-4-6): spawnSync claude ETIMEDOUT
-[microverse] measureLlmMetric failed (judge_backend=claude, session_backend=codex, model=claude-sonnet-4-6): spawnSync claude ETIMEDOUT
-[microverse] measureLlmMetric failed (judge_backend=claude, session_backend=codex, model=claude-sonnet-4-6): spawnSync claude ETIMEDOUT
-[2026-05-17T15:31:22.045Z] ERROR: Could not measure LLM baseline (judge_timeout) after 4 attempt(s): spawnSync claude ETIMEDOUT
-[2026-05-17T15:31:22.046Z] microverse-runner exit: judge_timeout (spawnSync claude ETIMEDOUT)
-[2026-05-17T15:31:22.049Z] microverse-runner finished. 1 iterations, 22m 4s, exit: judge_timeout
-```
+| H | Hypothesis | Evidence | Falsifiable via |
+|---|---|---|---|
+| H1 | Stdin pipe held open with no writer; claude CLI reads stdin until EOF before producing output. | `stdio: ['pipe', 'pipe', 'pipe']` × 2 sites; codex-worker case fails 100% at iter-1; matches `probeJudgeCliAvailability` not exercising full prompt pipeline. | T-HARDEN-PROBE P1 (clean shell). |
+| H2 | Nested-claude auth/session contention. | Claude-worker case fails at iter-3 (not iter-1); 28-min "success" baseline anomaly suggests partial state contention. | T-HARDEN-PROBE P2 (nested claude shell). |
+| H3 | Output stream backpressure on long judge responses. | execFileSync stdout buffer ≤ 1MB; judge prompts ≤ 100KB typical. | Less likely; not falsifiable without telemetry. Punted to R-SJET-5 mid-spawn fields. |
 
-### Verbatim runner log — run 2 (same session, 33 min later, 27m 0s)
-
-```
-[2026-05-17T15:42:35.167Z] microverse-runner started
-[2026-05-17T15:42:35.254Z] Resuming from failed state — resetting status to gap_analysis
-[2026-05-17T15:42:35.302Z] Starting gap analysis phase
-[2026-05-17T16:09:35.783Z] ERROR: Could not measure LLM baseline (judge_timeout) after 4 attempt(s): spawnSync claude ETIMEDOUT
-[2026-05-17T16:09:35.785Z] microverse-runner exit: judge_timeout (spawnSync claude ETIMEDOUT)
-[2026-05-17T16:09:35.787Z] microverse-runner finished. 1 iterations, 27m 0s, exit: judge_timeout
-```
-
-This is a 100% reproducible failure on this environment. Not a flake. Not a one-off. Two clean launches, same failure, no environmental drift between them.
-
-### Discriminator — anatomy-park works fine on the same branch
-
-Same session morning: anatomy-park ran on the same LOA-753 branch (session `2026-05-17-e8cffa10`), converged cleanly in 6 iterations / 33m 48s, found 1 HIGH bug, fixed it, cataloged 1 trap door. Anatomy-park uses **worker-managed convergence** — the worker writes `anatomy-park.json` and the runner reads it. There is no LLM-judge baseline-measurement step. It never touches the broken code path.
-
-The bug class is therefore: **LLM-judge-driven convergence modes only.** Every mode that calls `measureLlmMetricWithBackoff` (szechuan-sauce, plumbus, microverse) is broken on this environment until R-SJET lands. Every mode that doesn't (anatomy-park, pickle / pickle-tmux build phase) is unaffected.
-
-### Important nuance — the worker DID produce work before the judge failed
-
-Tempting to assume the whole iteration is dead. It isn't. The worker side ran first and made real progress on run 1:
-
-- Read the LOA-753 PRD + contracts.
-- Produced a partial `gap_analysis.md` — 30 lines, contract map of comment-chat slice, two dropped extraction candidates, a small violations section.
-- Found a contract mismatch in `comment-chat-panel.tsx`: payload was being read as `payload.error` when the API contract returns `payload.status`.
-- Fixed it and committed: `a6abeb8d1` on the LOA-753 branch (`gregory/loa-753-appraisal-free-form-textcomments`).
-
-Then `executeGapAnalysis` (microverse-runner.ts:2180) called `measureLlmBaseline` (line 2216), which called `measureLlmMetricWithBackoff` (line 2144), which hit the broken `execFileSync('claude', …)` path and burned the next 22 minutes producing nothing.
-
-The bug is structurally located **AFTER the worker's first iteration commits, INSIDE the baseline-score measurement, BEFORE the iteration loop can advance.** Subsequent iterations never start. The worker's good commit is in `git log` and would survive a rebase, but the iteration loop that would produce more such commits is dead.
-
-## Root cause
-
-The structurally-suspect call: `extension/src/bin/microverse-runner.ts:1589-1596`:
-
-```typescript
-try {
-  const output = _deps.execFileSync(cmd, args, {
-    cwd,
-    timeout: timeout * 1000,
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, ...backendEnvOverrides('claude') },
-  }).trim();
-```
-
-Three structural issues, ranked by likelihood:
-
-### Hypothesis 1 (most likely): stdin pipe held open with no writer, claude CLI in non-interactive mode awaits stdin closure
-
-`stdio: ['pipe', 'pipe', 'pipe']` opens a pipe for the child's stdin and never writes to it or closes it. Many CLI tools — claude included, in some invocation modes — read stdin until EOF before producing output, even when the prompt is supplied via `-p <prompt>`. With stdin held open by the parent and no `end()` call, the child waits forever, then the 180s per-attempt timeout fires.
-
-`execFileSync` does not expose a way to close stdin separately; the fix is either `stdio: ['ignore', 'pipe', 'pipe']` (closes the descriptor immediately, child sees EOF on stdin) or replacing `execFileSync` with `execFile` (async) and explicitly `.stdin.end()` before awaiting.
-
-This hypothesis is testable in 60 seconds: run `claude --allowedTools Read,Glob,Grep --no-session-persistence -p "echo ok" --add-dir <cwd>` from a shell where stdin is `/dev/null`. If the call returns promptly, hypothesis 1 is confirmed. The probe at `probeJudgeCliAvailability` (line 1631-1650) does NOT exercise this path — it only calls `claude --version`, which doesn't open the full prompt-processing pipeline, so the probe returns ok and the runner proceeds into the broken main spawn.
-
-### Hypothesis 2: claude CLI in nested-claude context — auth state contention
-
-If the operator is running this from inside a Claude Code session (the runner was launched as a tool call from a parent claude process), the spawned claude CLI may be probing for or contending with a parent session's auth state, terminal state, or tmux pane association. `--no-session-persistence` should defuse this but there is no positive integration test confirming it actually does. The `CLAUDE_CODE` / `CLAUDE_API_KEY` / `ANTHROPIC_API_KEY` env vars all pass through `backendEnvOverrides('claude')` unchanged (`backend-spawn.ts:485-488` only sets `PICKLE_BACKEND`), which means the parent's session state is leaking into the child.
-
-This hypothesis is also testable: log the full inherited env at spawn time, diff against a known-good standalone-shell invocation.
-
-### Hypothesis 3: output stream backpressure on long judge responses
-
-`stdio: ['pipe', 'pipe', 'pipe']` with default high-water marks can cause the child to block on a full stdout buffer if the judge response is large and the parent doesn't drain it concurrently. `execFileSync` does drain stdout to a string, but the implementation buffers up to `maxBuffer` (default 1MB) and may stall if the child writes faster than the parent reads under certain libuv schedules. The 180-second timeout still fires, so this is observationally indistinguishable from hypotheses 1/2.
-
-Less likely than hypothesis 1 — the judge prompt + response should be under 100KB for a small slice like comment-chat. But not impossible.
-
-### Why R-MJCP (Finding #14, closed v1.73.0) doesn't cover this
-
-R-MJCP closed the *misclassification* path: when the probe ETIMEDOUTs, classify it as `judge_timeout`, not as `judge_cli_missing`. That fix landed in `probeJudgeCliAvailability` (line 1645-1648 — the explicit "judge probe timed out … falling back to measurement loop" branch).
-
-R-SJET is downstream of that fix: the probe returns `ok` (claude --version works), the runner enters the measurement loop, and **the measurement loop itself hangs the same way**. R-MJCP's diagnostic branch never runs because the failure is not in the probe, it's in the actual scoring call. The classification is correct (`failureKind: 'timeout'` at line 1610); the underlying spawn is just broken.
-
-If you read the R-MJCP closure notes in v1.73.0 carefully ("Microverse judge probe ETIMEDOUT misclassification"), the closure scope was explicitly limited to misclassification. The underlying spawn-hang was left for a successor. R-SJET is that successor.
+R-SJET-1 (stdin-close) is load-bearing under H1, defensive under H2. R-SJET-3 (env isolation) is load-bearing under H2, defensive under H1. R-SJET-4 (fallback config) is the operator escape hatch regardless of which H dominates. All three ship together.
 
 ## Cost of the bug
 
 | Metric | Value |
 |---|---|
-| Session `2026-05-17-0fca029f` run 1 wall | 22m 4s |
-| Session `2026-05-17-0fca029f` run 2 wall | 27m 0s |
-| Total wasted on this session alone | 49m 4s |
-| Useful work landed before the hang | 1 commit (`a6abeb8d1`, comment-chat payload contract fix) |
-| Iterations attempted | 2 (one per run; neither advanced past baseline) |
-| Iterations completed | 0 (zero) |
-| Tokens spent (worker side, run 1) | ~14k (worker did produce output) |
-| Tokens spent (judge side, both runs) | unknown — claude CLI hung before any prompt was delivered or response received |
-| Operator overhead | Session decode + this PRD; ~45 min |
+| Sessions broken (observed) | 3 |
+| Total wall-time wasted | 1h 51m |
+| Iterations completed across all 3 sessions | 1 (the 28-min anomalous baseline) |
+| Useful commits the workers landed BEFORE the judge died | 2 (`a6abeb8d1`, `a9c0038eb`) |
+| Structural impact | Every LLM-judge-driven convergence mode (szechuan-sauce, plumbus, microverse) broken on this environment |
 
-The structural cost is broader than this one session:
+## Pipeline-Layer Exit-Reason Mapping (R-CNAR-4 / R-PRJT-2 alignment)
 
-- **Every LLM-judge-driven convergence mode is broken on this environment.** szechuan-sauce, plumbus, microverse all share the same `measureLlmMetricWithBackoff` path. The deslopping tool is the third phase of `/pickle-pipeline`, so the project's principal cleanup phase is dead.
-- **R-SSDF (Finding #46, sibling bug filed earlier today) breaks the codex-worker side of szechuan-sauce on firewalled repos.** R-SJET breaks the claude-judge side regardless of repo. Both have to land before szechuan-sauce can run end-to-end again.
-- **The 4-attempt × 180s = 12 min minimum failure latency is operationally toxic.** Operators see the runner working, watch it for 10-15 min, then it dies. That's the worst failure mode — long enough to look like progress, short enough that retrying is tempting, deterministic enough that retrying is hopeless.
-- **Working Rule 1 ceiling breached.** Open P1 count: B-QSRC + B-CCPM-1b + B-SSDF + B-SJET = 4 open P1 bundles vs ≤3 ceiling. Operator triage required before queueing more.
+Verified at `extension/scripts/auto-resume.sh:144-145` (R-CNAR-4(c)): auto-resume.sh halts the overnight resume loop on any `state.json.exit_reason != 'pipeline_phase_incomplete'`. Verified at `extension/src/bin/pipeline-runner.ts:2181-2269` (R-PRJT-2): `judge_timeout` is recovered via finalize-gate.js spawn; exit_reason rewritten to `pipeline_phase_incomplete` (recovery succeeded) or `failed` (recovery failed).
 
-## Why it matters specifically now
+Every new microverse exit_reason introduced by B-SJET-2 MUST be mapped explicitly. T-HARDEN-AUTORESUME owns this wiring.
 
-- **szechuan-sauce is the project's principal deslopping tool.** Without it, the `/pickle-pipeline` third phase is dead, anatomy-park is the only cleanup phase, and szechuan-style violation-ledger judging is offline indefinitely.
-- **Two consecutive PRDs filed today** target failure modes on the same szechuan-sauce session: R-SSDF (codex-worker side, firewall conflict) and R-SJET (claude-judge side, spawn timeout). Both must ship before szechuan-sauce is functional again on codex-backend repos.
-- **B-CTSF and B-CCPM-1b already queued P1.** With B-SJET pushing the queue to **4 open P1 bundles** (B-QSRC + B-CCPM-1b + B-SSDF + B-SJET), the queue is **over the ≤3 ceiling stated in Working Rule 1**. Per that rule, operator must triage before new features or non-P1 bundles can be queued. Recommend operator launch B-SJET first — broadest impact (all LLM-judge modes), most-deterministic failure, least dependencies.
-- **The worker side IS still working.** This bug is unusual in that the worker can land useful commits before it fires. If we leave it unfixed, operators will accidentally accumulate single-commit szechuan slop fixes that look like progress, miss the iteration-loop death, and ship partial slop cleanups. Cleaner to fix the iteration loop than to rely on the operator catching the silent-stop.
-- **Anatomy-park escapes**, which means operators can route around this with `/pickle-pipeline --skip-szechuan-sauce` or `/anatomy-park <prd>` directly. But that's a workaround, not a fix, and anatomy-park doesn't perform szechuan's specific work (allowlist-driven slop violation scoring).
-
-## Reproducer
-
-1. Any repo with a `prd.md` and a non-trivial slice to score. (Use `loanlight-api` LOA-753 if available; any sufficiently-sized monorepo PRD works.)
-2. Fresh session:
-   ```bash
-   /szechuan-sauce <prd-path>
-   ```
-   or via the pipeline:
-   ```bash
-   /pickle-pipeline <prd-path> --skip-pickle --skip-anatomy-park
-   ```
-3. Watch the runner log. After the worker's gap-analysis iteration completes (~5-10 min), the baseline-measurement phase begins. Within 12-13 minutes of that point, the runner exits with `exit_reason=judge_timeout` and 4 stderr `[microverse] measureLlmMetric failed (judge_backend=claude, session_backend=*, model=claude-sonnet-4-6): spawnSync claude ETIMEDOUT` lines.
-
-Total observed time-to-failure: ~22-27 min from runner start. Lower bound: ~17 min (10s+30s+60s backoff + 4×180s timeout + worker iteration). Upper bound: variable per environment, capped by the worker iteration's own timeout.
-
-The fastest available reproducer is a script that bypasses the worker iteration and invokes `measureLlmMetric` directly:
-
-```bash
-node --input-type=module -e "
-  import { measureLlmMetric } from '$HOME/.claude/pickle-rick/extension/bin/microverse-runner.js';
-  const start = Date.now();
-  const result = measureLlmMetric(
-    'echo back the literal string \"hello\" and a numeric score',
-    180,
-    process.cwd(),
-    'claude-sonnet-4-6',
-    [],
-    undefined,
-    undefined,
-    'claude',
-    [],
-  );
-  console.log('result:', result, 'elapsed_ms:', Date.now() - start);
-"
-```
-
-Expected on broken environment: hangs 180s, then ETIMEDOUT. Expected after R-SJET-1: returns within 30s with a real score, OR errors cleanly within the configured timeout.
-
-## B-SJET-2 bundle scope (2026-05-18 partial-ship cleanup)
-
-After v1.75.4 B-SJET partial-shipped:
-- ✅ **R-SJET-2 (command-metric path)** — shipped commit `66e187e8`. Async pivot for `measureMetric` (command metric only); does NOT cover the LLM judge path.
-- ✅ **R-SJET-5 (telemetry)** — shipped commit `4bf68232`. `judge_measurement_attempted` events with full payload.
-
-**B-SJET-2 implements the remaining 4 items below, all targeting the LLM judge spawn path (`measureLlmMetricAttempt`, `probeJudgeCliAvailability`, `measureLlmMetricWithBackoff`)**:
-- R-SJET-1 — `stdio: ['ignore', 'pipe', 'pipe']` × 2 sites
-- R-SJET-3 — nested-claude env isolation OR Anthropic API direct OR codex fallback path
-- R-SJET-4 — `judge_backend: 'auto'` config + codex fallback on typed timeout
-- R-SJET-6 — integration test against fake-hanging-claude binary
-
-**ALSO required (folded into R-SJET-1 or R-SJET-3)**: apply the async-pivot from R-SJET-2 to the LLM judge path (`measureLlmMetricAttempt`). The v1.75.4 commit only landed it for `measureMetric` (command metric path), NOT the LLM judge path. The LLM judge spawn at `microverse-runner.ts:1722` is still synchronous `execFileSync`.
-
-## Proposed fix (R-SJET-1..6, ranked bandage → structural)
-
-### R-SJET-1 — Close stdin on the judge spawn (`stdio: ['ignore', 'pipe', 'pipe']`)
-
-Edit `microverse-runner.ts:1594` and `microverse-runner.ts:1638` to use `stdio: ['ignore', 'pipe', 'pipe']` instead of `stdio: ['pipe', 'pipe', 'pipe']`. The prompt is already passed as a CLI arg via `-p <prompt>`; nothing is ever written to the child's stdin, so closing it immediately should be safe and should defuse hypothesis 1 (the most likely cause).
-
-**Effort**: ≤30 min (1-line change × 2 call sites + 1 unit test confirming stdio shape).
-**Class**: bandage. Doesn't fix the structural design of using sync spawn for a 180-second LLM call, but if hypothesis 1 is correct it ends the production failure today.
-**Risk**: Low. If hypothesis 1 is wrong, this is a no-op; the call still ETIMEDOUTs. Worth shipping regardless because `['pipe', 'pipe', 'pipe']` with no writer is a footgun and should not be in the codebase.
-
-### R-SJET-2 — Replace `execFileSync` with async `execFile` + Promise.race against a hard timer  *(✅ SHIPPED v1.75.4 commit `66e187e8` for the COMMAND metric path; LLM judge path STILL synchronous — see B-SJET-2 scope note)*
-
-`execFileSync` is the wrong primitive for a multi-minute LLM call. Switch to `execFile` (Node's promisified `child_process.execFile`) and race the resulting promise against a hard timer. On timer expiry, send SIGTERM, then SIGKILL after a 2s grace, and reject with a `JudgeMeasurementTimeout` typed error that is distinct from `JudgeCliMissing` (R-MJCP's residual ambiguity).
-
-Update:
-- `extension/src/bin/microverse-runner.ts:1558` — `measureLlmMetricAttempt` becomes async; the call to it in `measureLlmMetric` (line 1503) and `measureLlmMetricWithBackoff` (line 1681) becomes `await`.
-- New typed error classes for `JudgeMeasurementTimeout` and `JudgeMeasurementSpawnFailed`.
-- `classifyJudgeError` (line 1552) updated to recognize the new error classes by `instanceof`, not just by stringy regex on `.message`.
-
-**Effort**: ≤1h (call-site changes are mechanical; the test surface changes only in failure-class assertions).
-**Class**: structural. Replaces the wrong primitive with the right one and improves classification simultaneously.
-
-### R-SJET-3 — Detect nested-claude context and route the judge through a different path
-
-When `process.env['CLAUDE_CODE']` is set (or `ANTHROPIC_API_KEY` is present and `CLAUDECODE` markers are visible), the runner is executing inside a Claude Code session. In that case, the spawned `claude` CLI is contending with the parent's auth/session state and is more likely to hang. Route the judge through one of:
-
-a) Anthropic API direct (using `@anthropic-ai/sdk` via Node — no CLI shell-out, no auth contention).
-b) Sub-process with explicit auth-isolation env (`CLAUDE_CODE=` empty, fresh `XDG_RUNTIME_DIR`, fresh tmp `HOME`).
-c) Codex CLI as the judge backend (claude-sonnet-4-6 not supported on ChatGPT codex per existing comment at line 1570; but Anthropic codex / OpenRouter codex models can score).
-
-Update:
-- `extension/src/services/judge-spawn-env.ts` (new) — `buildJudgeEnv(backend, isNested)` returns an env override map.
-- `extension/src/bin/microverse-runner.ts:1581` — call `buildJudgeEnv` and pass result to spawn options.
-
-**Effort**: ≤2h.
-**Class**: structural. Removes the most-likely class of intermittent hang (parent-session auth contention).
-
-### R-SJET-4 — Add `judge_backend: 'claude' | 'codex' | 'auto'` config
-
-Today the judge is hardcoded to `'claude'` at `microverse-runner.ts:1581` (`buildJudgeInvocation('claude', …)`), with a code comment explaining that codex on ChatGPT accounts rejects `claude-sonnet-4-6`. That assumption may be obsolete (Codex API now supports anthropic-passthrough models on some providers) and is structurally too rigid: when claude spawn is broken, the operator has no escape hatch.
-
-Expose `judge_backend` as a config in `pickle_settings.json`:
-
-```json
-{
-  "microverse": {
-    "judge_backend": "auto",
-    "judge_backend_fallback": "codex",
-    "judge_model_claude": "claude-sonnet-4-6",
-    "judge_model_codex": "gpt-5.4"
-  }
-}
-```
-
-`'auto'` tries claude first; on R-SJET-2's typed `JudgeMeasurementTimeout` or `JudgeMeasurementSpawnFailed` from the first attempt, switches to `judge_backend_fallback` for subsequent attempts and emits an event. `'claude'` and `'codex'` are explicit pins.
-
-Update:
-- `extension/src/services/pickle-settings.ts` — schema + defaults.
-- `extension/src/bin/microverse-runner.ts:1581` — replace the hardcoded `'claude'` with `resolveJudgeBackend(settings, attemptNumber, lastFailure)`.
-- `extension/src/services/backend-spawn.ts:433` — `buildJudgeInvocation('codex', ...)` already exists (lines 452-479); wire it through.
-- New tests: judge_backend resolution under each mode + auto-fallback behavior.
-
-**Effort**: ≤1h.
-**Class**: structural escape hatch. Operators can route around environment-specific claude-spawn brokenness without code changes.
-
-### R-SJET-5 — Improve telemetry on the judge spawn  *(✅ SHIPPED v1.75.4 commit `4bf68232`)*
-
-Today the only diagnostic on failure is the single stderr line `[microverse] measureLlmMetric failed (judge_backend=claude, session_backend=X, model=Y): spawnSync claude ETIMEDOUT`. That tells the operator *what* failed but nothing about *why*. Future occurrences should be diagnosable in seconds, not by re-reading a 22-minute log.
-
-Add structured telemetry:
-- Pre-spawn: log `cmd`, `args` (with prompt body redacted to first 200 chars), full env keys (values redacted), `cwd`, `timeout_ms`, `stdio` configuration.
-- Mid-spawn: every 30s, log child PID + `kill -0` liveness + observed stdout/stderr byte count.
-- On timeout: log captured stdout bytes, captured stderr bytes (in full — claude often emits diagnostic info to stderr that we discard today), child PID, time to first stdout byte (if any).
-- All events go to `<session-dir>/judge_spawn_debug.ndjson`.
-
-Update:
-- `extension/src/bin/microverse-runner.ts:1558-1612` — instrumentation wrapper around the spawn.
-- `extension/src/services/judge-telemetry.ts` (new) — NDJSON writer + redaction helpers.
-
-**Effort**: ≤1h.
-**Class**: future-proofing. Doesn't fix the bug but makes the next variant of this bug 10× cheaper to diagnose.
-
-### R-SJET-6 — Integration test against a mocked-hanging claude binary
-
-Create a test that simulates the failure mode: substitute a fake `claude` binary that sleeps indefinitely on stdin, and assert that `measureLlmMetricWithBackoff` returns a clean `judge_timeout` failure within 30s (not 12 minutes — because the test should configure shorter per-attempt timeouts) with the right exit-reason classification.
-
-Update:
-- `extension/tests/integration/judge-spawn-timeout.test.js` (new).
-- `extension/tests/fixtures/bin/fake-claude-hang.sh` — shell script that `sleep infinity`s on stdin read, ignores SIGTERM (forces SIGKILL escalation), writes nothing to stdout.
-- Test harness uses `process.env.PATH` override to inject the fake binary; restores PATH on teardown.
-- Asserts:
-  - Total elapsed ≤ 30s under configured short timeouts.
-  - Returned `exitReason === 'judge_timeout'`.
-  - Returned `exhaustedFailureKind === 'timeout'`.
-  - Telemetry NDJSON exists and contains 4 spawn-attempt records.
-
-**Effort**: ≤1h (after R-SJET-1..5).
-**Class**: regression prevention.
-
-## Acceptance criteria
-
-| ID | Criterion | Evidence |
-|---|---|---|
-| AC-SJET-01 | `measureLlmMetricAttempt` and `probeJudgeCliAvailability` both spawn `claude` with `stdio[0] === 'ignore'`. | grep on `extension/src/bin/microverse-runner.ts` finds no `stdio: ['pipe', 'pipe', 'pipe']` in either function; replaced by `stdio: ['ignore', 'pipe', 'pipe']`. |
-| AC-SJET-02 | `measureLlmMetric` returns null with `failureKind: 'timeout'` within `(timeoutSeconds * 1000) + 2000` ms on a hung child process. | Integration test `judge-spawn-timeout.test.js` against a fake-claude-hang binary measures elapsed; assertion `elapsed < per_attempt_timeout_ms + 2000`. |
-| AC-SJET-03 | `JudgeMeasurementTimeout` and `JudgeMeasurementSpawnFailed` are distinct typed error classes; `classifyJudgeError` returns the correct kind by `instanceof` check (not by regex on `.message`). | Unit test on `classifyJudgeError` with both error class instances + a control `ENOENT` instance. |
-| AC-SJET-04 | `pickle_settings.json` accepts `judge_backend: 'claude' | 'codex' | 'auto'` and `judge_backend_fallback` keys; `'auto'` falls back to the fallback backend on first attempt's typed timeout. | Integration test runs the runner with `judge_backend: 'auto'` against fake-claude-hang; asserts second attempt uses codex (not claude) and emits a `judge_backend_fallback_engaged` event. |
-| AC-SJET-05 | When `judge_backend: 'auto'` falls back to codex and codex succeeds, the runner records `judge_backend_used: 'codex'` in the iteration history entry. | Integration test asserts `history[0].judge_backend_used === 'codex'` in the microverse state after a successful fallback iteration. |
-| AC-SJET-06 | `<session-dir>/judge_spawn_debug.ndjson` exists after a judge spawn attempt (success or failure) and contains a `spawn_start` event with redacted env keys + `spawn_end` event with elapsed_ms + final stdout/stderr byte counts. | Integration test reads NDJSON, asserts shape. |
-| AC-SJET-07 | The reproducer command from § Reproducer (direct `measureLlmMetric` invocation node one-liner) returns a result (success OR clean failure within ≤30s under `PICKLE_JUDGE_PROBE_TIMEOUT_MS=5000` and `DEFAULT_JUDGE_TIMEOUT=10` test config) — does NOT hang for 180s. | Manual operator validation pre-close, logged in `prds/p1-szechuan-sauce-judge-etimedout-baseline-measurement.md` post-validation gaps. |
-
-## Bundle sizing
-
-**Single-PRD bundle. ≤6 atomic + 4 hardening. ≤4-6h codex.**
-
-Sequencing in the bundle PRD:
-- R-SJET-1 first (≤30 min, lowest blast radius — 1-line stdio change × 2 call sites).
-- R-SJET-2 (≤1h, async spawn + typed errors — depends on R-SJET-1 landing cleanly).
-- R-SJET-5 (≤1h, telemetry — can run in parallel with R-SJET-2 if a second worker is available; otherwise serial).
-- R-SJET-4 (≤1h, judge_backend config — depends on R-SJET-2's typed errors for fallback trigger).
-- R-SJET-3 (≤2h, nested-claude env isolation — depends on R-SJET-2 + R-SJET-4 for fallback path).
-- R-SJET-6 (≤1h, integration test — depends on R-SJET-1..5).
-
-Hardening tickets (3-4):
-- Lint + typecheck + `npm run test:fast` after each implementation ticket (worker-gate compliant).
-- Conformance docs per R-code (R-CTSF compliant; closer-owned residuals tagged `[manager]`).
-- Documentation: `docs/judge-spawn-troubleshooting.md` describing the failure mode + telemetry NDJSON schema + how to diagnose future variants in seconds.
-- Manager-owned closer (version bump, install.sh, MASTER_PLAN edit, gh release) — NOT in worker scope per R-CTSF.
-
-## Out of scope
-
-- **Fixing R-SSDF (Finding #46, codex-worker session-dir firewall conflict).** Already filed today; lives in `prds/p1-szechuan-sauce-session-dir-firewall-conflict.md`. R-SJET and R-SSDF are independent — R-SJET fires regardless of repo firewall, R-SSDF fires only on firewalled repos and only on codex-worker side. Both must ship to make szechuan-sauce healthy end-to-end on the LOA-753 environment.
-- **Fixing R-CCPM-1b (Finding #45, codex manager hallucinated wedge).** Already filed today; lives in `prds/p1-codex-manager-hallucinated-wedge-self-terminate.md`. Different layer (manager kills its own healthy mux-runner via SIGTERM); unrelated to judge spawn.
-- **R-MJCP successor for the probe path.** R-MJCP closed in v1.73.0 covered the probe ETIMEDOUT misclassification. The probe is currently functional (`claude --version` returns ok); R-SJET only touches the measurement path. If a future occurrence exhibits a hung probe, file a separate R-MJCP-3 PRD against `probeJudgeCliAvailability`.
-- **Refactoring `measureLlmMetricWithBackoff`'s 4-attempt schedule.** Current schedule (immediate + 10s + 30s + 60s × 180s per attempt) burns ~12 min on a deterministic hang. R-SJET-2 + R-SJET-4 fix the per-attempt hang and add a fallback path; once the per-attempt class is fast-fail, the 4-attempt schedule becomes a non-issue. Don't co-touch the schedule in this bundle.
-- **Switching to Anthropic API direct as the default judge path.** Hypothesis 3 of R-SJET-3 implies the structurally-cleanest fix would be to drop the CLI shell-out entirely and call the API directly. That's a larger surgery (auth, retry/backoff at the API level, rate-limit handling, streaming) and should be its own design PRD. R-SJET keeps the CLI path and patches its symptoms.
-
-## Related findings / bundles
-
-- **Finding #14 R-MJCP** (closed v1.73.0). Microverse judge probe ETIMEDOUT *misclassification*. Same family, different code path: R-MJCP fixed the probe's classification, R-SJET fixes the measurement spawn's hang. R-SJET could be coded as `R-MJCP-2` if we prefer continuity; using a new R-code keeps the bug's distinct shape visible in the queue.
-- **Finding #46 R-SSDF** (filed 2026-05-17 AM). Sibling on the same session. Codex-worker session-dir firewall conflict. Independent of R-SJET; both must ship before szechuan-sauce can run end-to-end on the LOA-753 environment.
-- **Finding #45 R-CCPM-1b** (filed 2026-05-17 AM). Codex manager hallucinated wedge. Same morning, same session, different layer. Defensible to bundle thematically under "codex-backend compatibility hardening" but easier to ship as independent P1s.
-- **Finding #44 R-CTSF** (closed v1.75.2). Established the closer-ownership-tag pattern that R-SJET inherits: manager-owned residuals (version bump, install.sh, MASTER_PLAN edit, release) are tagged `[manager]` and excluded from worker AC evaluation.
-- **Working Rule 1** (`MASTER_PLAN.md` § Working Rules). Bugs first. Open P1 ceiling ≤3; with R-SJET this filing pushes the queue to **4 open P1 bundles** (B-QSRC + B-CCPM-1b + B-SSDF + B-SJET), over the ceiling. Operator triage required.
-
-## Post-validation gaps
-
-To resolve before closing this PRD (the bundle that ships R-SJET should answer these or file successors):
-
-1. **Does the same ETIMEDOUT × 4 fire on plumbus and microverse modes?** Both call `measureLlmMetricWithBackoff` at the same line in the same file; the bug is presumed shared. Confirm by triggering each mode on the same broken environment after R-SJET-1 lands (should pass) and on a pre-R-SJET-1 commit (should fail identically).
-2. **Is `claude-sonnet-4-6` a valid model ID against the current claude CLI?** Run `claude --model claude-sonnet-4-6 -p "echo ok"` from a fresh shell. If the CLI rejects the model ID with a fast error, the ETIMEDOUT is not the spawn-hang it appears to be — it's a slow rejection. Less likely (180s for a rejection is excessive) but worth verifying at close time.
-3. **Should the judge default to `'auto'` instead of `'claude'`?** R-SJET-4 introduces the config. Decision: ship with `'claude'` default to preserve current behavior, document `'auto'` as the operator-recommended setting in `docs/judge-spawn-troubleshooting.md`. Revisit after 30 days of telemetry from R-SJET-5.
-4. **Does the spawn hang reproduce on a fresh claude CLI install (no nested-claude context, no parent session state)?** If hypothesis 2 is correct, a fresh install in a clean shell should succeed. Confirm at close time.
-5. **What's the per-attempt timeout that real-world judge calls actually need?** `DEFAULT_JUDGE_TIMEOUT = 180s` (line 1283). Anthropic claude-sonnet-4-6 typically returns within 30-60s for prompts of this size; 180s is generous. Once R-SJET ships, log p50/p95/p99 of successful judge call durations and right-size the default.
-6. **Does R-SJET-3's `CLAUDE_CODE=` env-strip interact badly with claude's auth resolution?** If the operator's `~/.claude/credentials.json` is needed and the env-strip blocks it, the judge spawn might fail with auth errors instead of timeouts. Confirm telemetry captures the auth-error case distinctly.
-7. **Should pickle-rick's runtime expose a `pickle-rick judge-health-check` CLI** that runs the reproducer end-to-end and reports pass/fail in <60s? Useful for operators diagnosing this bug class without re-reading PRDs. File as P3 follow-up if there's appetite.
-
-## Post-Filing Observations (2026-05-17 PM — claude-backend retry)
-
-After this PRD was filed, the operator re-ran szechuan-sauce on the same LOA-753 branch with the same scope.json (91 paths) and the same target, but flipped the worker backend from codex to claude (`--backend claude`). The hypothesis going in was "the judge always hangs"; the observed result is meaningfully more nuanced.
-
-### Session: `2026-05-17-902b9155` (claude-backend retry)
-
-The judge did NOT fail consistently — it succeeded once before failing. Timeline:
-
-- `19:00:06Z` microverse-runner started, gap analysis phase started.
-- `19:28:56Z` LLM baseline metric: 9 (succeeded — **28m 50s elapsed for baseline**).
-- `19:28:56Z` Gap analysis complete — transitioning to iterating.
-- `19:28:56Z` Iteration 2 began.
-- Worker iter 2 ran, fixed a P2 dead-code finding, committed `a9c0038eb szechuan-sauce: YAGNI — drop dead AbortController in startCommentChatStream`.
-- `20:02:20Z` ERROR: Metric measurement failed (judge_timeout) after 4 attempt(s): spawnSync claude ETIMEDOUT.
-- `20:02:20Z` microverse-runner finished. 2 iterations, 62m 13s, exit: judge_timeout.
-
-So iter-1 baseline succeeded (slow, 28+ min). Iter-3 baseline (post-iter-2 fix) hit the same ETIMEDOUT × 4 we saw in the original observation.
-
-### Cross-session pattern — backend modulates judge spawn success
-
-| Session | Worker backend | Iter-1 baseline | Iter-N>1 baseline | Notes |
+| New microverse exit_reason | In MICROVERSE_FAILURE_REASONS? | pipeline-runner translation | Operator-visible exit_reason | Auto-resume? |
 |---|---|---|---|---|
-| `2026-05-17-0fca029f` run 1 | codex | ETIMEDOUT × 4 | never reached | 22m 4s wall, 0 baseline measurements |
-| `2026-05-17-0fca029f` run 2 | codex | ETIMEDOUT × 4 | never reached | 27m 0s wall, 0 baseline measurements |
-| `2026-05-17-902b9155` | claude | succeeded, 28m 50s | ETIMEDOUT × 4 at iter-3 | 62m 13s wall, 1 baseline measurement, 1 commit |
+| `all_judge_backends_exhausted` (R-SJET-4) | NO (transient) | finalize-gate.js spawn (mirror R-PRJT-2) | `pipeline_phase_incomplete` on gate pass / `failed` on gate fail | Yes |
+| `judge_cli_missing` (R-SJET-4, codex pinned + absent CLI) | YES (terminal) | passthrough | `judge_cli_missing` | No (operator install required) |
 
-Codex worker → judge fails 100% at baseline 1. Claude worker → judge succeeds at baseline 1 (slowly), fails at baseline N>1. This shifts the bug shape from "deterministic spawn-hang" to "intermittent spawn-hang modulated by worker-backend identity and/or parent-process lifetime."
+## Fallback Policy (R-SJET-4 within-session and resume semantics)
 
-### Significance
+When `judge_backend: 'auto'` engages the fallback backend in iteration N of a session, ALL subsequent iterations in the same session use the fallback backend exclusively. The runner does NOT re-probe the failed primary mid-session.
 
-1. **H1 (stdin pipe held open) is still the most likely root cause, but it needs a sub-hypothesis H1b.** The intermittent flavor of the hang is compatible with H1 if the pipe-hold only races into a hang under certain parent-process states — e.g., when the parent claude session has been running long enough to consume some shared resource (file descriptors, posix-spawn slot, libuv thread pool), or when sibling claude processes have polluted shared XDG/cache state. H1 alone explains "always hangs"; H1b explains "sometimes hangs, more often as the parent ages." Both can be true; R-SJET-1's stdin-close fix is still load-bearing.
+**Within-session**: on attempt N's `JudgeMeasurementTimeout` or `JudgeMeasurementSpawnFailed` from the primary backend, attempt N+1 uses the fallback. The 4-attempt schedule (immediate + 10s + 30s + 60s × 180s per attempt) is **shared across backends** — at most 4 spawn attempts total per iteration, not 4 per backend. Once fallback engages in attempt N+1, all subsequent attempts in the same session use the fallback backend.
 
-2. **H2 (nested-claude auth contention) gains evidence from the claude-worker case.** When the worker IS claude, the judge spawn is a claude-spawning-claude-spawning-claude tower (operator's claude session → mux-runner → microverse-runner → judge `claude` CLI). The claude-worker case failed at iter N>1 — i.e., after the tower had been standing for >30 min. The codex-worker case failed at iter 1 — i.e., when the tower is two levels shorter but still nested. Both fail; the claude case fails later. Consistent with "auth/session contention compounds with depth and age."
+**Resume semantics**: the fallback decision persists to `state.json.judge_backend_resolved` (new optional field, no schema bump). On `--resume`, microverse-runner reads this field and skips the primary probe. Operator can force re-probe by `jq 'del(.judge_backend_resolved)' state.json | sponge state.json` (documented in `docs/judge-spawn-troubleshooting.md`).
 
-3. **The judge spawn is intermittent, not deterministic.** The R-SJET fix must handle BOTH "first spawn hangs" AND "Nth spawn hangs after parent claude has been running for >30 min." R-SJET-1's stdin-close addresses the always-hang shape; R-SJET-3's nested-claude env isolation addresses the compounds-with-age shape; R-SJET-4's `judge_backend: 'auto'` fallback addresses the "we can't predict which spawn will hang, so we need an escape hatch."
+**New sessions** reset to primary-first.
 
-4. **The 28-minute "successful" baseline is itself anomalous.** Claude CLI startup should be <5 seconds, not 30 minutes. A successful judge call returning a score of 9 in 28m 50s is not "healthy" — it's "barely-not-timed-out." Something structurally wrong is happening even when the spawn appears to work. R-SJET-5's mid-spawn telemetry (PID liveness + 30s output sampling) should make this diagnosable when it next happens.
+**Telemetry**: do NOT introduce a new activity event for the fallback transition. The shipped `judge_measurement_attempted` (`types/index.ts:469`) already carries `gate_payload.judge_backend`, `gate_payload.fallback_activated`, `gate_payload.spawn_context`. The SECOND `judge_measurement_attempted` on a fallback iteration sets `fallback_activated: true` and `judge_backend: 'codex'`. Operators reading `activity_<date>.jsonl` see two adjacent events on the same iteration. This avoids the R-PDD-oneOf five-touchpoint cost and matches the v1.75.4 telemetry design.
 
-### Useful additional observation — judge breakage doesn't prevent point fixes
+## Schema deltas (no LATEST_SCHEMA_VERSION bump)
 
-Despite the judge breaking on iter 3, this szechuan-sauce run DID produce real engineering value before it died:
+This bundle introduces ZERO schema-version-affecting changes. All new fields are OPTIONAL:
 
-- **1 commit landed** (`a9c0038eb szechuan-sauce: YAGNI — drop dead AbortController in startCommentChatStream`) on the LOA-753 branch.
-- **Full 125-line `gap_analysis.md` written** — contract map, Override 4/5/6 results (all PASS), 3 remaining P3 findings catalogued at confidence 80-85.
-- 0 P0/P1/P2 findings remained after the iter-2 fix; only 3 surgical P3s.
+- `MicroverseHistoryEntry.judge_backend_used?: 'claude' | 'codex'` (R-SJET-4) — backward-compatible.
+- `state.json.judge_backend_resolved?: 'claude' | 'codex'` (R-SJET-4 fallback-stickiness across resume) — backward-compatible.
+- `pickle_settings.json.microverse.{judge_backend, judge_backend_fallback, judge_model_claude, judge_model_codex}` (R-SJET-4) — new top-level namespace; loader is non-strict (verified at `extension/src/services/recoverable-json.ts:52-89`); no schema-version bump.
+- `judge_measurement_attempted.gate_payload` (extended via R-SJET-3 + R-SJET-5+1) — additional OPTIONAL fields: `pre_spawn_env_key_names: string[]`, `mid_spawn_pid: number`, `mid_spawn_stdout_bytes: number`, `mid_spawn_stderr_bytes: number`, `time_to_first_stdout_byte_ms: number|null`, `nested_claude_detected: boolean`, `stdout_redacted_preview: string|null`, `stderr_redacted_preview: string|null`. Existing tests cover the event; no new schema-conformance test file needed.
 
-The judge is structurally downstream enough that worker iterations CAN produce real value before the judge dies. The bug breaks the CONVERGENCE LOOP (we can no longer measure whether we're done), but it doesn't prevent the worker from making point fixes. Today the runner treats any baseline-measurement failure as a runner-level fatal exit, which discards subsequent iterations and (worse) makes operators distrust the commits the worker DID land.
+**Producer discipline** (per R-CCPM-1 + R-WSE-2 trap doors at `extension/src/bin/CLAUDE.md`):
+- Emission site MUST stamp `ts: new Date().toISOString()` explicitly (writeActivityEntry does NOT auto-stamp).
+- `gate_payload.attempt_number` MUST be the actual attempt index (1-indexed), never reconstructed.
+- `ticket` field MUST be `state.current_ticket ?? null`.
 
-### New candidate fix — R-SJET-7
+**Forbidden by this bundle**: bumping `LATEST_SCHEMA_VERSION`. The R-WSRC-1 ceiling at `extension/src/services/state-manager.ts:update()` throws `SchemaVersionAheadError` on any worker forward-schema write. Workers MUST add fields as OPTIONAL and tolerate `undefined` on read.
 
-**R-SJET-7 — Continue iterating with `convergence_not_measurable` marker when the judge times out.**
+**DROPPED from B-SJET-2** (R-SJET-7 deferral, 3-analyst consensus):
+- New event `judge_unmeasurable_iteration_continued` — overlaps shipped `pipeline_judge_timeout_recovery_attempted`.
+- New event `judge_backend_fallback_engaged` — overlaps shipped `judge_measurement_attempted.fallback_activated`.
+- Type field `MicroverseHistoryEntry.convergence_status` — no consumer in B-SJET-2.
+- Settings key `microverse.continue_on_judge_timeout` — no consumer in B-SJET-2.
 
-Today, when `measureLlmMetricWithBackoff` exhausts its 4 attempts, the runner exits with `exit_reason=judge_timeout` and the iteration loop terminates. The worker's prior iteration commits are preserved in git (they're not reverted) but no further iterations run, even though the worker side is structurally healthy.
+## Atomic ticket scope (4)
 
-Proposed behavior: when baseline measurement fails after R-SJET-2's typed timeout, the runner should:
-- Record `convergence_status: 'unmeasurable_due_to_judge_timeout'` in the iteration history entry.
-- Treat the failed measurement as a "fix-only" iteration boundary — worker still produces commits, but the convergence delta-threshold check is skipped for this iteration.
-- Continue to iteration N+1 with the same fix-only semantics.
-- Only halt the runner when (a) the worker itself reports no findings (`gap_analysis.findings_remaining === 0`), (b) the runner hits its configured `stall_limit`, or (c) the operator interrupts.
-- Emit a `judge_unmeasurable_iteration_continued` event at iteration boundary so operators can see the degraded mode in the runner log.
+### R-SJET-1 (medium, ≤2h) — Stdin-close + async pivot + typed errors + Math.max floor removal + kill-switch
 
-Update:
-- `extension/src/bin/microverse-runner.ts:1681` (`measureLlmMetricWithBackoff`) returns the typed-timeout result without throwing.
-- `extension/src/bin/microverse-runner.ts:2216` (`measureLlmBaseline` callers) check for the typed-timeout return shape and route to the fix-only branch instead of the exit branch.
-- `extension/src/services/pickle-settings.ts` — new boolean `microverse.continue_on_judge_timeout` (default `true` per acceptance criteria below; operators can pin `false` to preserve old fail-fast behavior).
-- Iteration history schema gains `convergence_status` string field.
+**Files to modify**:
+- `extension/src/bin/microverse-runner.ts`
+- `extension/src/bin/CLAUDE.md` (trap-door entries for the new typed error classes)
+- `extension/tests/bin/microverse-judge-probe.test.js` (extend; do NOT remove existing assertions)
+- `extension/tests/microverse-runner.test.js` (extend if present; otherwise add new)
 
-**Acceptance**: AC-SJET-08 — judge ETIMEDOUT after iteration N does NOT discard the iteration N commit or terminate the runner. Runner records `convergence_status: 'unmeasurable_due_to_judge_timeout'` in the iteration history entry and continues to iteration N+1. Integration test: fake-claude-hang binary returns timeout on baseline calls; assert (a) iteration N commit survives in git log, (b) `state.json` shows iteration N+1 started, (c) runner only exits when worker reports zero remaining findings.
+**Changes**:
 
-**Effort**: ≤1h (decoupling baseline-measurement failure from iteration-loop termination is structurally cleaner than the current coupling; the wiring change is small).
-**Class**: structural. Removes the strongest amplifier of this bug class — the operator-trust regression where "judge hung → I doubt the worker's commits."
-**Depends on**: R-SJET-2 (typed timeout error class is the signal that distinguishes "judge unmeasurable" from "judge fundamentally broken — abort").
+1. **Stdin-close** at the two judge spawn sites (lines verified at HEAD `7a280bdb`):
+   - `microverse-runner.ts:1758` (measureLlmMetricAttempt) — `stdio: ['pipe', 'pipe', 'pipe']` → `stdio: ['ignore', 'pipe', 'pipe']`.
+   - `microverse-runner.ts:1804` (probeJudgeCliAvailability) — same.
+   - Grep assertion: `grep -c "stdio: \['pipe', 'pipe', 'pipe'\]" extension/src/bin/microverse-runner.ts` count drops from 8 to 6.
+
+2. **Async pivot**: replace `_deps.execFileSync` at both sites with `execFile` (promisified via `util.promisify` or `child_process.execFile` + manual Promise wrapper) + `Promise.race` against a hard timer. On timer expiry: send SIGTERM, then SIGKILL after 2s grace, reject with typed `JudgeMeasurementTimeout`. On spawn failure (ENOENT, EACCES): reject with typed `JudgeMeasurementSpawnFailed`.
+   - `measureLlmMetricAttempt` becomes `async`; callers (`measureLlmMetric` at HEAD line 1503 area, `measureLlmMetricWithBackoff` at HEAD line 1819) `await` it.
+   - `probeJudgeCliAvailability` becomes `async`; rename callers to `await probeJudgeCliAvailability(cwd)` (deferring backend-parametrization rename to R-SJET-4).
+
+3. **Typed error classes** at `extension/src/bin/microverse-runner.ts` (module-local):
+   ```typescript
+   export class JudgeMeasurementTimeout extends Error {
+     readonly kind = 'timeout' as const;
+     constructor(msg: string, public readonly elapsed_ms: number) { super(msg); }
+   }
+   export class JudgeMeasurementSpawnFailed extends Error {
+     readonly kind = 'spawn_failed' as const;
+     constructor(msg: string, public readonly cause_code: string | null) { super(msg); }
+   }
+   ```
+
+4. **Shared `classifyJudgeError` helper**: update existing helper (verified to exist at HEAD; see R-MJCP-8 trap door at `extension/src/bin/CLAUDE.md`) to recognize the new classes via `instanceof` FIRST, then fall back to existing regex on `.message` for legacy callers. Both `probeJudgeCliAvailability` and `measureLlmMetricAttempt` MUST invoke `classifyJudgeError` exactly once — no duplicate ENOENT/ETIMEDOUT regex branches in either function body.
+
+5. **Math.max floor removal** at `microverse-runner.ts:1738`:
+   - Current: `const timeout = Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT);`
+   - New: `const timeout = Math.max(timeoutSeconds, 1);` (defensive against zero/negative; trusts caller otherwise).
+   - This is load-bearing for AC-SJET-02 (test with `timeoutSeconds: 10` must observe elapsed ≤ 12s).
+
+6. **Kill-switch** `PICKLE_JUDGE_LEGACY_SPAWN`:
+   - When `process.env['PICKLE_JUDGE_LEGACY_SPAWN'] === '1'`, BOTH judge spawn sites revert to `stdio: ['pipe', 'pipe', 'pipe']` (synchronous `execFileSync`, no typed errors, no Math.max removal). This is the emergency-rollback path documented in `docs/judge-spawn-troubleshooting.md` (T-HARDEN-DOCS).
+   - The kill-switch is the only legitimate user of legacy spawn shape — production code paths must use the new shape.
+
+7. **Trap-door entries** in `extension/src/bin/CLAUDE.md`:
+   - R-SJET-1a (stdio-close): PATTERN_SHAPE forbids `stdio: \['pipe', 'pipe', 'pipe'\]` in `measureLlmMetricAttempt` or `probeJudgeCliAvailability` bodies UNLESS guarded by `PICKLE_JUDGE_LEGACY_SPAWN`.
+   - R-SJET-1b (typed errors): PATTERN_SHAPE requires `instanceof JudgeMeasurementTimeout` in `classifyJudgeError` before any `/timeout/i` regex branch.
+
+### R-SJET-3 (medium, ≤2h) — Nested-claude env isolation
+
+**Files to create**:
+- `extension/src/services/judge-spawn-env.ts` — exports `buildJudgeEnv(backend: 'claude' | 'codex', isNested: boolean): Record<string, string | undefined>`. When `isNested && backend === 'claude'`, strips `CLAUDE_CODE`, `CLAUDECODE`, `CLAUDE_API_KEY` (if `ANTHROPIC_API_KEY` is present), and replaces `XDG_RUNTIME_DIR` with a fresh tmp dir created via `fs.mkdtempSync`. Otherwise returns `backendEnvOverrides(backend)` unchanged.
+- `extension/src/services/judge-spawn-env.test.js` — unit tests for both branches.
+
+**Files to modify**:
+- `extension/src/bin/microverse-runner.ts:1759` — replace `backendEnvOverrides('claude')` with `buildJudgeEnv(resolvedBackend, isNestedClaude())`. The `isNestedClaude()` helper checks for `process.env['CLAUDE_CODE']` or `process.env['CLAUDECODE']`.
+- `microverse-runner.ts:1805` — same.
+- `judge_measurement_attempted.gate_payload` emission — add optional `nested_claude_detected: boolean` and `pre_spawn_env_key_names: string[]` (env names redacted of values).
+
+**Note**: `resolvedBackend` is provided by R-SJET-4's `resolveJudgeBackend` accessor. R-SJET-3 ships AFTER R-SJET-4 (depends on the resolver) OR ships with a `'claude'` literal initially and the variable replaced in R-SJET-4's diff. Sequencing in worker queue: R-SJET-1 → R-SJET-4 → R-SJET-3 → R-SJET-6.
+
+**Anthropic API direct** (Hypothesis 3a in original PRD) is OUT OF SCOPE — file separate design PRD if needed.
+
+### R-SJET-4 (medium, ≤2h) — judge_backend config + sticky fallback (no new event)
+
+**Files to modify**:
+- `extension/src/services/pickle-utils.ts` — add:
+  - `resolveJudgeBackend(state, settings?, attempt?, lastFailure?): 'claude' | 'codex'` — precedence (mirrors `getTicketTierBudgetWithOverrides` at line 541-556):
+    1. `state.flags.judge_backend_override` (when present and valid).
+    2. `pickle_settings.microverse.judge_backend` (loaded via `loadPickleSettingsBag()`).
+    3. Compiled default: `'claude'` (preserves historical behavior; AC-SJET-17 byte-identical claude-spawn under default).
+  - `'auto'` resolves to `'claude'` on attempt 0 with no prior failure, OR to `state.judge_backend_resolved` if set, OR to `settings.microverse.judge_backend_fallback ?? 'codex'` on a typed `JudgeMeasurementTimeout`/`JudgeMeasurementSpawnFailed` from the previous attempt.
+  - `getMicroverseSettings(settings: PickleSettings | null)` — typed reader; returns `{ judge_backend, judge_backend_fallback, judge_model_claude, judge_model_codex }` with known-key allowlist. No `(settings as any)` access.
+
+- `extension/src/bin/microverse-runner.ts`:
+  - **line 1745**: `buildJudgeInvocation('claude', …)` → conditional preserving the R-SCJM-5 literal:
+    ```typescript
+    const invocation = resolvedBackend === 'codex'
+      ? buildJudgeInvocation('codex', { prompt: userPrompt, addDirs: [cwd], model: codexModel, systemPrompt: JUDGE_SYSTEM_PROMPT })
+      : buildJudgeInvocation('claude', { prompt: userPrompt, addDirs: [cwd], model: claudeModel, systemPrompt: JUDGE_SYSTEM_PROMPT });
+    ```
+    The literal substring `buildJudgeInvocation('claude'` MUST remain present (R-SCJM-5 trap door). Grep assertion: `grep -c "buildJudgeInvocation('claude'" extension/src/bin/microverse-runner.ts` ≥ 1 after diff lands.
+  - **line 1759**: `backendEnvOverrides('claude')` → `buildJudgeEnv(resolvedBackend, isNestedClaude())` (collaborates with R-SJET-3).
+  - **line 1800** (probe binary): literal `'claude'` first arg → variable; rename `probeJudgeCliAvailability(cwd)` to `probeJudgeBackendAvailability(backend: 'claude' | 'codex', cwd: string)`. Update all call sites.
+  - **line 1805**: `backendEnvOverrides('claude')` → `buildJudgeEnv(backend, isNestedClaude())`.
+  - `measureLlmMetricWithBackoff` (line 1819 area) — fallback logic: on first typed failure from primary, switch `attempt.backend` to fallback for remaining attempts in this iteration; persist `state.judge_backend_resolved = fallback` once any iteration's fallback engages.
+
+- `extension/src/types/index.ts:875` (`MicroverseHistoryEntry`):
+  - Add `judge_backend_used?: 'claude' | 'codex'` (OPTIONAL).
+  - Workers MUST NOT bump `LATEST_SCHEMA_VERSION`. Readers tolerate `undefined` via `?? 'claude'`.
+
+- `extension/src/types/index.ts` (state interface):
+  - Add `judge_backend_resolved?: 'claude' | 'codex'` to the state interface (OPTIONAL).
+
+- `pickle_settings.json` at repo root (NOT the deployed copy):
+  - Add `microverse: { judge_backend: 'claude', judge_backend_fallback: 'codex', judge_model_claude: 'claude-sonnet-4-6', judge_model_codex: 'gpt-5.4' }`. `schema_version` stays at current value.
+
+- `extension/CLAUDE.md` (R-SCJM-5 trap-door prose) — amend to: *"`buildJudgeInvocation\('claude'` MUST appear as a literal substring in `microverse-runner.ts`. `backendEnvOverrides`/`buildJudgeEnv` MUST be called with the resolved judge backend (`resolvedBackend`); when `microverse.judge_backend` is `'claude'` (the default) or `'auto'` with no fallback engaged, this resolves to `'claude'` (preserving the historical R-SCJM-3 invariant)."* Update PATTERN_SHAPE if needed. Worker MUST NOT touch `extension/src/bin/CLAUDE.md` or `~/.claude/pickle-rick/**` paths (R-WSRC).
+
+- `extension/tests/microverse-codex.test.js` AND `extension/tests/integration/microverse-runner-judge-failure.test.js` — update to assert BOTH branches: byte-identical claude spawn when `judge_backend: 'claude'` (default) AND codex spawn with codex-env when `judge_backend: 'codex'` (explicit pin).
+
+### R-SJET-6 (small, ≤1h) — Integration tests + forward-created fixtures
+
+**Files to create** (all forward-created annotations follow R-RTRC-7):
+
+- `extension/tests/fixtures/bin/fake-claude-hang.sh` (created by R-SJET-6) — `#!/bin/bash` + portable infinite read: `while :; do sleep 86400; done` (NOT `sleep infinity` — macOS BSD doesn't accept it). Ignores SIGTERM (forces SIGKILL escalation). Writes nothing to stdout.
+- `extension/tests/fixtures/bin/fake-codex-hang.sh` (created by R-SJET-6) — analogous.
+
+- `extension/tests/integration/judge-spawn-timeout.test.js` (created by R-SJET-6) — `describe.each([['measureLlmMetricAttempt', 1758], ['probeJudgeCliAvailability', 1804]])` parametrized: inject PATH override to fake-claude-hang, assert thrown error is `instanceof JudgeMeasurementTimeout`, elapsed ≤ `(timeoutSeconds * 1000) + 2000` ms with `timeoutSeconds: 10`. AST scan asserts both function bodies invoke `classifyJudgeError` exactly once.
+
+- `extension/tests/integration/judge-spawn-legacy-kill-switch.test.js` (created by R-SJET-6) — env `PICKLE_JUDGE_LEGACY_SPAWN=1`: asserts `_deps.execFileSync` was called with `stdio[0] === 'pipe'` (legacy shape). env unset: asserts `stdio[0] === 'ignore'` (new shape).
+
+- `extension/tests/integration/judge-spawn-env-isolation.test.js` (created by R-SJET-6) — nested context (set `CLAUDE_CODE=1` in test env): asserts spawn env omits `CLAUDE_CODE` and includes a fresh `XDG_RUNTIME_DIR`. Clean context: asserts env preserved.
+
+- `extension/tests/integration/auto-resume-on-all-judge-backends-exhausted.test.js` (created by R-SJET-6) — dual fake-claude-hang + fake-codex-hang fixtures: pipeline-runner exits `pipeline_phase_incomplete`; auto-resume.sh attempts at least one resume cycle before R-CNAR-4(a) stop condition fires.
+
+- `extension/tests/integration/judge-fallback-sticky-resume.test.js` (created by R-SJET-6) — fake-claude-hang in iteration N: asserts attempt N+1 uses codex. Simulate `--resume` (relaunch runner with same session state): asserts `state.judge_backend_resolved === 'codex'` was read; runner skips claude probe entirely.
+
+- `extension/tests/services/microverse-state-judge-backend-used-optional.test.js` (created by R-SJET-6) — load pre-R-SJET-4 `microverse.json` fixture (no `judge_backend_used` in history entries) into post-R-SJET-4 runtime: no `SchemaVersionAheadError`, no fallback-default pollution.
+
+- `extension/tests/pickle-utils-microverse-namespace-load.test.js` (created by R-SJET-6) — load `pickle_settings.json` fixture with `microverse: { judge_backend: 'auto' }`: asserts `loadPickleSettingsBag` returns object without error; `getMicroverseSettings` returns parsed values.
+
+- `extension/tests/integration/codex-judge-prompt-compat.test.js` (created by R-SJET-6, gated by `RUN_EXPENSIVE_TESTS=1`) — codex CLI returns parseable `JudgeResult` (shape `'full'` | `'legacy'` | `'partial'`, never `'malformed'`); score ∈ [0, 10]; ±2 tolerance vs claude on `extension/tests/fixtures/judge-compat/szechuan-sauce-baseline.json` (created by R-SJET-6).
+
+- `extension/tests/fixtures/judge-compat/szechuan-sauce-baseline.json` (created by R-SJET-6) — known-good baseline pair (claude score, codex score) from a prior szechuan run on a stable PRD.
+
+## Hardening ticket scope (4)
+
+### T-HARDEN-AUTORESUME (small, ≤1h) — Pipeline-runner exit-reason mapping
+
+**Files to modify**:
+- `extension/src/bin/pipeline-runner.ts` — handle `all_judge_backends_exhausted` mirror of R-PRJT-2 finalize-gate.js path at `:2181-2269`. New transient exit_reason rewrites to `pipeline_phase_incomplete` on gate pass or `failed` on gate fail.
+- `extension/src/bin/finalize-gate.js` (if separate) — recognize new exit_reason.
+- `extension/scripts/auto-resume.sh` — no edit needed (R-CNAR-4(c) logic already routes `pipeline_phase_incomplete` to resume).
+
+**Tests**: covered by `judge-spawn-timeout-pipeline-translation.test.js` (created by this ticket) and `auto-resume-on-all-judge-backends-exhausted.test.js` (created by R-SJET-6).
+
+### T-HARDEN-DOCS (small, ≤1h) — Documentation + event catalog
+
+**Files to create**:
+- `docs/judge-spawn-troubleshooting.md` (created by T-HARDEN-DOCS) — sections:
+  - § "Failure mode" — symptom, three hypothesis stack, recurrence table.
+  - § "Telemetry NDJSON schema" — extended `judge_measurement_attempted.gate_payload` fields.
+  - § "Emergency rollback" — `PICKLE_JUDGE_LEGACY_SPAWN=1` env-var usage.
+  - § "Force re-probe" — `jq 'del(.judge_backend_resolved)' state.json | sponge state.json`.
+  - § "Pre-validation probe procedure" — runs `extension/scripts/repro-judge-timeout.sh` (T-HARDEN-PROBE) and explains decision tree.
+  - § "Diagnosing the next variant in seconds" — read NDJSON `mid_spawn_stdout_bytes` time series.
+
+**Files to modify**:
+- `extension/src/bin/spawn-refinement-team.ts:148-220` (ACTIVITY_EVENT_SCHEMA_SECTION) — update the `judge_measurement_attempted` row to document extended `gate_payload` fields added by R-SJET-3 + R-SJET-5+1.
+- `extension/src/types/activity-events.schema.json` — extend `judge_measurement_attempted` `gate_payload` definition with new OPTIONAL fields (no `oneOf` change; existing schema-conformance test covers).
+- `extension/tests/activity-event-payload.test.js` — extend `EVENT_CASES` row for `judge_measurement_attempted` to exercise new optional fields.
+
+### T-HARDEN-PROBE (small, ≤1h) — Three-probe pre-validation script
+
+**Files to create**:
+- `extension/scripts/repro-judge-timeout.sh` (created by T-HARDEN-PROBE) — runs three probes, logs elapsed_ms + exit code per probe, prints decision-tree verdict:
+  - P1: `claude -p 'echo ok' --add-dir $PWD </dev/null` from CLEAN shell (no parent claude).
+  - P2: same, from NESTED shell (inside `CLAUDE_CODE=1` env).
+  - P3: `codex -p 'echo ok' --model gpt-5.4 </dev/null` from clean shell.
+  - All three exit 0 within 60s → bundle ships as designed.
+  - P1 pass + P2 fail → H2 dominant; R-SJET-3 ship-blocker.
+  - P1 fail → H1 falsified; R-SJET-1 defensive only; R-SJET-3 ship-blocker.
+  - P3 fail → R-SJET-4 codex-fallback disabled; ship R-SJET-1/2/3/6 only; file successor for codex-judge.
+
+Not a release gate — operator-optional pre-validation.
+
+### T-HARDEN-CONFORMANCE (small, ≤1h) — Per-R-code conformance docs
+
+Each R-SJET-* and T-HARDEN-* worker ticket emits `conformance_<ticket_id>.md` with:
+- Mapped ACs (from this PRD).
+- ## Diff Evidence section listing modified files (R-HCAG-3 / R-CTSF compliant; B-HCAG citation gate will enforce on the next session).
+- `## Conformance Check` checklist (typecheck + test:fast + grep assertions).
+
+T-HARDEN-CONFORMANCE owns the consolidation: verifies all 9 conformance docs exist at session close, runs the full audit suite (`cd extension && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && bash scripts/audit-*.sh && npm run test:fast && npm run test:integration`), and emits the bundle's `conformance_bundle.md` summary.
+
+## Closer (1)
+
+### C-SJET-CLOSER [manager] (small, ≤30m) — Bundle ship
+
+Manager-owned residuals per R-CTSF (workers MUST NOT touch):
+
+1. Bump `extension/package.json` + `extension/package-lock.json` from `1.75.5` → `1.75.6`.
+2. `cd extension && npx tsc` — rebuild compiled JS mirrors.
+3. Verify install.sh parity gate (R-AC-RVN-08 / R-PJV-6): `md5` of source TS vs compiled JS matches for the 5 most-trafficked files (`types/index.js`, `services/state-manager.js`, `bin/spawn-morty.js`, `bin/mux-runner.js`, `services/pickle-utils.js`). R-SJET-4 touches `types/index.js` directly; others unaffected.
+4. `bash install.sh` — confirm log emits `install_sh_parity_check status=pass`.
+5. Run full release-gate from `extension/`:
+   ```
+   npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && \
+   bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh && \
+   bash scripts/audit-fix-commits.sh && bash scripts/audit-bundle-thesis.sh && \
+   bash scripts/audit-quarantine.sh && bash scripts/audit-trap-door-enforcement.sh && \
+   npm run test:fast && npm run test:integration && \
+   RUN_EXPENSIVE_TESTS=1 npm run test:expensive
+   ```
+6. Commit `chore: bump version to 1.75.6` + push to origin/main.
+7. Update `prds/MASTER_PLAN.md`: B-SJET-2 closed; ships v1.75.6; B-SSDF next.
+8. `gh release create v1.75.6` with release notes summarizing R-SJET-1/3/4/6 + 4 hardening tickets.
+
+## Acceptance criteria (revised)
+
+| ID | Criterion | Evidence | Owner |
+|---|---|---|---|
+| AC-SJET-01 | Both judge spawn sites (`measureLlmMetricAttempt`, `probeJudgeCliAvailability`) use `stdio[0] === 'ignore'`. | `describe.each([['measureLlmMetricAttempt'], ['probeJudgeCliAvailability']])` AST inspection; companion grep asserts total count of `stdio: ['pipe', 'pipe', 'pipe']` in `microverse-runner.ts` drops from 8 to 6 (UNLESS `PICKLE_JUDGE_LEGACY_SPAWN=1`). | R-SJET-1 |
+| AC-SJET-02 | `measureLlmMetric` returns null with `failureKind: 'timeout'` within `(timeoutSeconds * 1000) + 2000` ms on a hung child. | Integration test against fake-claude-hang with `timeoutSeconds: 10`; assertion `elapsed < 12_000`. Requires AC-SJET-18 (Math.max floor removed). | R-SJET-1 + R-SJET-6 |
+| AC-SJET-03 | `JudgeMeasurementTimeout` and `JudgeMeasurementSpawnFailed` are distinct typed classes; `classifyJudgeError` recognizes via `instanceof` before any regex. | Unit test on `classifyJudgeError` with both class instances + a control `ENOENT` instance. | R-SJET-1 |
+| AC-SJET-04 | `pickle_settings.json.microverse.judge_backend ∈ {'claude', 'codex', 'auto'}`. `'auto'` mode falls back on first attempt's typed timeout from primary backend; 4-attempt schedule shared across backends; fallback is sticky for session lifetime. | Integration test against fake-claude-hang asserts attempt 2 uses codex (not claude); total spawn attempts = 2 (not 4). | R-SJET-4 + R-SJET-6 |
+| AC-SJET-05 | On successful auto-fallback, `MicroverseHistoryEntry.judge_backend_used === 'codex'`. The two adjacent `judge_measurement_attempted` events show distinct `judge_backend` values; the SECOND has `fallback_activated: true`. | Integration test asserts (a) history `judge_backend_used: 'codex'`, (b) ≥ 2 activity events of type `judge_measurement_attempted` with distinct `gate_payload.judge_backend`. | R-SJET-4 + R-SJET-6 |
+| AC-SJET-05b | When BOTH backends typed-timeout (`exit_reason: 'all_judge_backends_exhausted'`), `MicroverseHistoryEntry.judge_backend_used === 'codex'` (last attempted); activity events show both attempts with `failureKind: 'timeout'`. NO new `'both'` enum value. | Integration test against fake-claude-hang + fake-codex-hang. | R-SJET-4 + R-SJET-6 |
+| AC-SJET-06 | Extended `judge_measurement_attempted.gate_payload` fields (`pre_spawn_env_key_names`, `mid_spawn_pid`, `mid_spawn_stdout_bytes`, `mid_spawn_stderr_bytes`, `time_to_first_stdout_byte_ms`, `nested_claude_detected`) emit on every spawn attempt (success or failure). Existing `EVENT_CASES` row updated. | Integration test asserts gate_payload shape. | R-SJET-3 + T-HARDEN-DOCS |
+| AC-SJET-06c | Captured stdout/stderr text in `gate_payload` (any new text fields) is redacted: `/sk-[A-Za-z0-9_-]{20,}/g`, `/Bearer [A-Za-z0-9._~+/-]{20,}/g`, `\b/Users/[^/\s]+/\.claude/credentials[^"\s]*`. Replacement: `[REDACTED:<class>]`. | Unit test on redaction helper across 5 known-leak shapes. | R-SJET-3 + R-SJET-6 |
+| AC-SJET-07 | DROPPED (folded into AC-SJET-02). | — | — |
+| AC-SJET-08 | DROPPED (R-SJET-7 deferred). | — | — |
+| AC-SJET-09 | Nested-claude env stripped: `CLAUDE_CODE`, `CLAUDECODE`, `XDG_RUNTIME_DIR` replaced with fresh tmp dir when judge spawn detects nested context. | `judge-spawn-env-isolation.test.js` (R-SJET-6). | R-SJET-3 |
+| AC-SJET-11 | Dual-backend typed timeout → `exit_reason: 'all_judge_backends_exhausted'`. Pipeline-runner translates to `pipeline_phase_incomplete` via finalize-gate.js mirror of R-PRJT-2. | `auto-resume-on-all-judge-backends-exhausted.test.js` (R-SJET-6). | R-SJET-4 + T-HARDEN-AUTORESUME |
+| AC-SJET-12 | When `judge_backend: 'codex'` pinned and codex CLI absent, `probeJudgeBackendAvailability('codex', cwd)` returns `kind: 'cli_missing'` within 5s; runner exits `judge_cli_missing` (terminal, NOT mapped through finalize-gate). | Integration test with codex absent from PATH. | R-SJET-4 + R-SJET-6 |
+| AC-SJET-13 | Codex-judge invocations (`--model gpt-5.4`) return parseable `JudgeResult` (shape `'full'`/`'legacy'`/`'partial'`, NEVER `'malformed'`); `score ∈ [0, 10]`; ±2 tolerance vs claude on `extension/tests/fixtures/judge-compat/szechuan-sauce-baseline.json` (created by R-SJET-6). | `codex-judge-prompt-compat.test.js`, gated by `RUN_EXPENSIVE_TESTS=1`. | R-SJET-4 + R-SJET-6 |
+| AC-SJET-13b | When `resolvedBackend === 'codex'`, parsed `JudgeResult` has either `violations: ViolationItem[]` OR `updateViolationLedger` no-ops on codex-shape responses. R-SLLJ-4 `compareMetric` set-ops branch fires correctly across backend swaps. | `judge-backend-fallback-violation-ledger.test.js` (created by R-SJET-6). | R-SJET-4 + R-SJET-6 |
+| AC-SJET-17 | Default (`judge_backend: 'claude'`, no fallback engaged) preserves byte-identical claude spawn shape vs HEAD `7a280bdb`. | Snapshot test on `_deps.execFileSync` mock-call arrays. | R-SJET-4 + R-SJET-6 |
+| AC-SJET-18 | `Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT)` clamp removed at `microverse-runner.ts:1738`; replaced with `Math.max(timeoutSeconds, 1)`. AC-SJET-02 passes with `timeoutSeconds: 10`. | Grep assertion: `Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT)` returns zero hits. | R-SJET-1 |
+| AC-SJET-19 | Both `probeJudgeBackendAvailability` and `measureLlmMetricAttempt` throw typed instances. Both invoke `classifyJudgeError(err)` exactly once; neither contains a standalone `/timeout|etimedout/i` regex. AST scan. | `judge-spawn-timeout.test.js` `describe.each` (R-SJET-6). | R-SJET-1 |
+| AC-SJET-20 | `grep -c "buildJudgeInvocation('claude'" extension/src/bin/microverse-runner.ts` ≥ 1 after R-SJET-4 lands. `extension/tests/microverse-codex.test.js` + `extension/tests/integration/microverse-runner-judge-failure.test.js` pass without modification (or both updated in the SAME diff with the trap-door amendment). | Grep + test-suite assertion under `npm run test:fast`. | R-SJET-4 |
+| AC-SJET-AUTORESUME | Dual fake-claude-hang + fake-codex-hang → pipeline-runner exits `pipeline_phase_incomplete`; auto-resume.sh attempts ≥ 1 resume cycle before R-CNAR-4(a) stop fires. | `auto-resume-on-all-judge-backends-exhausted.test.js`. | T-HARDEN-AUTORESUME + R-SJET-6 |
+| AC-SJET-SCHEMA-INVARIANT | Pre-R-SJET-4 `microverse.json` fixture (no `judge_backend_used` in history) loads in post-R-SJET-4 runtime: no `SchemaVersionAheadError`, no `SchemaVersionMismatchError`, no fallback-default pollution. | `microverse-state-judge-backend-used-optional.test.js` (R-SJET-6). | R-SJET-4 + R-SJET-6 |
+| AC-SJET-FALLBACK-MEMO | After fallback engages, `state.judge_backend_resolved === 'codex'` persists across `--resume`. Resumed runner reads it and skips claude probe entirely. | `judge-fallback-sticky-resume.test.js` (R-SJET-6). | R-SJET-4 + R-SJET-6 |
+| AC-SJET-KILL | `PICKLE_JUDGE_LEGACY_SPAWN=1` restores `stdio: ['pipe', 'pipe', 'pipe']` at both sites AND skips Math.max floor removal AND skips typed-error rewrap. Default-unset uses new shape. | `judge-spawn-legacy-kill-switch.test.js` (R-SJET-6). | R-SJET-1 + R-SJET-6 |
+| AC-SJET-PROBE | (Operator-optional) `extension/scripts/repro-judge-timeout.sh` runs three probes and prints decision-tree verdict in `<= 90s` wall. NOT a release gate — pre-validation only. | Operator runs script and logs results to §Post-validation gaps. | T-HARDEN-PROBE |
 
 ## Trap doors
 
-Each ticket's `conformance_*.md` MUST include explicit evidence for:
-- R-SJET-1: grep on `microverse-runner.ts` finds zero `stdio: ['pipe', 'pipe', 'pipe']` occurrences in judge spawn paths; both relevant lines (1594, 1638) updated.
-- R-SJET-2: typed-error unit test passes; `classifyJudgeError` uses `instanceof` branches before falling back to regex.
-- R-SJET-3: env-isolation test confirms `CLAUDE_CODE` is stripped from spawn env when nested-claude context detected; clean-shell control confirms env is preserved otherwise.
-- R-SJET-4: `pickle_settings.json` schema accepts `judge_backend: 'auto'`; integration test confirms fallback path engages on first-attempt typed timeout.
-- R-SJET-5: `judge_spawn_debug.ndjson` schema documented in `docs/judge-spawn-troubleshooting.md`; integration test asserts NDJSON shape.
-- R-SJET-6: integration test runs in CI under `npm run test:fast` (or `npm run test:integration` if too slow for fast tier); asserts ≤30s total elapsed under short-timeout config.
+Each ticket's `conformance_<ticket>.md` MUST cite verifiable evidence for the relevant rows below:
+
+- **R-SJET-1a (stdio-close)**: PATTERN_SHAPE forbids `stdio: \['pipe', 'pipe', 'pipe'\]` in `measureLlmMetricAttempt`/`probeJudgeCliAvailability` UNLESS guarded by `PICKLE_JUDGE_LEGACY_SPAWN`. ENFORCE: `extension/tests/integration/judge-spawn-legacy-kill-switch.test.js`.
+- **R-SJET-1b (typed errors)**: PATTERN_SHAPE requires `instanceof JudgeMeasurementTimeout` in `classifyJudgeError` BEFORE any `/timeout/i` regex. ENFORCE: `judge-spawn-timeout.test.js`.
+- **R-SJET-3 (env isolation)**: env-isolation test confirms `CLAUDE_CODE` stripped from spawn env when nested context detected; clean-shell control confirms preserved otherwise. ENFORCE: `judge-spawn-env-isolation.test.js`.
+- **R-SJET-4a (judge_backend config)**: pickle_settings.json schema accepts `microverse.judge_backend: 'auto'`; non-strict loader verified; integration test confirms fallback engages on first-attempt typed timeout. ENFORCE: `pickle-utils-microverse-namespace-load.test.js`, `judge-fallback-sticky-resume.test.js`.
+- **R-SJET-4b (R-SCJM-5 reconciliation)**: `grep -c "buildJudgeInvocation('claude'" extension/src/bin/microverse-runner.ts` ≥ 1. Worker MUST NOT edit `extension/CLAUDE.md` (R-WSRC ceiling); the prose amendment is OPERATOR-owned in same commit OR deferred to closer manager-tagged work. ENFORCE: `extension/tests/microverse-codex.test.js`, `extension/tests/integration/microverse-runner-judge-failure.test.js`.
+- **R-SJET-6 (regression prevention)**: integration tests run under `npm run test:fast` (or `test:integration` if too slow); assert ≤ 12s elapsed under `timeoutSeconds: 10` config. ENFORCE: `judge-spawn-timeout.test.js`.
+
+## Out of scope
+
+- **R-SJET-7 (continue-on-judge-unmeasurable inside microverse-runner).** FULLY DEFERRED to B-SJET-3 design PRD. 3-analyst consensus: conflicts with R-PRJT-2 (pipeline-runner handles `judge_timeout` via finalize-gate) and R-MBLE-2 (`judge_timeout` excluded from `MICROVERSE_FAILURE_REASONS`). Both verified at HEAD `7a280bdb`. AC-SJET-08, `MicroverseHistoryEntry.convergence_status`, and `microverse.continue_on_judge_timeout` all dropped.
+- **R-SSDF (Finding #46, codex-worker session-dir firewall conflict).** Separate PRD. Independent of R-SJET.
+- **R-CCPM-1b (Finding #45, codex manager hallucinated wedge).** Separate PRD.
+- **R-MJCP successor for the probe path.** R-MJCP-2 covers probe ETIMEDOUT misclassification; R-SJET only touches the measurement path. If a future occurrence exhibits hung probe, file R-MJCP-3.
+- **Refactoring `measureLlmMetricWithBackoff`'s 4-attempt schedule.** Once per-attempt class is fast-fail (R-SJET-1) + fallback engaged on first failure (R-SJET-4), the 4-attempt schedule becomes a non-issue. Don't co-touch.
+- **Switching to Anthropic API direct as the default judge path.** Larger surgery (auth, retry/backoff, rate-limit, streaming). Own design PRD. R-SJET-3 §a explicitly dropped.
+
+## Worker invariants (pre-flight check)
+
+Workers MUST verify before staging:
+
+1. **R-MJCP probe class test passes**: `cd extension && node --test tests/bin/microverse-judge-probe.test.js` exits 0. Diff MUST NOT inadvertently break probe semantics.
+2. **R-SCJM-5 literal substring preserved**: `grep -c "buildJudgeInvocation('claude'" extension/src/bin/microverse-runner.ts` ≥ 1.
+3. **No LATEST_SCHEMA_VERSION bump**: `git diff extension/src/types/index.ts | grep -c 'LATEST_SCHEMA_VERSION'` = 0.
+4. **No edits to deployed paths**: `git diff --name-only | grep -E '^(\\.claude/pickle-rick|~/\\.claude)' | wc -l` = 0.
+5. **No state.json/pickle_settings.json/circuit_breaker.json/pipeline-status.json writes**: R-WSRC enforcement via runtime hooks.
+
+## Post-validation gaps
+
+To resolve before bundle close (closer-owned):
+
+1. Run T-HARDEN-PROBE script on reproducer environment, log P1/P2/P3 elapsed + verdict in this section.
+2. Verify `pickle_settings.json` source vs deployed: source at repo root (`pickle_settings.json`) updated; install.sh deploys to `~/.claude/pickle-rick/pickle_settings.json`.
+3. Confirm install.sh parity gate output: `install_sh_parity_check status=pass`.
+4. Verify `MicroverseHistoryEntry.judge_backend_used` is OPTIONAL in deployed `types/index.js` (`md5` parity check).
+5. Decision: ship with `judge_backend: 'claude'` default (preserves current behavior); document `'auto'` as operator-recommended in `docs/judge-spawn-troubleshooting.md`. Revisit after 30 days of telemetry from R-SJET-5.
+6. Run B-HCAG citation gate against R-SJET-1/3/4/6 conformance docs (gate active in next session after B-HCAG ships; not a blocker for B-SJET-2 close).
+
+## Related findings / bundles
+
+- **Finding #14 R-MJCP** (closed v1.73.0). Same family, different code path.
+- **Finding #46 R-SSDF** (filed 2026-05-17 AM). Independent.
+- **Finding #45 R-CCPM-1b** (filed 2026-05-17 AM). Independent.
+- **Finding #44 R-CTSF** (closed v1.75.2). Establishes the closer-ownership-tag pattern this PRD inherits.
+- **Finding #2 B-HCAG** (refined 2026-05-18, F4 deferred). Hallucinated-acceptance gate. R-SJET-1/3/4/6 conformance docs become the first input to the gate when B-HCAG ships.
+- **Working Rule 1**. After B-SJET-2 ships, open P1 count = B-QSRC + B-CCPM-1b + B-SSDF = 3 (back at ceiling).
