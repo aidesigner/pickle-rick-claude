@@ -165,3 +165,113 @@ These are not new — they confirm the operator-facing severity of the friction 
 - Session: `~/.local/share/pickle-rick/sessions/2026-05-18-6108815e/` (kept; includes both `readiness_2026-05-18.md` + `audit-ticket-bundle.json` + `pipeline-runner.log` + `mux-runner.log`).
 - LOA-701 branch: `gregory/loa-701-use-bounding-boxes-in-reducto-to-show-field-locations-in-doc` at commit `5a45c371a` (PRD-only).
 - Operator decision pending: how to actually ship LOA-701 implementation work given the gate friction (skip both flags, or wait for B-QSRC, or run `/pickle-tmux` directly bypassing the pipeline orchestrator).
+
+---
+
+# Addendum — 2026-05-18 PM (post-launch execution failures)
+
+Same session (`2026-05-18-6108815e`, LOA-701). After bypassing the launch-friction gates documented above, T01 worker ran 48m 45s across 3 iterations and produced **357 lines of real, on-spec spike code** (`citation-spike.ts` 141 LOC + `cost-latency-measure.ts` 216 LOC) that compile against the existing `reductoai@0.15.0` SDK and import the project's actual `schemas/reducto-1025.json`. Pickle orchestrator dropped both files on the floor uncommitted, marked T01 Failed, and the runner logged `Phase pickle completed successfully`. Then anatomy-park crashed on a stale scope-archive file from the previous launch.
+
+Final state before operator salvage: T01 Failed, 0 commits, pipeline halted, **357 lines of usable Phase 0 work sitting untracked in the working tree** and almost lost. Operator salvaged via `git add` + `git commit` manually as `dbec6699d` and flipped T01 to Done in the session manifest, then relaunched at iteration 0 against T02. The same execution failures may recur on T02.
+
+## Bug 5 — Worker produces real on-spec code but pickle orchestrator never commits; ticket wedges at Failed (Finding #2 class recurrence)
+
+**What happened:** T01 worker (`fb4b547f`) completed Research and Plan phases cleanly (artifacts `research_2026-05-18.md`, `plan_2026-05-18.md` present in session dir). During Implement phase, worker wrote two files to the working tree:
+
+- `packages/api/src/lib/appraisal-pipeline/citation-spike.ts` — 141 LOC, complete; uses Reducto SDK + the project's `schemas/reducto-1025.json`; runnable via `pnpm exec tsx`.
+- `packages/api/src/lib/appraisal-pipeline/cost-latency-measure.ts` — 216 LOC, complete; 5-PDF p50/p95 latency + credit cost harness; matches AC-COST-1 mechanism.
+
+Worker NEVER ran `git add` + `git commit`. T01 marked Failed. Iterations 2 and 3 verified Failed status (same HEAD = `5a45c371ad80671dadcca2d403e8d0d7548485ad`, no new commits) and the closer terminated:
+
+```
+[2026-05-18T22:31:28.783Z] closer_handoff_terminal: ticket fb4b547f remained Failed
+on HEAD 5a45c371ad80671dadcca2d403e8d0d7548485ad for 2/2 consecutive iterations.
+Exiting at iteration 3.
+```
+
+Pickle's wrapper then logged the false-green:
+```
+[2026-05-18T22:31:28.882Z] Phase pickle exited with code 0
+[2026-05-18T22:31:28.884Z] Phase pickle completed successfully
+```
+
+Worker's final message in window 0 acknowledged the lost work:
+> "The untracked `citation-spike.ts` and `cost-latency-measure.ts` remain in the working tree from iteration 1 — keep or `git restore`-equivalent at your discretion."
+
+**Root cause hypothesis:** The R-WSRC `bash install.sh` ban + R-CTSF closer-handoff guards (v1.75.0-v1.75.2) + F1-F3+F5 surgical sweep (v1.75.5) introduce a closer/manager handoff contract that, when violated, prevents the worker from writing the completion commit. Worker writes code → worker tries to mark Done → markTicketDone gate refuses because `guardCompletionCommitBeforeDone` requires `completion_commit` evidence that doesn't exist yet → worker enters limbo → next iteration sees Failed and gives up.
+
+The exact failure point requires a manager-side log dump from iteration 1 — worker_session_44321.log (116 bytes) and worker_session_76639.log (0 bytes) are nearly empty in T01's dir, which itself is a separate observability bug.
+
+**Impact:** B-PIPE-FIX (Finding #34 + R-PIPE-2 family) is the explicit hardening for this class. This session is a fresh, post-v1.75.5 reproducer with full forensic artifacts retained. Use it to validate whatever R-PIPE-2 / R-PIPE-3 / R-PIPE-4 ship.
+
+**Forensic data:**
+- Session: `~/.local/share/pickle-rick/sessions/2026-05-18-6108815e/fb4b547f/`
+- 357 LOC of recovered worker output: `git show dbec6699d:packages/api/src/lib/appraisal-pipeline/citation-spike.ts` + `git show dbec6699d:packages/api/src/lib/appraisal-pipeline/cost-latency-measure.ts`
+- Iteration timeline: launch 21:42:43Z → iteration 1 done ~22:07Z (worker_session_76639.log empty) → iteration 2 done ~22:31Z (worker_session_44321.log near-empty) → iteration 3 closer_handoff_terminal at 22:31:28Z
+- Total wasted wall-clock: 48m 45s
+
+**Severity:** S2 — work IS being lost without operator intervention. Salvage requires reading window 0 capture-pane to discover what the worker actually did.
+
+**Recommended fix:**
+1. Master Plan's planned R-PIPE-2 `phase_no_progress` exit_reason directly addresses this.
+2. Plus: when a worker writes files to the working tree but `markTicketDone` is blocked, the runner should auto-commit the worker's tree changes with a stub message before terminating the ticket as Failed. Lost work is worse than a noisy git history.
+3. Plus: surface the working-tree diff prominently in pipeline-status.json when a phase exits non-zero with uncommitted changes. The current ASCII pane-capture method is not discoverable.
+
+## Bug 6 — `refreshScope: archive already exists (refusing overwrite)` is fatal on pipeline relaunch
+
+**What happened:** Second launch (`21:42:43Z` → pickle ran → citadel ran → anatomy-park hit). Anatomy-park's setup tried to write `archive/scope.anatomy-park.json` but the file already existed from the FIRST launch. Window 0:
+
+```
+🧪 Pipeline Phase: anatomy-park
+  Phase:  3/4
+  Target: /Users/gregorydickson/loanlight/loanlight-api
+
+[FATAL] refreshScope: archive already exists (refusing overwrite):
+  /Users/gregorydickson/.local/share/pickle-rick/sessions/2026-05-18-6108815e/archive/scope.anatomy-park.json
+
+Pipeline finished. Ctrl+B 1 → monitor | Ctrl+B D → detach
+```
+
+Exit. Pipeline state went to `exit_reason: "fatal"`, `active: false`. The archive directory at that point contained:
+```
+scope.anatomy-park.json
+scope.szechuan-sauce.json
+skipped_by_scope.anatomy-park.json
+skipped_by_scope.szechuan-sauce.json
+```
+
+— all from launch #1 (or earlier).
+
+**Root cause:** `refreshScope` (or equivalent in pipeline-runner) refuses to overwrite the scope-archive file as a safety check, but does not consider that a pipeline RELAUNCH legitimately should overwrite. There's no "this is a fresh run, archive the previous result" path.
+
+**Impact:** Every pipeline relaunch against a previously-run session hits this. Operator must manually `rm -f $SESSION/archive/scope.*.json` between runs. Combined with Bug 5, an operator who hits a worker-commit failure cannot relaunch without also knowing to clean the scope archive.
+
+**Severity:** S2 — undocumented manual cleanup step required for every relaunch.
+
+**Recommended fix:**
+1. `refreshScope` should either: (a) overwrite with previous file rotated to `scope.anatomy-park.<timestamp>.json`, or (b) emit a clear WARN naming the exact `rm` command an operator can run.
+2. Better: `pipeline-runner` on startup should detect `exit_reason: "fatal"` in state.json and proactively clean the archive directory after warning.
+3. Best: Pipeline launch should be idempotent against prior failed runs. Rotate-and-overwrite by default.
+
+## Bug 7 — `MULTI-REPO DETECTED` warning on monorepo with workspaces (false positive)
+
+**What happened:** Every launch logs:
+```
+⚠️  MULTI-REPO DETECTED: Tickets span [/Users/gregorydickson/loanlight/loanlight-api/packages/api,
+  /Users/gregorydickson/loanlight/loanlight-api/packages/app,
+  /Users/gregorydickson/loanlight/loanlight-api].
+  Pickle Rick works best with single-repo sessions.
+```
+
+All three paths are the SAME monorepo (loanlight-api) at different `packages/` workspaces. The runner appears to compute "repos" from `working_dir:` frontmatter on each ticket without walking up to find a common `.git`.
+
+**Severity:** S3 — cosmetic/false-alarm noise. Does not block execution.
+
+**Recommended fix:** In the multi-repo detector, walk each `working_dir` up to its containing `.git` and dedupe. Only WARN if the resulting set has cardinality > 1.
+
+## Updated finding numbers proposed for MASTER_PLAN
+
+- **#52 R-WUWC** (Worker-Uncommitted-Work-Crash) — Bug 5 above. P2 (data-loss class). Use the LOA-701 T01 session as the regression fixture for R-PIPE-2/3/4 validation.
+- **#53 R-SRAA** (Scope-Refresh-Archive-Already-exists) — Bug 6 above. P2 (every relaunch hits it).
+- **#54 R-MRFP** (Multi-Repo False-Positive on monorepo) — Bug 7 above. P3 (noise).
+
