@@ -83,7 +83,7 @@ export function validateBundleArtifact(artifact) {
 }
 
 export function verifyBundle(options = {}) {
-  const repoRoot = options.repoRoot ?? process.cwd();
+  const repoRoot = options.repoRoot ?? DEFAULT_REPO_ROOT;
   const requestedAcId = options.ac ?? null;
   const normalizedRequestedAcId = requestedAcId ? normalizeBundleArtifactAcId(requestedAcId) : null;
   if (normalizedRequestedAcId && !isKnownBundleArtifactAcId(normalizedRequestedAcId)) {

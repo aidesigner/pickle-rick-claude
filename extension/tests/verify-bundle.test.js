@@ -17,6 +17,7 @@ import {
   BUNDLE_ARTIFACT_SCHEMA,
   EXPECTED_BUNDLE_AC_IDS,
   REFINED_TO_BUNDLE_ARTIFACT_AC_ID,
+  verifyBundle,
 } from '../../bin/verify-bundle.js';
 import { writeWatcherLivenessArtifact } from '../bin/pipeline-runner.js';
 
@@ -275,4 +276,16 @@ test('verify-bundle.repo-ac-dr-04d stays verifier-clean as a tracked artifact', 
   const result = runVerifier(REPO_ROOT, ['--ac', 'AC-DR-04d']);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /bundle PASS/);
+});
+
+test('verify-bundle.exported-api defaults to repo root instead of caller cwd', () => {
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(path.join(REPO_ROOT, 'extension'));
+    const result = verifyBundle({ ac: 'AC-DR-04d' });
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.match(result.stdout, /bundle PASS/);
+  } finally {
+    process.chdir(originalCwd);
+  }
 });
