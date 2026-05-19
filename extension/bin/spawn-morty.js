@@ -1313,6 +1313,7 @@ export async function runWorkerProcess(ctx) {
     }, ctx.effectiveTimeoutMs + 30_000);
     hangGuard.unref();
     return new Promise(resolve => {
+        let spawnErrorHandled = false;
         const clearLifecycleTimers = () => {
             clearInterval(interval);
             clearTimeout(timeoutHandle);
@@ -1323,6 +1324,7 @@ export async function runWorkerProcess(ctx) {
                 process.stdout.write('\r\x1b[K');
         };
         proc.on('error', async (err) => {
+            spawnErrorHandled = true;
             clearLifecycleTimers();
             const errorCode = err.code;
             const exitCode = (args.backend === 'hermes' && errorCode === 'ENOENT') ? 127 : 1;
@@ -1344,6 +1346,11 @@ export async function runWorkerProcess(ctx) {
             await flushAndExit(sessionLog, exitCode);
         });
         proc.on('close', code => {
+            // When spawn fails with ENOENT, node emits both 'error' and 'close' events.
+            // The 'error' handler owns the exit semantics (e.g. 127 for hermes missing);
+            // skip the normal close flow so it cannot race ahead with `process.exit(1)`.
+            if (spawnErrorHandled)
+                return;
             clearLifecycleTimers();
             const flushTimeout = setTimeout(() => {
                 console.error(`${Style.YELLOW}⚠️  Log flush timed out — reading partial log${Style.RESET}`);
