@@ -456,11 +456,16 @@ function main(): void {
   block(decision.reason || formatBlockReason('compile_error', 'unknown tsc failure'));
 }
 
-try {
-  main();
-} catch (error) {
-  const inputData = readHookInputData();
-  const input = inputData ? parseHookInput(inputData) : null;
-  emitCrashEvent(error, input?.tool_input?.command ?? '');
-  approve();
+// CLI guard: only execute the hook entrypoint when invoked directly as a
+// script. Importing the module (e.g. tests reusing `isGitCommitCommand`)
+// must not block on stdin or emit hook decisions.
+if (process.argv[1] && path.basename(process.argv[1]) === 'tsc-gate.js') {
+  try {
+    main();
+  } catch (error) {
+    const inputData = readHookInputData();
+    const input = inputData ? parseHookInput(inputData) : null;
+    emitCrashEvent(error, input?.tool_input?.command ?? '');
+    approve();
+  }
 }
