@@ -481,16 +481,19 @@ test('setup: --resume rejects codex teams conflict from recovered tmp state', ()
     const statePath = path.join(sessionPath, 'state.json');
     const workingDir = process.cwd();
 
+    // Use "now" so pruneOldSessions (7-day cutoff at setup.ts entry) cannot
+    // delete the fixture before resumeSession reads it.
+    const now = new Date();
     const commonState = {
         session_dir: sessionPath,
         working_dir: workingDir,
         step: 'implement',
         original_prompt: 'resume conflict test',
-        started_at: '2026-05-12T00:00:00.000Z',
+        started_at: now.toISOString(),
         max_iterations: 50,
         max_time_minutes: 0,
         worker_timeout_seconds: 1200,
-        start_time_epoch: 1778600000,
+        start_time_epoch: Math.floor(now.getTime() / 1000),
         history: [],
         completion_promise: null,
     };
