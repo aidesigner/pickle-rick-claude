@@ -113,7 +113,17 @@ test('worker lint gate forensic: deliberate lint violation fails ticket and leav
 
     assert.equal(result.status, 1, `stderr: ${result.stderr}`);
     const state = JSON.parse(fs.readFileSync(path.join(sessionRoot, 'state.json'), 'utf8'));
-    assert.ok(state.activity.some((entry) => entry.event === 'worker_lint_gate_failed'));
+    // Worker gate telemetry consolidated to a single `worker_gate_failed` event with a
+    // `gate_phase` discriminator in commit b4a2a282 (2026-05-11). The lint-specific
+    // assertion below tracks the post-consolidation shape.
+    assert.ok(
+      state.activity.some(
+        (entry) => entry.event === 'worker_gate_failed' && entry.gate_phase === 'lint',
+      ),
+      `expected worker_gate_failed{gate_phase:'lint'} in activity, got: ${JSON.stringify(
+        state.activity.filter((e) => /worker_/.test(e.event)).map((e) => e.event),
+      )}`,
+    );
     const ticketContent = fs.readFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), 'utf8');
     assert.match(ticketContent, /status: "Failed"/);
     const headAfter = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
