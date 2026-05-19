@@ -26,6 +26,7 @@ export function getBranchName(taskId) {
     return `${user}/${type}/${taskId}`;
 }
 const MAX_TICKET_SEARCH_DEPTH = 10;
+const GIT_CHECK_IGNORE_TIMEOUT_MS = 5_000;
 function findTicketFile(sessionDir, ticketId) {
     const fileName = `linear_ticket_${ticketId}.md`;
     const walk = (dir, depth) => {
@@ -214,6 +215,7 @@ export function isGitIgnoredPath(cwd, filePath) {
     const result = spawnSync('git', ['check-ignore', '--no-index', '--quiet', '--', filePath], {
         cwd,
         stdio: 'ignore',
+        timeout: GIT_CHECK_IGNORE_TIMEOUT_MS,
     });
     return result.status === 0;
 }

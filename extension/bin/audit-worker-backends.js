@@ -11,69 +11,66 @@ function logKey(ticket, pid) {
 function detectCodexBanner(content) {
     return CODEX_BANNER_PATTERNS.filter((p) => content.includes(p));
 }
+function recordWorkerSpawnBackendResolved(entry, acc) {
+    if (!entry.ticket || typeof entry.pid !== 'number' || !Number.isInteger(entry.pid))
+        return;
+    if (typeof entry.backend !== 'string' || entry.backend.length === 0)
+        return;
+    acc.expectedWorkerBackendByLog.set(logKey(entry.ticket, entry.pid), entry.backend);
+}
+function recordWorkerBackendResolved(entry, acc) {
+    acc.workerBackendResolutionCount += 1;
+    if (!entry.ticket_id)
+        return;
+    const expected = entry.source === 'worker_backend'
+        ? entry.worker_backend
+        : entry.source === 'env_lock'
+            ? 'claude'
+            : entry.backend;
+    if (typeof expected === 'string' && expected.length > 0) {
+        acc.expectedWorkerBackendByTicket.set(entry.ticket_id, expected);
+    }
+}
+function recordWorkerSpawnBackendOverride(entry, acc) {
+    if (!entry.ticket)
+        return;
+    if (typeof entry.backend === 'string' && entry.backend.length > 0) {
+        acc.expectedWorkerBackendByTicket.set(entry.ticket, entry.backend);
+    }
+}
+function emptySessionStateAccumulators() {
+    return {
+        expectedWorkerBackendByLog: new Map(),
+        expectedWorkerBackendByTicket: new Map(),
+        subtoolOverrideCount: 0,
+        workerBackendResolutionCount: 0,
+    };
+}
 function readSessionState(sessionDir) {
+    const acc = emptySessionStateAccumulators();
     try {
         const state = readRecoverableJsonObject(path.join(sessionDir, 'state.json'));
         if (state === null)
             throw new Error('state unreadable');
         const backend = state.backend ?? 'unknown';
-        const activity = state.activity ?? [];
-        const expectedWorkerBackendByLog = new Map();
-        const expectedWorkerBackendByTicket = new Map();
-        let subtoolOverrideCount = 0;
-        let workerBackendResolutionCount = 0;
-        for (const entry of activity) {
+        for (const entry of state.activity ?? []) {
             if (entry.event === 'subtool_backend_override') {
-                subtoolOverrideCount += 1;
-                continue;
+                acc.subtoolOverrideCount += 1;
             }
-            if (entry.event === 'worker_spawn_backend_resolved') {
-                if (!entry.ticket || typeof entry.pid !== 'number' || !Number.isInteger(entry.pid))
-                    continue;
-                if (typeof entry.backend !== 'string' || entry.backend.length === 0)
-                    continue;
-                expectedWorkerBackendByLog.set(logKey(entry.ticket, entry.pid), entry.backend);
-                continue;
+            else if (entry.event === 'worker_spawn_backend_resolved') {
+                recordWorkerSpawnBackendResolved(entry, acc);
             }
-            if (entry.event === 'worker_backend_resolved') {
-                workerBackendResolutionCount += 1;
-                if (!entry.ticket_id)
-                    continue;
-                const source = entry.source;
-                const expected = source === 'worker_backend'
-                    ? entry.worker_backend
-                    : source === 'env_lock'
-                        ? 'claude'
-                        : entry.backend;
-                if (typeof expected === 'string' && expected.length > 0) {
-                    expectedWorkerBackendByTicket.set(entry.ticket_id, expected);
-                }
-                continue;
+            else if (entry.event === 'worker_backend_resolved') {
+                recordWorkerBackendResolved(entry, acc);
             }
-            if (entry.event === 'worker_spawn_backend_override') {
-                if (!entry.ticket)
-                    continue;
-                if (typeof entry.backend === 'string' && entry.backend.length > 0) {
-                    expectedWorkerBackendByTicket.set(entry.ticket, entry.backend);
-                }
+            else if (entry.event === 'worker_spawn_backend_override') {
+                recordWorkerSpawnBackendOverride(entry, acc);
             }
         }
-        return {
-            backend,
-            subtoolOverrideCount,
-            workerBackendResolutionCount,
-            expectedWorkerBackendByLog,
-            expectedWorkerBackendByTicket,
-        };
+        return { backend, ...acc };
     }
     catch {
-        return {
-            backend: 'unknown',
-            subtoolOverrideCount: 0,
-            workerBackendResolutionCount: 0,
-            expectedWorkerBackendByLog: new Map(),
-            expectedWorkerBackendByTicket: new Map(),
-        };
+        return { backend: 'unknown', ...acc };
     }
 }
 export function scanSession(sessionDir) {

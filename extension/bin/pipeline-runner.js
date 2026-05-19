@@ -1202,10 +1202,12 @@ function findingMeetsThreshold(finding, threshold) {
     return SEVERITY_RANK[finding.severity] <= SEVERITY_RANK[threshold];
 }
 const MICROVERSE_FATAL_REASON_SET = new Set(MICROVERSE_FATAL_REASONS);
+const GIT_PHASE_COMMIT_COUNT_TIMEOUT_MS = 10_000;
 function countCommitsSince(startCommit, workingDir) {
     const output = execFileSync('git', ['rev-list', '--count', `${startCommit}..HEAD`], {
         cwd: workingDir,
         encoding: 'utf-8',
+        timeout: GIT_PHASE_COMMIT_COUNT_TIMEOUT_MS,
     }).trim();
     const count = Number.parseInt(output, 10);
     if (!Number.isInteger(count) || count < 0) {

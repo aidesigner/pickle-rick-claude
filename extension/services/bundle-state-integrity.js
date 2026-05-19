@@ -17,8 +17,9 @@ function statePathsForBundle(sessionDir) {
         if (!entry.isDirectory() || !entry.name.startsWith('microverse_'))
             continue;
         const childStatePath = path.join(sessionDir, entry.name, 'state.json');
-        if (fs.existsSync(childStatePath) || readRecoverableJsonObject(childStatePath) !== null)
+        if (fs.existsSync(childStatePath) || readRecoverableJsonObject(childStatePath) !== null) {
             statePaths.push(childStatePath);
+        }
     }
     return statePaths;
 }

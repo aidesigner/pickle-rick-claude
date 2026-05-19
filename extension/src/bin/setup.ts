@@ -1159,10 +1159,9 @@ export function scanPausedOrphans(sessionsRoot: string, config: SetupArgs, smIns
     let mtime: number;
     try { mtime = fs.statSync(statePath).mtimeMs; } catch { continue; }
     if (now - mtime <= 300_000) continue;
-    let state: Record<string, unknown>;
     const recovered = readRecoverableJsonObject(statePath);
     if (!recovered || typeof recovered !== 'object' || Array.isArray(recovered)) continue;
-    state = recovered as Record<string, unknown>;
+    const state = recovered as Record<string, unknown>;
     if (state.active !== true) continue;
     if (state.pid != null) continue;
     if (state.working_dir !== cwd) continue;

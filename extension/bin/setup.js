@@ -1088,11 +1088,10 @@ export function scanPausedOrphans(sessionsRoot, config, smInstance) {
         }
         if (now - mtime <= 300_000)
             continue;
-        let state;
         const recovered = readRecoverableJsonObject(statePath);
         if (!recovered || typeof recovered !== 'object' || Array.isArray(recovered))
             continue;
-        state = recovered;
+        const state = recovered;
         if (state.active !== true)
             continue;
         if (state.pid != null)
