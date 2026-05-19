@@ -779,8 +779,9 @@ test('spawn-refinement-team: corrupt state.json is ignored gracefully', () => {
         );
         // Should not crash on corrupt state.json — falls back to default timeout
         assert.ok(!result.stderr.includes('Fatal'), `Should not fatal on corrupt state.json, got: ${result.stderr.slice(0, 500)}`);
-        // Default timeout comes from pickle_settings.json (default_worker_timeout_seconds: 1200)
-        assert.ok(result.stdout.includes('1200s each'), `Should fall back to settings default timeout, got: ${result.stdout.slice(0, 500)}`);
+        // Default timeout comes from pickle_settings.json (default_worker_timeout_seconds: 2400,
+        // matched to R-WTB-4 medium-tier floor).
+        assert.ok(result.stdout.includes('2400s each'), `Should fall back to settings default timeout, got: ${result.stdout.slice(0, 500)}`);
         fs.rmSync(fakeBin, { recursive: true, force: true });
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
