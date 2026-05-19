@@ -230,15 +230,17 @@ function readPhaseFindings(
 ): PhaseFindingsRead {
   if (!sessionDir) return { findings: [], missing: sourceFile === 'anatomy-park.json' };
   const artifactPath = path.join(sessionDir, sourceFile);
-  if (!existsSync(artifactPath)) return { findings: [], missing: sourceFile === 'anatomy-park.json' };
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(artifactPath, 'utf-8')) as unknown;
+    parsed = readRecoverableJsonObject(artifactPath);
   } catch {
     return { findings: [], missing: false };
   }
 
+  if (!parsed) {
+    return { findings: [], missing: sourceFile === 'anatomy-park.json' && !existsSync(artifactPath) };
+  }
   if (!isRecord(parsed) || !Array.isArray(parsed.findings)) return { findings: [], missing: false };
   const findings = parsed.findings.flatMap((finding): CrossPhaseFinding[] => {
     if (!isRecord(finding) || typeof finding.id !== 'string' || !isSeverity(finding.severity)) return [];

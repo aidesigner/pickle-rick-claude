@@ -161,14 +161,15 @@ function readPhaseFindings(sessionDir, source, sourceFile) {
     if (!sessionDir)
         return { findings: [], missing: sourceFile === 'anatomy-park.json' };
     const artifactPath = path.join(sessionDir, sourceFile);
-    if (!existsSync(artifactPath))
-        return { findings: [], missing: sourceFile === 'anatomy-park.json' };
     let parsed;
     try {
-        parsed = JSON.parse(readFileSync(artifactPath, 'utf-8'));
+        parsed = readRecoverableJsonObject(artifactPath);
     }
     catch {
         return { findings: [], missing: false };
+    }
+    if (!parsed) {
+        return { findings: [], missing: sourceFile === 'anatomy-park.json' && !existsSync(artifactPath) };
     }
     if (!isRecord(parsed) || !Array.isArray(parsed.findings))
         return { findings: [], missing: false };

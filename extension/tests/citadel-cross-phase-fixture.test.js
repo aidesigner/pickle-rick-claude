@@ -263,4 +263,47 @@ describe('citadel cross-phase fixture', () => {
       fs.rmSync(sessionDir, { recursive: true, force: true });
     }
   });
+
+  test('promotes newer dead tmp cross-phase artifacts before reading findings', async () => {
+    const { repoRoot, base } = makeRepo();
+    const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-cross-phase-artifact-tmp-'));
+    try {
+      fs.writeFileSync(
+        path.join(sessionDir, 'anatomy-park.json.tmp.999999.1'),
+        JSON.stringify({
+          findings: [
+            { id: 'tmp-anatomy', severity: 'High', message: 'recoverable anatomy finding' },
+          ],
+        }, null, 2),
+      );
+      fs.writeFileSync(
+        path.join(sessionDir, 'szechuan-sauce.json.tmp.999999.2'),
+        JSON.stringify({
+          findings: [
+            { id: 'tmp-szechuan', severity: 'Medium', message: 'recoverable szechuan finding' },
+          ],
+        }, null, 2),
+      );
+
+      const report = await runCitadelAudit({
+        prdPath: 'prd.md',
+        diffRange: `${base}..HEAD`,
+        repoRoot,
+        sessionDir,
+      });
+
+      assert.deepEqual(
+        report.sections.cross_phase.findings.map((finding) => finding.id),
+        ['tmp-anatomy', 'tmp-szechuan'],
+      );
+      assert.equal(report.sections.cross_phase.summary.anatomy_park, 1);
+      assert.equal(report.sections.cross_phase.summary.szechuan_sauce, 1);
+      assert.equal(report.sections.cross_phase.summary.anatomy_park_missing, false);
+      assert.equal(fs.existsSync(path.join(sessionDir, 'anatomy-park.json')), true);
+      assert.equal(fs.existsSync(path.join(sessionDir, 'szechuan-sauce.json')), true);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
 });
