@@ -386,13 +386,19 @@ export interface PerIterationGateDeps {
 }
 
 const PER_ITERATION_GATE_CHECKS: Array<'typecheck' | 'lint' | 'tests'> = ['typecheck', 'lint', 'tests'];
+const GIT_TEMP_CHECKOUT_TIMEOUT_MS = 10_000;
 
 function getGitRestoreArgs(workingDir: string): string[] {
-  const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workingDir, encoding: 'utf-8' }).trim();
+  const headSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: workingDir,
+    encoding: 'utf-8',
+    timeout: GIT_TEMP_CHECKOUT_TIMEOUT_MS,
+  }).trim();
   try {
     const branch = execFileSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], {
       cwd: workingDir,
       encoding: 'utf-8',
+      timeout: GIT_TEMP_CHECKOUT_TIMEOUT_MS,
     }).trim();
     if (branch) return ['checkout', '--quiet', branch];
   } catch {
@@ -411,11 +417,19 @@ async function withCleanTemporaryCheckout<T>(
   }
 
   const restoreArgs = getGitRestoreArgs(workingDir);
-  execFileSync('git', ['checkout', '--quiet', sha], { cwd: workingDir, stdio: 'pipe' });
+  execFileSync('git', ['checkout', '--quiet', sha], {
+    cwd: workingDir,
+    stdio: 'pipe',
+    timeout: GIT_TEMP_CHECKOUT_TIMEOUT_MS,
+  });
   try {
     return await fn();
   } finally {
-    execFileSync('git', restoreArgs, { cwd: workingDir, stdio: 'pipe' });
+    execFileSync('git', restoreArgs, {
+      cwd: workingDir,
+      stdio: 'pipe',
+      timeout: GIT_TEMP_CHECKOUT_TIMEOUT_MS,
+    });
   }
 }
 
