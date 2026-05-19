@@ -1896,13 +1896,11 @@ function persistWorkerIterationFallback(
   fallbackBackend: ProbeJudgeBackend,
 ): void {
   if (attemptActivity?.runnerState) {
-    delete attemptActivity.runnerState.judge_backend_resolved;
     attemptActivity.runnerState.worker_backend = fallbackBackend;
   }
   if (!attemptActivity?.statePath) return;
   try {
     sm.update(attemptActivity.statePath, s => {
-      delete s.judge_backend_resolved;
       s.worker_backend = fallbackBackend;
     });
   } catch (err) {

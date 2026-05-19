@@ -22,6 +22,7 @@ function makeRunnerState(sessionDir, workingDir) {
     started_at: new Date().toISOString(),
     session_dir: sessionDir,
     backend: 'claude',
+    judge_backend_resolved: 'codex',
   };
 }
 
@@ -117,11 +118,11 @@ test('measureLlmMetricWithBackoff persists worker fallback after first typed fai
     assert.equal(measurementCmds[0].cmd, 'claude');
     assert.equal(measurementCmds[1].cmd, 'claude', 'judge binary must remain claude after worker fallback');
     assert.equal(runnerState.worker_backend, 'codex');
-    assert.equal(runnerState.judge_backend_resolved, undefined);
+    assert.equal(runnerState.judge_backend_resolved, 'codex');
 
     const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     assert.equal(persisted.worker_backend, 'codex');
-    assert.equal(persisted.judge_backend_resolved, undefined);
+    assert.equal(persisted.judge_backend_resolved, 'codex');
 
     const judgeEvents = events.filter((event) => event.event === 'judge_measurement_attempted');
     assert.equal(judgeEvents.length, 2);
