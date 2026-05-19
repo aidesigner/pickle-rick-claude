@@ -98,7 +98,24 @@ export function verifyRecaptureFired(sessionRoot) {
     };
   }
 
-  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  let state;
+  try {
+    state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  } catch (err) {
+    return {
+      exitCode: 1,
+      artifact: writeRuntimeArtifact({
+        pass: false,
+        failureReason: 'state-unreadable',
+        evidence: {
+          state_path: statePath,
+          read_error: err instanceof Error ? err.message : String(err),
+          activity_count: null,
+          anatomy_windows: [],
+        },
+      }),
+    };
+  }
   const activity = state.activity;
   const latestWindow = latestAnatomyWindow(state.history);
   const windows = latestWindow ? [latestWindow] : [];

@@ -163,3 +163,18 @@ test('verify-recapture.state-missing exits 2 and writes state-missing artifact',
     rmSync(session, { recursive: true, force: true });
   }
 });
+
+test('verify-recapture.corrupt-state writes unreadable-state artifact instead of leaving stale runtime evidence', () => {
+  const session = mkdtempSync(path.join(tmpdir(), 'verify-recapture-corrupt-'));
+  writeFileSync(path.join(session, 'state.json'), '{bad json\n');
+  try {
+    const result = runVerifier(session);
+    assert.equal(result.status, 1);
+    assert.equal(result.runtimeArtifact.pass, false);
+    assert.equal(result.runtimeArtifact.failure_reason, 'state-unreadable');
+    assert.equal(result.runtimeArtifact.evidence.state_path, path.join(session, 'state.json'));
+    assert.match(result.runtimeArtifact.evidence.read_error, /Expected property name|JSON/i);
+  } finally {
+    rmSync(session, { recursive: true, force: true });
+  }
+});
