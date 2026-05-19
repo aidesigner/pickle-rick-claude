@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { readRecoverableJsonObject } from '../extension/services/recoverable-json.js';
 import { StateManager } from '../extension/services/state-manager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -97,7 +98,20 @@ function ensureStableArtifact() {
 export function verifyRecaptureFired(sessionRoot) {
   const statePath = sessionRoot ? path.join(sessionRoot, 'state.json') : null;
   const artifactPath = runtimeArtifactPath(sessionRoot);
-  if (!statePath || !fs.existsSync(statePath)) {
+  if (!statePath) {
+    return {
+      exitCode: 2,
+      artifactPath,
+      artifact: writeRuntimeArtifact(artifactPath, {
+        pass: false,
+        failureReason: 'state-missing',
+        evidence: { state_path: statePath, activity_count: null, anatomy_windows: [] },
+      }),
+    };
+  }
+
+  readRecoverableJsonObject(statePath);
+  if (!fs.existsSync(statePath)) {
     return {
       exitCode: 2,
       artifactPath,

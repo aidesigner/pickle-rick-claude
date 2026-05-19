@@ -237,6 +237,29 @@ test('verify-recapture.recovers orphan tmp state before evaluating the latest an
   }
 });
 
+test('verify-recapture.recovers orphan tmp state when state.json is missing entirely', () => {
+  const session = mkdtempSync(path.join(tmpdir(), 'verify-recapture-missing-base-'));
+  const statePath = path.join(session, 'state.json');
+  const orphanPath = `${statePath}.tmp.999999`;
+  writeFileSync(orphanPath, `${JSON.stringify(recoverableState([
+    {
+      ts: '2026-05-02T11:15:00.000Z',
+      event: 'baseline_recapture_attempted',
+      iteration: 7,
+    },
+  ]), null, 2)}\n`);
+  try {
+    const result = runVerifier(session);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.runtimeArtifact.pass, true);
+    assert.equal(result.runtimeArtifact.failure_reason, null);
+    assert.equal(existsSync(statePath), true, 'missing base state should be recreated from orphan tmp');
+    assert.equal(existsSync(orphanPath), false, 'orphan tmp should be consumed during recovery');
+  } finally {
+    rmSync(session, { recursive: true, force: true });
+  }
+});
+
 test('verify-recapture.session-runtime-artifacts do not overwrite evidence from another session', () => {
   const repoRuntimeArtifact = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.runtime.json');
   const repoRuntimeBaseline = readOptionalFile(repoRuntimeArtifact);
