@@ -293,3 +293,33 @@ test('verify-recapture.session-runtime-artifacts do not overwrite evidence from 
     rmSync(failSession, { recursive: true, force: true });
   }
 });
+
+test('verify-recapture.no-session writes runtime artifact outside the tracked repo bundle tree', () => {
+  const fakeHome = mkdtempSync(path.join(tmpdir(), 'verify-recapture-home-'));
+  const baseline = readFileSync(STABLE_ARTIFACT, 'utf8');
+  const repoRuntimeArtifact = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.runtime.json');
+  const repoRuntimeBaseline = readOptionalFile(repoRuntimeArtifact);
+  const runtimeArtifact = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'bundle', 'ac-dr-02.runtime.json');
+
+  try {
+    const result = spawnSync(process.execPath, [CLI], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+      },
+    });
+
+    assert.equal(result.status, 2);
+    assert.equal(readFileSync(STABLE_ARTIFACT, 'utf8'), baseline);
+    assert.equal(readOptionalFile(repoRuntimeArtifact), repoRuntimeBaseline);
+    assert.equal(runtimeArtifact.startsWith(path.join(REPO_ROOT, 'bundle')), false);
+
+    const artifact = JSON.parse(readFileSync(runtimeArtifact, 'utf8'));
+    assert.equal(artifact.pass, false);
+    assert.equal(artifact.failure_reason, 'state-missing');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});

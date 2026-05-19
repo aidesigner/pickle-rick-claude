@@ -4,12 +4,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { readRecoverableJsonObject } from '../extension/services/recoverable-json.js';
+import { getDataRoot } from '../extension/services/pickle-utils.js';
 import { StateManager } from '../extension/services/state-manager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const ARTIFACT_PATH = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.json');
-const DEFAULT_RUNTIME_ARTIFACT_PATH = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.runtime.json');
+const DEFAULT_RUNTIME_ARTIFACT_PATH = path.join(getDataRoot(), 'bundle', 'ac-dr-02.runtime.json');
 const sm = new StateManager();
 const STABLE_ARTIFACT = {
   ac_id: 'AC-DR-02',
