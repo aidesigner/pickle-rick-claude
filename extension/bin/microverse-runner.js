@@ -2977,15 +2977,16 @@ export function markMicroverseFatalError(sessionDir) {
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js') {
     const sessionDir = process.argv[2];
-    if (!sessionDir || !fs.existsSync(path.join(sessionDir, 'state.json'))) {
+    const statePath = sessionDir ? path.join(sessionDir, 'state.json') : '';
+    if (!sessionDir || readRecoverableJsonObject(statePath) === null) {
         console.error('Usage: node microverse-runner.js <session-dir>');
         process.exit(1);
     }
     main(sessionDir).catch((err) => {
         const msg = safeErrorMessage(err);
         console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
-        recordExitReason(path.join(sessionDir, 'state.json'), 'fatal');
-        deactivateRunnerState(path.join(sessionDir, 'state.json'));
+        recordExitReason(statePath, 'fatal');
+        deactivateRunnerState(statePath);
         try {
             markMicroverseFatalError(sessionDir);
         }

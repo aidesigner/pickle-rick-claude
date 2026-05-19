@@ -2486,7 +2486,8 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'pipeline-runner.js') 
   const argv = process.argv.slice(2);
   const valuedFlags = new Set(['--scope', '--scope-base']);
   const sessionDir = findPositional(argv, valuedFlags);
-  if (!sessionDir || !fs.existsSync(path.join(sessionDir, 'state.json'))) {
+  const statePath = sessionDir ? path.join(sessionDir, 'state.json') : '';
+  if (!sessionDir || readRecoverableJsonObject(statePath) === null) {
     console.error('Usage: node pipeline-runner.js <session-dir> [--scope <flag>] [--scope-base <ref>] [--strict-phases]');
     process.exit(1);
   }

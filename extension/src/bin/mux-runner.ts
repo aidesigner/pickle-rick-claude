@@ -3766,14 +3766,18 @@ async function main() {
 // eslint-disable-next-line -- legacy mux runner loop retained behavior-preserving for global bin acceptance
 async function runMuxRunnerMain() {
   const sessionDir = process.argv[2];
+  const statePath = sessionDir ? path.join(sessionDir, 'state.json') : '';
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-  if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(path.join(sessionDir, 'state.json'))) {
+  if (
+    !sessionDir
+    || sessionDir.startsWith('--')
+    || readRecoverableJsonObject(statePath) === null
+  ) {
     console.error('Usage: node mux-runner.js <session-dir>');
     process.exit(1);
   }
 
   const extensionRoot = getExtensionRoot();
-  const statePath = path.join(sessionDir, 'state.json');
   const runnerLog = path.join(sessionDir, 'mux-runner.log');
 
   const log = (msg: string) => {
