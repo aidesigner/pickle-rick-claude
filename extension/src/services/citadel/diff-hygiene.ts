@@ -21,6 +21,7 @@ export const ROOT_MARKDOWN_ALLOWLIST = new Set([
 
 export const LARGE_FILE_BYTES = 1024 * 1024;
 export const ENV_FILE_ALLOWLIST = new Set(['.env.example']);
+const GIT_CHECK_IGNORE_TIMEOUT_MS = 5_000;
 
 export interface DiffHygieneFinding {
   id: string;
@@ -288,6 +289,7 @@ function isGitIgnored(repoRoot: string, filePath: string): boolean {
   const result = spawnSync('git', ['check-ignore', '--quiet', '--', filePath], {
     cwd: repoRoot,
     stdio: 'ignore',
+    timeout: GIT_CHECK_IGNORE_TIMEOUT_MS,
   });
   return result.status === 0;
 }
