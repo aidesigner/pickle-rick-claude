@@ -272,6 +272,24 @@ test('verify-bundle.ac-dr-05 accepts the real watcher-liveness artifact shape', 
   }
 });
 
+test('verify-bundle.recovers newer orphan tmp bundle artifacts before reporting missing files', () => {
+  const fixture = makeFixture(({ dir, bundleDir }) => {
+    writeFileSync(path.join(dir, 'tmux-runner.log'), 'iteration 1\niteration 2\n');
+    writeWatcherLivenessArtifact(dir, 'pickle');
+    const watcherArtifactPath = path.join(bundleDir, 'ac-dr-05.json');
+    const watcherArtifact = readFileSync(watcherArtifactPath, 'utf8');
+    rmSync(watcherArtifactPath);
+    writeFileSync(path.join(bundleDir, 'ac-dr-05.json.tmp.999999.recovered'), watcherArtifact);
+  });
+  try {
+    const result = runVerifier(fixture, ['--ac', 'AC-DR-05']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /bundle PASS/);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test('verify-bundle.repo-ac-dr-04d stays verifier-clean as a tracked artifact', () => {
   const result = runVerifier(REPO_ROOT, ['--ac', 'AC-DR-04d']);
   assert.equal(result.status, 0, result.stderr);

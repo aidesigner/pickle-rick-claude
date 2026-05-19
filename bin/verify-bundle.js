@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { readRecoverableJsonObject } from '../extension/services/recoverable-json.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, '..');
 
@@ -101,12 +103,13 @@ export function verifyBundle(options = {}) {
 
   for (const acId of expectedIds) {
     const filePath = artifactPath(repoRoot, acId);
-    if (!fs.existsSync(filePath)) {
+    const recoveredArtifact = readRecoverableJsonObject(filePath);
+    if (!fs.existsSync(filePath) && !recoveredArtifact) {
       missing.push(`${acId}: missing ${path.relative(repoRoot, filePath)}`);
       continue;
     }
     try {
-      const artifact = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const artifact = recoveredArtifact ?? JSON.parse(fs.readFileSync(filePath, 'utf8'));
       const errors = validateBundleArtifact(artifact);
       if (artifact.ac_id !== acId) errors.push(`ac_id must equal ${acId}`);
       if (errors.length > 0) failures.push(`${acId}: ${errors.join('; ')}`);
