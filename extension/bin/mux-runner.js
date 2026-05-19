@@ -23,6 +23,27 @@ export { evaluateManagerRelaunch as evaluateCodexManagerRelaunch, recordManagerR
 const sm = new StateManager();
 let currentChildProc = null;
 let qualityGateLegacyWarningLogged = false;
+function readSiblingState(siblingStatePath) {
+    try {
+        const recovered = readRecoverableJsonObject(siblingStatePath);
+        if (!recovered || typeof recovered !== 'object' || Array.isArray(recovered))
+            return null;
+        return recovered;
+    }
+    catch {
+        return null;
+    }
+}
+function siblingQualifiesAsOrphan(sibling, parentWorkingDir) {
+    const parentHash = typeof sibling.parent_session_hash === 'string' && sibling.parent_session_hash
+        ? sibling.parent_session_hash : null;
+    const isManagerSubprocess = sibling.invocation_source === 'manager_subprocess';
+    if (!parentHash && !isManagerSubprocess)
+        return { qualifies: false, parentHash };
+    if (sibling.working_dir !== parentWorkingDir)
+        return { qualifies: false, parentHash };
+    return { qualifies: true, parentHash };
+}
 export function detectOrphanSessions(state, dataRoot, sessionDir) {
     const sessionsRoot = path.join(dataRoot, 'sessions');
     const parentWorkingDir = state.working_dir;
@@ -38,30 +59,18 @@ export function detectOrphanSessions(state, dataRoot, sessionDir) {
     for (const entry of entries) {
         if (path.join(sessionsRoot, entry) === sessionDir)
             continue;
-        const siblingStatePath = path.join(sessionsRoot, entry, 'state.json');
-        let sibling;
-        try {
-            const recovered = readRecoverableJsonObject(siblingStatePath);
-            if (!recovered || typeof recovered !== 'object' || Array.isArray(recovered))
-                continue;
-            sibling = recovered;
-        }
-        catch {
-            continue;
-        }
-        const siblingParentHash = typeof sibling.parent_session_hash === 'string' && sibling.parent_session_hash
-            ? sibling.parent_session_hash : null;
-        const isManagerSubprocess = sibling.invocation_source === 'manager_subprocess';
-        if (!siblingParentHash && !isManagerSubprocess)
-            continue;
-        if (sibling.working_dir !== parentWorkingDir)
-            continue;
         if (alreadyDetected.has(entry))
+            continue;
+        const sibling = readSiblingState(path.join(sessionsRoot, entry, 'state.json'));
+        if (!sibling)
+            continue;
+        const { qualifies, parentHash } = siblingQualifiesAsOrphan(sibling, parentWorkingDir);
+        if (!qualifies)
             continue;
         results.push({
             orphan_session_path: path.join(sessionsRoot, entry),
             orphan_started_at: typeof sibling.start_time_epoch === 'number' ? sibling.start_time_epoch : 0,
-            parent_session_hash: siblingParentHash ?? 'unknown',
+            parent_session_hash: parentHash ?? 'unknown',
             orphan_pid: typeof sibling.pid === 'number' ? sibling.pid : 0,
         });
     }
@@ -548,12 +557,12 @@ function collectFrontmatterInProgress(frontmatterStatuses) {
     }
     return inProgress;
 }
-function hasManagerHandoffSnapshot(state, currentTicket) {
+function hasManagerHandoffSnapshot(sessionDir, currentTicket) {
     if (!currentTicket)
         return false;
-    if (typeof state.session_dir !== 'string' || !state.session_dir)
+    if (typeof sessionDir !== 'string' || !sessionDir)
         return false;
-    return readLatestTicketConformanceSnapshot(path.join(state.session_dir, currentTicket)).hasManagerHandoff;
+    return readLatestTicketConformanceSnapshot(path.join(sessionDir, currentTicket)).hasManagerHandoff;
 }
 function frontmatterStatusForCurrentTicket(state, frontmatterStatuses) {
     const currentTicket = typeof state.current_ticket === 'string' ? state.current_ticket : null;
@@ -569,7 +578,7 @@ function alreadyInSync(state, inProgress) {
         : null;
     return !!currentTicket && inProgress.some(ticket => ticket.id === currentTicket);
 }
-function shouldSkipDesyncSync(state, inProgress, frontmatterStatuses) {
+function shouldSkipDesyncSync(state, sessionDir, inProgress, frontmatterStatuses) {
     if (inProgress.length !== 0)
         return false;
     const currentStatus = frontmatterStatusForCurrentTicket(state, frontmatterStatuses);
@@ -577,9 +586,9 @@ function shouldSkipDesyncSync(state, inProgress, frontmatterStatuses) {
         return false;
     if (currentStatus === 'failed')
         return true;
-    return hasManagerHandoffSnapshot(state, typeof state.current_ticket === 'string' ? state.current_ticket : null);
+    return hasManagerHandoffSnapshot(sessionDir, typeof state.current_ticket === 'string' ? state.current_ticket : null);
 }
-export function resolveTicketDesyncWinner(state, frontmatterStatuses) {
+export function resolveTicketDesyncWinner(state, frontmatterStatuses, sessionDir = '') {
     const currentTicket = typeof state.current_ticket === 'string' && state.current_ticket.length > 0
         ? state.current_ticket
         : null;
@@ -591,7 +600,10 @@ export function resolveTicketDesyncWinner(state, frontmatterStatuses) {
     if (alreadyInSync(state, inProgress)) {
         return { winner, action: 'noop' };
     }
-    if (shouldSkipDesyncSync(state, inProgress, frontmatterStatuses)) {
+    // Prefer the explicit sessionDir argument when callers pass it; fall back to
+    // state.session_dir for legacy callers (tests built around the typed signature).
+    const effectiveSessionDir = sessionDir || (typeof state.session_dir === 'string' ? state.session_dir : '');
+    if (shouldSkipDesyncSync(state, effectiveSessionDir, inProgress, frontmatterStatuses)) {
         return { winner, action: 'noop' };
     }
     return { winner, action: 'sync' };
@@ -636,7 +648,7 @@ function reconcileTicketStateDesync(statePath, sessionDir, currentTicket, iterat
             frontmatterStatuses.set(ticket.id, '');
         }
     }
-    const resolution = resolveTicketDesyncWinner(state, frontmatterStatuses);
+    const resolution = resolveTicketDesyncWinner(state, frontmatterStatuses, sessionDir);
     if (resolution.action === 'noop')
         return state;
     const winner = resolution.winner;
@@ -1813,9 +1825,14 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
             proc.once('close', () => {
                 finishTimeoutResolution();
             });
+            // R-APMW-6: bounded fallback wait for delayed SIGTERM cleanup. The
+            // child has up to TIMEOUT_RESOLVE_FALLBACK_MS to flush shutdown output
+            // and exit cleanly before we force the resolve path. 500ms was too
+            // tight under load (data flows stdout→pipe→Node→fd write); 1500ms
+            // gives realistic slack while still bounding the resolve.
             timeoutResolveTimer = setTimeout(() => {
                 finishTimeoutResolution();
-            }, 500);
+            }, 1500);
             timeoutResolveTimer.unref();
             try {
                 proc.kill('SIGTERM');
@@ -2053,6 +2070,7 @@ export function commitPendingProbe(input) {
     log(`commit-pending probe FIRED: stagnation=${stagnation} (>= threshold ${threshold}), uncommitted edits present — handoff.txt written`);
     return 'fired';
 }
+const QUALITY_GATE_SUBPROCESS_TIMEOUT_MS = 60_000;
 export function runMuxReadinessGate(input) {
     const localBinPath = path.join(input.extensionRoot, 'extension', 'bin', 'check-readiness.js');
     const installedBinPath = path.join(input.extensionRoot, 'bin', 'check-readiness.js');
@@ -2074,6 +2092,7 @@ export function runMuxReadinessGate(input) {
         cwd: input.repoRoot,
         encoding: 'utf-8',
         stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: QUALITY_GATE_SUBPROCESS_TIMEOUT_MS,
     });
     if (result.stdout)
         process.stdout.write(result.stdout);
@@ -2138,6 +2157,7 @@ export function runTicketAuditGate(input) {
     const result = spawnSync(process.execPath, [binPath, input.sessionDir], {
         encoding: 'utf-8',
         stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: QUALITY_GATE_SUBPROCESS_TIMEOUT_MS,
     });
     if (result.stdout)
         process.stdout.write(result.stdout);

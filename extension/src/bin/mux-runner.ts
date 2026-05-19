@@ -43,6 +43,26 @@ export interface OrphanDetectionResult {
   orphan_pid: number;
 }
 
+function readSiblingState(siblingStatePath: string): Record<string, unknown> | null {
+  try {
+    const recovered = readRecoverableJsonObject(siblingStatePath);
+    if (!recovered || typeof recovered !== 'object' || Array.isArray(recovered)) return null;
+    return recovered as Record<string, unknown>;
+  } catch { return null; }
+}
+
+function siblingQualifiesAsOrphan(
+  sibling: Record<string, unknown>,
+  parentWorkingDir: string | undefined,
+): { qualifies: boolean; parentHash: string | null } {
+  const parentHash = typeof sibling.parent_session_hash === 'string' && sibling.parent_session_hash
+    ? sibling.parent_session_hash : null;
+  const isManagerSubprocess = sibling.invocation_source === 'manager_subprocess';
+  if (!parentHash && !isManagerSubprocess) return { qualifies: false, parentHash };
+  if (sibling.working_dir !== parentWorkingDir) return { qualifies: false, parentHash };
+  return { qualifies: true, parentHash };
+}
+
 export function detectOrphanSessions(
   state: State,
   dataRoot: string,
@@ -56,23 +76,15 @@ export function detectOrphanSessions(
   try { entries = fs.readdirSync(sessionsRoot); } catch { return results; }
   for (const entry of entries) {
     if (path.join(sessionsRoot, entry) === sessionDir) continue;
-    const siblingStatePath = path.join(sessionsRoot, entry, 'state.json');
-    let sibling: Record<string, unknown>;
-    try {
-      const recovered = readRecoverableJsonObject(siblingStatePath);
-      if (!recovered || typeof recovered !== 'object' || Array.isArray(recovered)) continue;
-      sibling = recovered as Record<string, unknown>;
-    } catch { continue; }
-    const siblingParentHash = typeof sibling.parent_session_hash === 'string' && sibling.parent_session_hash
-      ? sibling.parent_session_hash : null;
-    const isManagerSubprocess = sibling.invocation_source === 'manager_subprocess';
-    if (!siblingParentHash && !isManagerSubprocess) continue;
-    if (sibling.working_dir !== parentWorkingDir) continue;
     if (alreadyDetected.has(entry)) continue;
+    const sibling = readSiblingState(path.join(sessionsRoot, entry, 'state.json'));
+    if (!sibling) continue;
+    const { qualifies, parentHash } = siblingQualifiesAsOrphan(sibling, parentWorkingDir);
+    if (!qualifies) continue;
     results.push({
       orphan_session_path: path.join(sessionsRoot, entry),
       orphan_started_at: typeof sibling.start_time_epoch === 'number' ? sibling.start_time_epoch : 0,
-      parent_session_hash: siblingParentHash ?? 'unknown',
+      parent_session_hash: parentHash ?? 'unknown',
       orphan_pid: typeof sibling.pid === 'number' ? sibling.pid : 0,
     });
   }
@@ -646,10 +658,10 @@ function collectFrontmatterInProgress(frontmatterStatuses: Map<string, TicketSta
   return inProgress;
 }
 
-function hasManagerHandoffSnapshot(state: State, currentTicket: string | null): boolean {
+function hasManagerHandoffSnapshot(sessionDir: string, currentTicket: string | null): boolean {
   if (!currentTicket) return false;
-  if (typeof state.session_dir !== 'string' || !state.session_dir) return false;
-  return readLatestTicketConformanceSnapshot(path.join(state.session_dir, currentTicket)).hasManagerHandoff;
+  if (typeof sessionDir !== 'string' || !sessionDir) return false;
+  return readLatestTicketConformanceSnapshot(path.join(sessionDir, currentTicket)).hasManagerHandoff;
 }
 
 function frontmatterStatusForCurrentTicket(state: State, frontmatterStatuses: Map<string, TicketStatus>): string {
@@ -666,15 +678,15 @@ function alreadyInSync(state: State, inProgress: readonly { id: string }[]): boo
   return !!currentTicket && inProgress.some(ticket => ticket.id === currentTicket);
 }
 
-function shouldSkipDesyncSync(state: State, inProgress: readonly { id: string }[], frontmatterStatuses: Map<string, TicketStatus>): boolean {
+function shouldSkipDesyncSync(state: State, sessionDir: string, inProgress: readonly { id: string }[], frontmatterStatuses: Map<string, TicketStatus>): boolean {
   if (inProgress.length !== 0) return false;
   const currentStatus = frontmatterStatusForCurrentTicket(state, frontmatterStatuses);
   if (currentStatus !== 'failed' && currentStatus !== 'done') return false;
   if (currentStatus === 'failed') return true;
-  return hasManagerHandoffSnapshot(state, typeof state.current_ticket === 'string' ? state.current_ticket : null);
+  return hasManagerHandoffSnapshot(sessionDir, typeof state.current_ticket === 'string' ? state.current_ticket : null);
 }
 
-export function resolveTicketDesyncWinner(state: State, frontmatterStatuses: Map<string, TicketStatus>): TicketDesyncResolution {
+export function resolveTicketDesyncWinner(state: State, frontmatterStatuses: Map<string, TicketStatus>, sessionDir = ''): TicketDesyncResolution {
   const currentTicket = typeof state.current_ticket === 'string' && state.current_ticket.length > 0
     ? state.current_ticket
     : null;
@@ -686,7 +698,10 @@ export function resolveTicketDesyncWinner(state: State, frontmatterStatuses: Map
   if (alreadyInSync(state, inProgress)) {
     return { winner, action: 'noop' };
   }
-  if (shouldSkipDesyncSync(state, inProgress, frontmatterStatuses)) {
+  // Prefer the explicit sessionDir argument when callers pass it; fall back to
+  // state.session_dir for legacy callers (tests built around the typed signature).
+  const effectiveSessionDir = sessionDir || (typeof state.session_dir === 'string' ? state.session_dir : '');
+  if (shouldSkipDesyncSync(state, effectiveSessionDir, inProgress, frontmatterStatuses)) {
     return { winner, action: 'noop' };
   }
   return { winner, action: 'sync' };
@@ -740,7 +755,7 @@ function reconcileTicketStateDesync(
       frontmatterStatuses.set(ticket.id, '');
     }
   }
-  const resolution = resolveTicketDesyncWinner(state, frontmatterStatuses);
+  const resolution = resolveTicketDesyncWinner(state, frontmatterStatuses, sessionDir);
   if (resolution.action === 'noop') return state;
 
   const winner = resolution.winner;
@@ -2069,9 +2084,14 @@ export async function runIteration(
       proc.once('close', () => {
         finishTimeoutResolution();
       });
+      // R-APMW-6: bounded fallback wait for delayed SIGTERM cleanup. The
+      // child has up to TIMEOUT_RESOLVE_FALLBACK_MS to flush shutdown output
+      // and exit cleanly before we force the resolve path. 500ms was too
+      // tight under load (data flows stdout→pipe→Node→fd write); 1500ms
+      // gives realistic slack while still bounding the resolve.
       timeoutResolveTimer = setTimeout(() => {
         finishTimeoutResolution();
-      }, 500);
+      }, 1500);
       timeoutResolveTimer.unref();
       try { proc.kill('SIGTERM'); } catch { /* already dead */ }
     }
