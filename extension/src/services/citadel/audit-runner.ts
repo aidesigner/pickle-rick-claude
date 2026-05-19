@@ -17,6 +17,7 @@ import { detectAllowlistDeadEntries } from './allowlist-dead-entry-detector.js';
 import { auditStateTransitions } from './state-transition-audit.js';
 import { auditTrapDoorCoverage } from './trap-door-coverage-audit.js';
 import { checkEndpointContractConformance } from './endpoint-contract-conformance.js';
+import { readRecoverableJsonObject } from '../recoverable-json.js';
 
 interface FindingLike extends CitadelFinding {
   id: string;
@@ -168,11 +169,9 @@ export function buildCitadelReportHeader(sessionDir: string | undefined): Citade
   if (!sessionDir) return fallback;
 
   const statePath = path.join(sessionDir, 'state.json');
-  if (!existsSync(statePath)) return fallback;
-
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(statePath, 'utf-8')) as unknown;
+    parsed = readRecoverableJsonObject(statePath);
   } catch {
     return fallback;
   }

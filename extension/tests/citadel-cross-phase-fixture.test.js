@@ -125,6 +125,43 @@ describe('citadel cross-phase fixture', () => {
     }
   });
 
+  test('citadel report header promotes recoverable state tmp before reading pickle failure activity', async () => {
+    const { repoRoot, base } = makeRepo();
+    const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-cross-phase-header-tmp-'));
+    try {
+      const statePath = path.join(sessionDir, 'state.json');
+      fs.writeFileSync(`${statePath}.tmp.999999.1`, JSON.stringify({
+        activity: [
+          {
+            event: 'recoverable_phase_failure',
+            phase: 'pickle',
+            exit_code: 17,
+            fatal: false,
+            reason: 'tmp promoted pickle exit',
+          },
+        ],
+      }, null, 2));
+
+      const report = await runCitadelAudit({
+        prdPath: 'prd.md',
+        diffRange: `${base}..HEAD`,
+        repoRoot,
+        sessionDir,
+      });
+
+      assert.equal(report.header.pickle_phase_failed, true);
+      assert.equal(report.header.pickle_exit_code, 17);
+      const promotedState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      assert.equal(promotedState.activity[0].exit_code, 17);
+      const persisted = JSON.parse(fs.readFileSync(path.join(sessionDir, 'citadel_report.json'), 'utf-8'));
+      assert.equal(persisted.header.pickle_phase_failed, true);
+      assert.equal(persisted.header.pickle_exit_code, 17);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
   test('exits cleanly when sibling phase artifacts are absent', async () => {
     const { repoRoot, base } = makeRepo();
     const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-cross-phase-empty-'));
