@@ -159,7 +159,8 @@ export function cancelSession(cwd: string) {
   }
 
   const statePath = path.join(sessionPath, 'state.json');
-  if (!fs.existsSync(statePath)) {
+  const recoveredState = readRecoverableJsonObject(statePath);
+  if (!fs.existsSync(statePath) && !recoveredState) {
     console.log('State file not found.');
     return;
   }

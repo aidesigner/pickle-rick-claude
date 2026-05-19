@@ -1076,15 +1076,9 @@ export function pruneOrphanedMapEntries(dataRoot) {
             pruned++;
             continue;
         }
-        let stateReadable = false;
-        try {
-            fs.accessSync(path.join(sessionPath, 'state.json'), fs.constants.R_OK);
-            stateReadable = true;
-        }
-        catch {
-            // stateReadable already false
-        }
-        if (!stateReadable) {
+        const statePath = path.join(sessionPath, 'state.json');
+        const recoveredState = readRecoverableJsonObject(statePath);
+        if (!fs.existsSync(statePath) && !recoveredState) {
             writePhantomSessionDemotedActivity(cwd, sessionPath);
             pruned++;
             continue;
@@ -1127,16 +1121,18 @@ const MAX_FUTURE_RECENCY_DRIFT_MS = 5 * 60 * 1000;
 function readSessionLookupState(sessionPath) {
     try {
         const statePath = path.join(sessionPath, 'state.json');
+        const recovered = readRecoverableJsonObject(statePath);
+        if (!recovered || typeof recovered !== 'object' || Array.isArray(recovered))
+            return null;
         let stateMtimeMs = 0;
         try {
             stateMtimeMs = fs.statSync(statePath).mtimeMs;
         }
-        catch { /* missing state read below will fail */ }
-        const state = new StateManager().read(statePath);
+        catch { /* state may still be absent after failed promotion */ }
         return {
-            active: state.active,
-            working_dir: state.working_dir,
-            started_at: state.started_at,
+            active: recovered.active,
+            working_dir: recovered.working_dir,
+            started_at: recovered.started_at,
             state_mtime_ms: stateMtimeMs,
         };
     }

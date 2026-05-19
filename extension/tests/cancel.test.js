@@ -217,6 +217,36 @@ test('cancelSession: promotes newer dead current_sessions tmp before removing cw
     }
 });
 
+test('cancelSession: promotes tmp-only recoverable state before deactivating the session', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const cwdDir = path.join(tmpRoot, 'repo');
+        const sessionDir = path.join(tmpRoot, 'sessions', 'recoverable-session');
+        const statePath = path.join(sessionDir, 'state.json');
+        const tmpStatePath = `${statePath}.tmp.99999999`;
+        fs.mkdirSync(cwdDir, { recursive: true });
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(tmpStatePath, JSON.stringify({
+            active: true,
+            working_dir: cwdDir,
+            session_dir: sessionDir,
+            step: 'implement',
+            iteration: 4,
+            original_prompt: 'cancel tmp-only recoverable session',
+        }, null, 2));
+        writeSessionsMap(tmpRoot, { [cwdDir]: sessionDir });
+
+        const output = runCancelSubprocess(tmpRoot, cwdDir);
+
+        const updated = readState(sessionDir);
+        assert.equal(updated.active, false, 'recovered tmp-only session should be deactivated');
+        assert.equal(fs.existsSync(tmpStatePath), false, 'recoverable tmp should be promoted');
+        assert.ok(output.includes('Loop Cancelled'), `expected cancel success output, got: ${output}`);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- Already inactive: refuse to masquerade as a live loop ---
 
 test('cancelSession: already-inactive mapped session reports no active loop and stays inactive', () => {
