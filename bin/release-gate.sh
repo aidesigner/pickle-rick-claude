@@ -102,10 +102,12 @@ pre_tag() {
 
 post_tag() {
   local tag="$1"
-  local expected tag_name_version tmpdir
+  local expected tag_name_version tagged_commit_version tmpdir
   expected="$(read_expected_version)"
   tag_name_version="$(read_tag_name_version "$tag")"
+  tagged_commit_version="$(read_tag_version "$tag")"
   [ "$expected" = "$tag_name_version" ] || die 21 "expected release tag $tag to match $PKG_DISPLAY_PATH version $expected"
+  [ "$expected" = "$tagged_commit_version" ] || die 21 "expected $PKG_DISPLAY_PATH version $expected but tag $tag has $tagged_commit_version"
   gh api "repos/$REPO/releases/tags/$tag" >/dev/null 2>&1 || die 22 "GitHub release API check failed for $tag"
   tmpdir="$(mktemp -d)"
   RELEASE_GATE_TMPDIR="$tmpdir"

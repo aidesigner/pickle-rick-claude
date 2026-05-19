@@ -328,6 +328,25 @@ esac
     }
   });
 
+  test('exits 21 when the tagged commit package version drifts from HEAD even if the tarball matches HEAD', () => {
+    const { dir: repoDir } = makeGitFixture({
+      headVersion: '1.67.0',
+      tagVersion: '1.64.0',
+      tagName: 'v1.67.0',
+    });
+    const tarFixture = makeTarball('1.67.0');
+    const ghDir = makeGhFixture({ tarball: tarFixture.tarball });
+    try {
+      const result = gate(['--post-tag', 'v1.67.0'], { cwd: repoDir, pathPrefix: ghDir });
+      assert.equal(result.status, 21);
+      assert.match(result.stderr, /tag v1\.67\.0 has 1\.64\.0/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(tarFixture.dir, { recursive: true, force: true });
+      rmSync(ghDir, { recursive: true, force: true });
+    }
+  });
+
   test('exits 21 when tag name semver does not match HEAD package version', () => {
     const { dir: repoDir } = makeGitFixture({ headVersion: '1.67.0', tagVersion: '1.67.0', tagName: 'v9.99.0' });
     const tarFixture = makeTarball('1.67.0');
