@@ -177,3 +177,52 @@ test('audit-worker-backends: codex banner under hermes-expected worker is flagge
 
   fs.rmSync(sessionDir, { recursive: true, force: true });
 });
+
+test('audit-worker-backends: stale override does not mask a newer ticket-level claude resolution', () => {
+  const sessionDir = makeTmpDir();
+  const ticketDir = path.join(sessionDir, 'ticket-001');
+  fs.mkdirSync(ticketDir, { recursive: true });
+
+  fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+    backend: 'claude',
+    activity: [
+      {
+        event: 'worker_spawn_backend_override',
+        ts: '2026-05-19T10:00:00.000Z',
+        ticket: 'ticket-001',
+        backend: 'codex',
+        source: 'cli-flag-override',
+      },
+      {
+        event: 'worker_backend_resolved',
+        ts: '2026-05-19T10:05:00.000Z',
+        ticket_id: 'ticket-001',
+        backend: 'claude',
+        worker_backend: null,
+        source: 'backend',
+      },
+    ],
+  }));
+
+  fs.writeFileSync(
+    path.join(ticketDir, 'worker_session_999.log'),
+    'Reading additional input from stdin...\nchatgpt.com/codex/settings/usage\n',
+  );
+
+  const report = scanSession(sessionDir);
+  assert.equal(report.session_backend, 'claude');
+  assert.equal(report.worker_backend_resolution_count, 1);
+  assert.equal(report.mismatch_count, 1);
+  assert.deepEqual(report.mismatches, [
+    {
+      ticket: 'ticket-001',
+      log: 'worker_session_999.log',
+      patterns_found: [
+        'Reading additional input from stdin...',
+        'chatgpt.com/codex/settings/usage',
+      ],
+    },
+  ]);
+
+  fs.rmSync(sessionDir, { recursive: true, force: true });
+});

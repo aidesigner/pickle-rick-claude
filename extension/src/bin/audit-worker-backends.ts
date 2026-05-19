@@ -52,39 +52,46 @@ function readSessionState(sessionDir: string): {
     const state = JSON.parse(raw) as { backend?: string; activity?: WorkerBackendResolvedEvent[] };
     const backend = state.backend ?? 'unknown';
     const activity = state.activity ?? [];
-    const subtoolOverrideCount = activity.filter((a) => a.event === 'subtool_backend_override').length;
-    const workerBackendEvents = activity.filter((a) => a.event === 'worker_backend_resolved');
-    const workerSpawnEvents = activity.filter((a) => a.event === 'worker_spawn_backend_resolved');
-    const workerOverrideEvents = activity.filter((a) => a.event === 'worker_spawn_backend_override');
     const expectedWorkerBackendByLog = new Map<string, string>();
     const expectedWorkerBackendByTicket = new Map<string, string>();
-    for (const entry of workerSpawnEvents) {
-      if (!entry.ticket || typeof entry.pid !== 'number' || !Number.isInteger(entry.pid)) continue;
-      if (typeof entry.backend !== 'string' || entry.backend.length === 0) continue;
-      expectedWorkerBackendByLog.set(logKey(entry.ticket, entry.pid), entry.backend);
-    }
-    for (const entry of workerBackendEvents) {
-      if (!entry.ticket_id) continue;
-      const source = entry.source;
-      const expected = source === 'worker_backend'
-        ? entry.worker_backend
-        : source === 'env_lock'
-          ? 'claude'
-          : entry.backend;
-      if (typeof expected === 'string' && expected.length > 0) {
-        expectedWorkerBackendByTicket.set(entry.ticket_id, expected);
+    let subtoolOverrideCount = 0;
+    let workerBackendResolutionCount = 0;
+    for (const entry of activity) {
+      if (entry.event === 'subtool_backend_override') {
+        subtoolOverrideCount += 1;
+        continue;
       }
-    }
-    for (const entry of workerOverrideEvents) {
-      if (!entry.ticket) continue;
-      if (typeof entry.backend === 'string' && entry.backend.length > 0) {
-        expectedWorkerBackendByTicket.set(entry.ticket, entry.backend);
+      if (entry.event === 'worker_spawn_backend_resolved') {
+        if (!entry.ticket || typeof entry.pid !== 'number' || !Number.isInteger(entry.pid)) continue;
+        if (typeof entry.backend !== 'string' || entry.backend.length === 0) continue;
+        expectedWorkerBackendByLog.set(logKey(entry.ticket, entry.pid), entry.backend);
+        continue;
+      }
+      if (entry.event === 'worker_backend_resolved') {
+        workerBackendResolutionCount += 1;
+        if (!entry.ticket_id) continue;
+        const source = entry.source;
+        const expected = source === 'worker_backend'
+          ? entry.worker_backend
+          : source === 'env_lock'
+            ? 'claude'
+            : entry.backend;
+        if (typeof expected === 'string' && expected.length > 0) {
+          expectedWorkerBackendByTicket.set(entry.ticket_id, expected);
+        }
+        continue;
+      }
+      if (entry.event === 'worker_spawn_backend_override') {
+        if (!entry.ticket) continue;
+        if (typeof entry.backend === 'string' && entry.backend.length > 0) {
+          expectedWorkerBackendByTicket.set(entry.ticket, entry.backend);
+        }
       }
     }
     return {
       backend,
       subtoolOverrideCount,
-      workerBackendResolutionCount: workerBackendEvents.length,
+      workerBackendResolutionCount,
       expectedWorkerBackendByLog,
       expectedWorkerBackendByTicket,
     };
