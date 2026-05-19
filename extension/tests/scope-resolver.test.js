@@ -122,10 +122,16 @@ test('resolveScope: paths mode matches globs against working tree', () => {
     }
 });
 
-test('resolveScope: base-default falls back to "main" when no upstream', () => {
+test('resolveScope: base-default falls back to "origin/main" when no upstream', () => {
     const repo = makeRepo();
     const session = fs.mkdtempSync(path.join(os.tmpdir(), 'scope-session-'));
     try {
+        // Synthesize an `origin/main` ref so the fallback can resolve in a bare fixture.
+        // This matches the contract where default base prefers `origin/main` (see
+        // scope-resolver-branch-base.test.js) even when no upstream is configured.
+        const mainSha = git(['rev-parse', 'HEAD'], repo);
+        git(['update-ref', 'refs/remotes/origin/main', mainSha], repo);
+
         git(['checkout', '-qb', 'feature'], repo);
         fs.writeFileSync(path.join(repo, 'new.ts'), 'new\n');
         git(['add', '.'], repo);
@@ -138,8 +144,8 @@ test('resolveScope: base-default falls back to "main" when no upstream', () => {
             repoRoot: repo,
         });
 
-        assert.equal(scope.base_ref, 'main',
-            'no upstream is configured in fixture; default must be "main"');
+        assert.equal(scope.base_ref, 'origin/main',
+            'no upstream is configured in fixture; default must be "origin/main"');
         assert.deepStrictEqual(scope.allowed_paths, ['new.ts']);
     } finally {
         cleanup(repo);
