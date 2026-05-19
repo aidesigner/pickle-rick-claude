@@ -77,6 +77,19 @@ function makeSidecarTarball(archiveName = 'sidecar.tar.gz', { includeInstallScri
   return { dir, tarball };
 }
 
+function makeSplitPayloadTarball(archiveName = 'split.tar.gz') {
+  const dir = mkdtempSync(path.join(tmpdir(), 'release-gate-split-'));
+  const pkgRoot = path.join(dir, 'pkg-root');
+  const installRoot = path.join(dir, 'install-root');
+  mkdirSync(path.join(pkgRoot, 'extension'), { recursive: true });
+  mkdirSync(installRoot, { recursive: true });
+  writeFileSync(path.join(pkgRoot, 'extension', 'package.json'), `${JSON.stringify({ version: '1.67.0' }, null, 2)}\n`);
+  writeFileSync(path.join(installRoot, 'install.sh'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+  const tarball = path.join(dir, archiveName);
+  run('tar', ['-czf', tarball, '-C', dir, 'pkg-root', 'install-root']);
+  return { dir, tarball };
+}
+
 function makeGhFixture({ mode = 'ok', tarball, tarballs, fakeFindNames, downloadAssert }) {
   const binDir = mkdtempSync(path.join(tmpdir(), 'release-gate-bin-'));
   const ghPath = path.join(binDir, 'gh');
@@ -296,6 +309,21 @@ esac
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
       rmSync(sidecarFixture.dir, { recursive: true, force: true });
+      rmSync(ghDir, { recursive: true, force: true });
+    }
+  });
+
+  test('exits 21 when extension/package.json and install.sh live under different archive roots', () => {
+    const { dir: repoDir, tagName } = makeGitFixture();
+    const splitFixture = makeSplitPayloadTarball('pickle-release.tar.gz');
+    const ghDir = makeGhFixture({ tarball: splitFixture.tarball });
+    try {
+      const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
+      assert.equal(result.status, 21);
+      assert.match(result.stderr, /missing install payload root shared by extension\/package\.json and install\.sh/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(splitFixture.dir, { recursive: true, force: true });
       rmSync(ghDir, { recursive: true, force: true });
     }
   });

@@ -60,6 +60,44 @@ read_tag_version() {
   printf '%s\n' "$version"
 }
 
+find_installable_payload_root() {
+  local tarball="$1"
+  tar -tzf "$tarball" | awk '
+    function normalized(entry) {
+      sub(/^\.\//, "", entry)
+      sub(/\/$/, "", entry)
+      return entry
+    }
+    {
+      entry = normalized($0)
+      if (entry == "extension/package.json") {
+        pkg[""] = 1
+      } else if (entry ~ /\/extension\/package\.json$/) {
+        root = entry
+        sub(/\/extension\/package\.json$/, "", root)
+        pkg[root] = 1
+      }
+
+      if (entry == "install.sh") {
+        install[""] = 1
+      } else if (entry ~ /\/install\.sh$/) {
+        root = entry
+        sub(/\/install\.sh$/, "", root)
+        install[root] = 1
+      }
+    }
+    END {
+      for (root in pkg) {
+        if (root in install) {
+          print root
+          exit 0
+        }
+      }
+      exit 1
+    }
+  '
+}
+
 select_installable_tarball() {
   local dir="$1"
   local tag="$2"
@@ -75,16 +113,12 @@ select_installable_tarball() {
   [ ${#downloaded[@]} -gt 0 ] || die 20 "release download produced no tar.gz asset for $tag"
 
   for tarball in "${downloaded[@]}"; do
-    if tar -tzf "$tarball" | awk '
-      /(^|\/)extension\/package\.json$/ { has_pkg=1 }
-      /(^|\/)install\.sh$/ { has_install=1 }
-      END { exit (has_pkg && has_install) ? 0 : 1 }
-    '; then
+    if find_installable_payload_root "$tarball" >/dev/null; then
       installable+=("$tarball")
     fi
   done
 
-  [ ${#installable[@]} -gt 0 ] || die 21 "downloaded tarball is missing install payload ($PKG_DISPLAY_PATH + install.sh)"
+  [ ${#installable[@]} -gt 0 ] || die 21 "downloaded tarball is missing install payload root shared by $PKG_DISPLAY_PATH and install.sh"
   [ ${#installable[@]} -eq 1 ] || die 21 "release $tag downloaded multiple installable tar.gz assets"
   printf '%s\n' "${installable[0]}"
 }
@@ -114,9 +148,14 @@ post_tag() {
   trap 'rm -rf "$RELEASE_GATE_TMPDIR"' EXIT
   gh release download "$tag" -R "$REPO" -p '*.tar.gz' -D "$tmpdir" >/dev/null 2>&1 || die 20 "release download failed for $tag"
 
-  local tarball pkg_member pkg tagged
+  local tarball payload_root pkg_member pkg tagged
   tarball="$(select_installable_tarball "$tmpdir" "$tag")"
-  pkg_member="$(tar -tzf "$tarball" | awk '/(^|\/)extension\/package\.json$/ { print; exit }')"
+  payload_root="$(find_installable_payload_root "$tarball")" || die 21 "downloaded tarball is missing install payload root shared by $PKG_DISPLAY_PATH and install.sh"
+  if [ -n "$payload_root" ]; then
+    pkg_member="$payload_root/extension/package.json"
+  else
+    pkg_member="extension/package.json"
+  fi
   [ -n "$pkg_member" ] || die 21 "downloaded tarball is missing $PKG_DISPLAY_PATH"
   pkg="$(tar -xOzf "$tarball" "$pkg_member" 2>/dev/null)" || die 21 "could not read $PKG_DISPLAY_PATH from downloaded tarball"
   tagged="$(printf '%s\n' "$pkg" | jq -r '.version' 2>/dev/null)" || die 21 "could not parse $PKG_DISPLAY_PATH from downloaded tarball"
