@@ -1508,11 +1508,13 @@ function findingMeetsThreshold(finding: CitadelFinding, threshold: CitadelSeveri
 }
 
 const MICROVERSE_FATAL_REASON_SET = new Set<string>(MICROVERSE_FATAL_REASONS);
+const GIT_PHASE_COMMIT_COUNT_TIMEOUT_MS = 10_000;
 
 function countCommitsSince(startCommit: string, workingDir: string): number {
   const output = execFileSync('git', ['rev-list', '--count', `${startCommit}..HEAD`], {
     cwd: workingDir,
     encoding: 'utf-8',
+    timeout: GIT_PHASE_COMMIT_COUNT_TIMEOUT_MS,
   }).trim();
   const count = Number.parseInt(output, 10);
   if (!Number.isInteger(count) || count < 0) {
