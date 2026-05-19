@@ -1374,14 +1374,14 @@ function loadMicroverseSettingsBag() {
 }
 function persistWorkerIterationFallback(attemptActivity, fallbackBackend) {
     if (attemptActivity?.runnerState) {
-        attemptActivity.runnerState.judge_backend_resolved = fallbackBackend;
+        delete attemptActivity.runnerState.judge_backend_resolved;
         attemptActivity.runnerState.worker_backend = fallbackBackend;
     }
     if (!attemptActivity?.statePath)
         return;
     try {
         sm.update(attemptActivity.statePath, s => {
-            s.judge_backend_resolved = fallbackBackend;
+            delete s.judge_backend_resolved;
             s.worker_backend = fallbackBackend;
         });
     }

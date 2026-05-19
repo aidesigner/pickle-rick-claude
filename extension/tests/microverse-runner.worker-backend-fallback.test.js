@@ -116,12 +116,12 @@ test('measureLlmMetricWithBackoff persists worker fallback after first typed fai
     assert.equal(measurementCmds.length, 2);
     assert.equal(measurementCmds[0].cmd, 'claude');
     assert.equal(measurementCmds[1].cmd, 'claude', 'judge binary must remain claude after worker fallback');
-    assert.equal(runnerState.judge_backend_resolved, 'codex');
     assert.equal(runnerState.worker_backend, 'codex');
+    assert.equal(runnerState.judge_backend_resolved, undefined);
 
     const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    assert.equal(persisted.judge_backend_resolved, 'codex');
     assert.equal(persisted.worker_backend, 'codex');
+    assert.equal(persisted.judge_backend_resolved, undefined);
 
     const judgeEvents = events.filter((event) => event.event === 'judge_measurement_attempted');
     assert.equal(judgeEvents.length, 2);
