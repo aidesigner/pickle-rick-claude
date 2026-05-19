@@ -38,6 +38,8 @@ export interface State {
   backend?: Backend;
   /** Optional per-session worker backend override. Worker spawns prefer this over `backend` when present. */
   worker_backend?: Backend;
+  /** Worker-iteration fallback breadcrumb written after a typed judge failure; judge spawn itself stays claude-only. */
+  judge_backend_resolved?: Extract<Backend, 'claude' | 'codex'>;
   /** When false, pipeline-runner halts on any non-zero non-citadel phase exit instead of continuing on recoverable failures. */
   pipeline_continue_on_phase_fail?: boolean;
   /** When true, /pickle Phase 3 spawns workers via harness team primitives (TeamCreate + Agent + TaskUpdate) instead of `claude -p` subprocesses. claude backend only. */
@@ -894,6 +896,7 @@ export interface MicroverseHistoryEntry {
   description: string;
   pre_iteration_sha: string;
   timestamp: string;
+  judge_backend_used?: Extract<Backend, 'claude' | 'codex'>;
   classification?: 'improved' | 'held' | 'regressed';
   failure_class?: FailureClass;
 }

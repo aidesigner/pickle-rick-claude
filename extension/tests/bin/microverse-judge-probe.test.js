@@ -3,7 +3,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   _deps,
-  probeJudgeCliAvailability,
+  probeJudgeBackendAvailability,
   measureLlmMetricWithBackoff,
   classifyJudgeError,
   JudgeMeasurementTimeout,
@@ -86,12 +86,12 @@ describe('classifyJudgeError', () => {
   });
 });
 
-describe('probeJudgeCliAvailability', () => {
+describe('probeJudgeBackendAvailability', () => {
   test('returns kind:ok on success', async () => {
     const orig = _deps.execFile;
     _deps.execFile = makeExecFileMock(null, 'claude/2.1.0');
     try {
-      const result = await probeJudgeCliAvailability('/tmp');
+      const result = await probeJudgeBackendAvailability('claude', '/tmp');
       assert.equal(result.kind, 'ok');
     } finally {
       _deps.execFile = orig;
@@ -102,7 +102,7 @@ describe('probeJudgeCliAvailability', () => {
     const orig = _deps.execFile;
     _deps.execFile = makeExecFileMock(makeEnoentError());
     try {
-      const result = await probeJudgeCliAvailability('/tmp');
+      const result = await probeJudgeBackendAvailability('claude', '/tmp');
       assert.equal(result.kind, 'missing');
       assert.ok('message' in result);
     } finally {
@@ -114,7 +114,7 @@ describe('probeJudgeCliAvailability', () => {
     const orig = _deps.execFile;
     _deps.execFile = makeExecFileMock(makeEtimedoutError());
     try {
-      const result = await probeJudgeCliAvailability('/tmp');
+      const result = await probeJudgeBackendAvailability('claude', '/tmp');
       assert.equal(result.kind, 'timeout');
       assert.ok('message' in result);
     } finally {
@@ -126,7 +126,7 @@ describe('probeJudgeCliAvailability', () => {
     const orig = _deps.execFile;
     _deps.execFile = makeExecFileMock(makeGenericError());
     try {
-      const result = await probeJudgeCliAvailability('/tmp');
+      const result = await probeJudgeBackendAvailability('claude', '/tmp');
       assert.equal(result.kind, 'failed');
       assert.ok('message' in result);
     } finally {

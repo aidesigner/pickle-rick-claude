@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeStateFile } from '../../services/pickle-utils.js';
 import { createMicroverseState } from '../../services/microverse-state.js';
-import { measureLlmMetric, _deps, handleWorkerManagedIteration } from '../../bin/microverse-runner.js';
+import { measureLlmMetric, measureLlmMetricWithBackoff, _deps, handleWorkerManagedIteration } from '../../bin/microverse-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_ROOT = path.resolve(__dirname, '../..');
@@ -18,6 +18,39 @@ const RUNNER_PATH = path.join(EXTENSION_ROOT, 'bin', 'microverse-runner.js');
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   writeStateFile(filePath, value);
+}
+
+function withTempExtensionSettings(settings, fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-ext-settings-'));
+  const prev = {
+    EXTENSION_DIR: process.env.EXTENSION_DIR,
+    EXTENSION_DIR_TEST: process.env.EXTENSION_DIR_TEST,
+    NODE_ENV: process.env.NODE_ENV,
+  };
+  fs.writeFileSync(path.join(dir, 'pickle_settings.json'), JSON.stringify(settings, null, 2));
+  process.env.EXTENSION_DIR = dir;
+  process.env.EXTENSION_DIR_TEST = '1';
+  process.env.NODE_ENV = 'test';
+  const cleanup = () => {
+    if (prev.EXTENSION_DIR === undefined) delete process.env.EXTENSION_DIR;
+    else process.env.EXTENSION_DIR = prev.EXTENSION_DIR;
+    if (prev.EXTENSION_DIR_TEST === undefined) delete process.env.EXTENSION_DIR_TEST;
+    else process.env.EXTENSION_DIR_TEST = prev.EXTENSION_DIR_TEST;
+    if (prev.NODE_ENV === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prev.NODE_ENV;
+    fs.rmSync(dir, { recursive: true, force: true });
+  };
+  try {
+    const result = fn(dir);
+    if (result && typeof result.then === 'function') {
+      return result.finally(cleanup);
+    }
+    cleanup();
+    return result;
+  } catch (err) {
+    cleanup();
+    throw err;
+  }
 }
 
 function makeGitRepo(root) {
@@ -109,6 +142,31 @@ test('codex backend: judge uses claude binary with default model (R-SCJM-2)', as
       assert.ok(modelIdx >= 0, `claude judge must include --model flag: ${JSON.stringify(argv)}`);
       assert.equal(argv[modelIdx + 1], 'claude-sonnet-4-6', `judge must use DEFAULT_JUDGE_MODEL: ${JSON.stringify(argv)}`);
     }
+  } finally {
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    _deps.execFileSync = originalExec;
+  }
+});
+
+test('microverse codex judge setting still measures through claude binary (R-SCJM-5)', async () => {
+  process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
+  const originalExec = _deps.execFileSync;
+  const captured = [];
+  _deps.execFileSync = (cmd, args) => {
+    captured.push({ cmd, args });
+    return Array.isArray(args) && args[0] === '--version' ? 'claude/2.1.0' : '13';
+  };
+
+  try {
+    const result = await withTempExtensionSettings(
+      { microverse: { judge_backend: 'codex' } },
+      () => measureLlmMetricWithBackoff('settings fixture', 30, os.tmpdir(), undefined, [], undefined, undefined, 'codex'),
+    );
+
+    assert.deepEqual(result.metric, { raw: '13', score: 13 });
+    const measurementCalls = captured.filter(({ args }) => !args.includes('--version'));
+    assert.equal(measurementCalls.length, 1);
+    assert.equal(measurementCalls[0].cmd, 'claude', 'judge measurement must stay on claude when settings pin codex');
   } finally {
     delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
     _deps.execFileSync = originalExec;

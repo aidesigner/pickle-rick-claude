@@ -5,7 +5,7 @@ import * as path from 'path';
 import { execFileSync, execFile, spawn, spawnSync } from 'child_process';
 import { pathToFileURL } from 'node:url';
 import { State, Defaults, MicroverseExitReason } from '../types/index.js';
-import type { ActivityEventType, Backend, IterationExitType, MicroverseSessionState, MicroverseHistoryEntry, ViolationLedger, FailureClass, GateResult, StallClassification, StallRecoveryAction, JudgeResult, Violation } from '../types/index.js';
+import type { ActivityEventType, Backend, IterationExitType, MicroverseSessionState, MicroverseHistoryEntry, ViolationLedger, FailureClass, GateResult, StallClassification, StallRecoveryAction, JudgeResult, Violation, PickleSettings } from '../types/index.js';
 import type { ErrorRecord } from '../types/index.js';
 import {
   resolveBackend,
@@ -45,6 +45,8 @@ import {
   displayMacNotification,
   ensureMonitorWindow,
   collectTickets,
+  getMicroverseSettings,
+  resolveJudgeBackend,
 } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 
@@ -74,6 +76,7 @@ export type MetricSnapshot = { raw: string; score: number };
 type JudgeFailureExitReason = Extract<ExitReason, 'judge_timeout' | 'judge_cli_missing'>;
 type JudgeMeasurementFailureExitReason = Extract<ExitReason, 'judge_timeout' | 'judge_cli_missing' | 'baseline_unmeasurable_unrecoverable'>;
 type CommandMeasurementFailureKind = 'timeout' | 'cli_missing' | 'spawn_failure' | 'failed';
+type ProbeJudgeBackend = Extract<Backend, 'claude' | 'codex'>;
 export type IterationClassification =
   | { kind: 'improved'; metric: MetricSnapshot }
   | { kind: 'regressed'; rollback: true }
@@ -1510,6 +1513,7 @@ type JudgeMeasurementAttempt = {
   metric: MetricSnapshot | null;
   failureKind?: 'timeout' | 'cli_missing' | 'failed';
   message?: string;
+  typedFailure?: ClassifiedJudgeError;
 };
 
 type CommandMeasurementAttempt = {
@@ -1570,7 +1574,7 @@ export class JudgeMeasurementSpawnFailed extends Error {
 
 // R-SJET-1b TRAP DOOR: classifyJudgeError MUST check instanceof typed errors FIRST before
 // regex fallbacks; no standalone ENOENT/ETIMEDOUT regex may appear inside the two spawn
-// function bodies (measureLlmMetricAttempt, probeJudgeCliAvailability). Each body calls
+// function bodies (measureLlmMetricAttempt, probeJudgeBackendAvailability). Each body calls
 // classifyJudgeError exactly once.
 // ENFORCE: AC-SJET-03 unit test + AC-SJET-19 AST scan in R-SJET-6.
 type ClassifiedJudgeError =
@@ -1835,7 +1839,12 @@ async function measureLlmMetricAttempt(
     const msg = safeErrorMessage(err);
     process.stderr.write(`[microverse] measureLlmMetric failed (judge_backend=claude, session_backend=${backend}, model=${model}): ${msg}\n`);
     const classified = classifyJudgeError(err);
-    return { metric: null, failureKind: toAttemptFailureKind(classified), message: msg };
+    return {
+      metric: null,
+      failureKind: toAttemptFailureKind(classified),
+      message: msg,
+      typedFailure: classified.failureKind === 'unknown' ? undefined : classified,
+    };
   }
 
   const score = extractScore(output);
@@ -1852,6 +1861,13 @@ async function measureLlmMetricAttempt(
 type ProbeJudgeResult = { kind: 'ok' } | { kind: 'missing' | 'timeout' | 'failed'; message: string };
 
 type JudgeMeasurementSpawnContext = 'baseline' | 'iteration';
+type JudgeAttemptActivity = {
+  session: string;
+  iteration: number;
+  spawnContext: JudgeMeasurementSpawnContext;
+  statePath?: string;
+  runnerState?: State;
+};
 
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 const MAX_PROBE_TIMEOUT_MS = 60000;
@@ -1867,7 +1883,51 @@ function getProbeTimeoutMs(): number {
   return clamped;
 }
 
-export async function probeJudgeCliAvailability(cwd: string): Promise<ProbeJudgeResult> {
+function isFallbackEligibleBackend(backend: Backend): backend is ProbeJudgeBackend {
+  return backend === 'claude' || backend === 'codex';
+}
+
+function loadMicroverseSettingsBag(): PickleSettings | null {
+  return readRecoverableJsonObject(path.join(getExtensionRoot(), 'pickle_settings.json')) as PickleSettings | null;
+}
+
+function persistWorkerIterationFallback(
+  attemptActivity: JudgeAttemptActivity | undefined,
+  fallbackBackend: ProbeJudgeBackend,
+): void {
+  if (attemptActivity?.runnerState) {
+    attemptActivity.runnerState.judge_backend_resolved = fallbackBackend;
+    attemptActivity.runnerState.worker_backend = fallbackBackend;
+  }
+  if (!attemptActivity?.statePath) return;
+  try {
+    sm.update(attemptActivity.statePath, s => {
+      s.judge_backend_resolved = fallbackBackend;
+      s.worker_backend = fallbackBackend;
+    });
+  } catch (err) {
+    process.stderr.write(`[microverse] could not persist worker fallback backend (${fallbackBackend}): ${safeErrorMessage(err)}\n`);
+  }
+}
+
+function resolveWorkerIterationFallbackBackend(
+  backend: Backend,
+  attempt: number,
+  typedFailure: ClassifiedJudgeError | undefined,
+  attemptActivity: JudgeAttemptActivity | undefined,
+  settings: PickleSettings | null,
+): ProbeJudgeBackend | null {
+  if (!typedFailure) return null;
+  if (attemptActivity?.spawnContext !== 'iteration') return null;
+  if (!isFallbackEligibleBackend(backend)) return null;
+  const microverseSettings = getMicroverseSettings(settings);
+  if (microverseSettings.judge_backend !== 'auto' && microverseSettings.judge_backend === backend) return null;
+  const runnerState = (attemptActivity.runnerState ?? { flags: {} }) as State;
+  const fallbackBackend = resolveJudgeBackend(runnerState, settings, attempt, typedFailure);
+  return fallbackBackend !== backend ? fallbackBackend : null;
+}
+
+export async function probeJudgeBackendAvailability(backend: ProbeJudgeBackend, cwd: string): Promise<ProbeJudgeResult> {
   const timeoutMs = getProbeTimeoutMs();
 
   const toProbeKind = (c: ClassifiedJudgeError): 'missing' | 'timeout' | 'failed' => {
@@ -1878,20 +1938,20 @@ export async function probeJudgeCliAvailability(cwd: string): Promise<ProbeJudge
 
   try {
     if (process.env['PICKLE_JUDGE_LEGACY_SPAWN'] === '1') {
-      _deps.execFileSync('claude', ['--version'], {
+      _deps.execFileSync(backend, ['--version'], {
         cwd,
         timeout: timeoutMs,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ...backendEnvOverrides('claude') },
+        env: { ...process.env, ...backendEnvOverrides(backend) },
       });
     } else {
       await new Promise<void>((resolve, reject) => {
         let settled = false;
-        const child = _deps.execFile('claude', ['--version'], {
+        const child = _deps.execFile(backend, ['--version'], {
           cwd,
           encoding: 'utf-8',
-          env: { ...process.env, ...backendEnvOverrides('claude') },
+          env: { ...process.env, ...backendEnvOverrides(backend) },
         }, (err) => {
           if (settled) return;
           settled = true;
@@ -1915,13 +1975,14 @@ export async function probeJudgeCliAvailability(cwd: string): Promise<ProbeJudge
     const kind = toProbeKind(classified);
     const message = safeErrorMessage(err);
     if (kind === 'timeout') {
-      const diagLine = `[microverse] judge probe timed out at ${timeoutMs}ms (claude --version exceeded probe timeout); falling back to measurement loop with 10s/30s/60s backoff. If this recurs, set PICKLE_JUDGE_PROBE_TIMEOUT_MS=10000 or higher.`;
+      const diagLine = `[microverse] judge probe timed out at ${timeoutMs}ms (${backend} --version exceeded probe timeout); falling back to measurement loop with 10s/30s/60s backoff. If this recurs, set PICKLE_JUDGE_PROBE_TIMEOUT_MS=10000 or higher.`;
       process.stderr.write(diagLine + '\n');
     }
     return { kind, message };
   }
 }
 
+// eslint-disable-next-line complexity -- R-LINT-2 owns the structural refactor; keep the judge trap-door logic explicit here.
 export async function measureLlmMetricWithBackoff(
   goal: string,
   timeoutSeconds: number,
@@ -1932,9 +1993,15 @@ export async function measureLlmMetricWithBackoff(
   judgeContextPath?: string,
   backend: Backend = 'claude',
   priorViolations: ViolationLedger[] = [],
-  attemptActivity?: { session: string; iteration: number; spawnContext: JudgeMeasurementSpawnContext },
+  attemptActivity?: JudgeAttemptActivity,
 ): Promise<JudgeMeasurementResult> {
-  const probe = await probeJudgeCliAvailability(cwd);
+  const primaryWorkerBackend = backend;
+  const settings = attemptActivity?.spawnContext === 'iteration'
+    ? loadMicroverseSettingsBag()
+    : null;
+  let attemptBackend = backend;
+  let workerFallbackActivated = false;
+  const probe = await probeJudgeBackendAvailability('claude', cwd);
   if (probe.kind === 'missing') {
     return {
       metric: null,
@@ -1959,7 +2026,7 @@ export async function measureLlmMetricWithBackoff(
       history,
       prdPath,
       judgeContextPath,
-      backend,
+      attemptBackend,
       priorViolations,
     );
     const elapsedMs = Math.max(0, Date.now() - startedAt);
@@ -1980,10 +2047,10 @@ export async function measureLlmMetricWithBackoff(
           source: 'pickle',
           session: attemptActivity.session,
           iteration: attemptActivity.iteration,
-          backend,
+          backend: attemptBackend,
           judge_backend: 'claude',
           model: judgeModel || DEFAULT_JUDGE_MODEL,
-          fallback_activated: backend !== 'claude' || probe.kind === 'timeout',
+          fallback_activated: workerFallbackActivated || primaryWorkerBackend !== 'claude' || probe.kind === 'timeout',
           spawn_context: attemptActivity.spawnContext,
           gate_payload: {
             attempt: attempt + 1,
@@ -2001,6 +2068,20 @@ export async function measureLlmMetricWithBackoff(
       return { metric: result.metric, attempts: attempt + 1 };
     }
     lastError = result.message ?? null;
+    if (!workerFallbackActivated) {
+      const fallbackBackend = resolveWorkerIterationFallbackBackend(
+        attemptBackend,
+        attempt + 1,
+        result.typedFailure,
+        attemptActivity,
+        settings,
+      );
+      if (fallbackBackend) {
+        workerFallbackActivated = true;
+        attemptBackend = fallbackBackend;
+        persistWorkerIterationFallback(attemptActivity, fallbackBackend);
+      }
+    }
     if (result.failureKind === 'cli_missing') {
       return {
         metric: null,
@@ -2474,7 +2555,11 @@ async function measureLlmBaseline(
     state.judge_context_path,
     backend,
     [],
-    { session: path.basename(ctx.sessionDir), iteration: ctx.iteration, spawnContext: 'baseline' },
+    {
+      session: path.basename(ctx.sessionDir),
+      iteration: ctx.iteration,
+      spawnContext: 'baseline',
+    },
   );
   if (measured.metric) return measured.metric;
   const exitReason: ExitReason = mapJudgeMeasurementFailure(measured);
@@ -2568,7 +2653,7 @@ export async function executeGapAnalysis(
       ctx.log(`WARNING: Could not re-read state.json before baseline (${safeErrorMessage(err)}) — using in-memory state`);
     }
   }
-  const backend = resolveBackend(ctx.currentRunnerState);
+  const backend = resolveWorkerBackendFromState(ctx.currentRunnerState).backend;
   const baseline: MetricSnapshot | null = state.key_metric.type === 'llm'
     ? await measureLlmBaseline(state, ctx, backend)
     : state.key_metric.type === 'command'
@@ -2693,6 +2778,7 @@ function buildMetricHistoryEntry(
     description: `${classification}: ${metricResult.score} vs ${previousScore}`,
     pre_iteration_sha: ctx.preIterSha ?? '',
     timestamp: new Date().toISOString(),
+    ...(state.key_metric.type === 'llm' ? { judge_backend_used: 'claude' as const } : {}),
   };
 }
 
@@ -2732,7 +2818,13 @@ async function measureLlmIteration(
     state.judge_context_path,
     backend,
     state.violation_ledger ?? [],
-    { session: path.basename(ctx.sessionDir), iteration: ctx.iteration, spawnContext: 'iteration' },
+    {
+      session: path.basename(ctx.sessionDir),
+      iteration: ctx.iteration,
+      spawnContext: 'iteration',
+      statePath: ctx.statePath,
+      runnerState: ctx.currentRunnerState,
+    },
   );
   if (measured.metric) return { kind: 'ok', metric: measured.metric };
   const exitReason = mapJudgeMeasurementFailure(measured);
@@ -2787,7 +2879,7 @@ export async function measureAndClassifyIteration(
   baseline: MetricSnapshot,
   ctx: RunContext,
 ): Promise<IterationClassification> {
-  const backend = resolveBackend(ctx.currentRunnerState);
+  const backend = resolveWorkerBackendFromState(ctx.currentRunnerState).backend;
   let metricResult: MetricSnapshot;
   let currentLedger: { resolved: string[]; new: string[]; remaining: string[] } | undefined;
   let previousLedger: { resolved: string[]; new: string[]; remaining: string[] } | undefined;
