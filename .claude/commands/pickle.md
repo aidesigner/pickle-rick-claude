@@ -1,5 +1,5 @@
 <!-- BEGIN GIT_BOUNDARY_RULES -->
-## Git Boundary Rules (READ FIRST — applies to every step)
+### Git Boundary Rules (READ FIRST — applies to every step)
 
 You are pinned to the current branch. The pipeline owns branch state.
 
