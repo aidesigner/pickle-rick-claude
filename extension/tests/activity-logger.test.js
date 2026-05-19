@@ -194,6 +194,11 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'session_map_collision_blocked',
         'state_write_override_used',
         'state_write_schema_version_violation',
+        'install_sh_override_used',
+        'tsc_gate_failed',
+        'tsc_gate_override_used',
+        'tsc_gate_override_consumed',
+        'tsc_gate_crashed',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
