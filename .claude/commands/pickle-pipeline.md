@@ -166,7 +166,7 @@ If pipeline launch halts at a quality gate, edit `${SESSION_ROOT}/state.json` an
 ```
 This unified flag (R-QGSK-2, `b2ddf584`) covers both readiness AND ticket-audit gates.
 
-**Legacy**: `skip_readiness_reason` and `skip_ticket_audit_reason` are still honored but emit a deprecation warning. Migrate to the unified flag.
+**Legacy**: `state.flags.skip_readiness_reason` and `state.flags.skip_ticket_audit_reason` are still honored but emit a deprecation warning. Migrate to the unified flag.
 
 Each override must contain a short reason string. The gate writes an activity breadcrumb for the skip, then the pipeline proceeds on the next launch.
 
