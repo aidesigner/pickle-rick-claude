@@ -20,7 +20,7 @@ export interface AutoFillCompletionCommitResult {
 }
 
 function parseStateStartEpoch(statePath: string | null | undefined): number | null {
-  if (!statePath || !fs.existsSync(statePath)) return null;
+  if (!statePath) return null;
   try {
     const raw = readRecoverableJsonObject(statePath) as { start_time_epoch?: unknown } | null;
     const parsed = Number(raw?.start_time_epoch);

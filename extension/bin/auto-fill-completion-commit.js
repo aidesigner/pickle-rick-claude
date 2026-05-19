@@ -6,7 +6,7 @@ import { hasCompletionCommit, readFrontmatterField, ticketFilePath, upsertFrontm
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { writeActivityEntry } from '../services/state-manager.js';
 function parseStateStartEpoch(statePath) {
-    if (!statePath || !fs.existsSync(statePath))
+    if (!statePath)
         return null;
     try {
         const raw = readRecoverableJsonObject(statePath);
