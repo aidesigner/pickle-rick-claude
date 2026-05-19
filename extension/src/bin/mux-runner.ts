@@ -59,7 +59,9 @@ export function detectOrphanSessions(
     const siblingStatePath = path.join(sessionsRoot, entry, 'state.json');
     let sibling: Record<string, unknown>;
     try {
-      sibling = JSON.parse(fs.readFileSync(siblingStatePath, 'utf-8')) as Record<string, unknown>;
+      const recovered = readRecoverableJsonObject(siblingStatePath);
+      if (!recovered || typeof recovered !== 'object' || Array.isArray(recovered)) continue;
+      sibling = recovered as Record<string, unknown>;
     } catch { continue; }
     const siblingParentHash = typeof sibling.parent_session_hash === 'string' && sibling.parent_session_hash
       ? sibling.parent_session_hash : null;

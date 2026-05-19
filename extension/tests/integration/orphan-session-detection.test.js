@@ -47,6 +47,15 @@ function writeFakeSession(dataRoot, sessionName, stateOverrides) {
   return sessionDir;
 }
 
+function writeRecoverableSiblingTmp(sessionDir, stateOverrides, suffix = '999999') {
+  const tmpPath = path.join(sessionDir, `state.json.tmp.${suffix}`);
+  const stateData = makeState({ session_dir: sessionDir, ...stateOverrides });
+  fs.writeFileSync(tmpPath, JSON.stringify(stateData));
+  const future = new Date(Date.now() + 5_000);
+  fs.utimesSync(tmpPath, future, future);
+  return tmpPath;
+}
+
 test('orphan-session-detection: synthetic orphan with parent_session_hash fires exactly 1 result', () => {
   const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'orphan-test-'));
   const parentSessionDir = writeFakeSession(dataRoot, 'parent-session', {
@@ -143,6 +152,48 @@ test('orphan-session-detection: concurrent legitimate session (no parent_session
     const results = detectOrphanSessions(parentState, dataRoot, parentSessionDir);
 
     assert.equal(results.length, 0, 'legitimate session must not trigger orphan detection');
+  } finally {
+    fs.rmSync(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test('orphan-session-detection: promotes newer sibling tmp snapshot before orphan scan', () => {
+  const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'orphan-recoverable-'));
+  const parentSessionDir = writeFakeSession(dataRoot, 'parent-session', {
+    working_dir: '/proj/myapp',
+    orphans_detected: [],
+    parent_session_hash: null,
+    invocation_source: 'operator',
+    pid: process.pid,
+  });
+  const orphanSessionDir = writeFakeSession(dataRoot, 'orphan-session', {
+    working_dir: '/proj/myapp',
+    parent_session_hash: null,
+    invocation_source: 'operator',
+    pid: 11111,
+    start_time_epoch: 1747350000,
+  });
+  const tmpPath = writeRecoverableSiblingTmp(orphanSessionDir, {
+    working_dir: '/proj/myapp',
+    parent_session_hash: 'tmp-parent',
+    invocation_source: 'manager_subprocess',
+    pid: 22222,
+    start_time_epoch: 1747351234,
+  });
+
+  try {
+    const staleBase = path.join(orphanSessionDir, 'state.json');
+    const oldTime = new Date('2026-05-19T10:00:00.000Z');
+    fs.utimesSync(staleBase, oldTime, oldTime);
+    const parentState = sm.read(path.join(parentSessionDir, 'state.json'));
+    const results = detectOrphanSessions(parentState, dataRoot, parentSessionDir);
+
+    assert.equal(results.length, 1, 'recoverable tmp should make the orphan visible');
+    assert.equal(results[0].orphan_session_path, orphanSessionDir);
+    assert.equal(results[0].parent_session_hash, 'tmp-parent');
+    assert.equal(results[0].orphan_pid, 22222);
+    assert.equal(results[0].orphan_started_at, 1747351234);
+    assert.equal(fs.existsSync(tmpPath), false, 'recoverable tmp should be promoted into state.json');
   } finally {
     fs.rmSync(dataRoot, { recursive: true, force: true });
   }

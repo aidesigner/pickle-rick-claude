@@ -41,7 +41,10 @@ export function detectOrphanSessions(state, dataRoot, sessionDir) {
         const siblingStatePath = path.join(sessionsRoot, entry, 'state.json');
         let sibling;
         try {
-            sibling = JSON.parse(fs.readFileSync(siblingStatePath, 'utf-8'));
+            const recovered = readRecoverableJsonObject(siblingStatePath);
+            if (!recovered || typeof recovered !== 'object' || Array.isArray(recovered))
+                continue;
+            sibling = recovered;
         }
         catch {
             continue;
@@ -3282,7 +3285,9 @@ async function runMuxRunnerMain() {
     const sessionDir = process.argv[2];
     const statePath = sessionDir ? path.join(sessionDir, 'state.json') : '';
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    if (!sessionDir || sessionDir.startsWith('--') || readRecoverableJsonObject(statePath) === null) {
+    if (!sessionDir
+        || sessionDir.startsWith('--')
+        || readRecoverableJsonObject(statePath) === null) {
         console.error('Usage: node mux-runner.js <session-dir>');
         process.exit(1);
     }
