@@ -3,10 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { StateManager } from '../extension/services/state-manager.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const ARTIFACT_PATH = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.json');
 const RUNTIME_ARTIFACT_PATH = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.runtime.json');
+const sm = new StateManager();
 const STABLE_ARTIFACT = {
   ac_id: 'AC-DR-02',
   pass: true,
@@ -100,13 +103,16 @@ export function verifyRecaptureFired(sessionRoot) {
 
   let state;
   try {
-    state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    state = sm.read(statePath);
   } catch (err) {
+    const failureReason = err && typeof err === 'object' && 'code' in err && err.code === 'MISSING'
+      ? 'state-missing'
+      : 'state-unreadable';
     return {
-      exitCode: 1,
+      exitCode: failureReason === 'state-missing' ? 2 : 1,
       artifact: writeRuntimeArtifact({
         pass: false,
-        failureReason: 'state-unreadable',
+        failureReason,
         evidence: {
           state_path: statePath,
           read_error: err instanceof Error ? err.message : String(err),

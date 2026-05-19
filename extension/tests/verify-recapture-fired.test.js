@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -46,6 +47,30 @@ function baseState(activity) {
       { step: 'szechuan-sauce', timestamp: '2026-05-02T12:00:00.000Z' },
     ],
     activity,
+  };
+}
+
+function recoverableState(activity) {
+  return {
+    active: false,
+    working_dir: REPO_ROOT,
+    step: 'anatomy-park',
+    iteration: 7,
+    max_iterations: 100,
+    max_time_minutes: 720,
+    worker_timeout_seconds: 1200,
+    start_time_epoch: 1,
+    completion_promise: null,
+    original_prompt: 'verify recapture orphan recovery',
+    history: [
+      { step: 'pickle', timestamp: '2026-05-02T10:00:00.000Z' },
+      { step: 'anatomy-park', timestamp: '2026-05-02T11:00:00.000Z' },
+      { step: 'szechuan-sauce', timestamp: '2026-05-02T12:00:00.000Z' },
+    ],
+    activity,
+    started_at: '2026-05-02T10:00:00.000Z',
+    session_dir: REPO_ROOT,
+    schema_version: 4,
   };
 }
 
@@ -174,6 +199,29 @@ test('verify-recapture.corrupt-state writes unreadable-state artifact instead of
     assert.equal(result.runtimeArtifact.failure_reason, 'state-unreadable');
     assert.equal(result.runtimeArtifact.evidence.state_path, path.join(session, 'state.json'));
     assert.match(result.runtimeArtifact.evidence.read_error, /Expected property name|JSON/i);
+  } finally {
+    rmSync(session, { recursive: true, force: true });
+  }
+});
+
+test('verify-recapture.recovers orphan tmp state before evaluating the latest anatomy window', () => {
+  const session = mkdtempSync(path.join(tmpdir(), 'verify-recapture-orphan-'));
+  const statePath = path.join(session, 'state.json');
+  const orphanPath = `${statePath}.tmp.999999`;
+  writeFileSync(statePath, '{bad json\n');
+  writeFileSync(orphanPath, `${JSON.stringify(recoverableState([
+    {
+      ts: '2026-05-02T11:15:00.000Z',
+      event: 'baseline_recapture_attempted',
+      iteration: 7,
+    },
+  ]), null, 2)}\n`);
+  try {
+    const result = runVerifier(session);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.runtimeArtifact.pass, true);
+    assert.equal(result.runtimeArtifact.failure_reason, null);
+    assert.equal(existsSync(orphanPath), false, 'orphan tmp should be consumed during recovery');
   } finally {
     rmSync(session, { recursive: true, force: true });
   }
