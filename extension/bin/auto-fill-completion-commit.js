@@ -3,13 +3,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { hasCompletionCommit, readFrontmatterField, ticketFilePath, upsertFrontmatterField } from '../services/pickle-utils.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { writeActivityEntry } from '../services/state-manager.js';
 function parseStateStartEpoch(statePath) {
     if (!statePath || !fs.existsSync(statePath))
         return null;
     try {
-        const raw = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-        const parsed = Number(raw.start_time_epoch);
+        const raw = readRecoverableJsonObject(statePath);
+        const parsed = Number(raw?.start_time_epoch);
         return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
     }
     catch {

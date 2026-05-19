@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { hasCompletionCommit, readFrontmatterField, ticketFilePath, upsertFrontmatterField } from '../services/pickle-utils.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { writeActivityEntry } from '../services/state-manager.js';
 
 export interface AutoFillCompletionCommitInput {
@@ -21,8 +22,8 @@ export interface AutoFillCompletionCommitResult {
 function parseStateStartEpoch(statePath: string | null | undefined): number | null {
   if (!statePath || !fs.existsSync(statePath)) return null;
   try {
-    const raw = JSON.parse(fs.readFileSync(statePath, 'utf8')) as { start_time_epoch?: unknown };
-    const parsed = Number(raw.start_time_epoch);
+    const raw = readRecoverableJsonObject(statePath) as { start_time_epoch?: unknown } | null;
+    const parsed = Number(raw?.start_time_epoch);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   } catch {
     return null;

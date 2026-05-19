@@ -90,3 +90,57 @@ test('autoFillCompletionCommit: fills missing completion_commit, stages the tick
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('autoFillCompletionCommit: promotes recoverable state tmp before inferring completion evidence', () => {
+  const root = makeTmpRoot();
+  try {
+    initGitRepo(root);
+    const sessionDir = path.join(root, 'session');
+    const ticketId = '4b5f3f21';
+    const ticketPath = writeTicket(sessionDir, ticketId);
+    const statePath = path.join(sessionDir, 'state.json');
+    const oldEpoch = 1_700_000_000;
+    const commitEpoch = oldEpoch + 60;
+    const recoveredEpoch = oldEpoch + 120;
+
+    fs.writeFileSync(statePath, JSON.stringify({
+      start_time_epoch: oldEpoch,
+      activity: [],
+    }, null, 2));
+
+    fs.writeFileSync(path.join(root, 'worker-output.txt'), 'worker changes\n');
+    execFileSync('git', ['add', 'worker-output.txt'], { cwd: root });
+    execFileSync('git', ['commit', '-m', `fix(${ticketId}): stale session evidence`, '--no-gpg-sign'], {
+      cwd: root,
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: `${commitEpoch} +0000`,
+        GIT_COMMITTER_DATE: `${commitEpoch} +0000`,
+      },
+    });
+
+    fs.writeFileSync(
+      `${statePath}.tmp.999999999.1`,
+      JSON.stringify({
+        start_time_epoch: recoveredEpoch,
+        activity: [],
+      }, null, 2),
+    );
+
+    const result = autoFillCompletionCommit({
+      sessionDir,
+      workingDir: root,
+      ticketId,
+      statePath,
+    });
+
+    assert.deepEqual(result, [{ ticketId, sha: null, action: 'no_evidence' }]);
+    const updated = fs.readFileSync(ticketPath, 'utf8');
+    assert.doesNotMatch(updated, /completion_commit:/);
+    const recoveredState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.equal(recoveredState.start_time_epoch, recoveredEpoch);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
