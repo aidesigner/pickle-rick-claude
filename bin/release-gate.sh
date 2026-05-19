@@ -110,7 +110,7 @@ post_tag() {
   tmpdir="$(mktemp -d)"
   RELEASE_GATE_TMPDIR="$tmpdir"
   trap 'rm -rf "$RELEASE_GATE_TMPDIR"' EXIT
-  gh release download "$tag" -R "$REPO" -A 'tar.gz' -D "$tmpdir" >/dev/null 2>&1 || die 20 "release download failed for $tag"
+  gh release download "$tag" -R "$REPO" -p '*.tar.gz' -D "$tmpdir" >/dev/null 2>&1 || die 20 "release download failed for $tag"
 
   local tarball pkg_member pkg tagged
   tarball="$(select_installable_tarball "$tmpdir" "$tag")"

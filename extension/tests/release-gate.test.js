@@ -77,10 +77,11 @@ function makeSidecarTarball(archiveName = 'sidecar.tar.gz', { includeInstallScri
   return { dir, tarball };
 }
 
-function makeGhFixture({ mode = 'ok', tarball, tarballs, fakeFindNames }) {
+function makeGhFixture({ mode = 'ok', tarball, tarballs, fakeFindNames, downloadAssert }) {
   const binDir = mkdtempSync(path.join(tmpdir(), 'release-gate-bin-'));
   const ghPath = path.join(binDir, 'gh');
   const downloadTarballs = tarballs ?? (tarball ? [tarball] : ['/no/such/file']);
+  const downloadAssertBlock = downloadAssert ?? '';
   writeFileSync(
     ghPath,
     `#!/usr/bin/env bash
@@ -93,6 +94,7 @@ if [ "$1" = "api" ]; then
 fi
 if [ "$1" = "release" ] && [ "$2" = "download" ]; then
   if [ "$mode" = "download-fail" ]; then exit 1; fi
+  ${downloadAssertBlock}
   dest=""
   while [ "$#" -gt 0 ]; do
     if [ "$1" = "-D" ]; then
@@ -207,6 +209,33 @@ describe('release-gate.post-tag', () => {
     const { dir: repoDir, tagName } = makeGitFixture();
     const tarFixture = makeTarball('1.67.0');
     const ghDir = makeGhFixture({ tarball: tarFixture.tarball });
+    try {
+      const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /ok/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(tarFixture.dir, { recursive: true, force: true });
+      rmSync(ghDir, { recursive: true, force: true });
+    }
+  });
+
+  test('requests release tar.gz assets via glob pattern instead of the source archive flag', () => {
+    const { dir: repoDir, tagName } = makeGitFixture();
+    const tarFixture = makeTarball('1.67.0');
+    const ghDir = makeGhFixture({
+      tarball: tarFixture.tarball,
+      downloadAssert: `
+download_args=" $* "
+case "$download_args" in
+  *" -p *.tar.gz "*|*" --pattern *.tar.gz "*) ;;
+  *) exit 98 ;;
+esac
+case "$download_args" in
+  *" -A tar.gz "*|*" --archive tar.gz "*) exit 99 ;;
+esac
+`,
+    });
     try {
       const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
       assert.equal(result.status, 0, result.stderr);
