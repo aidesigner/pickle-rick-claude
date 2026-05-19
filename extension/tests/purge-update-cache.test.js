@@ -20,16 +20,19 @@ function makeFixture() {
   const cachePath = path.join(runtimeRoot, 'update-check.json');
   const auditPath = path.join(runtimeRoot, 'deploy-audit.log');
   const tarballDir = path.join(tmpRoot, 'pickle-update-fixture');
+  const extractDir = path.join(tmpRoot, 'pickle-extract-fixture');
   mkdirSync(runtimeRoot, { recursive: true });
   mkdirSync(varFoldersRoot, { recursive: true });
   mkdirSync(tarballDir, { recursive: true });
+  mkdirSync(extractDir, { recursive: true });
   writeFileSync(cachePath, JSON.stringify({
     last_check_epoch: 1,
     latest_version: '1.0.0',
     current_version: '1.0.0',
   }));
   writeFileSync(path.join(tarballDir, 'release.tar.gz'), 'fixture');
-  return { dir, homeDir, tmpRoot, varFoldersRoot, cachePath, auditPath, tarballDir };
+  writeFileSync(path.join(extractDir, 'install.sh'), '#!/usr/bin/env bash\nexit 0\n');
+  return { dir, homeDir, tmpRoot, varFoldersRoot, cachePath, auditPath, tarballDir, extractDir };
 }
 
 function runPurge(fixture, args = []) {
@@ -45,13 +48,14 @@ function runPurge(fixture, args = []) {
 }
 
 describe('purge-update-cache.js', () => {
-  test('removes update cache, tmpdir tarballs, and appends audit log', () => {
+  test('removes update cache, updater tmp roots, and appends audit log', () => {
     const fixture = makeFixture();
     try {
       const result = runPurge(fixture);
       assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
       assert.equal(existsSync(fixture.cachePath), false);
       assert.equal(existsSync(fixture.tarballDir), false);
+      assert.equal(existsSync(fixture.extractDir), false);
 
       const lines = readFileSync(fixture.auditPath, 'utf8').trim().split('\n');
       assert.equal(lines.length, 1);
@@ -59,6 +63,7 @@ describe('purge-update-cache.js', () => {
       assert.equal(audit.event, 'CACHE_PURGE');
       assert.ok(audit.removed_paths.includes(fixture.cachePath));
       assert.ok(audit.removed_paths.includes(fixture.tarballDir));
+      assert.ok(audit.removed_paths.includes(fixture.extractDir));
       assert.equal(typeof audit.ts, 'string');
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
@@ -70,6 +75,7 @@ describe('purge-update-cache.js', () => {
     try {
       rmSync(fixture.cachePath, { force: true });
       rmSync(fixture.tarballDir, { recursive: true, force: true });
+      rmSync(fixture.extractDir, { recursive: true, force: true });
       const result = runPurge(fixture);
       assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
       assert.equal(existsSync(fixture.auditPath), false);
@@ -85,6 +91,7 @@ describe('purge-update-cache.js', () => {
       assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
       assert.equal(existsSync(fixture.cachePath), true);
       assert.equal(existsSync(fixture.tarballDir), true);
+      assert.equal(existsSync(fixture.extractDir), true);
       assert.equal(existsSync(fixture.auditPath), false);
       assert.match(result.stderr, /Would remove/);
     } finally {

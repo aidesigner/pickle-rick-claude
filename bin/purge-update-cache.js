@@ -46,6 +46,13 @@ function collectPrefixMatches(dir, prefix) {
   }
 }
 
+function collectTmpRootMatches(dir) {
+  return [
+    ...collectPrefixMatches(dir, 'pickle-update-'),
+    ...collectPrefixMatches(dir, 'pickle-extract-'),
+  ];
+}
+
 function collectVarFolderMatches(rootDir) {
   const matches = [];
   const stack = [rootDir];
@@ -86,7 +93,7 @@ function appendAudit() {
 removePath(cachePath);
 
 const tmpRoot = process.env.TMPDIR || os.tmpdir();
-for (const targetPath of collectPrefixMatches(tmpRoot, 'pickle-update-')) {
+for (const targetPath of collectTmpRootMatches(tmpRoot)) {
   removePath(targetPath);
 }
 
