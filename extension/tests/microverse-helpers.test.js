@@ -230,6 +230,7 @@ test('measureAndClassifyIteration consumes structured LLM judge ledger before nu
   fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify(runnerState, null, 2));
   writeMicroverseState(sessionDir, mv);
 
+  process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
   const originalExec = _deps.execFileSync;
   try {
     _deps.execFileSync = (_cmd, args) => {
@@ -261,6 +262,7 @@ test('measureAndClassifyIteration consumes structured LLM judge ledger before nu
       }],
     );
   } finally {
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
     _deps.execFileSync = originalExec;
     fs.rmSync(sessionDir, { recursive: true, force: true });
     fs.rmSync(workingDir, { recursive: true, force: true });
@@ -312,6 +314,7 @@ test('measureAndClassifyIteration drops resolved violations from the live ledger
   fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify(runnerState, null, 2));
   writeMicroverseState(sessionDir, mv);
 
+  process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
   const originalExec = _deps.execFileSync;
   const originalReset = _deps.resetToSha;
   let pass = 0;
@@ -339,6 +342,7 @@ test('measureAndClassifyIteration drops resolved violations from the live ledger
     await measureAndClassifyIteration(mv, { raw: '40', score: 40 }, secondCtx);
     assert.deepEqual(mv.violation_ledger, [], 'resolved violations must be removed from the live ledger');
   } finally {
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
     _deps.resetToSha = originalReset;
     _deps.execFileSync = originalExec;
     fs.rmSync(sessionDir, { recursive: true, force: true });

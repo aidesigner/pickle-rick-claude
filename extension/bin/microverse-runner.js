@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { execFileSync, spawn, spawnSync } from 'child_process';
+import { execFileSync, execFile, spawn, spawnSync } from 'child_process';
 import { pathToFileURL } from 'node:url';
 import { Defaults } from '../types/index.js';
 import { resolveBackend, resolveWorkerBackendFromState, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
@@ -677,6 +677,7 @@ export function measureMetric(validation, timeoutSeconds, cwd) {
 /** @internal test seam — do not use outside tests */
 export const _deps = {
     execFileSync: execFileSync,
+    execFile: execFile,
     spawn: spawn,
     spawnSync: spawnSync,
     displayMacNotification: displayMacNotification,
@@ -1064,8 +1065,8 @@ export function parseLlmJudgeOutput(rawOutput) {
         shape: 'full',
     };
 }
-export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = []) {
-    return measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend, priorViolations).metric;
+export async function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = []) {
+    return (await measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend, priorViolations)).metric;
 }
 function isMissingCliError(err) {
     if (!err || typeof err !== 'object')
@@ -1075,12 +1076,42 @@ function isMissingCliError(err) {
         return true;
     return /not found|ENOENT/i.test(safeErrorMessage(err));
 }
+// R-SJET-1a TRAP DOOR: both judge spawn sites MUST use stdio: ['ignore', 'pipe', 'pipe']
+// when PICKLE_JUDGE_LEGACY_SPAWN is unset. stdin 'ignore' closes stdin immediately so
+// the claude CLI does not block waiting for EOF before producing output.
+// BREAKS: reverting to ['pipe', 'pipe', 'pipe'] re-introduces the 180s deterministic hang.
+// ENFORCE: AC-SJET-01 grep count + R-SJET-6 integration test.
+export class JudgeMeasurementTimeout extends Error {
+    elapsed_ms;
+    kind = 'timeout';
+    constructor(msg, elapsed_ms) {
+        super(msg);
+        this.elapsed_ms = elapsed_ms;
+        this.name = 'JudgeMeasurementTimeout';
+    }
+}
+export class JudgeMeasurementSpawnFailed extends Error {
+    cause_code;
+    kind = 'spawn_failed';
+    constructor(msg, cause_code) {
+        super(msg);
+        this.cause_code = cause_code;
+        this.name = 'JudgeMeasurementSpawnFailed';
+    }
+}
 export function classifyJudgeError(err) {
+    if (err instanceof JudgeMeasurementTimeout)
+        return { failureKind: 'timeout', elapsed_ms: err.elapsed_ms };
+    if (err instanceof JudgeMeasurementSpawnFailed) {
+        return err.cause_code === 'ENOENT'
+            ? { failureKind: 'cli_missing' }
+            : { failureKind: 'spawn_failed', cause_code: err.cause_code };
+    }
     if (isMissingCliError(err))
-        return 'missing';
+        return { failureKind: 'cli_missing' };
     if (/\bETIMEDOUT\b/i.test(safeErrorMessage(err)))
-        return 'timeout';
-    return 'failed';
+        return { failureKind: 'timeout' };
+    return { failureKind: 'unknown' };
 }
 const COMMAND_METRIC_KILL_GRACE_MS = 1000;
 function summarizeCommandFailure(base, stdout, stderr) {
@@ -1229,13 +1260,12 @@ async function measureMetricWithRetry(validation, timeoutSeconds, cwd) {
         lastError: second.message ?? first.message ?? null,
     };
 }
-function measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = []) {
+async function measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = []) {
     // The judge always runs via the claude binary, even when state.backend=codex.
     // codex on ChatGPT accounts rejects claude-sonnet-4-6 as unsupported, causing
     // silent false-convergence (BestScore: 0). Worker iteration spawns continue
     // to honor state.backend; only the judge is pinned to claude.
     const model = judgeModel || DEFAULT_JUDGE_MODEL;
-    const timeout = Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT);
     const userPrompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath, priorViolations);
     // Always use the claude judge path: --allowedTools Read,Glob,Grep +
     // --no-session-persistence + --system-prompt. The judge MUST NOT write,
@@ -1248,31 +1278,74 @@ function measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history,
         systemPrompt: JUDGE_SYSTEM_PROMPT,
     });
     const { cmd, args } = invocation;
+    const toAttemptFailureKind = (c) => {
+        if (c.failureKind === 'spawn_failed' || c.failureKind === 'unknown')
+            return 'failed';
+        return c.failureKind;
+    };
+    let output;
     try {
-        const output = _deps.execFileSync(cmd, args, {
-            cwd,
-            timeout: timeout * 1000,
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env: { ...process.env, ...backendEnvOverrides('claude') },
-        }).trim();
-        const score = extractScore(output);
-        if (score === null) {
-            return {
-                metric: null,
-                failureKind: 'failed',
-                message: 'judge output did not contain a numeric score',
-            };
+        if (process.env['PICKLE_JUDGE_LEGACY_SPAWN'] === '1') {
+            const timeout = Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT);
+            output = _deps.execFileSync(cmd, args, {
+                cwd,
+                timeout: timeout * 1000,
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe'],
+                env: { ...process.env, ...backendEnvOverrides('claude') },
+            }).trim();
         }
-        return { metric: { raw: output, score } };
+        else {
+            const timeout = Math.max(timeoutSeconds, 1);
+            output = await new Promise((resolve, reject) => {
+                let settled = false;
+                const child = _deps.execFile(cmd, args, {
+                    cwd,
+                    encoding: 'utf-8',
+                    env: { ...process.env, ...backendEnvOverrides('claude') },
+                }, (err, stdout) => {
+                    if (settled)
+                        return;
+                    settled = true;
+                    clearTimeout(timer);
+                    if (err) {
+                        reject(err);
+                    }
+                    else {
+                        resolve(stdout.trim());
+                    }
+                });
+                child.stdin?.destroy();
+                const timer = setTimeout(() => {
+                    if (settled)
+                        return;
+                    settled = true;
+                    child.kill('SIGTERM');
+                    setTimeout(() => { try {
+                        child.kill('SIGKILL');
+                    }
+                    catch { /* already dead */ } }, 2000);
+                    reject(new JudgeMeasurementTimeout(`judge timed out after ${timeout}s`, timeout * 1000));
+                }, timeout * 1000);
+                timer.unref();
+            });
+        }
     }
     catch (err) {
         const msg = safeErrorMessage(err);
         process.stderr.write(`[microverse] measureLlmMetric failed (judge_backend=claude, session_backend=${backend}, model=${model}): ${msg}\n`);
         const classified = classifyJudgeError(err);
-        const failureKind = classified === 'missing' ? 'cli_missing' : classified;
-        return { metric: null, failureKind, message: msg };
+        return { metric: null, failureKind: toAttemptFailureKind(classified), message: msg };
     }
+    const score = extractScore(output);
+    if (score === null) {
+        return {
+            metric: null,
+            failureKind: 'failed',
+            message: 'judge output did not contain a numeric score',
+        };
+    }
+    return { metric: { raw: output, score } };
 }
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 const MAX_PROBE_TIMEOUT_MS = 60000;
@@ -1287,20 +1360,64 @@ function getProbeTimeoutMs() {
     process.stderr.write(`[microverse] judge probe timeout override: ${clamped}ms\n`);
     return clamped;
 }
-export function probeJudgeCliAvailability(cwd) {
+export async function probeJudgeCliAvailability(cwd) {
     const timeoutMs = getProbeTimeoutMs();
+    const toProbeKind = (c) => {
+        if (c.failureKind === 'cli_missing')
+            return 'missing';
+        if (c.failureKind === 'timeout')
+            return 'timeout';
+        return 'failed';
+    };
     try {
-        _deps.execFileSync('claude', ['--version'], {
-            cwd,
-            timeout: timeoutMs,
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env: { ...process.env, ...backendEnvOverrides('claude') },
-        });
+        if (process.env['PICKLE_JUDGE_LEGACY_SPAWN'] === '1') {
+            _deps.execFileSync('claude', ['--version'], {
+                cwd,
+                timeout: timeoutMs,
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe'],
+                env: { ...process.env, ...backendEnvOverrides('claude') },
+            });
+        }
+        else {
+            await new Promise((resolve, reject) => {
+                let settled = false;
+                const child = _deps.execFile('claude', ['--version'], {
+                    cwd,
+                    encoding: 'utf-8',
+                    env: { ...process.env, ...backendEnvOverrides('claude') },
+                }, (err) => {
+                    if (settled)
+                        return;
+                    settled = true;
+                    clearTimeout(timer);
+                    if (err) {
+                        reject(err);
+                    }
+                    else {
+                        resolve();
+                    }
+                });
+                child.stdin?.destroy();
+                const timer = setTimeout(() => {
+                    if (settled)
+                        return;
+                    settled = true;
+                    child.kill('SIGTERM');
+                    setTimeout(() => { try {
+                        child.kill('SIGKILL');
+                    }
+                    catch { /* already dead */ } }, 2000);
+                    reject(new JudgeMeasurementTimeout(`probe timed out after ${timeoutMs}ms`, timeoutMs));
+                }, timeoutMs);
+                timer.unref();
+            });
+        }
         return { kind: 'ok' };
     }
     catch (err) {
-        const kind = classifyJudgeError(err);
+        const classified = classifyJudgeError(err);
+        const kind = toProbeKind(classified);
         const message = safeErrorMessage(err);
         if (kind === 'timeout') {
             const diagLine = `[microverse] judge probe timed out at ${timeoutMs}ms (claude --version exceeded probe timeout); falling back to measurement loop with 10s/30s/60s backoff. If this recurs, set PICKLE_JUDGE_PROBE_TIMEOUT_MS=10000 or higher.`;
@@ -1310,7 +1427,7 @@ export function probeJudgeCliAvailability(cwd) {
     }
 }
 export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = [], attemptActivity) {
-    const probe = probeJudgeCliAvailability(cwd);
+    const probe = await probeJudgeCliAvailability(cwd);
     if (probe.kind === 'missing') {
         return {
             metric: null,
@@ -1325,7 +1442,7 @@ export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, jud
     let exhaustedFailureKind = probe.kind === 'failed' ? 'failed' : 'timeout';
     for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
         const startedAt = Date.now();
-        const result = measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend, priorViolations);
+        const result = await measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend, priorViolations);
         const elapsedMs = Math.max(0, Date.now() - startedAt);
         if (attemptActivity) {
             const outcome = result.metric

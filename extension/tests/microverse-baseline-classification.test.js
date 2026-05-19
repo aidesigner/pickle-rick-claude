@@ -108,6 +108,7 @@ const makeUnsupportedModelError = () => new Error('claude-sonnet-4-6 model is no
 const makeSchemaInvalidError = () => new Error('schema-invalid: response payload did not satisfy the expected schema');
 
 async function runBaselineFailureScenario({ probeResult = 'ok', attemptErrorFactory }) {
+  process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
   const original = {
     execFileSync: _deps.execFileSync,
     runIteration: _deps.runIteration,
@@ -146,6 +147,7 @@ async function runBaselineFailureScenario({ probeResult = 'ok', attemptErrorFact
       measurementCalls,
     };
   } finally {
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
     _deps.execFileSync = original.execFileSync;
     _deps.runIteration = original.runIteration;
     _deps.sleep = original.sleep;
@@ -204,6 +206,7 @@ describe('microverse-baseline-classification', () => {
   });
 
   test('iteration ETIMEDOUT attempts emit baseline_attempt_timeout telemetry per attempt', async () => {
+    process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
     const original = {
       execFileSync: _deps.execFileSync,
       sleep: _deps.sleep,
@@ -251,6 +254,7 @@ describe('microverse-baseline-classification', () => {
         assert.equal(event.gate_payload.elapsed_ms >= 0, true);
       });
     } finally {
+      delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
       _deps.execFileSync = original.execFileSync;
       _deps.sleep = original.sleep;
       _deps.logActivity = original.logActivity;
@@ -260,6 +264,7 @@ describe('microverse-baseline-classification', () => {
   });
 
   test('iteration unsupported-model failures stay fatal instead of degrading to judge_timeout', async () => {
+    process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
     const original = {
       execFileSync: _deps.execFileSync,
       sleep: _deps.sleep,
@@ -291,6 +296,7 @@ describe('microverse-baseline-classification', () => {
       const result = await measureAndClassifyIteration(state, { raw: '40', score: 40 }, ctx);
       assert.deepEqual(result, { kind: 'failed', exitReason: 'baseline_unmeasurable_unrecoverable' });
     } finally {
+      delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
       _deps.execFileSync = original.execFileSync;
       _deps.sleep = original.sleep;
       fs.rmSync(session.dir, { recursive: true, force: true });
@@ -299,6 +305,7 @@ describe('microverse-baseline-classification', () => {
   });
 
   test('successful codex-session measurement emits fallback telemetry and preserves late-baseline behavior', async () => {
+    process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
     const original = {
       execFileSync: _deps.execFileSync,
       sleep: _deps.sleep,
@@ -350,6 +357,7 @@ describe('microverse-baseline-classification', () => {
       const timeoutEvents = events.filter((event) => event.event === 'baseline_attempt_timeout');
       assert.equal(timeoutEvents.length, 0);
     } finally {
+      delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
       _deps.execFileSync = original.execFileSync;
       _deps.sleep = original.sleep;
       _deps.logActivity = original.logActivity;

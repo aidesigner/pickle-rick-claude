@@ -85,9 +85,10 @@ function writeChildRunner(root) {
   return childPath;
 }
 
-test('codex backend: judge uses claude binary with default model (R-SCJM-2)', () => {
+test('codex backend: judge uses claude binary with default model (R-SCJM-2)', async () => {
   // Regression guard for R-SCJM-2: with session backend=codex, the judge
   // must spawn via claude (not codex) and always include --model claude-sonnet-4-6.
+  process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
   const originalExec = _deps.execFileSync;
   const capturedArgv = [];
   _deps.execFileSync = (cmd, args) => {
@@ -97,8 +98,8 @@ test('codex backend: judge uses claude binary with default model (R-SCJM-2)', ()
   };
 
   try {
-    const first = measureLlmMetric('default metric fixture', 30, os.tmpdir(), undefined, [], undefined, undefined, 'codex');
-    const second = measureLlmMetric('default metric fixture', 30, os.tmpdir(), undefined, [], undefined, undefined, 'codex');
+    const first = await measureLlmMetric('default metric fixture', 30, os.tmpdir(), undefined, [], undefined, undefined, 'codex');
+    const second = await measureLlmMetric('default metric fixture', 30, os.tmpdir(), undefined, [], undefined, undefined, 'codex');
 
     assert.equal(first, null);
     assert.equal(second, null);
@@ -109,6 +110,7 @@ test('codex backend: judge uses claude binary with default model (R-SCJM-2)', ()
       assert.equal(argv[modelIdx + 1], 'claude-sonnet-4-6', `judge must use DEFAULT_JUDGE_MODEL: ${JSON.stringify(argv)}`);
     }
   } finally {
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
     _deps.execFileSync = originalExec;
   }
 });

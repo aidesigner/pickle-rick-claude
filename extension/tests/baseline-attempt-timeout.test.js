@@ -23,6 +23,7 @@ function makeEtimedoutError() {
 }
 
 test('judge_measurement_attempted and baseline_attempt_timeout emit per attempt', async () => {
+  process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
   const origExecFileSync = _deps.execFileSync;
   const origSleep = _deps.sleep;
   const origLogActivity = _deps.logActivity;
@@ -95,6 +96,7 @@ test('judge_measurement_attempted and baseline_attempt_timeout emit per attempt'
     assert.equal(oneOfRefs.includes('#/definitions/baseline_attempt_timeout'), true);
     assert.equal(oneOfRefs.includes('#/definitions/judge_measurement_attempted'), true);
   } finally {
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
     _deps.execFileSync = origExecFileSync;
     _deps.sleep = origSleep;
     _deps.logActivity = origLogActivity;

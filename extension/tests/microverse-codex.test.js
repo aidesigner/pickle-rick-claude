@@ -25,7 +25,8 @@ import { resolveBackend } from '../services/backend-spawn.js';
 
 // --- Bug 1 coverage: measureLlmMetric read-only sandboxing ---
 
-test('measureLlmMetric codex backend: judge always spawns via claude binary (R-SCJM-2)', () => {
+test('measureLlmMetric codex backend: judge always spawns via claude binary (R-SCJM-2)', async () => {
+    process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
     const orig = _deps.execFileSync;
     let captured;
     _deps.execFileSync = (cmd, args) => {
@@ -33,7 +34,7 @@ test('measureLlmMetric codex backend: judge always spawns via claude binary (R-S
         return '42';
     };
     try {
-        const result = measureLlmMetric(
+        const result = await measureLlmMetric(
             'fix bugs', 30, '/tmp',
             undefined, undefined, undefined, undefined,
             'codex',
@@ -51,11 +52,13 @@ test('measureLlmMetric codex backend: judge always spawns via claude binary (R-S
         );
         assert.deepEqual(result, { raw: '42', score: 42 });
     } finally {
+        delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
         _deps.execFileSync = orig;
     }
 });
 
-test('measureLlmMetric codex backend: judge uses --system-prompt flag (claude path)', () => {
+test('measureLlmMetric codex backend: judge uses --system-prompt flag (claude path)', async () => {
+    process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
     const orig = _deps.execFileSync;
     let captured;
     _deps.execFileSync = (cmd, args) => {
@@ -63,7 +66,7 @@ test('measureLlmMetric codex backend: judge uses --system-prompt flag (claude pa
         return '7';
     };
     try {
-        measureLlmMetric(
+        await measureLlmMetric(
             'fix bugs', 30, '/tmp',
             undefined, undefined, undefined, undefined,
             'codex',
@@ -81,11 +84,13 @@ test('measureLlmMetric codex backend: judge uses --system-prompt flag (claude pa
         assert.ok(pIdx >= 0, 'claude judge passes prompt via -p');
         assert.ok(captured.args[pIdx + 1].includes('fix bugs'), 'user prompt passed via -p');
     } finally {
+        delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
         _deps.execFileSync = orig;
     }
 });
 
-test('measureLlmMetric codex backend: judge always includes claude-sonnet-4-6 model (R-SCJM-2)', () => {
+test('measureLlmMetric codex backend: judge always includes claude-sonnet-4-6 model (R-SCJM-2)', async () => {
+    process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
     const orig = _deps.execFileSync;
     let captured;
     _deps.execFileSync = (cmd, args) => {
@@ -93,7 +98,7 @@ test('measureLlmMetric codex backend: judge always includes claude-sonnet-4-6 mo
         return '7';
     };
     try {
-        measureLlmMetric(
+        await measureLlmMetric(
             'fix bugs', 30, '/tmp',
             undefined, undefined, undefined, undefined,
             'codex',
@@ -110,11 +115,13 @@ test('measureLlmMetric codex backend: judge always includes claude-sonnet-4-6 mo
             'judge always uses DEFAULT_JUDGE_MODEL regardless of session backend',
         );
     } finally {
+        delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
         _deps.execFileSync = orig;
     }
 });
 
-test('measureLlmMetric claude backend still uses --allowedTools Read,Glob,Grep', () => {
+test('measureLlmMetric claude backend still uses --allowedTools Read,Glob,Grep', async () => {
+    process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
     const orig = _deps.execFileSync;
     let captured;
     _deps.execFileSync = (cmd, args) => {
@@ -122,7 +129,7 @@ test('measureLlmMetric claude backend still uses --allowedTools Read,Glob,Grep',
         return '99';
     };
     try {
-        measureLlmMetric(
+        await measureLlmMetric(
             'fix bugs', 30, '/tmp',
             'claude-opus-4-6', undefined, undefined, undefined,
             'claude',
@@ -137,6 +144,7 @@ test('measureLlmMetric claude backend still uses --allowedTools Read,Glob,Grep',
             'claude path must not accidentally pass codex sandbox flag',
         );
     } finally {
+        delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
         _deps.execFileSync = orig;
     }
 });
