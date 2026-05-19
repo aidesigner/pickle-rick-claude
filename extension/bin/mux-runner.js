@@ -521,16 +521,6 @@ const MUX_LIFECYCLE_ORDER = {
 function normalizeTicketStatus(status) {
     return (status || '').toLowerCase().replace(/["']/g, '').trim();
 }
-function isInProgressTicket(sessionDir, ticket) {
-    if (!ticket.id)
-        return false;
-    try {
-        return normalizeTicketStatus(getTicketStatus(sessionDir, ticket.id)) === 'in progress';
-    }
-    catch {
-        return false;
-    }
-}
 function writeTicketStatus(sessionDir, ticketId, status) {
     try {
         const planned = updateTicketStatusInTransaction(ticketId, status, sessionDir);
@@ -546,36 +536,110 @@ function chooseInProgressWinner(inProgress, currentTicket) {
         return currentTicket;
     return inProgress.find(ticket => !!ticket.id)?.id ?? currentTicket;
 }
+function collectFrontmatterInProgress(frontmatterStatuses) {
+    const inProgress = [];
+    for (const [ticketId, status] of frontmatterStatuses.entries()) {
+        if (normalizedStatus(status) === 'in progress') {
+            inProgress.push({ id: ticketId });
+        }
+    }
+    return inProgress;
+}
+function hasManagerHandoffSnapshot(state, currentTicket) {
+    if (!currentTicket)
+        return false;
+    if (typeof state.session_dir !== 'string' || !state.session_dir)
+        return false;
+    return readLatestTicketConformanceSnapshot(path.join(state.session_dir, currentTicket)).hasManagerHandoff;
+}
+function frontmatterStatusForCurrentTicket(state, frontmatterStatuses) {
+    const currentTicket = typeof state.current_ticket === 'string' ? state.current_ticket : null;
+    if (!currentTicket)
+        return '';
+    return normalizedStatus(frontmatterStatuses.get(currentTicket) ?? '');
+}
+function alreadyInSync(state, inProgress) {
+    if (inProgress.length !== 1)
+        return false;
+    const currentTicket = typeof state.current_ticket === 'string' && state.current_ticket.length > 0
+        ? state.current_ticket
+        : null;
+    return !!currentTicket && inProgress.some(ticket => ticket.id === currentTicket);
+}
+function shouldSkipDesyncSync(state, inProgress, frontmatterStatuses) {
+    if (inProgress.length !== 0)
+        return false;
+    const currentStatus = frontmatterStatusForCurrentTicket(state, frontmatterStatuses);
+    if (currentStatus !== 'failed' && currentStatus !== 'done')
+        return false;
+    if (currentStatus === 'failed')
+        return true;
+    return hasManagerHandoffSnapshot(state, typeof state.current_ticket === 'string' ? state.current_ticket : null);
+}
+export function resolveTicketDesyncWinner(state, frontmatterStatuses) {
+    const currentTicket = typeof state.current_ticket === 'string' && state.current_ticket.length > 0
+        ? state.current_ticket
+        : null;
+    const inProgress = collectFrontmatterInProgress(frontmatterStatuses);
+    const winner = chooseInProgressWinner(inProgress, currentTicket);
+    if (frontmatterStatuses.size === 0) {
+        return { winner: null, action: 'noop' };
+    }
+    if (alreadyInSync(state, inProgress)) {
+        return { winner, action: 'noop' };
+    }
+    if (shouldSkipDesyncSync(state, inProgress, frontmatterStatuses)) {
+        return { winner, action: 'noop' };
+    }
+    return { winner, action: 'sync' };
+}
+function reconcileInProgressSet(tickets, frontmatterStatuses) {
+    const inProgress = [];
+    for (const ticket of tickets) {
+        if (!ticket.id)
+            continue;
+        const status = normalizedStatus(frontmatterStatuses.get(ticket.id) ?? '');
+        if (status === 'in progress') {
+            inProgress.push({ id: ticket.id, status });
+        }
+    }
+    return inProgress;
+}
+function applyTicketDesyncWrites(sessionDir, winner, inProgress) {
+    if (!inProgress.some((ticket) => ticket.id === winner)) {
+        writeTicketStatus(sessionDir, winner, 'In Progress');
+    }
+    for (const ticket of inProgress) {
+        if (ticket.id === winner)
+            continue;
+        writeTicketStatus(sessionDir, ticket.id, 'Todo');
+    }
+}
 function reconcileTicketStateDesync(statePath, sessionDir, currentTicket, iteration, log) {
     const tickets = collectTickets(sessionDir);
     if (tickets.length === 0) {
         log('WARN: ticket_state_desync check found no ticket directories');
         return readRunnerState(statePath);
     }
-    const inProgress = tickets.filter(ticket => isInProgressTicket(sessionDir, ticket));
-    const winner = chooseInProgressWinner(inProgress, currentTicket);
-    let currentStatus = null;
-    if (currentTicket) {
+    const state = readRunnerState(statePath);
+    const frontmatterStatuses = new Map();
+    for (const ticket of tickets) {
+        if (!ticket.id)
+            continue;
         try {
-            currentStatus = getTicketStatus(sessionDir, currentTicket);
+            frontmatterStatuses.set(ticket.id, getTicketStatus(sessionDir, ticket.id));
         }
         catch {
-            currentStatus = null;
+            frontmatterStatuses.set(ticket.id, '');
         }
     }
-    const winnerMatchesState = winner === currentTicket;
-    const alreadySynced = inProgress.length === 1 && winnerMatchesState;
-    if (alreadySynced)
+    const resolution = resolveTicketDesyncWinner(state, frontmatterStatuses);
+    if (resolution.action === 'noop')
+        return state;
+    const winner = resolution.winner;
+    if (!winner)
         return readRunnerState(statePath);
-    if (inProgress.length === 0 && normalizedStatus(currentStatus) === 'failed') {
-        return readRunnerState(statePath);
-    }
-    if (inProgress.length === 0 && normalizedStatus(currentStatus) === 'done' && currentTicket) {
-        const conformance = readLatestTicketConformanceSnapshot(path.join(sessionDir, currentTicket));
-        if (conformance.hasManagerHandoff) {
-            return readRunnerState(statePath);
-        }
-    }
+    const inProgress = reconcileInProgressSet(tickets, frontmatterStatuses);
     logActivity({
         event: 'ticket_state_desync_detected',
         source: 'pickle',
@@ -584,18 +648,11 @@ function reconcileTicketStateDesync(statePath, sessionDir, currentTicket, iterat
         ticket: winner ?? currentTicket ?? undefined,
         reason: `current_ticket=${currentTicket ?? 'none'} in_progress=${inProgress.map(t => t.id || '?').join(',') || 'none'}`,
     });
-    if (winner && !inProgress.some(ticket => ticket.id === winner)) {
-        writeTicketStatus(sessionDir, winner, 'In Progress');
-    }
-    for (const ticket of inProgress) {
-        if (!ticket.id || ticket.id === winner)
-            continue;
-        writeTicketStatus(sessionDir, ticket.id, 'Todo');
-    }
+    applyTicketDesyncWrites(sessionDir, winner, inProgress);
     if (winner && winner !== currentTicket) {
         return updateMuxLifecycleState(statePath, {
             currentTicket: winner,
-            step: inferTicketLifecycleStep(sessionDir, winner, readRunnerState(statePath).step),
+            step: inferTicketLifecycleStep(sessionDir, winner, state.step),
         });
     }
     return readRunnerState(statePath);
@@ -2644,7 +2701,6 @@ function buildSignalReceivedEvent(statePath, sessionDir, signal) {
         currentPhase = typeof state.step === 'string' ? state.step : null;
     }
     catch {
-        currentPhase = null;
     }
     return {
         event: 'signal_received',
