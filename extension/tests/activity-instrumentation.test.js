@@ -53,7 +53,14 @@ function runHookWithActivity(opts = {}) {
     JSON.stringify({ [process.cwd()]: sessionDir })
   );
 
-  const env = { ...process.env, EXTENSION_DIR: tmpDir, FORCE_COLOR: '0', PICKLE_STATE_FILE: stateFile };
+  const env = {
+    ...process.env,
+    EXTENSION_DIR: tmpDir,
+    FORCE_COLOR: '0',
+    PICKLE_STATE_FILE: stateFile,
+    NODE_ENV: 'test',
+    EXTENSION_DIR_TEST: '1',
+  };
   delete env.PICKLE_ROLE;
   if (role !== undefined) env.PICKLE_ROLE = role;
 
