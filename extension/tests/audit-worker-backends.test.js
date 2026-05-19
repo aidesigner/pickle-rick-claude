@@ -83,3 +83,56 @@ test('audit-worker-backends: worker_spawn_backend_override suppresses intentiona
 
   fs.rmSync(sessionDir, { recursive: true, force: true });
 });
+
+test('audit-worker-backends: per-log spawn backend beats ticket-level fallback for mixed backend retries', () => {
+  const sessionDir = makeTmpDir();
+  const ticketDir = path.join(sessionDir, 'ticket-001');
+  fs.mkdirSync(ticketDir, { recursive: true });
+
+  fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+    backend: 'claude',
+    activity: [
+      {
+        event: 'worker_backend_resolved',
+        ts: new Date().toISOString(),
+        ticket_id: 'ticket-001',
+        backend: 'claude',
+        worker_backend: null,
+        source: 'backend',
+      },
+      {
+        event: 'worker_spawn_backend_resolved',
+        ts: new Date().toISOString(),
+        ticket: 'ticket-001',
+        pid: 111,
+        backend: 'codex',
+        source: 'cli-flag-override',
+      },
+      {
+        event: 'worker_spawn_backend_resolved',
+        ts: new Date().toISOString(),
+        ticket: 'ticket-001',
+        pid: 222,
+        backend: 'claude',
+        source: 'state',
+      },
+    ],
+  }));
+
+  fs.writeFileSync(
+    path.join(ticketDir, 'worker_session_111.log'),
+    'Reading additional input from stdin...\nchatgpt.com/codex/settings/usage\n',
+  );
+  fs.writeFileSync(
+    path.join(ticketDir, 'worker_session_222.log'),
+    'ordinary claude worker output\n',
+  );
+
+  const report = scanSession(sessionDir);
+  assert.equal(report.session_backend, 'claude');
+  assert.equal(report.worker_backend_resolution_count, 1);
+  assert.equal(report.mismatch_count, 0);
+  assert.deepEqual(report.mismatches, []);
+
+  fs.rmSync(sessionDir, { recursive: true, force: true });
+});

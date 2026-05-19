@@ -26,9 +26,14 @@ interface WorkerBackendResolvedEvent {
   event: string;
   ticket_id?: string;
   ticket?: string;
+  pid?: number;
   backend?: string;
   worker_backend?: string | null;
   source?: string;
+}
+
+function logKey(ticket: string, pid: number): string {
+  return `${ticket}/worker_session_${pid}.log`;
 }
 
 function detectCodexBanner(content: string): string[] {
@@ -39,6 +44,7 @@ function readSessionState(sessionDir: string): {
   backend: string;
   subtoolOverrideCount: number;
   workerBackendResolutionCount: number;
+  expectedWorkerBackendByLog: Map<string, string>;
   expectedWorkerBackendByTicket: Map<string, string>;
 } {
   try {
@@ -48,8 +54,15 @@ function readSessionState(sessionDir: string): {
     const activity = state.activity ?? [];
     const subtoolOverrideCount = activity.filter((a) => a.event === 'subtool_backend_override').length;
     const workerBackendEvents = activity.filter((a) => a.event === 'worker_backend_resolved');
+    const workerSpawnEvents = activity.filter((a) => a.event === 'worker_spawn_backend_resolved');
     const workerOverrideEvents = activity.filter((a) => a.event === 'worker_spawn_backend_override');
+    const expectedWorkerBackendByLog = new Map<string, string>();
     const expectedWorkerBackendByTicket = new Map<string, string>();
+    for (const entry of workerSpawnEvents) {
+      if (!entry.ticket || typeof entry.pid !== 'number' || !Number.isInteger(entry.pid)) continue;
+      if (typeof entry.backend !== 'string' || entry.backend.length === 0) continue;
+      expectedWorkerBackendByLog.set(logKey(entry.ticket, entry.pid), entry.backend);
+    }
     for (const entry of workerBackendEvents) {
       if (!entry.ticket_id) continue;
       const source = entry.source;
@@ -72,6 +85,7 @@ function readSessionState(sessionDir: string): {
       backend,
       subtoolOverrideCount,
       workerBackendResolutionCount: workerBackendEvents.length,
+      expectedWorkerBackendByLog,
       expectedWorkerBackendByTicket,
     };
   } catch {
@@ -79,6 +93,7 @@ function readSessionState(sessionDir: string): {
       backend: 'unknown',
       subtoolOverrideCount: 0,
       workerBackendResolutionCount: 0,
+      expectedWorkerBackendByLog: new Map<string, string>(),
       expectedWorkerBackendByTicket: new Map<string, string>(),
     };
   }
@@ -89,6 +104,7 @@ export function scanSession(sessionDir: string): AuditReport {
     backend: sessionBackend,
     subtoolOverrideCount,
     workerBackendResolutionCount,
+    expectedWorkerBackendByLog,
     expectedWorkerBackendByTicket,
   } = readSessionState(sessionDir);
   const mismatches: WorkerLogFinding[] = [];
@@ -123,7 +139,9 @@ export function scanSession(sessionDir: string): AuditReport {
       }
 
       const patternsFound = detectCodexBanner(content);
-      const expectedWorkerBackend = expectedWorkerBackendByTicket.get(entry.name) ?? sessionBackend;
+      const expectedWorkerBackend = expectedWorkerBackendByLog.get(`${entry.name}/${logFile}`)
+        ?? expectedWorkerBackendByTicket.get(entry.name)
+        ?? sessionBackend;
       if (expectedWorkerBackend === 'claude' && patternsFound.length > 0) {
         mismatches.push({ ticket: entry.name, log: logFile, patterns_found: patternsFound });
       }

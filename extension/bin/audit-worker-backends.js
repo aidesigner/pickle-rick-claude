@@ -4,6 +4,9 @@ const CODEX_BANNER_PATTERNS = [
     'Reading additional input from stdin...',
     'chatgpt.com/codex/settings/usage',
 ];
+function logKey(ticket, pid) {
+    return `${ticket}/worker_session_${pid}.log`;
+}
 function detectCodexBanner(content) {
     return CODEX_BANNER_PATTERNS.filter((p) => content.includes(p));
 }
@@ -15,8 +18,17 @@ function readSessionState(sessionDir) {
         const activity = state.activity ?? [];
         const subtoolOverrideCount = activity.filter((a) => a.event === 'subtool_backend_override').length;
         const workerBackendEvents = activity.filter((a) => a.event === 'worker_backend_resolved');
+        const workerSpawnEvents = activity.filter((a) => a.event === 'worker_spawn_backend_resolved');
         const workerOverrideEvents = activity.filter((a) => a.event === 'worker_spawn_backend_override');
+        const expectedWorkerBackendByLog = new Map();
         const expectedWorkerBackendByTicket = new Map();
+        for (const entry of workerSpawnEvents) {
+            if (!entry.ticket || typeof entry.pid !== 'number' || !Number.isInteger(entry.pid))
+                continue;
+            if (typeof entry.backend !== 'string' || entry.backend.length === 0)
+                continue;
+            expectedWorkerBackendByLog.set(logKey(entry.ticket, entry.pid), entry.backend);
+        }
         for (const entry of workerBackendEvents) {
             if (!entry.ticket_id)
                 continue;
@@ -41,6 +53,7 @@ function readSessionState(sessionDir) {
             backend,
             subtoolOverrideCount,
             workerBackendResolutionCount: workerBackendEvents.length,
+            expectedWorkerBackendByLog,
             expectedWorkerBackendByTicket,
         };
     }
@@ -49,12 +62,13 @@ function readSessionState(sessionDir) {
             backend: 'unknown',
             subtoolOverrideCount: 0,
             workerBackendResolutionCount: 0,
+            expectedWorkerBackendByLog: new Map(),
             expectedWorkerBackendByTicket: new Map(),
         };
     }
 }
 export function scanSession(sessionDir) {
-    const { backend: sessionBackend, subtoolOverrideCount, workerBackendResolutionCount, expectedWorkerBackendByTicket, } = readSessionState(sessionDir);
+    const { backend: sessionBackend, subtoolOverrideCount, workerBackendResolutionCount, expectedWorkerBackendByLog, expectedWorkerBackendByTicket, } = readSessionState(sessionDir);
     const mismatches = [];
     let scannedLogs = 0;
     let entries;
@@ -86,7 +100,9 @@ export function scanSession(sessionDir) {
                 continue;
             }
             const patternsFound = detectCodexBanner(content);
-            const expectedWorkerBackend = expectedWorkerBackendByTicket.get(entry.name) ?? sessionBackend;
+            const expectedWorkerBackend = expectedWorkerBackendByLog.get(`${entry.name}/${logFile}`)
+                ?? expectedWorkerBackendByTicket.get(entry.name)
+                ?? sessionBackend;
             if (expectedWorkerBackend === 'claude' && patternsFound.length > 0) {
                 mismatches.push({ ticket: entry.name, log: logFile, patterns_found: patternsFound });
             }
