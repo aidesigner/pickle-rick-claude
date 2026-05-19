@@ -21,10 +21,15 @@ function makeFixture() {
   const auditPath = path.join(runtimeRoot, 'deploy-audit.log');
   const tarballDir = path.join(tmpRoot, 'pickle-update-fixture');
   const extractDir = path.join(tmpRoot, 'pickle-extract-fixture');
+  const darwinBranch = path.join(varFoldersRoot, 'zz', '12345', 'T');
+  const darwinTarballDir = path.join(darwinBranch, 'pickle-update-darwin-fixture');
+  const darwinExtractDir = path.join(darwinBranch, 'pickle-extract-darwin-fixture');
   mkdirSync(runtimeRoot, { recursive: true });
   mkdirSync(varFoldersRoot, { recursive: true });
   mkdirSync(tarballDir, { recursive: true });
   mkdirSync(extractDir, { recursive: true });
+  mkdirSync(darwinTarballDir, { recursive: true });
+  mkdirSync(darwinExtractDir, { recursive: true });
   writeFileSync(cachePath, JSON.stringify({
     last_check_epoch: 1,
     latest_version: '1.0.0',
@@ -32,7 +37,20 @@ function makeFixture() {
   }));
   writeFileSync(path.join(tarballDir, 'release.tar.gz'), 'fixture');
   writeFileSync(path.join(extractDir, 'install.sh'), '#!/usr/bin/env bash\nexit 0\n');
-  return { dir, homeDir, tmpRoot, varFoldersRoot, cachePath, auditPath, tarballDir, extractDir };
+  writeFileSync(path.join(darwinTarballDir, 'release.tar.gz'), 'fixture');
+  writeFileSync(path.join(darwinExtractDir, 'install.sh'), '#!/usr/bin/env bash\nexit 0\n');
+  return {
+    dir,
+    homeDir,
+    tmpRoot,
+    varFoldersRoot,
+    cachePath,
+    auditPath,
+    tarballDir,
+    extractDir,
+    darwinTarballDir,
+    darwinExtractDir,
+  };
 }
 
 function runPurge(fixture, args = []) {
@@ -56,6 +74,8 @@ describe('purge-update-cache.js', () => {
       assert.equal(existsSync(fixture.cachePath), false);
       assert.equal(existsSync(fixture.tarballDir), false);
       assert.equal(existsSync(fixture.extractDir), false);
+      assert.equal(existsSync(fixture.darwinTarballDir), false);
+      assert.equal(existsSync(fixture.darwinExtractDir), false);
 
       const lines = readFileSync(fixture.auditPath, 'utf8').trim().split('\n');
       assert.equal(lines.length, 1);
@@ -64,6 +84,8 @@ describe('purge-update-cache.js', () => {
       assert.ok(audit.removed_paths.includes(fixture.cachePath));
       assert.ok(audit.removed_paths.includes(fixture.tarballDir));
       assert.ok(audit.removed_paths.includes(fixture.extractDir));
+      assert.ok(audit.removed_paths.includes(fixture.darwinTarballDir));
+      assert.ok(audit.removed_paths.includes(fixture.darwinExtractDir));
       assert.equal(typeof audit.ts, 'string');
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
@@ -76,6 +98,8 @@ describe('purge-update-cache.js', () => {
       rmSync(fixture.cachePath, { force: true });
       rmSync(fixture.tarballDir, { recursive: true, force: true });
       rmSync(fixture.extractDir, { recursive: true, force: true });
+      rmSync(fixture.darwinTarballDir, { recursive: true, force: true });
+      rmSync(fixture.darwinExtractDir, { recursive: true, force: true });
       const result = runPurge(fixture);
       assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
       assert.equal(existsSync(fixture.auditPath), false);
@@ -92,6 +116,8 @@ describe('purge-update-cache.js', () => {
       assert.equal(existsSync(fixture.cachePath), true);
       assert.equal(existsSync(fixture.tarballDir), true);
       assert.equal(existsSync(fixture.extractDir), true);
+      assert.equal(existsSync(fixture.darwinTarballDir), true);
+      assert.equal(existsSync(fixture.darwinExtractDir), true);
       assert.equal(existsSync(fixture.auditPath), false);
       assert.match(result.stderr, /Would remove/);
     } finally {

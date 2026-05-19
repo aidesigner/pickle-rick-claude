@@ -56,6 +56,7 @@ function collectTmpRootMatches(dir) {
 function collectVarFolderMatches(rootDir) {
   const matches = [];
   const stack = [rootDir];
+  const prefixes = ['pickle-update-', 'pickle-extract-'];
   while (stack.length > 0) {
     const current = stack.pop();
     let entries;
@@ -67,7 +68,7 @@ function collectVarFolderMatches(rootDir) {
 
     for (const entry of entries) {
       const fullPath = path.join(current, entry.name);
-      if (entry.name.startsWith('pickle-update-')) {
+      if (prefixes.some((prefix) => entry.name.startsWith(prefix))) {
         matches.push(fullPath);
       } else if (entry.isDirectory()) {
         stack.push(fullPath);
