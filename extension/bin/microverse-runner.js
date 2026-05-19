@@ -222,12 +222,18 @@ function readRemediationResult(gateDir, startMs) {
     }
 }
 const PER_ITERATION_GATE_CHECKS = ['typecheck', 'lint', 'tests'];
+const GIT_TEMP_CHECKOUT_TIMEOUT_MS = 10_000;
 function getGitRestoreArgs(workingDir) {
-    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workingDir, encoding: 'utf-8' }).trim();
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: workingDir,
+        encoding: 'utf-8',
+        timeout: GIT_TEMP_CHECKOUT_TIMEOUT_MS,
+    }).trim();
     try {
         const branch = execFileSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], {
             cwd: workingDir,
             encoding: 'utf-8',
+            timeout: GIT_TEMP_CHECKOUT_TIMEOUT_MS,
         }).trim();
         if (branch)
             return ['checkout', '--quiet', branch];
@@ -242,12 +248,20 @@ async function withCleanTemporaryCheckout(workingDir, sha, fn) {
         throw new Error('working tree is dirty; refusing baseline recapture checkout');
     }
     const restoreArgs = getGitRestoreArgs(workingDir);
-    execFileSync('git', ['checkout', '--quiet', sha], { cwd: workingDir, stdio: 'pipe' });
+    execFileSync('git', ['checkout', '--quiet', sha], {
+        cwd: workingDir,
+        stdio: 'pipe',
+        timeout: GIT_TEMP_CHECKOUT_TIMEOUT_MS,
+    });
     try {
         return await fn();
     }
     finally {
-        execFileSync('git', restoreArgs, { cwd: workingDir, stdio: 'pipe' });
+        execFileSync('git', restoreArgs, {
+            cwd: workingDir,
+            stdio: 'pipe',
+            timeout: GIT_TEMP_CHECKOUT_TIMEOUT_MS,
+        });
     }
 }
 async function capturePerIterationGateBaseline(opts) {
@@ -1437,22 +1451,22 @@ export async function probeJudgeBackendAvailability(backend, cwd) {
     };
     try {
         if (process.env['PICKLE_JUDGE_LEGACY_SPAWN'] === '1') {
-        _deps.execFileSync(backend, ['--version'], {
-            cwd,
-            timeout: timeoutMs,
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env: { ...getJudgeEnvForAttempt(backend, cwd), ...backendEnvOverrides(backend) },
-        });
-    }
-    else {
-        await spawnWithClosedStdin(backend, ['--version'], {
-            cwd,
-            env: { ...getJudgeEnvForAttempt(backend, cwd), ...backendEnvOverrides(backend) },
-            timeoutMs,
-            timeoutMessage: `probe timed out after ${timeoutMs}ms`,
-        });
-    }
+            _deps.execFileSync(backend, ['--version'], {
+                cwd,
+                timeout: timeoutMs,
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe'],
+                env: { ...getJudgeEnvForAttempt(backend, cwd), ...backendEnvOverrides(backend) },
+            });
+        }
+        else {
+            await spawnWithClosedStdin(backend, ['--version'], {
+                cwd,
+                env: { ...getJudgeEnvForAttempt(backend, cwd), ...backendEnvOverrides(backend) },
+                timeoutMs,
+                timeoutMessage: `probe timed out after ${timeoutMs}ms`,
+            });
+        }
         return { kind: 'ok' };
     }
     catch (err) {
@@ -2978,7 +2992,14 @@ export function markMicroverseFatalError(sessionDir) {
 if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js') {
     const sessionDir = process.argv[2];
     const statePath = sessionDir ? path.join(sessionDir, 'state.json') : '';
-    if (!sessionDir || readRecoverableJsonObject(statePath) === null) {
+    // Preflight: only reject when sessionDir is missing OR no state.json exists on disk
+    // (including no recoverable .tmp.* snapshot). A corrupt state.json with no recoverable
+    // tmp must still enter main() so the fatal-cleanup path can mark microverse.json
+    // stopped/error before exiting.
+    const hasAnyStateOnDisk = sessionDir
+        ? (fs.existsSync(statePath) || readRecoverableJsonObject(statePath) !== null)
+        : false;
+    if (!sessionDir || !hasAnyStateOnDisk) {
         console.error('Usage: node microverse-runner.js <session-dir>');
         process.exit(1);
     }

@@ -3811,7 +3811,14 @@ export function markMicroverseFatalError(sessionDir: string): FatalErrorMarkResu
 if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js') {
   const sessionDir = process.argv[2];
   const statePath = sessionDir ? path.join(sessionDir, 'state.json') : '';
-  if (!sessionDir || readRecoverableJsonObject(statePath) === null) {
+  // Preflight: only reject when sessionDir is missing OR no state.json exists on disk
+  // (including no recoverable .tmp.* snapshot). A corrupt state.json with no recoverable
+  // tmp must still enter main() so the fatal-cleanup path can mark microverse.json
+  // stopped/error before exiting.
+  const hasAnyStateOnDisk = sessionDir
+    ? (fs.existsSync(statePath) || readRecoverableJsonObject(statePath) !== null)
+    : false;
+  if (!sessionDir || !hasAnyStateOnDisk) {
     console.error('Usage: node microverse-runner.js <session-dir>');
     process.exit(1);
   }
