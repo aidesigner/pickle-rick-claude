@@ -197,6 +197,15 @@ export interface StateFlags {
    * and emits a `bundle_bootstrap_exemption_applied` activity event.
    */
   bundle_bootstrap_mode?: string;
+  /**
+   * Manager-only emergency-revert escape hatch for the R-WACT tsc-gate.
+   * Trimmed non-empty string approves a single subsequent commit despite
+   * tsc errors; auto-cleared after consumption. Set via documented
+   * StateManager.update chain (manager context only).
+   * Emits activity events tsc_gate_override_used (on bypass) and
+   * tsc_gate_override_consumed (on auto-clear).
+   */
+  allow_tsc_failed_reason?: string;
   [key: string]: unknown;
 }
 
@@ -538,6 +547,10 @@ export const VALID_ACTIVITY_EVENTS = [
   'subtool_backend_override',
   'pipeline_auto_resumed',
   'smoke_gate_bypassed',
+  'tsc_gate_failed',
+  'tsc_gate_override_used',
+  'tsc_gate_override_consumed',
+  'tsc_gate_crashed',
   'skip_flag_legacy_used',
   'codex_unhealthy_consecutive_failures',
   'ticket_audit_bypassed',

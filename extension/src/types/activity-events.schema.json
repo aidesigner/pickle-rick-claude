@@ -297,6 +297,84 @@
         "reason": { "type": "string" }
       }
     },
+    "tsc_gate_failed": {
+      "type": "object",
+      "required": ["event", "ts", "reason", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "tsc_gate_failed" },
+        "ts": { "type": "string" },
+        "reason": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["failure_kind"],
+          "properties": {
+            "failure_kind": {
+              "type": "string",
+              "enum": ["compile_error", "timeout", "cold_cache_timeout", "setup_error", "crashed"]
+            },
+            "command": { "type": "string" }
+          }
+        }
+      }
+    },
+    "tsc_gate_override_used": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "tsc_gate_override_used" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "properties": {
+            "failure_kind": {
+              "type": "string",
+              "enum": ["compile_error", "timeout", "cold_cache_timeout", "setup_error", "crashed"]
+            },
+            "override_reason": { "type": "string" },
+            "command": { "type": "string" }
+          }
+        }
+      }
+    },
+    "tsc_gate_override_consumed": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "tsc_gate_override_consumed" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "properties": {
+            "failure_kind": {
+              "type": "string",
+              "enum": ["compile_error", "timeout", "cold_cache_timeout", "setup_error", "crashed"]
+            },
+            "override_reason": { "type": "string" },
+            "command": { "type": "string" }
+          }
+        }
+      }
+    },
+    "tsc_gate_crashed": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "tsc_gate_crashed" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["failure_kind"],
+          "properties": {
+            "failure_kind": {
+              "type": "string",
+              "enum": ["compile_error", "timeout", "cold_cache_timeout", "setup_error", "crashed"]
+            },
+            "error": { "type": "string" },
+            "command": { "type": "string" }
+          }
+        }
+      }
+    },
     "bundle_2026_05_04_closer_done": {
       "type": "object",
       "required": ["event", "ts", "gate_payload"],
@@ -1050,6 +1128,10 @@
     { "$ref": "#/definitions/ticket_audit_failed" },
     { "$ref": "#/definitions/ticket_audit_manual_edit" },
     { "$ref": "#/definitions/smoke_gate_bypassed" },
+    { "$ref": "#/definitions/tsc_gate_failed" },
+    { "$ref": "#/definitions/tsc_gate_override_used" },
+    { "$ref": "#/definitions/tsc_gate_override_consumed" },
+    { "$ref": "#/definitions/tsc_gate_crashed" },
     { "$ref": "#/definitions/bundle_2026_05_04_closer_done" },
     { "$ref": "#/definitions/install_sh_parity_check" },
     { "$ref": "#/definitions/worker_backend_resolved" },

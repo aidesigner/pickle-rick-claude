@@ -2,6 +2,12 @@
 
 Compiled TS → JS lives in `extension/services/`, `extension/bin/`, `extension/hooks/`, `extension/types/`. Source in `extension/src/`. Tests in `extension/tests/` via `node --test`. Rebuild with `npx tsc` from `extension/`.
 
+## ⛔ Worker Forbidden Ops (R-WSRC)
+
+| Forbidden write | Override flag | Runtime check |
+|---|---|---|
+| tsc errors at commit time | `allow_tsc_failed_reason` (manager-only) | `tsc-gate.ts` hook |
+
 ## R-TSPF
 
 R-TSPF stabilization spans five admitted flakes across four race classes. `load-dependent-timeout` covers `extension/tests/auto-resume-stop-conditions.test.js` warn-banner progression (depends on retry-state transitions, not extra waiting). `subprocess-spawn-timing` covers `extension/tests/council-publish.test.js` hung-`gh` regressions and `extension/tests/mux-runner-relaunch.test.js` delayed fake-`tmux` writes (both require deterministic barriers, not incidental timing luck). `process-global-state` covers `extension/tests/ensure-monitor-window.test.js` path-shim helpers (must serialize `process.env.PATH` mutation across concurrent tests). `file-existence` scope was merged: R-TSPF-5 collapsed into the R-TSPF-4 `ensure-monitor-window` fix, so the missing-`tmux-monitor.sh` case inherits the same shared PATH-serialization trap door.

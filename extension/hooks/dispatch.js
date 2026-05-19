@@ -7,12 +7,6 @@ import { safeErrorMessage } from '../services/pickle-utils.js';
 const EXTENSION_DIR = process.env.EXTENSION_DIR || join(os.homedir(), '.claude/pickle-rick');
 const HANDLERS_DIR = join(EXTENSION_DIR, 'extension', 'hooks', 'handlers');
 const LOG_PATH = join(EXTENSION_DIR, 'debug.log');
-const REGISTERED_JS_HANDLERS = {
-    'config-protection': join(HANDLERS_DIR, 'config-protection.js'),
-    'stop-hook': join(HANDLERS_DIR, 'stop-hook.js'),
-    'tool-error': join(HANDLERS_DIR, 'tool-error.js'),
-    'tsc-gate': join(HANDLERS_DIR, 'tsc-gate.js'),
-};
 // Prevent EPIPE errors from crashing the dispatcher when Claude Code closes the pipe
 const handleEpipe = (err) => {
     if (err.code === 'EPIPE')
@@ -74,7 +68,7 @@ function readHookArgs() {
     return { hookName, extraArgs };
 }
 function resolveHookCommand(hookName, extraArgs) {
-    const jsPath = REGISTERED_JS_HANDLERS[hookName] || join(HANDLERS_DIR, `${hookName}.js`);
+    const jsPath = join(HANDLERS_DIR, `${hookName}.js`);
     if (existsSync(jsPath)) {
         return { scriptPath: jsPath, cmd: 'node', cmdArgs: [jsPath, ...extraArgs] };
     }

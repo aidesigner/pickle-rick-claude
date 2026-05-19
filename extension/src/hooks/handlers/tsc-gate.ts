@@ -6,6 +6,7 @@ import { State } from '../../types/index.js';
 import { approve, loadActiveState, resolveStateFile } from '../resolve-state.js';
 import { logActivity } from '../../services/activity-logger.js';
 import { getDataRoot, safeErrorMessage } from '../../services/pickle-utils.js';
+import { StateManager } from '../../services/state-manager.js';
 
 interface PreToolUseHookPayload {
   tool_name?: string;
@@ -31,6 +32,12 @@ interface TextCommandResult {
   timedOut: boolean;
 }
 
+interface CommandFailureResult {
+  status: number | null;
+  timedOut: boolean;
+  error?: Error;
+}
+
 const TSC_TRIGGER_RE = /\.(?:[cm]?ts|tsx)$/i;
 const TSC_CONFIG_RE = /^tsconfig(?:\..+)?\.json$/i;
 const PACKAGE_JSON_RE = /^package.*\.json$/i;
@@ -38,6 +45,11 @@ const NEGATIVE_GIT_SUBCOMMANDS = new Set(['log', 'diff', 'show', 'rev-parse']);
 const CD_PREFIX_RE = /^cd\s+(?:"[^"]*"|'[^']*'|[^;&]+?)\s*(?:&&|;)\s*/;
 const COMMAND_TIMEOUT_MS = 5_000;
 const ALLOW_TSC_FAILED_REASON_FIELD = 'allow_tsc_failed_reason';
+const sm = new StateManager();
+
+type GateDecision =
+  | { decision: 'approve' }
+  | { decision: 'block'; reason: string; failureKind: GateFailureKind };
 
 function block(reason: string): void {
   console.log(JSON.stringify({ decision: 'block', reason }));
@@ -64,6 +76,10 @@ function loadResolvedState(): State | null {
   const stateFile = resolveStateFile(getDataRoot());
   if (!stateFile) return null;
   return loadActiveState(stateFile);
+}
+
+function resolveActiveStateFile(): string | null {
+  return resolveStateFile(getDataRoot());
 }
 
 function trimmedFlag(flags: Record<string, unknown> | undefined, key: string): string | null {
@@ -162,6 +178,10 @@ function parseLineList(output: string): string[] {
     .filter((line) => line.length > 0);
 }
 
+function isCommandFailure(result: CommandFailureResult): boolean {
+  return result.status !== 0 || result.timedOut || Boolean(result.error);
+}
+
 function listStagedPaths(repoRoot: string): TextCommandResult & { paths: string[] } {
   const result = runTextCommand('git', ['diff', '--cached', '--name-only', '--diff-filter=ACMR'], repoRoot, COMMAND_TIMEOUT_MS);
   return { ...result, paths: parseLineList(result.stdout) };
@@ -236,14 +256,15 @@ function formatBlockReason(kind: GateFailureKind, details: string): string {
   return `R-WACT: tsc --noEmit failed with ${kind}${suffix}`;
 }
 
-function runTscGate(repoRoot: string, stagedPaths: string[]): { decision: 'approve' | 'block'; reason?: string } {
+function runTscGate(repoRoot: string, stagedPaths: string[]): GateDecision {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rick-tsc-gate-'));
   try {
     const added = listAddedPaths(repoRoot);
-    if (added.status !== 0 || added.timedOut || added.error) {
+    if (isCommandFailure(added)) {
       return {
         decision: 'block',
         reason: formatBlockReason('setup_error', safeErrorMessage(added.error) || added.stderr || 'failed to enumerate added staged files'),
+        failureKind: 'setup_error',
       };
     }
 
@@ -252,6 +273,7 @@ function runTscGate(repoRoot: string, stagedPaths: string[]): { decision: 'appro
       return {
         decision: 'block',
         reason: formatBlockReason('setup_error', safeErrorMessage(materializeResult.error) || materializeResult.stderr || 'failed to materialize staged tree'),
+        failureKind: 'setup_error',
       };
     }
 
@@ -262,42 +284,132 @@ function runTscGate(repoRoot: string, stagedPaths: string[]): { decision: 'appro
 
     const failureKind = classifyTscFailure(tscResult);
     const detailSource = tscResult.stderr || tscResult.stdout || `staged changes: ${stagedPaths.join(', ')}`;
-    return { decision: 'block', reason: formatBlockReason(failureKind, detailSource.split('\n')[0] || failureKind) };
+    return {
+      decision: 'block',
+      reason: formatBlockReason(failureKind, detailSource.split('\n')[0] || failureKind),
+      failureKind,
+    };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
-function evaluateCommitCommand(command: string, state: State | null): { decision: 'approve' | 'block'; reason?: string } {
-  // TODO(R-WACT-1b): 1b removes the cast after StateFlags adds allow_tsc_failed_reason.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const allowReason = trimmedFlag((state?.flags as any) as Record<string, unknown> | undefined, ALLOW_TSC_FAILED_REASON_FIELD);
-  if (allowReason) {
-    return { decision: 'approve' };
+function emitTscGateFailed(reason: string, failureKind: GateFailureKind, command: string): void {
+  try {
+    logActivity({
+      event: 'tsc_gate_failed',
+      source: 'hook',
+      reason,
+      gate_payload: {
+        failure_kind: failureKind,
+        command,
+      },
+    } as never);
+  } catch {
+    /* activity logging is best effort */
   }
+}
 
+function emitTscGateOverrideUsed(overrideReason: string, failureKind: GateFailureKind, command: string): void {
+  try {
+    logActivity({
+      event: 'tsc_gate_override_used',
+      source: 'hook',
+      gate_payload: {
+        override_reason: overrideReason,
+        failure_kind: failureKind,
+        command,
+      },
+    } as never);
+  } catch {
+    /* activity logging is best effort */
+  }
+}
+
+function emitTscGateOverrideConsumed(overrideReason: string, command: string): void {
+  try {
+    logActivity({
+      event: 'tsc_gate_override_consumed',
+      source: 'hook',
+      gate_payload: {
+        override_reason: overrideReason,
+        command,
+      },
+    } as never);
+  } catch {
+    /* activity logging is best effort */
+  }
+}
+
+function consumeTscOverride(command: string): void {
+  const stateFile = resolveActiveStateFile();
+  if (!stateFile) return;
+
+  let consumedReason: string | null = null;
+  sm.update(stateFile, (loadedState) => {
+    const flags = { ...(loadedState.flags ?? {}) };
+    const currentReason = trimmedFlag(flags, ALLOW_TSC_FAILED_REASON_FIELD);
+    if (!currentReason) return;
+    consumedReason = currentReason;
+    delete flags[ALLOW_TSC_FAILED_REASON_FIELD];
+    loadedState.flags = flags;
+  });
+
+  if (consumedReason) {
+    emitTscGateOverrideConsumed(consumedReason, command);
+  }
+}
+
+function evaluateCommitCommand(command: string, state: State | null): GateDecision {
+  const allowReason = trimmedFlag(state?.flags, ALLOW_TSC_FAILED_REASON_FIELD);
   const repoRootResult = runTextCommand('git', ['rev-parse', '--show-toplevel'], process.cwd(), COMMAND_TIMEOUT_MS);
-  if (repoRootResult.status !== 0 || repoRootResult.timedOut || repoRootResult.error) {
-    return {
+  if (isCommandFailure(repoRootResult)) {
+    const decision = {
       decision: 'block',
       reason: formatBlockReason('setup_error', safeErrorMessage(repoRootResult.error) || repoRootResult.stderr || 'failed to resolve repository root'),
-    };
+      failureKind: 'setup_error',
+    } as const;
+    if (allowReason) {
+      emitTscGateOverrideUsed(allowReason, decision.failureKind, command);
+      return { decision: 'approve' };
+    }
+    emitTscGateFailed(decision.reason, decision.failureKind, command);
+    return decision;
   }
   const repoRoot = repoRootResult.stdout.trim();
 
   const staged = listStagedPaths(repoRoot);
-  if (staged.status !== 0 || staged.timedOut || staged.error) {
-    return {
+  if (isCommandFailure(staged)) {
+    const decision = {
       decision: 'block',
       reason: formatBlockReason('setup_error', safeErrorMessage(staged.error) || staged.stderr || 'failed to enumerate staged files'),
-    };
+      failureKind: 'setup_error',
+    } as const;
+    if (allowReason) {
+      emitTscGateOverrideUsed(allowReason, decision.failureKind, command);
+      return { decision: 'approve' };
+    }
+    emitTscGateFailed(decision.reason, decision.failureKind, command);
+    return decision;
   }
 
   if (!shouldRunTsc(staged.paths)) {
     return { decision: 'approve' };
   }
 
-  return runTscGate(repoRoot, staged.paths);
+  const gateDecision = runTscGate(repoRoot, staged.paths);
+  if (gateDecision.decision === 'approve') {
+    if (allowReason) consumeTscOverride(command);
+    return gateDecision;
+  }
+
+  if (allowReason) {
+    emitTscGateOverrideUsed(allowReason, gateDecision.failureKind, command);
+    return { decision: 'approve' };
+  }
+
+  emitTscGateFailed(gateDecision.reason, gateDecision.failureKind, command);
+  return gateDecision;
 }
 
 function emitCrashEvent(error: unknown, command: string): void {

@@ -12,6 +12,7 @@ Meta-tool: workers run inside the runtime they're modifying. Runtime hooks enfor
 | `LATEST_SCHEMA_VERSION` bump | schema-migration ticket + `_internalSchemaBump` flag | `state-manager.ts` + `install.sh` AC-RVN-08 |
 | `pickle_settings.json` / `.tmp.*` | `allow_settings_writes_reason` | `config-protection.ts` hook |
 | `circuit_breaker.json`, `pipeline-status.json` / `.tmp.*` | none | `config-protection.ts` hook |
+| tsc errors at commit time | `allow_tsc_failed_reason` (manager-only) | `tsc-gate.ts` hook |
 | `bash install.sh` from worker | none | bash-scanner |
 | `~/.claude/pickle-rick/**` | none | `config-protection.ts` hook |
 | Test `claude --add-dir <real-repo>` | none | `backend-spawn.ts` `PICKLE_TEST_MODE` + `audit-test-add-dir-containment.sh` |

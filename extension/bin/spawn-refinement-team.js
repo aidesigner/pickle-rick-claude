@@ -140,6 +140,10 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`ticket_audit_failed\` | \`session\` (optional) | mux-runner ticket-audit halt path |
 | \`ticket_audit_manual_edit\` | \`gate_payload.edit_count\` | mux-runner audit loop |
 | \`smoke_gate_bypassed\` | \`reason\` | mux-runner smoke-gate path |
+| \`tsc_gate_failed\` | \`reason\`, \`gate_payload.failure_kind\`, \`gate_payload.command\` | tsc-gate PreToolUse hook block path |
+| \`tsc_gate_override_used\` | \`gate_payload.override_reason\`, \`gate_payload.failure_kind\`, \`gate_payload.command\` | tsc-gate PreToolUse hook override path |
+| \`tsc_gate_override_consumed\` | \`gate_payload.override_reason\`, \`gate_payload.command\` | tsc-gate PreToolUse hook clean-pass auto-clear path |
+| \`tsc_gate_crashed\` | \`gate_payload.failure_kind\`, \`gate_payload.error\`, \`gate_payload.command\` | tsc-gate PreToolUse hook fail-open crash path |
 | \`manager_max_turns_relaunch\` | \`backend\`, \`relaunch_count\`, \`cap\`, \`pending_count\`, \`last_ticket_seen\` | manager-relaunch Claude max-turn relaunch path |
 
 | \`setup_resume_ticket_status_preserved\` | \`ticket_id\`, \`observed_status\`, \`expected_status\`, \`reason\` | setup.ts resume path (default, preserves operator edit) |
