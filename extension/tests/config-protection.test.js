@@ -209,6 +209,41 @@ test('blocks ./install.sh (R-WSRC)', () => {
   assert.equal(result.decision, 'block');
 });
 
+test('approves Bash cat install.sh (read-only)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'cat install.sh' } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('approves Bash vim install.sh (read-only)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'vim install.sh' } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('approves Bash git log install.sh (read-only)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'git log install.sh' } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('approves Bash bash pre-install.sh (different script)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'bash pre-install.sh' } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('approves Bash ./my-install.sh (different script)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: './my-install.sh' } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('blocks Bash /abs/path/install.sh (R-WSRC)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: '/Users/x/repo/install.sh' } });
+  assert.equal(result.decision, 'block');
+});
+
+test('blocks Bash bash /abs/path/install.sh (R-WSRC)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'bash /Users/x/repo/install.sh' } });
+  assert.equal(result.decision, 'block');
+});
+
 // ---------------------------------------------------------------------------
 // Approve cases
 // ---------------------------------------------------------------------------

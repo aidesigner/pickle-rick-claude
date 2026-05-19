@@ -6,21 +6,33 @@
  *
  * Goals:
  * - Prevent nested-claude auth/session contamination (H2 in the SJET PRD).
- * - Strip PICKLE_* and CLAUDE* session markers that can leak the outer manager context.
- * - Keep only the minimal required for the judge CLI to auth and run (ANTHROPIC_API_KEY etc. survive).
+ * - Strip PICKLE_* and Claude-Code session markers (`CLAUDECODE`,
+ *   `CLAUDECODE_*`, `CLAUDE_SESSION_*`, `CLAUDE_PROJECT_*`) that can leak the
+ *   outer manager context.
+ * - Preserve auth/routing env: `ANTHROPIC_*`, `CLAUDE_CODE_USE_VERTEX`,
+ *   `CLAUDE_CODE_USE_BEDROCK`, and any other non-session `CLAUDE_*` var the
+ *   child CLI needs to authenticate or pick its provider.
  * - Provide a single place for future "judge backend specific" pruning.
  *
  * Used by: microverse-runner.ts (measureLlmMetricAttempt + probeJudgeCliAvailability)
  * and any future convergence judge paths.
  */
+// Narrowly-targeted session markers only. Do NOT add a blanket `CLAUDE_`
+// prefix here — that strips routing controls like CLAUDE_CODE_USE_VERTEX /
+// CLAUDE_CODE_USE_BEDROCK that the child CLI needs.
 const DANGEROUS_PREFIXES = [
     'PICKLE_',
-    'CLAUDECODE',
-    'CLAUDE_',
     'PICKLE_RICK_',
+    'CLAUDECODE_',
+    'CLAUDE_SESSION_',
+    'CLAUDE_PROJECT_',
     'SESSION_ROOT',
     'TICKET_DIR',
 ];
+// Exact session-marker matches (no trailing underscore in the env name).
+const DANGEROUS_EXACT = new Set([
+    'CLAUDECODE',
+]);
 const ALLOWED_JUDGE_OVERRIDES = {
 // We deliberately do NOT pass the outer PICKLE_STATE_FILE etc.
 };
@@ -35,10 +47,14 @@ export function buildJudgeSpawnEnv(backend, baseEnv = process.env) {
         if (v === undefined)
             continue;
         // Never leak pickle internal state or outer session markers into the judge.
+        if (DANGEROUS_EXACT.has(k)) {
+            continue;
+        }
         if (DANGEROUS_PREFIXES.some(p => k.startsWith(p))) {
             continue;
         }
-        // Keep everything else (API keys, PATH, HOME, etc.)
+        // Keep everything else (API keys, PATH, HOME, routing flags such as
+        // CLAUDE_CODE_USE_VERTEX / CLAUDE_CODE_USE_BEDROCK, ANTHROPIC_*, etc.)
         out[k] = v;
     }
     // Explicitly force a "clean" claude context for the judge.

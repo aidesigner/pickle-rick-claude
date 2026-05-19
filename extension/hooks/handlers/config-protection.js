@@ -346,13 +346,33 @@ function detectTargetedStateFile(input) {
  * R-PIPE-3 / R-WSRC: Explicit detection for `bash install.sh` (and variants)
  * from worker contexts. This is a hard forbidden (manager-only) per the
  * project CLAUDE.md worker rules. The hook must return "block" for workers.
+ *
+ * Only matches when `install.sh` is the EXECUTABLE token (basename of the
+ * binary being invoked), not when it appears as an argument to a read-only
+ * tool (`cat install.sh`, `vim install.sh`, `git log install.sh`) and not
+ * when it is a suffix of a different filename (`pre-install.sh`,
+ * `my-install.sh`).
  */
 function isBashInvokingInstallSh(command) {
     if (!command)
         return false;
-    const c = command.trim().toLowerCase();
-    // Covers: bash install.sh, ./install.sh, /full/path/install.sh, bash ./install.sh --foo, etc.
-    return c.includes('install.sh') || c.startsWith('bash install') || c.startsWith('./install.sh') || c.startsWith('sh install');
+    const trimmed = command.trim();
+    if (!trimmed)
+        return false;
+    // Tokenize on whitespace; locate the executable token (first non-empty token,
+    // skipping a leading `bash` or `sh` wrapper).
+    const tokens = trimmed.split(/\s+/);
+    let execIdx = 0;
+    if (tokens[execIdx] === 'bash' || tokens[execIdx] === 'sh')
+        execIdx = 1;
+    const exec = tokens[execIdx];
+    if (!exec)
+        return false;
+    const cleanExec = exec.replace(/;+$/, '');
+    const base = cleanExec.includes('/')
+        ? cleanExec.substring(cleanExec.lastIndexOf('/') + 1)
+        : cleanExec;
+    return base === 'install.sh';
 }
 /**
  * R-PIPE-3 extracted helper — keeps main() complexity <= 15.
