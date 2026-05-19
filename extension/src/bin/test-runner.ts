@@ -5,6 +5,8 @@ import path from 'node:path';
 
 const VALID_TIERS = new Set(['fast', 'integration', 'expensive', 'contract']);
 const QUARANTINED_TIER_EXCLUSIONS = new Set(['fast', 'integration']);
+const DEFAULT_TEST_RUNNER_TIMEOUT_MS = 30 * 60 * 1000;
+const MAX_TEST_RUNNER_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 type Tier = 'fast' | 'integration' | 'expensive' | 'contract';
 
@@ -217,6 +219,16 @@ function shouldSkipTier(tier: Tier | null): boolean {
   return tier === 'expensive' && process.env.RUN_EXPENSIVE_TESTS !== '1';
 }
 
+function getRunnerTimeoutMs(): number {
+  const raw = process.env.PICKLE_TEST_RUNNER_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_TEST_RUNNER_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    exitWithError(`Invalid PICKLE_TEST_RUNNER_TIMEOUT_MS: ${raw}`, 2);
+  }
+  return Math.min(parsed, MAX_TEST_RUNNER_TIMEOUT_MS);
+}
+
 function selectFiles(
   rootDir: string,
   tier: Tier | null,
@@ -276,7 +288,10 @@ function main(): never {
   }
 
   const nodeArgs = ['--test', ...runnerArgs, ...selectedFiles];
-  const result = spawnSync(process.execPath, nodeArgs, { stdio: 'inherit' });
+  const result = spawnSync(process.execPath, nodeArgs, {
+    stdio: 'inherit',
+    timeout: getRunnerTimeoutMs(),
+  });
 
   if (result.error) {
     exitWithError(result.error.message, 1);

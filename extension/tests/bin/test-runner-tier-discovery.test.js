@@ -41,10 +41,12 @@ function writeSerialManifest(root, content) {
 }
 
 function runRunner(root, args, options = {}) {
+  const env = { ...process.env, ...options.env };
+  delete env.NODE_TEST_CONTEXT;
   return spawnSync(process.execPath, [RUNNER_PATH, ...args], {
     cwd: root,
     encoding: 'utf8',
-    env: { ...process.env, ...options.env },
+    env,
   });
 }
 
@@ -247,6 +249,39 @@ test('positional argv behavior still runs the selected file', () => {
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
+  } finally {
+    cleanupFixtureRoot(root);
+  }
+});
+
+test('runner times out wedged child test process instead of hanging indefinitely', () => {
+  const root = makeFixtureRoot();
+  try {
+    writeFixtureTest(
+      root,
+      'tests/hangs.test.js',
+      'fast',
+      [
+        "test('blocks event loop past timeout', () => {",
+        '  const shared = new SharedArrayBuffer(4);',
+        '  const view = new Int32Array(shared);',
+        '  Atomics.wait(view, 0, 0, 60_000);',
+        '});',
+      ].join('\n'),
+    );
+
+    const startedAt = Date.now();
+    const result = runRunner(root, ['tests/hangs.test.js'], {
+      env: { PICKLE_TEST_RUNNER_TIMEOUT_MS: '200' },
+    });
+
+    assert.ok(
+      result.status === 1 || /ETIMEDOUT|timed out/i.test(result.stderr),
+      `expected timeout failure, got status=${result.status}\nstdout=${result.stdout}\nstderr=${result.stderr}`,
+    );
+    assert.match(result.stderr, /ETIMEDOUT|timed out/i);
+    assert.match(result.stdout, /cancelled 1|tests 1/i);
+    assert.ok(Date.now() - startedAt < 10_000, 'timeout should fail fast');
   } finally {
     cleanupFixtureRoot(root);
   }
