@@ -92,6 +92,22 @@ test('section-c-gate.pipeline-log-banner writes still_needed true when only pipe
   }
 });
 
+test('section-c-gate.long-log-banner retains still_needed when the banner scrolls outside the trailing sample', () => {
+  const lines = ['older line 0', '◤ FEED TERMINATED ◢'];
+  for (let i = 0; i < 1005; i += 1) {
+    lines.push(`iteration ${i} completed`);
+  }
+  const session = makeSession(lines.join('\n'));
+  try {
+    const result = runGate(session);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.artifact.still_needed, true);
+    assert.match(result.artifact.evidence, /outside the trailing evidence sample/);
+  } finally {
+    rmSync(session, { recursive: true, force: true });
+  }
+});
+
 test('section-c-gate.no-session exits zero and defaults still_needed true', () => {
   const missing = path.join(tmpdir(), `section-c-missing-${process.pid}-${Date.now()}`);
   const result = runGate(missing);

@@ -97,11 +97,15 @@ export function evaluateSectionC({ sessionRoot } = {}) {
     });
   }
 
-  const lines = logPaths.flatMap((logPath) => lastLines(fs.readFileSync(logPath, 'utf8')));
-  const stillNeeded = lines.some((line) => line.includes(BANNER));
+  const logContents = logPaths.map((logPath) => fs.readFileSync(logPath, 'utf8'));
+  const lines = logContents.flatMap((text) => lastLines(text));
+  const stillNeeded = logContents.some((text) => text.includes(BANNER));
+  const sampledBannerVisible = lines.some((line) => line.includes(BANNER));
   return writeArtifact(artifactPath, {
     still_needed: stillNeeded,
-    evidence: evidenceFor(lines) || `No ${BANNER} found in ${logPaths.join(', ')}.`,
+    evidence: stillNeeded && !sampledBannerVisible
+      ? `${BANNER} found earlier in watcher log outside the trailing evidence sample.`
+      : evidenceFor(lines) || `No ${BANNER} found in ${logPaths.join(', ')}.`,
   });
 }
 
