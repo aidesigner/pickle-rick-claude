@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 const CODEX_BANNER_PATTERNS = [
     'Reading additional input from stdin...',
     'chatgpt.com/codex/settings/usage',
@@ -12,8 +13,9 @@ function detectCodexBanner(content) {
 }
 function readSessionState(sessionDir) {
     try {
-        const raw = fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8');
-        const state = JSON.parse(raw);
+        const state = readRecoverableJsonObject(path.join(sessionDir, 'state.json'));
+        if (state === null)
+            throw new Error('state unreadable');
         const backend = state.backend ?? 'unknown';
         const activity = state.activity ?? [];
         const expectedWorkerBackendByLog = new Map();

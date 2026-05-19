@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 
 const CODEX_BANNER_PATTERNS = [
   'Reading additional input from stdin...',
@@ -48,8 +49,11 @@ function readSessionState(sessionDir: string): {
   expectedWorkerBackendByTicket: Map<string, string>;
 } {
   try {
-    const raw = fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8');
-    const state = JSON.parse(raw) as { backend?: string; activity?: WorkerBackendResolvedEvent[] };
+    const state = readRecoverableJsonObject(path.join(sessionDir, 'state.json')) as {
+      backend?: string;
+      activity?: WorkerBackendResolvedEvent[];
+    } | null;
+    if (state === null) throw new Error('state unreadable');
     const backend = state.backend ?? 'unknown';
     const activity = state.activity ?? [];
     const expectedWorkerBackendByLog = new Map<string, string>();
