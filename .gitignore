@@ -19,6 +19,9 @@ current_sessions.json
 .claude/pickle-rick/
 .claude/projects/
 .claude/todos/
+# Cron/scheduler session metadata — written by Claude Code at session start; per-machine state
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
 # .claude/commands/ and .claude/skills/ are tracked — they're the product
 /scripts/
 activity/
