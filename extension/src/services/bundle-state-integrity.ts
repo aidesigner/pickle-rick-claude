@@ -31,7 +31,9 @@ function statePathsForBundle(sessionDir: string): string[] {
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith('microverse_')) continue;
     const childStatePath = path.join(sessionDir, entry.name, 'state.json');
-    if (fs.existsSync(childStatePath)) statePaths.push(childStatePath);
+    if (fs.existsSync(childStatePath) || readRecoverableJsonObject(childStatePath) !== null) {
+      statePaths.push(childStatePath);
+    }
   }
 
   return statePaths;

@@ -292,6 +292,33 @@ describe('phase-ordered AC gate', () => {
     assert.match(result.failures[0].reason, /exceeds cap/);
     fs.rmSync(dir, { recursive: true, force: true });
   });
+
+  test('AC-BUNDLE-03 fails when a child microverse only has a newer recoverable tmp state over cap', () => {
+    const dir = tmpDir();
+    const childDir = path.join(dir, 'microverse_citadel');
+    const childStatePath = path.join(childDir, 'state.json');
+    const childTmpStatePath = `${childStatePath}.tmp.999999`;
+    fs.mkdirSync(childDir);
+    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ codex_manager_relaunch_count: 0 }));
+    fs.writeFileSync(childTmpStatePath, JSON.stringify({ codex_manager_relaunch_count: Defaults.CODEX_MANAGER_RELAUNCH_CAP + 1 }));
+    fs.writeFileSync(path.join(dir, AC_PHASE_MANIFEST), JSON.stringify({
+      acceptance_criteria: [{ id: 'AC-BUNDLE-03', evaluation_phase: 'bundle-end' }],
+    }));
+
+    const result = runAcPhaseGate({
+      sessionDir: dir,
+      evaluationPhase: 'bundle-end',
+      cwd: dir,
+    });
+
+    assert.equal(result.status, 'fail');
+    assert.equal(result.failures[0].id, 'AC-BUNDLE-03');
+    assert.match(result.failures[0].reason, /microverse_citadel\/state\.json/);
+    assert.match(result.failures[0].reason, /exceeds cap/);
+    assert.equal(JSON.parse(fs.readFileSync(childStatePath, 'utf-8')).codex_manager_relaunch_count, Defaults.CODEX_MANAGER_RELAUNCH_CAP + 1);
+    assert.equal(fs.existsSync(childTmpStatePath), false);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 // ---------------------------------------------------------------------------
