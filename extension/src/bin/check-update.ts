@@ -356,7 +356,8 @@ function findActiveSession(): ActiveSession | null {
   for (const sessionDir of sessionDirs) {
     const statePath = path.join(sessionsRoot, sessionDir, 'state.json');
     try {
-      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as Record<string, unknown>;
+      const state = readRecoverableJsonObject(statePath) as Record<string, unknown> | null;
+      if (!state) continue;
       if (state.active === true) {
         return {
           id: typeof state.session_id === 'string' && state.session_id ? state.session_id : sessionDir,

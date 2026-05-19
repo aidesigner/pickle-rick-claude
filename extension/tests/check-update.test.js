@@ -606,17 +606,22 @@ describe('performUpgrade', () => {
     let tmpDir;
     let origEnv;
     let origPath;
+    let origDataRoot;
 
     beforeEach(() => {
         tmpDir = makeTmpDir();
         origEnv = process.env.EXTENSION_DIR;
         origPath = process.env.PATH;
+        origDataRoot = process.env.PICKLE_DATA_ROOT;
         process.env.EXTENSION_DIR = tmpDir;
+        process.env.PICKLE_DATA_ROOT = path.join(tmpDir, 'data-root');
     });
 
     afterEach(() => {
         if (origEnv === undefined) delete process.env.EXTENSION_DIR;
         else process.env.EXTENSION_DIR = origEnv;
+        if (origDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = origDataRoot;
         process.env.PATH = origPath;
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
@@ -824,6 +829,37 @@ ${tarballs.map((tarball) => `cp ${JSON.stringify(tarball)} "$dest/$(basename ${J
         );
 
         assert.equal(fs.existsSync(path.join(tmpDir, 'install-marker.txt')), false);
+    });
+
+    test('downgrade active-session guard promotes recoverable session state tmp before refusing', () => {
+        writeDeployedPackage('1.67.0');
+        mockDownloadRelease(makeReleaseTarball('1.64.0'));
+
+        const sessionDir = path.join(process.env.PICKLE_DATA_ROOT, 'sessions', 'active-abc123');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        const statePath = path.join(sessionDir, 'state.json');
+        const tmpStatePath = `${statePath}.tmp.999999`;
+        fs.writeFileSync(statePath, JSON.stringify({
+            active: false,
+            session_id: 'active-abc123',
+        }));
+        fs.writeFileSync(tmpStatePath, JSON.stringify({
+            active: true,
+            session_id: 'active-abc123',
+        }));
+        const stale = new Date('2026-05-19T10:00:00.000Z');
+        const newer = new Date('2026-05-19T10:00:01.000Z');
+        fs.utimesSync(statePath, stale, stale);
+        fs.utimesSync(tmpStatePath, newer, newer);
+
+        const result = performUpgrade('1.67.0', '1.66.0', 'v1.66.0', { allowDowngrade: true, noConfirm: true });
+
+        assert.equal(result.success, false);
+        assert.equal(result.exitCode, 2);
+        assert.match(result.error ?? '', /active session active-abc123/);
+        assert.equal(fs.existsSync(path.join(tmpDir, 'install-marker.txt')), false);
+        assert.equal(fs.existsSync(tmpStatePath), false);
+        assert.equal(JSON.parse(fs.readFileSync(statePath, 'utf-8')).active, true);
     });
 
     test('check-update.ignores-sidecar-tarballs-and-installs-the-unique-installable-release', () => {
