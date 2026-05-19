@@ -167,7 +167,7 @@ export function downloadRelease(tag) {
         const result = spawnSync('gh', [
             'release', 'download', tag,
             '-R', 'gregorydickson/pickle-rick-claude',
-            '-A', 'tar.gz',
+            '-p', '*.tar.gz',
             '-D', tmpDir,
         ], { encoding: 'utf-8', timeout: 60_000 });
         if (result.status !== 0) {

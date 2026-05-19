@@ -33,6 +33,16 @@ function makeTmpDir() {
     return tmpDir;
 }
 
+function makeGhFixture(scriptBody) {
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-update-gh-'));
+    const ghPath = path.join(binDir, 'gh');
+    fs.writeFileSync(ghPath, `#!/usr/bin/env bash
+set -eu
+${scriptBody}
+`, { mode: 0o755 });
+    return binDir;
+}
+
 // ---------------------------------------------------------------------------
 // parseVersion
 // ---------------------------------------------------------------------------
@@ -505,6 +515,51 @@ describe('downloadRelease', () => {
             assert.ok(result.endsWith('.tar.gz'));
             // Clean up downloaded file
             try { fs.rmSync(path.dirname(result), { recursive: true, force: true }); } catch { /* */ }
+        }
+    });
+
+    test('requests release tar.gz assets via glob pattern instead of the source archive flag', () => {
+        const tarRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'check-update-tar-'));
+        const releaseRoot = path.join(tarRoot, 'pickle-rick-claude');
+        const tarball = path.join(tarRoot, 'release.tar.gz');
+        const ghDir = makeGhFixture(`
+if [ "$1" = "release" ] && [ "$2" = "download" ]; then
+  download_args=" $* "
+  case "$download_args" in
+    *" -p *.tar.gz "*|*" --pattern *.tar.gz "*) ;;
+    *) exit 98 ;;
+  esac
+  case "$download_args" in
+    *" -A tar.gz "*|*" --archive tar.gz "*) exit 99 ;;
+  esac
+  dest=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "-D" ]; then
+      shift
+      dest="$1"
+      break
+    fi
+    shift
+  done
+  cp ${JSON.stringify(tarball)} "$dest/$(basename ${JSON.stringify(tarball)})"
+  exit 0
+fi
+exit 1
+`);
+        const origPath = process.env.PATH;
+        try {
+            fs.mkdirSync(path.join(releaseRoot, 'extension'), { recursive: true });
+            fs.writeFileSync(path.join(releaseRoot, 'extension', 'package.json'), `${JSON.stringify({ version: '1.2.3' }, null, 2)}\n`);
+            fs.writeFileSync(path.join(releaseRoot, 'install.sh'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+            execFileSync('tar', ['-czf', tarball, '-C', tarRoot, 'pickle-rick-claude']);
+
+            process.env.PATH = `${ghDir}:${origPath}`;
+            const result = downloadRelease('v1.2.3');
+            assert.equal(result?.endsWith('.tar.gz'), true);
+        } finally {
+            process.env.PATH = origPath;
+            fs.rmSync(tarRoot, { recursive: true, force: true });
+            fs.rmSync(ghDir, { recursive: true, force: true });
         }
     });
 });
