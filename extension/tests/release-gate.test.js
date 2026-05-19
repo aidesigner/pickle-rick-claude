@@ -90,6 +90,19 @@ function makeSplitPayloadTarball(archiveName = 'split.tar.gz') {
   return { dir, tarball };
 }
 
+function makeMultiPayloadRootTarball(archiveName = 'multi-root.tar.gz') {
+  const dir = mkdtempSync(path.join(tmpdir(), 'release-gate-multi-root-'));
+  const firstRoot = path.join(dir, 'pickle-rick-claude');
+  const secondRoot = path.join(dir, 'pickle-rick-claude-copy');
+  writePackage(firstRoot, '1.67.0');
+  writePackage(secondRoot, '1.67.0');
+  writeFileSync(path.join(firstRoot, 'install.sh'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+  writeFileSync(path.join(secondRoot, 'install.sh'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+  const tarball = path.join(dir, archiveName);
+  run('tar', ['-czf', tarball, '-C', dir, 'pickle-rick-claude', 'pickle-rick-claude-copy']);
+  return { dir, tarball };
+}
+
 function makeGhFixture({ mode = 'ok', tarball, tarballs, fakeFindNames, downloadAssert }) {
   const binDir = mkdtempSync(path.join(tmpdir(), 'release-gate-bin-'));
   const ghPath = path.join(binDir, 'gh');
@@ -324,6 +337,21 @@ esac
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
       rmSync(splitFixture.dir, { recursive: true, force: true });
+      rmSync(ghDir, { recursive: true, force: true });
+    }
+  });
+
+  test('exits 21 when a downloaded tarball contains multiple installable payload roots', () => {
+    const { dir: repoDir, tagName } = makeGitFixture();
+    const multiRootFixture = makeMultiPayloadRootTarball('pickle-release.tar.gz');
+    const ghDir = makeGhFixture({ tarball: multiRootFixture.tarball });
+    try {
+      const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
+      assert.equal(result.status, 21);
+      assert.match(result.stderr, /multiple install payload roots shared by extension\/package\.json and install\.sh/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(multiRootFixture.dir, { recursive: true, force: true });
       rmSync(ghDir, { recursive: true, force: true });
     }
   });

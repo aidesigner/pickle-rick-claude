@@ -60,7 +60,7 @@ read_tag_version() {
   printf '%s\n' "$version"
 }
 
-find_installable_payload_root() {
+list_installable_payload_roots() {
   local tarball="$1"
   tar -tzf "$tarball" | awk '
     function normalized(entry) {
@@ -90,12 +90,24 @@ find_installable_payload_root() {
       for (root in pkg) {
         if (root in install) {
           print root
-          exit 0
         }
       }
-      exit 1
     }
   '
+}
+
+find_installable_payload_root() {
+  local tarball="$1"
+  local -a roots=()
+  local root
+
+  while IFS= read -r root; do
+    roots+=("$root")
+  done < <(list_installable_payload_roots "$tarball")
+
+  [ ${#roots[@]} -gt 0 ] || return 1
+  [ ${#roots[@]} -eq 1 ] || return 2
+  printf '%s\n' "${roots[0]}"
 }
 
 select_installable_tarball() {
@@ -113,8 +125,11 @@ select_installable_tarball() {
   [ ${#downloaded[@]} -gt 0 ] || die 20 "release download produced no tar.gz asset for $tag"
 
   for tarball in "${downloaded[@]}"; do
-    if find_installable_payload_root "$tarball" >/dev/null; then
+    if payload_root="$(find_installable_payload_root "$tarball")"; then
       installable+=("$tarball")
+    else
+      status=$?
+      [ "$status" -eq 1 ] || die 21 "downloaded tarball contains multiple install payload roots shared by $PKG_DISPLAY_PATH and install.sh"
     fi
   done
 
@@ -150,7 +165,11 @@ post_tag() {
 
   local tarball payload_root pkg_member pkg tagged
   tarball="$(select_installable_tarball "$tmpdir" "$tag")"
-  payload_root="$(find_installable_payload_root "$tarball")" || die 21 "downloaded tarball is missing install payload root shared by $PKG_DISPLAY_PATH and install.sh"
+  payload_root="$(find_installable_payload_root "$tarball")" || {
+    status=$?
+    [ "$status" -eq 1 ] || die 21 "downloaded tarball contains multiple install payload roots shared by $PKG_DISPLAY_PATH and install.sh"
+    die 21 "downloaded tarball is missing install payload root shared by $PKG_DISPLAY_PATH and install.sh"
+  }
   if [ -n "$payload_root" ]; then
     pkg_member="$payload_root/extension/package.json"
   else
