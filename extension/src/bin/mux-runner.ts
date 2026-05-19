@@ -2336,6 +2336,8 @@ export interface MuxReadinessGateInput {
   skipReason?: string;
 }
 
+const QUALITY_GATE_SUBPROCESS_TIMEOUT_MS = 60_000;
+
 export function runMuxReadinessGate(input: MuxReadinessGateInput): number {
   const localBinPath = path.join(input.extensionRoot, 'extension', 'bin', 'check-readiness.js');
   const installedBinPath = path.join(input.extensionRoot, 'bin', 'check-readiness.js');
@@ -2357,6 +2359,7 @@ export function runMuxReadinessGate(input: MuxReadinessGateInput): number {
     cwd: input.repoRoot,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: QUALITY_GATE_SUBPROCESS_TIMEOUT_MS,
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
@@ -2456,6 +2459,7 @@ export function runTicketAuditGate(input: TicketAuditGateInput): TicketAuditGate
   const result = spawnSync(process.execPath, [binPath, input.sessionDir], {
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: QUALITY_GATE_SUBPROCESS_TIMEOUT_MS,
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
