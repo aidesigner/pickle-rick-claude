@@ -5,7 +5,7 @@
   "checker": "verify-recapture-fired",
   "checker_version": "2",
   "evidence": {
-    "contract": "Runtime verification results are written to bundle/ac-dr-02.runtime.json so the tracked artifact remains content-stable across runs."
+    "contract": "Runtime verification results are written to a session-scoped bundle/ac-dr-02.runtime.json artifact so the tracked artifact remains content-stable across runs."
   },
   "failure_reason": null,
   "remediation_hint": null

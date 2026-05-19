@@ -8,7 +8,7 @@ import { StateManager } from '../extension/services/state-manager.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const ARTIFACT_PATH = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.json');
-const RUNTIME_ARTIFACT_PATH = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.runtime.json');
+const DEFAULT_RUNTIME_ARTIFACT_PATH = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.runtime.json');
 const sm = new StateManager();
 const STABLE_ARTIFACT = {
   ac_id: 'AC-DR-02',
@@ -17,7 +17,7 @@ const STABLE_ARTIFACT = {
   checker: 'verify-recapture-fired',
   checker_version: '2',
   evidence: {
-    contract: 'Runtime verification results are written to bundle/ac-dr-02.runtime.json so the tracked artifact remains content-stable across runs.',
+    contract: 'Runtime verification results are written to a session-scoped bundle/ac-dr-02.runtime.json artifact so the tracked artifact remains content-stable across runs.',
   },
   failure_reason: null,
   remediation_hint: null,
@@ -69,7 +69,13 @@ function artifactWindows(windows) {
   }));
 }
 
-function writeRuntimeArtifact({ pass, failureReason, evidence }) {
+function runtimeArtifactPath(sessionRoot) {
+  return sessionRoot
+    ? path.join(sessionRoot, 'bundle', 'ac-dr-02.runtime.json')
+    : DEFAULT_RUNTIME_ARTIFACT_PATH;
+}
+
+function writeRuntimeArtifact(artifactPath, { pass, failureReason, evidence }) {
   const artifact = {
     ...STABLE_ARTIFACT,
     pass,
@@ -78,8 +84,8 @@ function writeRuntimeArtifact({ pass, failureReason, evidence }) {
     failure_reason: failureReason,
     remediation_hint: pass ? null : 'Ensure anatomy-park records baseline_recapture_attempted inside its latest anatomy-park phase window.',
   };
-  fs.mkdirSync(path.dirname(RUNTIME_ARTIFACT_PATH), { recursive: true });
-  fs.writeFileSync(RUNTIME_ARTIFACT_PATH, `${JSON.stringify(artifact, null, 2)}\n`);
+  fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+  fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
   return artifact;
 }
 
@@ -90,10 +96,12 @@ function ensureStableArtifact() {
 
 export function verifyRecaptureFired(sessionRoot) {
   const statePath = sessionRoot ? path.join(sessionRoot, 'state.json') : null;
+  const artifactPath = runtimeArtifactPath(sessionRoot);
   if (!statePath || !fs.existsSync(statePath)) {
     return {
       exitCode: 2,
-      artifact: writeRuntimeArtifact({
+      artifactPath,
+      artifact: writeRuntimeArtifact(artifactPath, {
         pass: false,
         failureReason: 'state-missing',
         evidence: { state_path: statePath, activity_count: null, anatomy_windows: [] },
@@ -110,7 +118,8 @@ export function verifyRecaptureFired(sessionRoot) {
       : 'state-unreadable';
     return {
       exitCode: failureReason === 'state-missing' ? 2 : 1,
-      artifact: writeRuntimeArtifact({
+      artifactPath,
+      artifact: writeRuntimeArtifact(artifactPath, {
         pass: false,
         failureReason,
         evidence: {
@@ -137,7 +146,8 @@ export function verifyRecaptureFired(sessionRoot) {
 
   return {
     exitCode: pass ? 0 : 1,
-    artifact: writeRuntimeArtifact({
+    artifactPath,
+    artifact: writeRuntimeArtifact(artifactPath, {
       pass,
       failureReason,
       evidence: {
@@ -155,7 +165,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'verify-recapture-fire
     ensureStableArtifact();
     const sessionRoot = process.argv[2] ?? process.env.PICKLE_SESSION_ROOT;
     const result = verifyRecaptureFired(sessionRoot);
-    process.stdout.write(`AC-DR-02 ${result.artifact.pass ? 'PASS' : 'FAIL'} ${RUNTIME_ARTIFACT_PATH}\n`);
+    process.stdout.write(`AC-DR-02 ${result.artifact.pass ? 'PASS' : 'FAIL'} ${result.artifactPath}\n`);
     process.exit(result.exitCode);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);

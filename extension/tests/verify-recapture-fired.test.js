@@ -19,7 +19,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CLI = path.join(REPO_ROOT, 'bin', 'verify-recapture-fired.js');
 const STABLE_ARTIFACT = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.json');
-const RUNTIME_ARTIFACT = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.runtime.json');
 
 function makeSession(state) {
   const session = mkdtempSync(path.join(tmpdir(), 'verify-recapture-'));
@@ -27,7 +26,16 @@ function makeSession(state) {
   return session;
 }
 
+function runtimeArtifactPath(session) {
+  return path.join(session, 'bundle', 'ac-dr-02.runtime.json');
+}
+
+function readOptionalFile(filePath) {
+  return existsSync(filePath) ? readFileSync(filePath, 'utf8') : null;
+}
+
 function runVerifier(session) {
+  const runtimeArtifactPathForSession = runtimeArtifactPath(session);
   const result = spawnSync(process.execPath, [CLI, session], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
@@ -35,7 +43,8 @@ function runVerifier(session) {
   return {
     ...result,
     stableArtifact: JSON.parse(readFileSync(STABLE_ARTIFACT, 'utf8')),
-    runtimeArtifact: JSON.parse(readFileSync(RUNTIME_ARTIFACT, 'utf8')),
+    runtimeArtifactPath: runtimeArtifactPathForSession,
+    runtimeArtifact: JSON.parse(readFileSync(runtimeArtifactPathForSession, 'utf8')),
   };
 }
 
@@ -87,6 +96,7 @@ test('verify-recapture.pass writes passing artifact when a recapture event is in
     const result = runVerifier(session);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /AC-DR-02 PASS/);
+    assert.match(result.stdout, new RegExp(result.runtimeArtifactPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.equal(readFileSync(STABLE_ARTIFACT, 'utf8'), baseline);
     assert.deepEqual(validateBundleArtifact(result.stableArtifact), []);
     assert.equal(result.stableArtifact.pass, true);
@@ -224,5 +234,39 @@ test('verify-recapture.recovers orphan tmp state before evaluating the latest an
     assert.equal(existsSync(orphanPath), false, 'orphan tmp should be consumed during recovery');
   } finally {
     rmSync(session, { recursive: true, force: true });
+  }
+});
+
+test('verify-recapture.session-runtime-artifacts do not overwrite evidence from another session', () => {
+  const repoRuntimeArtifact = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.runtime.json');
+  const repoRuntimeBaseline = readOptionalFile(repoRuntimeArtifact);
+  const passSession = makeSession(baseState([
+    {
+      ts: '2026-05-02T11:15:00.000Z',
+      event: 'baseline_recapture_attempted',
+      iteration: 3,
+    },
+  ]));
+  const failSession = makeSession(baseState([]));
+  try {
+    const passResult = runVerifier(passSession);
+    assert.equal(passResult.status, 0, passResult.stderr);
+    assert.equal(passResult.runtimeArtifact.pass, true);
+
+    const passArtifactSnapshot = readFileSync(passResult.runtimeArtifactPath, 'utf8');
+    const failResult = runVerifier(failSession);
+    assert.equal(failResult.status, 1, failResult.stderr);
+    assert.equal(failResult.runtimeArtifact.pass, false);
+    assert.equal(failResult.runtimeArtifact.failure_reason, 'recapture-event-missing');
+
+    assert.equal(readFileSync(passResult.runtimeArtifactPath, 'utf8'), passArtifactSnapshot);
+    assert.equal(
+      readOptionalFile(repoRuntimeArtifact),
+      repoRuntimeBaseline,
+      'repo-global runtime artifact must remain untouched when a session root is provided',
+    );
+  } finally {
+    rmSync(passSession, { recursive: true, force: true });
+    rmSync(failSession, { recursive: true, force: true });
   }
 });
