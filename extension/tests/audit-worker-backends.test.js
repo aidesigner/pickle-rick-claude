@@ -136,3 +136,44 @@ test('audit-worker-backends: per-log spawn backend beats ticket-level fallback f
 
   fs.rmSync(sessionDir, { recursive: true, force: true });
 });
+
+test('audit-worker-backends: codex banner under hermes-expected worker is flagged as a mismatch', () => {
+  const sessionDir = makeTmpDir();
+  const ticketDir = path.join(sessionDir, 'ticket-001');
+  fs.mkdirSync(ticketDir, { recursive: true });
+
+  fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+    backend: 'hermes',
+    activity: [
+      {
+        event: 'worker_spawn_backend_resolved',
+        ts: new Date().toISOString(),
+        ticket: 'ticket-001',
+        pid: 333,
+        backend: 'hermes',
+        source: 'state',
+      },
+    ],
+  }));
+
+  fs.writeFileSync(
+    path.join(ticketDir, 'worker_session_333.log'),
+    'Reading additional input from stdin...\nchatgpt.com/codex/settings/usage\n',
+  );
+
+  const report = scanSession(sessionDir);
+  assert.equal(report.session_backend, 'hermes');
+  assert.equal(report.mismatch_count, 1);
+  assert.deepEqual(report.mismatches, [
+    {
+      ticket: 'ticket-001',
+      log: 'worker_session_333.log',
+      patterns_found: [
+        'Reading additional input from stdin...',
+        'chatgpt.com/codex/settings/usage',
+      ],
+    },
+  ]);
+
+  fs.rmSync(sessionDir, { recursive: true, force: true });
+});

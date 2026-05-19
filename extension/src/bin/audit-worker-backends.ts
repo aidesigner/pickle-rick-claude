@@ -142,7 +142,9 @@ export function scanSession(sessionDir: string): AuditReport {
       const expectedWorkerBackend = expectedWorkerBackendByLog.get(`${entry.name}/${logFile}`)
         ?? expectedWorkerBackendByTicket.get(entry.name)
         ?? sessionBackend;
-      if (expectedWorkerBackend === 'claude' && patternsFound.length > 0) {
+      const expectsNonCodexWorker =
+        expectedWorkerBackend === 'claude' || expectedWorkerBackend === 'hermes';
+      if (expectsNonCodexWorker && patternsFound.length > 0) {
         mismatches.push({ ticket: entry.name, log: logFile, patterns_found: patternsFound });
       }
     }
