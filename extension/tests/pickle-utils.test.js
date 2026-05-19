@@ -17,7 +17,9 @@ import {
     resolveSessionPath,
     pruneOldSessions,
     extractFrontmatter,
+    getMicroverseSettings,
     getExtensionRoot,
+    resolveJudgeBackend,
     _resetExtensionDirFallbackForTests,
     getDataRoot,
     markTicketDone,
@@ -1571,4 +1573,41 @@ test('clearTicketCacheFields: idempotent on already-clean state', () => {
     const state = { current_ticket: null };
     assert.equal(clearTicketCacheFields(state), 0);
     assert.equal(clearTicketCacheFields(state), 0);
+});
+
+// --- R-SJET-4-PRE: new microverse helper functions ---
+
+test('resolveJudgeBackend: default (no settings, no state) -> claude', () => {
+    const result = resolveJudgeBackend({});
+    assert.equal(result, 'claude');
+});
+
+test('resolveJudgeBackend: state.flags.judge_backend_override = codex -> codex', () => {
+    const result = resolveJudgeBackend({ flags: { judge_backend_override: 'codex' } });
+    assert.equal(result, 'codex');
+});
+
+test('resolveJudgeBackend: judge backend auto -> claude at attempt 0 with no prior failure', () => {
+    const settings = {
+        microverse: {
+            judge_backend: 'auto',
+        },
+    };
+    const result = resolveJudgeBackend({}, settings, 0);
+    assert.equal(result, 'claude');
+});
+
+test('resolveJudgeBackend: auto + state.judge_backend_resolved -> codex', () => {
+    const settings = { microverse: { judge_backend: 'auto' } };
+    const state = { flags: {}, judge_backend_resolved: 'codex' };
+    const result = resolveJudgeBackend(state, settings, 2);
+    assert.equal(result, 'codex');
+});
+
+test('getMicroverseSettings: defaults apply when settings missing', () => {
+    const result = getMicroverseSettings(null);
+    assert.equal(result.judge_backend, 'claude');
+    assert.equal(result.judge_backend_fallback, 'codex');
+    assert.equal(result.judge_model_claude, 'claude-sonnet-4-6');
+    assert.equal(result.judge_model_codex, 'gpt-5.4');
 });

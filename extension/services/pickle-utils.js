@@ -8,6 +8,45 @@ import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
 let stateWriteSeq = 0;
+const DEFAULT_MICROVERSE_SETTINGS = {
+    judge_backend: 'claude',
+    judge_backend_fallback: 'codex',
+    judge_model_claude: 'claude-sonnet-4-6',
+    judge_model_codex: 'gpt-5.4',
+};
+function isRecord(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function isJudgeBackendValue(value) {
+    return value === 'claude' || value === 'codex' || value === 'auto';
+}
+function isBackendFallbackValue(value) {
+    return value === 'claude' || value === 'codex';
+}
+function resolveJudgeBackendChoice(value) {
+    return isJudgeBackendValue(value) ? value : null;
+}
+function resolveBackendFallback(value) {
+    return isBackendFallbackValue(value) ? value : null;
+}
+function isTypedFailure(failure) {
+    return !!failure && isRecord(failure) && typeof failure.failureKind === 'string';
+}
+function getMicroverseSettingsWithDefaults(settings) {
+    const microverse = isRecord(settings) && isRecord(settings.microverse)
+        ? settings.microverse
+        : {};
+    const configuredBackend = resolveJudgeBackendChoice(microverse['judge_backend']) ?? DEFAULT_MICROVERSE_SETTINGS.judge_backend;
+    const configuredFallback = resolveBackendFallback(microverse['judge_backend_fallback']);
+    const codexModel = microverse['judge_model_codex'];
+    const claudeModel = microverse['judge_model_claude'];
+    return {
+        judge_backend: configuredBackend,
+        judge_backend_fallback: configuredFallback ?? DEFAULT_MICROVERSE_SETTINGS.judge_backend_fallback,
+        judge_model_claude: typeof claudeModel === 'string' && claudeModel.trim() ? claudeModel : DEFAULT_MICROVERSE_SETTINGS.judge_model_claude,
+        judge_model_codex: typeof codexModel === 'string' && codexModel.trim() ? codexModel : DEFAULT_MICROVERSE_SETTINGS.judge_model_codex,
+    };
+}
 /** Extracts a string message from any thrown value. Never throws. */
 /**
  * R-CNAR-8: Atomic clear of all five `current_ticket_*` per-ticket cache fields.
@@ -420,6 +459,26 @@ export function resolveWorkerTestGateTimeoutMs(extensionRoot = getExtensionRoot(
         return timeoutMs;
     }
     return DEFAULT_WORKER_TEST_GATE_TIMEOUT_MS;
+}
+export function getMicroverseSettings(settings) {
+    return getMicroverseSettingsWithDefaults(settings);
+}
+export function resolveJudgeBackend(state, settings, attempt = 0, lastFailure) {
+    const microverseSettings = settings === undefined
+        ? getMicroverseSettings(loadPickleSettingsBag())
+        : getMicroverseSettings(settings);
+    const flags = isRecord(state?.flags) ? state.flags : {};
+    const chosen = resolveJudgeBackendChoice(flags['judge_backend_override']) ?? microverseSettings.judge_backend;
+    if (chosen !== 'auto')
+        return chosen;
+    if (!isTypedFailure(lastFailure) && attempt === 0)
+        return 'claude';
+    const resolved = isRecord(state) ? state.judge_backend_resolved : undefined;
+    const fromState = resolveJudgeBackendChoice(resolved);
+    if (fromState && fromState !== 'auto') {
+        return fromState;
+    }
+    return microverseSettings.judge_backend_fallback ?? DEFAULT_MICROVERSE_SETTINGS.judge_backend_fallback;
 }
 export function readPickleSettingsTierCaps(settings) {
     if (!settings)

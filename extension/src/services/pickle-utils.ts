@@ -10,6 +10,71 @@ import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
 
 let stateWriteSeq = 0;
 
+type JudgeBackendChoice = 'claude' | 'codex' | 'auto';
+type BackendFallback = 'claude' | 'codex' | null;
+
+interface JudgeMeasurementError {
+  failureKind?: string;
+  cause_code?: string | null;
+  elapsed_ms?: number;
+}
+
+const DEFAULT_MICROVERSE_SETTINGS = {
+  judge_backend: 'claude' as const,
+  judge_backend_fallback: 'codex' as const,
+  judge_model_claude: 'claude-sonnet-4-6',
+  judge_model_codex: 'gpt-5.4',
+} as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isJudgeBackendValue(value: unknown): value is JudgeBackendChoice {
+  return value === 'claude' || value === 'codex' || value === 'auto';
+}
+
+function isBackendFallbackValue(value: unknown): value is Exclude<JudgeBackendChoice, 'auto'> {
+  return value === 'claude' || value === 'codex';
+}
+
+function resolveJudgeBackendChoice(value: unknown): JudgeBackendChoice | null {
+  return isJudgeBackendValue(value) ? value : null;
+}
+
+function resolveBackendFallback(value: unknown): BackendFallback {
+  return isBackendFallbackValue(value) ? value : null;
+}
+
+function isTypedFailure(failure?: JudgeMeasurementError): boolean {
+  return !!failure && isRecord(failure) && typeof failure.failureKind === 'string';
+}
+
+function getMicroverseSettingsWithDefaults(
+  settings: PickleSettings | null,
+): {
+  judge_backend: JudgeBackendChoice;
+  judge_backend_fallback: BackendFallback;
+  judge_model_claude: string;
+  judge_model_codex: string;
+} {
+  const microverse = isRecord(settings) && isRecord((settings as Record<string, unknown>).microverse)
+    ? (settings as Record<string, unknown>).microverse as Record<string, unknown>
+    : {};
+
+  const configuredBackend = resolveJudgeBackendChoice(microverse['judge_backend']) ?? DEFAULT_MICROVERSE_SETTINGS.judge_backend;
+  const configuredFallback = resolveBackendFallback(microverse['judge_backend_fallback']);
+  const codexModel = microverse['judge_model_codex'];
+  const claudeModel = microverse['judge_model_claude'];
+
+  return {
+    judge_backend: configuredBackend,
+    judge_backend_fallback: configuredFallback ?? DEFAULT_MICROVERSE_SETTINGS.judge_backend_fallback,
+    judge_model_claude: typeof claudeModel === 'string' && claudeModel.trim() ? claudeModel : DEFAULT_MICROVERSE_SETTINGS.judge_model_claude,
+    judge_model_codex: typeof codexModel === 'string' && codexModel.trim() ? codexModel : DEFAULT_MICROVERSE_SETTINGS.judge_model_codex,
+  };
+}
+
 /** Extracts a string message from any thrown value. Never throws. */
 /**
  * R-CNAR-8: Atomic clear of all five `current_ticket_*` per-ticket cache fields.
@@ -504,6 +569,38 @@ export function resolveWorkerTestGateTimeoutMs(
     return timeoutMs;
   }
   return DEFAULT_WORKER_TEST_GATE_TIMEOUT_MS;
+}
+
+export function getMicroverseSettings(settings: PickleSettings | null): {
+  judge_backend: JudgeBackendChoice;
+  judge_backend_fallback: BackendFallback;
+  judge_model_claude: string;
+  judge_model_codex: string;
+} {
+  return getMicroverseSettingsWithDefaults(settings);
+}
+
+export function resolveJudgeBackend(
+  state: State,
+  settings?: PickleSettings | null,
+  attempt: number = 0,
+  lastFailure?: JudgeMeasurementError,
+): 'claude' | 'codex' {
+  const microverseSettings = settings === undefined
+    ? getMicroverseSettings(loadPickleSettingsBag())
+    : getMicroverseSettings(settings);
+  const flags = isRecord(state?.flags) ? state.flags : {};
+  const chosen = resolveJudgeBackendChoice(flags['judge_backend_override']) ?? microverseSettings.judge_backend;
+  if (chosen !== 'auto') return chosen;
+  if (!isTypedFailure(lastFailure) && attempt === 0) return 'claude';
+
+  const resolved = isRecord(state) ? (state as { judge_backend_resolved?: unknown }).judge_backend_resolved : undefined;
+  const fromState = resolveJudgeBackendChoice(resolved);
+  if (fromState && fromState !== 'auto') {
+    return fromState;
+  }
+
+  return microverseSettings.judge_backend_fallback ?? DEFAULT_MICROVERSE_SETTINGS.judge_backend_fallback;
 }
 
 export function readPickleSettingsTierCaps(
