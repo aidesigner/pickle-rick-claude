@@ -58,9 +58,17 @@ function makeSession(sessionsRoot, sessionId, stateOverrides) {
 }
 
 function backdate(statePath, ageMs = 400_000) {
-    const ageSeconds = ageMs / 1000;
     const pastTime = new Date(Date.now() - ageMs);
     fs.utimesSync(statePath, pastTime, pastTime);
+}
+
+function writeRecoverableTmp(statePath, stateOverrides, ageMs = 350_000) {
+    const tmpPath = `${statePath}.tmp.999999.snapshot`;
+    const baseState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    fs.writeFileSync(tmpPath, JSON.stringify({ ...baseState, ...stateOverrides }));
+    const pastTime = new Date(Date.now() - ageMs);
+    fs.utimesSync(tmpPath, pastTime, pastTime);
+    return tmpPath;
 }
 
 function makeConfig(overrides = {}) {
@@ -124,6 +132,42 @@ test('(b) --paused flag auto-demotes: state.active becomes false', () => {
 
         const updated = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
         assert.equal(updated.active, false, 'state.active should be false after --paused demote');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('(b2) --paused uses newer recoverable tmp snapshot before orphan demotion', () => {
+    const { sessionsRoot, dir } = makeTmpRoot();
+    try {
+        const sessionId = 'test-session-orphan-b2';
+        const statePath = makeSession(sessionsRoot, sessionId, {
+            active: false,
+            pid: null,
+            working_dir: process.cwd(),
+        });
+        backdate(statePath, 450_000);
+        writeRecoverableTmp(statePath, {
+            active: true,
+            pid: null,
+            working_dir: process.cwd(),
+        }, 350_000);
+
+        const origWrite = process.stderr.write.bind(process.stderr);
+        process.stderr.write = () => true;
+        try {
+            scanPausedOrphans(sessionsRoot, makeConfig({ pausedMode: true }), new StateManager());
+        } finally {
+            process.stderr.write = origWrite;
+        }
+
+        const updated = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(updated.active, false, 'promoted paused orphan snapshot should still be demoted');
+        assert.equal(updated.exit_reason, 'orphan-paused-no-claim');
+        assert.ok(
+            updated.activity.some((entry) => entry?.kind === 'paused_session_orphan_demoted'),
+            'expected paused_session_orphan_demoted activity after promoting tmp snapshot',
+        );
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }

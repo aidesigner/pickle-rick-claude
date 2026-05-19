@@ -1160,7 +1160,9 @@ export function scanPausedOrphans(sessionsRoot: string, config: SetupArgs, smIns
     try { mtime = fs.statSync(statePath).mtimeMs; } catch { continue; }
     if (now - mtime <= 300_000) continue;
     let state: Record<string, unknown>;
-    try { state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as Record<string, unknown>; } catch { continue; }
+    const recovered = readRecoverableJsonObject(statePath);
+    if (!recovered || typeof recovered !== 'object' || Array.isArray(recovered)) continue;
+    state = recovered as Record<string, unknown>;
     if (state.active !== true) continue;
     if (state.pid != null) continue;
     if (state.working_dir !== cwd) continue;
