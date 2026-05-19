@@ -286,6 +286,57 @@ const EVENT_CASES = [
     drop: 'reason',
   },
   {
+    type: 'tsc_gate_failed',
+    valid: {
+      event: 'tsc_gate_failed',
+      ts: TS,
+      reason: 'R-WACT: tsc --noEmit failed with compile_error: error TS2305',
+      gate_payload: {
+        failure_kind: 'compile_error',
+        command: 'git commit -m "broken"',
+      },
+    },
+    drop: 'reason',
+  },
+  {
+    type: 'tsc_gate_override_used',
+    valid: {
+      event: 'tsc_gate_override_used',
+      ts: TS,
+      gate_payload: {
+        override_reason: 'emergency revert',
+        failure_kind: 'compile_error',
+        command: 'git commit -m "override"',
+      },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    type: 'tsc_gate_override_consumed',
+    valid: {
+      event: 'tsc_gate_override_consumed',
+      ts: TS,
+      gate_payload: {
+        override_reason: 'emergency revert',
+        command: 'git commit -m "clean"',
+      },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    type: 'tsc_gate_crashed',
+    valid: {
+      event: 'tsc_gate_crashed',
+      ts: TS,
+      gate_payload: {
+        failure_kind: 'crashed',
+        error: 'synthetic crash',
+        command: 'git commit -m "crash"',
+      },
+    },
+    drop: 'gate_payload',
+  },
+  {
     type: 'bundle_2026_05_04_closer_done',
     valid: {
       event: 'bundle_2026_05_04_closer_done',
@@ -800,8 +851,13 @@ test('activity-event-payload: schema defines all registered event type definitio
     'ticket_audit_failed',
     'ticket_audit_manual_edit',
     'smoke_gate_bypassed',
+    'tsc_gate_failed',
+    'tsc_gate_override_used',
+    'tsc_gate_override_consumed',
+    'tsc_gate_crashed',
     'bundle_2026_05_04_closer_done',
     'install_sh_parity_check',
+    'install_sh_override_used',
     'worker_backend_resolved',
     'completion_commit_auto_filled',
     'completion_commit_inferred_from_git',
