@@ -999,6 +999,21 @@
         }
       }
     },
+    "install_sh_override_used": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "install_sh_override_used" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "properties": {
+            "override_reason": { "type": "string" },
+            "command": { "type": "string" }
+          }
+        }
+      }
+    },
     "state_write_schema_version_violation": {
       "type": "object",
       "required": ["event", "ts", "gate_payload"],
@@ -1082,6 +1097,7 @@
     { "$ref": "#/definitions/orphan_session_detected" },
     { "$ref": "#/definitions/session_map_collision_blocked" },
     { "$ref": "#/definitions/state_write_override_used" },
-    { "$ref": "#/definitions/state_write_schema_version_violation" }
+    { "$ref": "#/definitions/state_write_schema_version_violation" },
+    { "$ref": "#/definitions/install_sh_override_used" }
   ]
 }

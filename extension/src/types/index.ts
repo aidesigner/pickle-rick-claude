@@ -593,6 +593,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'session_map_collision_blocked',
   'state_write_override_used',
   'state_write_schema_version_violation',
+  'install_sh_override_used',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

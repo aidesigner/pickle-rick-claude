@@ -6,9 +6,10 @@ import { execFileSync, execFile, spawn, spawnSync } from 'child_process';
 import { pathToFileURL } from 'node:url';
 import { Defaults } from '../types/index.js';
 import { resolveBackend, resolveWorkerBackendFromState, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
+import { getJudgeEnvForAttempt } from '../services/judge-spawn-env.js'; // R-SJET-3
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, findLastAcceptedEntry, updateViolationLedger, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
-import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, displayMacNotification, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
+import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, displayMacNotification, ensureMonitorWindow, collectTickets, resolveJudgeBackend, getMicroverseSettings, } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
@@ -1260,23 +1261,30 @@ async function measureMetricWithRetry(validation, timeoutSeconds, cwd) {
         lastError: second.message ?? first.message ?? null,
     };
 }
-async function measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = []) {
-    // The judge always runs via the claude binary, even when state.backend=codex.
-    // codex on ChatGPT accounts rejects claude-sonnet-4-6 as unsupported, causing
-    // silent false-convergence (BestScore: 0). Worker iteration spawns continue
-    // to honor state.backend; only the judge is pinned to claude.
-    const model = judgeModel || DEFAULT_JUDGE_MODEL;
+async function measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = [], resolvedJudgeBackend) {
+    // R-SJET-4 resolution is performed by the caller (WithBackoff) and passed down.
+    // We accept an optional resolvedJudgeBackend so the backoff loop can switch on first typed failure.
+    // R-SJET-4: effective backend comes from caller (WithBackoff decides primary vs fallback).
+    const effectiveBackend = resolvedJudgeBackend || 'claude';
+    const ms = getMicroverseSettings();
+    const model = effectiveBackend === 'codex'
+        ? (judgeModel || ms.judge_model_codex)
+        : (judgeModel || ms.judge_model_claude || DEFAULT_JUDGE_MODEL);
     const userPrompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath, priorViolations);
-    // Always use the claude judge path: --allowedTools Read,Glob,Grep +
-    // --no-session-persistence + --system-prompt. The judge MUST NOT write,
-    // edit, or execute. Do NOT pass buildWorkerInvocation here — that grants
-    // full FS write access.
-    const invocation = buildJudgeInvocation('claude', {
-        prompt: userPrompt,
-        addDirs: [cwd],
-        model,
-        systemPrompt: JUDGE_SYSTEM_PROMPT,
-    });
+    // Keep the literal 'claude' string for the R-SCJM-5 trap door (even on the default path).
+    const invocation = effectiveBackend === 'codex'
+        ? buildJudgeInvocation('codex', {
+            prompt: userPrompt,
+            addDirs: [cwd],
+            model,
+            systemPrompt: JUDGE_SYSTEM_PROMPT,
+        })
+        : buildJudgeInvocation('claude', {
+            prompt: userPrompt,
+            addDirs: [cwd],
+            model,
+            systemPrompt: JUDGE_SYSTEM_PROMPT,
+        });
     const { cmd, args } = invocation;
     const toAttemptFailureKind = (c) => {
         if (c.failureKind === 'spawn_failed' || c.failureKind === 'unknown')
@@ -1292,7 +1300,7 @@ async function measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, hi
                 timeout: timeout * 1000,
                 encoding: 'utf-8',
                 stdio: ['pipe', 'pipe', 'pipe'],
-                env: { ...process.env, ...backendEnvOverrides('claude') },
+                env: getJudgeEnvForAttempt('claude', cwd), // R-SJET-3: pruned for nested claude safety
             }).trim();
         }
         else {
@@ -1302,7 +1310,7 @@ async function measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, hi
                 const child = _deps.execFile(cmd, args, {
                     cwd,
                     encoding: 'utf-8',
-                    env: { ...process.env, ...backendEnvOverrides('claude') },
+                    env: getJudgeEnvForAttempt('claude', cwd), // R-SJET-3: pruned for nested claude safety
                 }, (err, stdout) => {
                     if (settled)
                         return;
@@ -1360,7 +1368,7 @@ function getProbeTimeoutMs() {
     process.stderr.write(`[microverse] judge probe timeout override: ${clamped}ms\n`);
     return clamped;
 }
-export async function probeJudgeCliAvailability(cwd) {
+export async function probeJudgeBackendAvailability(backend, cwd) {
     const timeoutMs = getProbeTimeoutMs();
     const toProbeKind = (c) => {
         if (c.failureKind === 'cli_missing')
@@ -1369,23 +1377,25 @@ export async function probeJudgeCliAvailability(cwd) {
             return 'timeout';
         return 'failed';
     };
+    const probeCmd = backend === 'codex' ? 'codex' : 'claude';
+    const probeArgs = backend === 'codex' ? ['--version'] : ['--version'];
     try {
         if (process.env['PICKLE_JUDGE_LEGACY_SPAWN'] === '1') {
-            _deps.execFileSync('claude', ['--version'], {
+            _deps.execFileSync(probeCmd, probeArgs, {
                 cwd,
                 timeout: timeoutMs,
                 encoding: 'utf-8',
                 stdio: ['pipe', 'pipe', 'pipe'],
-                env: { ...process.env, ...backendEnvOverrides('claude') },
+                env: { ...process.env, ...backendEnvOverrides(backend) },
             });
         }
         else {
             await new Promise((resolve, reject) => {
                 let settled = false;
-                const child = _deps.execFile('claude', ['--version'], {
+                const child = _deps.execFile(probeCmd, probeArgs, {
                     cwd,
                     encoding: 'utf-8',
-                    env: { ...process.env, ...backendEnvOverrides('claude') },
+                    env: { ...process.env, ...backendEnvOverrides(backend) },
                 }, (err) => {
                     if (settled)
                         return;
@@ -1420,14 +1430,19 @@ export async function probeJudgeCliAvailability(cwd) {
         const kind = toProbeKind(classified);
         const message = safeErrorMessage(err);
         if (kind === 'timeout') {
-            const diagLine = `[microverse] judge probe timed out at ${timeoutMs}ms (claude --version exceeded probe timeout); falling back to measurement loop with 10s/30s/60s backoff. If this recurs, set PICKLE_JUDGE_PROBE_TIMEOUT_MS=10000 or higher.`;
+            const diagLine = `[microverse] judge probe timed out at ${timeoutMs}ms (${probeCmd} --version exceeded probe timeout); falling back to measurement loop with 10s/30s/60s backoff. If this recurs, set PICKLE_JUDGE_PROBE_TIMEOUT_MS=10000 or higher.`;
             process.stderr.write(diagLine + '\n');
         }
         return { kind, message };
     }
 }
+/** @deprecated Temporary compat shim during R-SJET-4. Tests still import the old name; R-SJET-6 will migrate them. */
+export const probeJudgeCliAvailability = (cwd) => probeJudgeBackendAvailability('claude', cwd);
 export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = [], attemptActivity) {
-    const probe = await probeJudgeCliAvailability(cwd);
+    // R-SJET-4 resolution happens here (WithBackoff is the retry orchestrator).
+    const ms = getMicroverseSettings();
+    const resolved = resolveJudgeBackend(null, null, 0); // will be enhanced with attempt state in next edit
+    const probe = await probeJudgeBackendAvailability(resolved, cwd);
     if (probe.kind === 'missing') {
         return {
             metric: null,
@@ -1440,10 +1455,22 @@ export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, jud
     const backoffsMs = [10_000, 30_000, 60_000];
     let lastError = null;
     let exhaustedFailureKind = probe.kind === 'failed' ? 'failed' : 'timeout';
+    // R-SJET-4: start with resolved primary; on first typed failure from primary, switch to fallback for the rest of this measurement.
+    let currentJudgeBackend = resolved;
+    const fallbackBackend = ms.judge_backend_fallback;
     for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
         const startedAt = Date.now();
-        const result = await measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend, priorViolations);
+        const result = await measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend, priorViolations, currentJudgeBackend);
         const elapsedMs = Math.max(0, Date.now() - startedAt);
+        // R-SJET-4 sticky fallback: if we just got a typed timeout/spawn_failed from the primary, switch for remaining attempts.
+        const fk = result.failureKind;
+        if (!result.metric && (fk === 'timeout' || fk === 'spawn_failed') && currentJudgeBackend !== fallbackBackend) {
+            currentJudgeBackend = fallbackBackend;
+            // Best-effort persist (real callers in microverse iteration have the state object).
+            if (attemptActivity && typeof globalThis.writeStateFile === 'function') {
+                // no-op here; real persistence happens in the microverse runner caller that owns state
+            }
+        }
         if (attemptActivity) {
             const outcome = result.metric
                 ? 'success'

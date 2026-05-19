@@ -198,6 +198,17 @@ test('blocks Bash bracket glob targeting tsconfig.json', () => {
   assert.equal(result.decision, 'block');
 });
 
+// R-PIPE-3 / R-WSRC: explicit block for bash install.sh from worker context (no override)
+test('blocks Bash install.sh (R-WSRC)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'bash install.sh' } });
+  assert.equal(result.decision, 'block');
+});
+
+test('blocks ./install.sh (R-WSRC)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: './install.sh --override-active' } });
+  assert.equal(result.decision, 'block');
+});
+
 // ---------------------------------------------------------------------------
 // Approve cases
 // ---------------------------------------------------------------------------

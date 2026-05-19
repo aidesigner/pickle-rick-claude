@@ -73,6 +73,30 @@ Workers run inside the runtime. These writes corrupt it; runtime hooks will bloc
 | `spawnSync`/`spawn` without `timeout` option | per-callsite trap door |
 | Orchestrator tokens: `EPIC_COMPLETED`, `TASK_COMPLETED`, `PRD_COMPLETE`, `TICKET_SELECTED`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, `ANALYSIS_DONE` | none — emit ONLY `<promise>I AM DONE</promise>` |
 
+## ⛔ SCOPE FENCE (R-PIPE-4 — mandatory, read before any Edit/Write/MultiEdit)
+
+This worker is implementing a specific ticket. The ticket body (in `linear_ticket_<id>.md`) lists the **exhaustive** "Files to modify" and "Files to create".
+
+- Any `Edit`, `Write`, `MultiEdit`, `NotebookEdit` (or equivalent) on a path **NOT** in that list is a **SCOPE VIOLATION**.
+- Emit exactly:
+  ```
+  <promise>SCOPE_VIOLATION</promise>
+  ```
+  and stop. Do not continue.
+
+**Always-forbidden** (even if ticket lists them — manager only):
+- `pickle_settings.json`
+- `~/.claude/**`
+- `bash install.sh` (any variant)
+- `LATEST_SCHEMA_VERSION` bumps
+- Any file under another ticket's session dir
+
+The runtime `check-scope-diff.ts` preflight + this prompt fence together close the bypass class seen in earlier attempts.
+
+If the ticket body is missing a clear "Files to ..." section, emit the violation promise and mark the ticket Skipped with `scope_fence_unclear`.
+
+PRD: `prds/p1-pipeline-fix-bundle-2026-05-18.md` (R-PIPE-4) + this mega campaign.
+
 If your ticket seems to need one: STOP. Wrong scope OR override flag missing. Mark Skipped with `skipped_reason: "requires <flag> not set"`. Don't bypass via shell tricks (`>`, `tee`, `node -e fs.writeFileSync` — all blocked).
 
 PRD: `prds/p1-worker-source-state-recursion-contamination.md`.

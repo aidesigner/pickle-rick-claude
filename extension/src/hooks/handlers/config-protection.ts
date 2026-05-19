@@ -370,8 +370,45 @@ function detectTargetedStateFile(input: PreToolUseInput): { matched: string; isS
   return null;
 }
 
+/**
+ * R-PIPE-3 / R-WSRC: Explicit detection for `bash install.sh` (and variants)
+ * from worker contexts. This is a hard forbidden (manager-only) per the
+ * project CLAUDE.md worker rules. The hook must return "block" for workers.
+ */
+function isBashInvokingInstallSh(command: string): boolean {
+  if (!command) return false;
+  const c = command.trim().toLowerCase();
+  // Covers: bash install.sh, ./install.sh, /full/path/install.sh, bash ./install.sh --foo, etc.
+  return c.includes('install.sh') || c.startsWith('bash install') || c.startsWith('./install.sh') || c.startsWith('sh install');
+}
+
+/**
+ * R-PIPE-3 extracted helper — keeps main() complexity <= 15.
+ * Returns true if we handled (blocked or approved via override); caller should return.
+ */
+function isBashInstallBlockedByRWSRC(input: PreToolUseInput, state: State): boolean {
+  if (input.tool_name !== 'Bash' || !input.tool_input?.command) return false;
+  if (!isBashInvokingInstallSh(input.tool_input.command)) return false;
+
+  const flags = (state.flags as Record<string, unknown> | undefined) || {};
+  const override = trimmedFlag(flags, ALLOW_INSTALL_SH_REASON_FIELD);
+  if (override) {
+    logActivity({
+      event: 'install_sh_override_used',
+      source: 'hook',
+      gate_payload: { override_reason: override, command: input.tool_input.command },
+    });
+    approve();
+    return true;
+  }
+
+  block('R-WSRC: `bash install.sh` (and variants) is FORBIDDEN from worker subprocesses. This is manager-only. See CLAUDE.md "## ⛔ Worker Forbidden Ops". Set state.flags.allow_install_sh_reason only for explicit manager-owned closer steps.');
+  return true;
+}
+
 const ALLOW_STATE_WRITE_REASON_FIELD = 'allow_state_writes_reason';
 const ALLOW_SETTINGS_WRITE_REASON_FIELD = 'allow_settings_writes_reason';
+const ALLOW_INSTALL_SH_REASON_FIELD = 'allow_install_sh_reason'; // rare manager override only (R-WSRC)
 
 function evaluateStateWriteGate(
   input: PreToolUseInput,
@@ -442,6 +479,12 @@ function main(): void {
     }
     block(stateDecision.reason || 'Runtime state file protected.');
     return;
+  }
+
+  // R-PIPE-3 + R-WSRC: Hard block on `bash install.sh` (any variant) from worker context.
+  // Extracted to keep main() cyclomatic complexity <= 15.
+  if (isBashInstallBlockedByRWSRC(input, state)) {
+    return; // block() or approve() already called inside
   }
 
   const targetedConfigFile = detectTargetedConfigFile(input);
