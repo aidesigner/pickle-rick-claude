@@ -1437,22 +1437,22 @@ export async function probeJudgeBackendAvailability(backend, cwd) {
     };
     try {
         if (process.env['PICKLE_JUDGE_LEGACY_SPAWN'] === '1') {
-            _deps.execFileSync(backend, ['--version'], {
-                cwd,
-                timeout: timeoutMs,
-                encoding: 'utf-8',
-                stdio: ['pipe', 'pipe', 'pipe'],
-                env: { ...process.env, ...backendEnvOverrides(backend) },
-            });
-        }
-        else {
-            await spawnWithClosedStdin(backend, ['--version'], {
-                cwd,
-                env: { ...process.env, ...backendEnvOverrides(backend) },
-                timeoutMs,
-                timeoutMessage: `probe timed out after ${timeoutMs}ms`,
-            });
-        }
+        _deps.execFileSync(backend, ['--version'], {
+            cwd,
+            timeout: timeoutMs,
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...getJudgeEnvForAttempt(backend, cwd), ...backendEnvOverrides(backend) },
+        });
+    }
+    else {
+        await spawnWithClosedStdin(backend, ['--version'], {
+            cwd,
+            env: { ...getJudgeEnvForAttempt(backend, cwd), ...backendEnvOverrides(backend) },
+            timeoutMs,
+            timeoutMessage: `probe timed out after ${timeoutMs}ms`,
+        });
+    }
         return { kind: 'ok' };
     }
     catch (err) {

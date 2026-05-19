@@ -1985,12 +1985,12 @@ export async function probeJudgeBackendAvailability(backend: ProbeJudgeBackend, 
         timeout: timeoutMs,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ...backendEnvOverrides(backend) },
+        env: { ...getJudgeEnvForAttempt(backend, cwd), ...backendEnvOverrides(backend) },
       });
     } else {
       await spawnWithClosedStdin(backend, ['--version'], {
         cwd,
-        env: { ...process.env, ...backendEnvOverrides(backend) },
+        env: { ...getJudgeEnvForAttempt(backend, cwd), ...backendEnvOverrides(backend) },
         timeoutMs,
         timeoutMessage: `probe timed out after ${timeoutMs}ms`,
       });

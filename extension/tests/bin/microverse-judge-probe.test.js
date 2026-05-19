@@ -105,7 +105,13 @@ describe('classifyJudgeError', () => {
 describe('probeJudgeBackendAvailability', () => {
   test('returns kind:ok on success', async () => {
     const previousLegacy = process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    const previousStateFile = process.env['PICKLE_STATE_FILE'];
+    const previousClaudeCode = process.env['CLAUDECODE'];
+    const previousPath = process.env['PATH'];
     delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    process.env['PICKLE_STATE_FILE'] = '/tmp/outer-state.json';
+    process.env['CLAUDECODE'] = 'outer-session';
+    process.env['PATH'] = '/usr/bin';
     const orig = _deps.spawn;
     const seenOptions = [];
     _deps.spawn = makeSpawnMock([{ type: 'success', stdout: 'claude/2.1.0' }], seenOptions);
@@ -113,10 +119,19 @@ describe('probeJudgeBackendAvailability', () => {
       const result = await probeJudgeBackendAvailability('claude', '/tmp');
       assert.equal(result.kind, 'ok');
       assert.deepEqual(seenOptions[0]?.stdio, ['ignore', 'pipe', 'pipe']);
+      assert.equal(seenOptions[0]?.env?.['PICKLE_STATE_FILE'], undefined);
+      assert.equal(seenOptions[0]?.env?.['CLAUDECODE'], undefined);
+      assert.equal(seenOptions[0]?.env?.['PATH'], '/usr/bin');
     } finally {
       _deps.spawn = orig;
       if (previousLegacy === undefined) delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
       else process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = previousLegacy;
+      if (previousStateFile === undefined) delete process.env['PICKLE_STATE_FILE'];
+      else process.env['PICKLE_STATE_FILE'] = previousStateFile;
+      if (previousClaudeCode === undefined) delete process.env['CLAUDECODE'];
+      else process.env['CLAUDECODE'] = previousClaudeCode;
+      if (previousPath === undefined) delete process.env['PATH'];
+      else process.env['PATH'] = previousPath;
     }
   });
 
