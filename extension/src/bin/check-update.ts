@@ -214,15 +214,74 @@ export function downloadRelease(tag: string): string | null {
 }
 
 function isInstallableReleaseTarball(tarballPath: string): boolean {
+  const payloadRoot = resolveInstallablePayloadRoot(tarballPath);
+  return payloadRoot !== null;
+}
+
+function listTarballMembers(tarballPath: string): string[] | null {
   const tar = spawnSync('tar', ['-tzf', tarballPath], {
     encoding: 'utf-8',
     timeout: 30_000,
   });
-  if (tar.status !== 0) return false;
-  const members = (tar.stdout || '').split(/\r?\n/);
-  const hasPackageJson = members.some((member) => /(^|\/)extension\/package\.json$/.test(member));
-  const hasInstallScript = members.some((member) => /(^|\/)install\.sh$/.test(member));
-  return hasPackageJson && hasInstallScript;
+  if (tar.status !== 0) return null;
+  return (tar.stdout || '').split(/\r?\n/).filter(Boolean);
+}
+
+function normalizeTarMember(member: string): string {
+  return member.replace(/^\.\/+/, '').replace(/\/+$/, '');
+}
+
+function payloadRootForMember(member: string, suffix: string): string | null {
+  const normalized = normalizeTarMember(member);
+  if (normalized === suffix) return '';
+  const marker = `/${suffix}`;
+  return normalized.endsWith(marker)
+    ? normalized.slice(0, -marker.length)
+    : null;
+}
+
+function resolveInstallablePayloadRoot(tarballPath: string): string | null {
+  const members = listTarballMembers(tarballPath);
+  if (!members) return null;
+
+  const packageRoots = new Set<string>();
+  const installRoots = new Set<string>();
+  for (const member of members) {
+    const packageRoot = payloadRootForMember(member, 'extension/package.json');
+    if (packageRoot !== null) packageRoots.add(packageRoot);
+    const installRoot = payloadRootForMember(member, 'install.sh');
+    if (installRoot !== null) installRoots.add(installRoot);
+  }
+
+  const sharedRoots = [...packageRoots].filter((root) => installRoots.has(root));
+  return sharedRoots.length === 1 ? sharedRoots[0] : null;
+}
+
+function extractInstallablePayload(
+  tarballPath: string,
+  extractDir: string,
+): { success: true } | { success: false; error: string } {
+  const payloadRoot = resolveInstallablePayloadRoot(tarballPath);
+  if (payloadRoot === null) {
+    return {
+      success: false,
+      error: 'Release tarball must contain exactly one payload root shared by extension/package.json and install.sh',
+    };
+  }
+
+  const tarArgs = ['xzf', tarballPath, '-C', extractDir] as string[];
+  if (payloadRoot !== '') {
+    tarArgs.push('--strip-components=1', payloadRoot);
+  }
+
+  const tar = spawnSync('tar', tarArgs, {
+    encoding: 'utf-8',
+    timeout: 30_000,
+  });
+  if (tar.status === 0) return { success: true };
+
+  const msg = (tar.stderr || '').trim();
+  return { success: false, error: `Extraction failed: ${msg}` };
 }
 
 interface InspectedRelease {
@@ -241,16 +300,8 @@ function extractReleaseForInspection(tarballPath: string): InspectedRelease {
   const extractDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-extract-')));
   try {
     log(`Inspecting ${tarballPath} in ${extractDir}`);
-
-    const tar = spawnSync('tar', ['xzf', tarballPath, '-C', extractDir, '--strip-components=1'], {
-      encoding: 'utf-8',
-      timeout: 30_000,
-    });
-
-    if (tar.status !== 0) {
-      const msg = (tar.stderr || '').trim();
-      throw new Error(`Extraction failed: ${msg}`);
-    }
+    const extracted = extractInstallablePayload(tarballPath, extractDir);
+    if (!extracted.success) throw new Error(extracted.error);
 
     const pkgPath = path.join(extractDir, 'extension', 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>;
@@ -269,17 +320,10 @@ function extractReleaseForInspection(tarballPath: string): InspectedRelease {
 function extractReleaseForInstall(tarballPath: string): { extractDir: string; error?: string } {
   const extractDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-extract-')));
   log(`Extracting ${tarballPath} to ${extractDir}`);
-
-  const tar = spawnSync('tar', ['xzf', tarballPath, '-C', extractDir, '--strip-components=1'], {
-    encoding: 'utf-8',
-    timeout: 30_000,
-  });
-
-  if (tar.status === 0) return { extractDir };
-
-  const msg = (tar.stderr || '').trim();
-  log(`tar extraction failed: ${msg}`);
-  return { extractDir, error: `Extraction failed: ${msg}` };
+  const extracted = extractInstallablePayload(tarballPath, extractDir);
+  if (extracted.success) return { extractDir };
+  log(extracted.error);
+  return { extractDir, error: extracted.error };
 }
 
 function runReleaseInstallScript(extractDir: string): UpgradeResult {

@@ -669,6 +669,39 @@ describe('performUpgrade', () => {
         return tarball;
     }
 
+    function makeSplitRootTarball(name = 'split-root.tar.gz') {
+        const contentRoot = path.join(tmpDir, name.replace(/[.]tar[.]gz$/, ''));
+        const packageRoot = path.join(contentRoot, 'payload-a');
+        const installRoot = path.join(contentRoot, 'payload-b');
+        fs.mkdirSync(path.join(packageRoot, 'extension'), { recursive: true });
+        fs.mkdirSync(installRoot, { recursive: true });
+        fs.writeFileSync(
+            path.join(packageRoot, 'extension', 'package.json'),
+            JSON.stringify({ version: '1.67.0' }),
+        );
+        fs.writeFileSync(path.join(installRoot, 'install.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        const tarball = path.join(tmpDir, name);
+        execFileSync('tar', ['czf', tarball, '-C', contentRoot, 'payload-a', 'payload-b']);
+        return tarball;
+    }
+
+    function makeMultiPayloadRootTarball(name = 'multi-root.tar.gz') {
+        const contentRoot = path.join(tmpDir, name.replace(/[.]tar[.]gz$/, ''));
+        const firstRoot = path.join(contentRoot, 'payload-a');
+        const secondRoot = path.join(contentRoot, 'payload-b');
+        for (const root of [firstRoot, secondRoot]) {
+            fs.mkdirSync(path.join(root, 'extension'), { recursive: true });
+            fs.writeFileSync(
+                path.join(root, 'extension', 'package.json'),
+                JSON.stringify({ version: '1.67.0' }),
+            );
+            fs.writeFileSync(path.join(root, 'install.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        }
+        const tarball = path.join(tmpDir, name);
+        execFileSync('tar', ['czf', tarball, '-C', contentRoot, 'payload-a', 'payload-b']);
+        return tarball;
+    }
+
     function mockDownloadRelease(tarball) {
         return mockDownloadReleases([tarball]);
     }
@@ -699,6 +732,22 @@ ${tarballs.map((tarball) => `cp ${JSON.stringify(tarball)} "$dest/$(basename ${J
         const result = performUpgrade('1.0.0', '999.0.0', 'v999.0.0');
         assert.equal(result.success, false);
         assert.ok(result.error);
+    });
+
+    test('rejects downloaded tarballs whose package and install script live under different roots', () => {
+        const tarball = makeSplitRootTarball();
+        mockDownloadRelease(tarball);
+
+        const result = downloadRelease('v1.67.0');
+        assert.equal(result, null);
+    });
+
+    test('rejects downloaded tarballs with multiple installable payload roots', () => {
+        const tarball = makeMultiPayloadRootTarball();
+        mockDownloadRelease(tarball);
+
+        const result = downloadRelease('v1.67.0');
+        assert.equal(result, null);
     });
 
     test('never throws', () => {
@@ -1173,9 +1222,26 @@ describe('edge cases', () => {
         assert.ok(result.error.includes('install.sh'));
     });
 
+    test('extractAndInstall fails when tarball has multiple installable payload roots', () => {
+        const contentDir = path.join(tmpDir, 'content');
+        const firstRoot = path.join(contentDir, 'payload-a');
+        const secondRoot = path.join(contentDir, 'payload-b');
+        for (const root of [firstRoot, secondRoot]) {
+            fs.mkdirSync(path.join(root, 'extension'), { recursive: true });
+            fs.writeFileSync(path.join(root, 'extension', 'package.json'), JSON.stringify({ version: '1.2.3' }));
+            fs.writeFileSync(path.join(root, 'install.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        }
+        const tarball = path.join(tmpDir, 'test-release.tar.gz');
+        execFileSync('tar', ['czf', tarball, '-C', contentDir, 'payload-a', 'payload-b']);
+        const result = extractAndInstall(tarball);
+        assert.equal(result.success, false);
+        assert.match(result.error, /exactly one payload root shared by extension\/package\.json and install\.sh/);
+    });
+
     test('extractAndInstall fails when install.sh exits non-zero', () => {
         const contentDir = path.join(tmpDir, 'content');
-        fs.mkdirSync(contentDir);
+        fs.mkdirSync(path.join(contentDir, 'extension'), { recursive: true });
+        fs.writeFileSync(path.join(contentDir, 'extension', 'package.json'), JSON.stringify({ version: '1.2.3' }));
         fs.writeFileSync(path.join(contentDir, 'install.sh'), '#!/bin/sh\nexit 1', { mode: 0o755 });
         const tarball = path.join(tmpDir, 'test-release.tar.gz');
         execFileSync('tar', ['czf', tarball, '-C', tmpDir, 'content']);
