@@ -1812,27 +1812,11 @@ async function measureLlmMetricAttempt(
       }).trim();
     } else {
       const timeout = Math.max(timeoutSeconds, 1);
-      output = await new Promise<string>((resolve, reject) => {
-        let settled = false;
-        const child = _deps.execFile(cmd, args, {
-          cwd,
-          encoding: 'utf-8',
-          env: getJudgeEnvForAttempt('claude', cwd), // R-SJET-3: pruned for nested claude safety
-        }, (err, stdout) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          if (err) { reject(err); } else { resolve((stdout as string).trim()); }
-        });
-        child.stdin?.destroy();
-        const timer = setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          child.kill('SIGTERM');
-          setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 2000);
-          reject(new JudgeMeasurementTimeout(`judge timed out after ${timeout}s`, timeout * 1000));
-        }, timeout * 1000);
-        (timer as NodeJS.Timeout).unref();
+      output = await spawnWithClosedStdin(cmd, args, {
+        cwd,
+        env: getJudgeEnvForAttempt('claude', cwd), // R-SJET-3: pruned for nested claude safety
+        timeoutMs: timeout * 1000,
+        timeoutMessage: `judge timed out after ${timeout}s`,
       });
     }
   } catch (err) {
@@ -1871,6 +1855,66 @@ type JudgeAttemptActivity = {
 
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 const MAX_PROBE_TIMEOUT_MS = 60000;
+
+function spawnWithClosedStdin(
+  cmd: string,
+  args: string[],
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    timeoutMs: number;
+    timeoutMessage: string;
+  },
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let settled = false;
+    let stdout = '';
+    let stderr = '';
+    const child = _deps.spawn(cmd, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
+
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', chunk => {
+      stdout += chunk;
+    });
+    child.stderr?.on('data', chunk => {
+      stderr += chunk;
+    });
+    child.on('error', err => {
+      settle(() => reject(err));
+    });
+    child.on('close', code => {
+      settle(() => {
+        if (code === 0) {
+          resolve(stdout.trim());
+          return;
+        }
+        const message = stderr.trim() || stdout.trim() || `command exited with code ${code ?? 'unknown'}`;
+        reject(new Error(message));
+      });
+    });
+
+    const timer = setTimeout(() => {
+      settle(() => {
+        child.kill('SIGTERM');
+        setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 2000);
+        reject(new JudgeMeasurementTimeout(options.timeoutMessage, options.timeoutMs));
+      });
+    }, options.timeoutMs);
+    (timer as NodeJS.Timeout).unref();
+  });
+}
 
 function getProbeTimeoutMs(): number {
   const raw = parseInt(process.env['PICKLE_JUDGE_PROBE_TIMEOUT_MS'] ?? '', 10);
@@ -1944,27 +1988,11 @@ export async function probeJudgeBackendAvailability(backend: ProbeJudgeBackend, 
         env: { ...process.env, ...backendEnvOverrides(backend) },
       });
     } else {
-      await new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const child = _deps.execFile(backend, ['--version'], {
-          cwd,
-          encoding: 'utf-8',
-          env: { ...process.env, ...backendEnvOverrides(backend) },
-        }, (err) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          if (err) { reject(err); } else { resolve(); }
-        });
-        child.stdin?.destroy();
-        const timer = setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          child.kill('SIGTERM');
-          setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already dead */ } }, 2000);
-          reject(new JudgeMeasurementTimeout(`probe timed out after ${timeoutMs}ms`, timeoutMs));
-        }, timeoutMs);
-        (timer as NodeJS.Timeout).unref();
+      await spawnWithClosedStdin(backend, ['--version'], {
+        cwd,
+        env: { ...process.env, ...backendEnvOverrides(backend) },
+        timeoutMs,
+        timeoutMessage: `probe timed out after ${timeoutMs}ms`,
       });
     }
     return { kind: 'ok' };

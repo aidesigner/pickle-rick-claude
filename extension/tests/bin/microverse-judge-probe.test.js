@@ -1,6 +1,8 @@
 // @tier: fast
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import {
   _deps,
   probeJudgeBackendAvailability,
@@ -26,12 +28,26 @@ function makeGenericError() {
   return new Error('something went wrong');
 }
 
-// Returns an execFile mock that calls callback asynchronously (process.nextTick).
-function makeExecFileMock(err, stdout = '') {
-  return (_cmd, _args, _opts, callback) => {
-    const proc = { stdin: { destroy: () => {} }, kill: () => {} };
-    process.nextTick(() => callback(err, stdout, ''));
-    return proc;
+function makeSpawnMock(steps, seenOptions = []) {
+  return (_cmd, _args, opts) => {
+    seenOptions.push(opts);
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = () => true;
+    process.nextTick(() => {
+      const step = steps.shift() ?? { type: 'success', stdout: '' };
+      if (step.type === 'error') {
+        child.emit('error', step.error);
+        return;
+      }
+      if (step.stdout) child.stdout.write(step.stdout);
+      if (step.stderr) child.stderr.write(step.stderr);
+      child.stdout.end();
+      child.stderr.end();
+      child.emit('close', step.code ?? 0, null);
+    });
+    return child;
   };
 }
 
@@ -88,70 +104,100 @@ describe('classifyJudgeError', () => {
 
 describe('probeJudgeBackendAvailability', () => {
   test('returns kind:ok on success', async () => {
-    const orig = _deps.execFile;
-    _deps.execFile = makeExecFileMock(null, 'claude/2.1.0');
+    const previousLegacy = process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    const orig = _deps.spawn;
+    const seenOptions = [];
+    _deps.spawn = makeSpawnMock([{ type: 'success', stdout: 'claude/2.1.0' }], seenOptions);
     try {
       const result = await probeJudgeBackendAvailability('claude', '/tmp');
       assert.equal(result.kind, 'ok');
+      assert.deepEqual(seenOptions[0]?.stdio, ['ignore', 'pipe', 'pipe']);
     } finally {
-      _deps.execFile = orig;
+      _deps.spawn = orig;
+      if (previousLegacy === undefined) delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+      else process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = previousLegacy;
     }
   });
 
   test('returns kind:missing on ENOENT', async () => {
-    const orig = _deps.execFile;
-    _deps.execFile = makeExecFileMock(makeEnoentError());
+    const previousLegacy = process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    const orig = _deps.spawn;
+    _deps.spawn = makeSpawnMock([{ type: 'error', error: makeEnoentError() }]);
     try {
       const result = await probeJudgeBackendAvailability('claude', '/tmp');
       assert.equal(result.kind, 'missing');
       assert.ok('message' in result);
     } finally {
-      _deps.execFile = orig;
+      _deps.spawn = orig;
+      if (previousLegacy === undefined) delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+      else process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = previousLegacy;
     }
   });
 
   test('returns kind:timeout on ETIMEDOUT', async () => {
-    const orig = _deps.execFile;
-    _deps.execFile = makeExecFileMock(makeEtimedoutError());
+    const previousLegacy = process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    const orig = _deps.spawn;
+    _deps.spawn = makeSpawnMock([{ type: 'error', error: makeEtimedoutError() }]);
     try {
       const result = await probeJudgeBackendAvailability('claude', '/tmp');
       assert.equal(result.kind, 'timeout');
       assert.ok('message' in result);
     } finally {
-      _deps.execFile = orig;
+      _deps.spawn = orig;
+      if (previousLegacy === undefined) delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+      else process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = previousLegacy;
     }
   });
 
   test('returns kind:failed on generic error', async () => {
-    const orig = _deps.execFile;
-    _deps.execFile = makeExecFileMock(makeGenericError());
+    const previousLegacy = process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    const orig = _deps.spawn;
+    _deps.spawn = makeSpawnMock([{ type: 'error', error: makeGenericError() }]);
     try {
       const result = await probeJudgeBackendAvailability('claude', '/tmp');
       assert.equal(result.kind, 'failed');
       assert.ok('message' in result);
     } finally {
-      _deps.execFile = orig;
+      _deps.spawn = orig;
+      if (previousLegacy === undefined) delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+      else process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = previousLegacy;
     }
   });
 });
 
 describe('measureLlmMetricWithBackoff — probe classification behavior', () => {
   test('ENOENT probe short-circuits to judge_cli_missing with attempts:0', async () => {
-    const orig = _deps.execFile;
-    _deps.execFile = makeExecFileMock(makeEnoentError());
+    const previousLegacy = process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    const orig = _deps.spawn;
+    _deps.spawn = makeSpawnMock([{ type: 'error', error: makeEnoentError() }]);
     try {
       const result = await measureLlmMetricWithBackoff('fix bugs', 30, '/tmp');
       assert.equal(result.metric, null);
       assert.equal(result.exitReason, 'judge_cli_missing');
       assert.equal(result.attempts, 0);
     } finally {
-      _deps.execFile = orig;
+      _deps.spawn = orig;
+      if (previousLegacy === undefined) delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+      else process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = previousLegacy;
     }
   });
 
   test('ETIMEDOUT probe does NOT return judge_cli_missing — falls through to backoff loop', async () => {
-    const orig = { execFile: _deps.execFile, sleep: _deps.sleep };
-    _deps.execFile = makeExecFileMock(makeEtimedoutError());
+    const previousLegacy = process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    const orig = { spawn: _deps.spawn, sleep: _deps.sleep };
+    _deps.spawn = makeSpawnMock([
+      { type: 'error', error: makeEtimedoutError() },
+      { type: 'error', error: makeEtimedoutError() },
+      { type: 'error', error: makeEtimedoutError() },
+      { type: 'error', error: makeEtimedoutError() },
+      { type: 'error', error: makeEtimedoutError() },
+    ]);
     _deps.sleep = async () => {};
     try {
       const result = await measureLlmMetricWithBackoff('fix bugs', 30, '/tmp');
@@ -160,44 +206,51 @@ describe('measureLlmMetricWithBackoff — probe classification behavior', () => 
         'ETIMEDOUT probe must NOT produce judge_cli_missing');
       assert.equal(result.exitReason, 'judge_timeout');
     } finally {
-      _deps.execFile = orig.execFile;
+      _deps.spawn = orig.spawn;
       _deps.sleep = orig.sleep;
+      if (previousLegacy === undefined) delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+      else process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = previousLegacy;
     }
   });
 
   test('backoff loop returns judge_timeout when all attempts time out', async () => {
-    const orig = { execFile: _deps.execFile, sleep: _deps.sleep };
-    _deps.execFile = makeExecFileMock(makeEtimedoutError());
+    const previousLegacy = process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    const orig = { spawn: _deps.spawn, sleep: _deps.sleep };
+    _deps.spawn = makeSpawnMock([
+      { type: 'error', error: makeEtimedoutError() },
+      { type: 'error', error: makeEtimedoutError() },
+      { type: 'error', error: makeEtimedoutError() },
+      { type: 'error', error: makeEtimedoutError() },
+      { type: 'error', error: makeEtimedoutError() },
+    ]);
     _deps.sleep = async () => {};
     try {
       const result = await measureLlmMetricWithBackoff('fix bugs', 30, '/tmp');
       assert.equal(result.exitReason, 'judge_timeout');
       assert.ok(result.attempts > 0, 'attempts should be > 0 (backoff ran)');
     } finally {
-      _deps.execFile = orig.execFile;
+      _deps.spawn = orig.spawn;
       _deps.sleep = orig.sleep;
+      if (previousLegacy === undefined) delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+      else process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = previousLegacy;
     }
   });
 
   test('codex session emits fallback telemetry when claude judge measurement succeeds', async () => {
+    const previousLegacy = process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
     const orig = {
-      execFile: _deps.execFile,
+      spawn: _deps.spawn,
       logActivity: _deps.logActivity,
     };
     const events = [];
+    const seenOptions = [];
     let measurementCalls = 0;
-    _deps.execFile = (_cmd, args, _opts, callback) => {
-      const proc = { stdin: { destroy: () => {} }, kill: () => {} };
-      process.nextTick(() => {
-        if (Array.isArray(args) && args[0] === '--version') {
-          callback(null, 'claude/2.1.0', '');
-        } else {
-          measurementCalls++;
-          callback(null, '8', '');
-        }
-      });
-      return proc;
-    };
+    _deps.spawn = makeSpawnMock([
+      { type: 'success', stdout: 'claude/2.1.0' },
+      { type: 'success', stdout: '8' },
+    ], seenOptions);
     _deps.logActivity = (event) => {
       events.push({ ts: new Date().toISOString(), ...event });
     };
@@ -215,7 +268,10 @@ describe('measureLlmMetricWithBackoff — probe classification behavior', () => 
         { session: 'session-1', iteration: 3, spawnContext: 'iteration' },
       );
       assert.deepEqual(result.metric, { raw: '8', score: 8 });
+      measurementCalls = seenOptions.length - 1;
       assert.equal(measurementCalls, 1);
+      assert.deepEqual(seenOptions[0]?.stdio, ['ignore', 'pipe', 'pipe']);
+      assert.deepEqual(seenOptions[1]?.stdio, ['ignore', 'pipe', 'pipe']);
       assert.equal(events.length, 1);
       assert.deepEqual(events[0], {
         ts: events[0].ts,
@@ -239,8 +295,10 @@ describe('measureLlmMetricWithBackoff — probe classification behavior', () => 
       assert.equal(Number.isInteger(events[0].gate_payload.elapsed_ms), true);
       assert.equal(events[0].gate_payload.elapsed_ms >= 0, true);
     } finally {
-      _deps.execFile = orig.execFile;
+      _deps.spawn = orig.spawn;
       _deps.logActivity = orig.logActivity;
+      if (previousLegacy === undefined) delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+      else process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = previousLegacy;
     }
   });
 });
