@@ -262,6 +262,38 @@ test('check-readiness: history reads recover dead-writer state tmp snapshots', (
     assert.equal(fs.existsSync(tmpPath), false, 'StateManager.read should consume the dead-writer tmp snapshot');
 }));
 
+test('check-readiness: failing run preserves cycle history from a tmp-only state snapshot', () => runFixture((sessionDir) => {
+    const statePath = path.join(sessionDir, 'state.json');
+    const tmpPath = `${statePath}.tmp.${DEAD_TMP_PID}`;
+    fs.writeFileSync(tmpPath, JSON.stringify(makeState(sessionDir, {
+        iteration: 2,
+        readiness: {
+            cycle_history: [
+                { cycle: 1, status: 'failed', suggested_analyst: 'gaps', user_action: null, timestamp: '2026-04-30T01:00:00.000Z' },
+            ],
+        },
+    }), null, 2));
+    markTmpNewer(tmpPath);
+
+    writeTicket(sessionDir, 'map001', { acIds: ['REQ-2'] });
+    writeManifest(sessionDir, {
+        requirements: ['REQ-1'],
+        tickets: [{ id: 'map001', key: 'MAP-1', ac_ids: ['REQ-2'] }],
+    });
+
+    const result = runReadiness(sessionDir);
+    assert.equal(result.status, 2, result.stderr);
+    const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    const history = persisted.readiness?.cycle_history ?? [];
+
+    assert.equal(fs.existsSync(tmpPath), false, 'tmp-only state should be promoted before readiness mutates state');
+    assert.equal(history.length, 2, `expected prior readiness history to survive tmp-only recovery: ${JSON.stringify(history)}`);
+    assert.equal(history[0].cycle, 1);
+    assert.equal(history[1].cycle, 2);
+    assert.equal(history[1].status, 'failed');
+    assert.equal(typeof history[1].suggested_analyst, 'string');
+  }));
+
 test('check-readiness: post-correction delta recovers dead-writer snapshot tmp', () => runFixture((sessionDir) => {
     const statePath = path.join(sessionDir, 'state.json');
     const unchanged = writeTicket(sessionDir, 'unchanged', {

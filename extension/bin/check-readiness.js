@@ -728,7 +728,8 @@ function displayTicketRef(sessionDir, ticket) {
 }
 function readState(sessionDir) {
     const statePath = path.join(sessionDir, 'state.json');
-    if (!fs.existsSync(statePath))
+    const recoveredState = readRecoverableJsonObject(statePath);
+    if (!fs.existsSync(statePath) && !recoveredState)
         return {};
     try {
         return new StateManager().read(statePath);
@@ -739,7 +740,8 @@ function readState(sessionDir) {
 }
 function writeState(sessionDir, state) {
     const statePath = path.join(sessionDir, 'state.json');
-    if (!fs.existsSync(statePath))
+    const recoveredState = readRecoverableJsonObject(statePath);
+    if (!fs.existsSync(statePath) && !recoveredState)
         return;
     const sm = new StateManager();
     sm.update(statePath, (current) => {
