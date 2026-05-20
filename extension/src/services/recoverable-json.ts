@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { execFileSync } from 'node:child_process';
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -7,6 +8,31 @@ function isProcessAlive(pid: number): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function readProcessStartTimeMs(pid: number): number | null {
+  try {
+    const output = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+      encoding: 'utf8',
+      timeout: 1000,
+    }).trim();
+    if (!output) return null;
+    const startedAt = Date.parse(output);
+    return Number.isFinite(startedAt) ? startedAt : null;
+  } catch {
+    return null;
+  }
+}
+
+function shouldSkipLiveTmp(tmpPid: number, tmpPath: string): boolean {
+  if (!Number.isFinite(tmpPid) || !isProcessAlive(tmpPid)) return false;
+  const processStartTimeMs = readProcessStartTimeMs(tmpPid);
+  if (processStartTimeMs === null) return true;
+  try {
+    return fs.statSync(tmpPath).mtimeMs >= processStartTimeMs;
+  } catch {
+    return true;
   }
 }
 
@@ -69,10 +95,10 @@ export function readRecoverableJsonObject(filePath: string): object | null {
   for (const entry of entries.filter(e => e.startsWith(tmpPrefix))) {
     const match = entry.match(tmpPattern);
     if (!match) continue;
-    const tmpPid = Number(match[1]);
-    if (Number.isFinite(tmpPid) && isProcessAlive(tmpPid)) continue;
-
     const tmpPath = path.join(dir, entry);
+    const tmpPid = Number(match[1]);
+    if (shouldSkipLiveTmp(tmpPid, tmpPath)) continue;
+
     const candidate = parseDeadTmp(tmpPath, baseMtimeMs);
     if (candidate && (!winner || candidate.mtimeMs > winner.mtimeMs)) {
       winner = { tmpPath, ...candidate };

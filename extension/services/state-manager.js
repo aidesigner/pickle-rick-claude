@@ -6,6 +6,7 @@
  * no lock — for signal/crash handlers).
  */
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -141,6 +142,29 @@ export function isProcessAlive(pid) {
     catch {
         return false;
     }
+}
+function readProcessStartTimeMs(pid) {
+    try {
+        const output = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+            encoding: 'utf8',
+            timeout: 1000,
+        }).trim();
+        if (!output)
+            return null;
+        const startedAt = Date.parse(output);
+        return Number.isFinite(startedAt) ? startedAt : null;
+    }
+    catch {
+        return null;
+    }
+}
+function shouldSkipLiveTmp(tmpPid, tmpPath) {
+    if (!Number.isFinite(tmpPid) || !isProcessAlive(tmpPid))
+        return false;
+    const processStartTimeMs = readProcessStartTimeMs(tmpPid);
+    if (processStartTimeMs === null)
+        return true;
+    return readMtimeMs(tmpPath) >= processStartTimeMs;
 }
 function readMtimeMs(filePath) {
     try {
@@ -726,11 +750,11 @@ export class StateManager {
             const match = entry.match(tmpPattern);
             if (!match)
                 continue;
+            const tmpPath = path.join(dir, entry);
             const tmpPid = Number(match[1]);
-            if (Number.isFinite(tmpPid) && isProcessAlive(tmpPid))
+            if (shouldSkipLiveTmp(tmpPid, tmpPath))
                 continue;
             try {
-                const tmpPath = path.join(dir, entry);
                 const parsed = JSON.parse(fs.readFileSync(tmpPath, 'utf-8'));
                 if (!isRecoverableStateSnapshotCandidate(parsed, this.opts.schemaVersion))
                     continue;
@@ -776,7 +800,7 @@ export class StateManager {
             const tmpPath = path.join(dir, entry);
             const tmpPid = Number(match[1]);
             // If owning process is still alive, leave it alone
-            if (Number.isFinite(tmpPid) && isProcessAlive(tmpPid))
+            if (shouldSkipLiveTmp(tmpPid, tmpPath))
                 continue;
             // Check if tmpfile contains valid JSON
             try {

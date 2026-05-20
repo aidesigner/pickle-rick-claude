@@ -8,6 +8,7 @@ import {
   realpathSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -239,6 +240,31 @@ test('verify-recapture.recovers orphan tmp state before evaluating the latest an
   }
 });
 
+test('verify-recapture.recovers corrupt-base orphan tmp state even when the tmp pid has been reused by a live process', () => {
+  const session = realpathSync(mkdtempSync(path.join(tmpdir(), 'verify-recapture-live-pid-corrupt-')));
+  const statePath = path.join(session, 'state.json');
+  const orphanPath = `${statePath}.tmp.${process.pid}`;
+  writeFileSync(statePath, '{bad json\n');
+  writeFileSync(orphanPath, `${JSON.stringify(recoverableState([
+    {
+      ts: '2026-05-02T11:15:00.000Z',
+      event: 'baseline_recapture_attempted',
+      iteration: 7,
+    },
+  ]), null, 2)}\n`);
+  utimesSync(statePath, new Date(500), new Date(500));
+  utimesSync(orphanPath, new Date(1_000), new Date(1_000));
+  try {
+    const result = runVerifier(session);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.runtimeArtifact.pass, true);
+    assert.equal(result.runtimeArtifact.failure_reason, null);
+    assert.equal(existsSync(orphanPath), false, 'reused live pid tmp should still be promoted when it predates the current process');
+  } finally {
+    rmSync(session, { recursive: true, force: true });
+  }
+});
+
 test('verify-recapture.recovers orphan tmp state when state.json is missing entirely', () => {
   const session = realpathSync(mkdtempSync(path.join(tmpdir(), 'verify-recapture-missing-base-')));
   const statePath = path.join(session, 'state.json');
@@ -257,6 +283,30 @@ test('verify-recapture.recovers orphan tmp state when state.json is missing enti
     assert.equal(result.runtimeArtifact.failure_reason, null);
     assert.equal(existsSync(statePath), true, 'missing base state should be recreated from orphan tmp');
     assert.equal(existsSync(orphanPath), false, 'orphan tmp should be consumed during recovery');
+  } finally {
+    rmSync(session, { recursive: true, force: true });
+  }
+});
+
+test('verify-recapture.recovers missing-base orphan tmp state even when the tmp pid has been reused by a live process', () => {
+  const session = realpathSync(mkdtempSync(path.join(tmpdir(), 'verify-recapture-live-pid-missing-')));
+  const statePath = path.join(session, 'state.json');
+  const orphanPath = `${statePath}.tmp.${process.pid}`;
+  writeFileSync(orphanPath, `${JSON.stringify(recoverableState([
+    {
+      ts: '2026-05-02T11:15:00.000Z',
+      event: 'baseline_recapture_attempted',
+      iteration: 7,
+    },
+  ]), null, 2)}\n`);
+  utimesSync(orphanPath, new Date(1_000), new Date(1_000));
+  try {
+    const result = runVerifier(session);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.runtimeArtifact.pass, true);
+    assert.equal(result.runtimeArtifact.failure_reason, null);
+    assert.equal(existsSync(statePath), true, 'missing base state should be recreated from a reused-live-pid tmp snapshot');
+    assert.equal(existsSync(orphanPath), false, 'reused live pid tmp should be consumed during recovery');
   } finally {
     rmSync(session, { recursive: true, force: true });
   }
