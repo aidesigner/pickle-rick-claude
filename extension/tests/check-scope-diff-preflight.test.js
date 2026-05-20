@@ -25,7 +25,11 @@ function writeScopeJson(dir, allowedPaths) {
 function runScript(args = [], opts = {}) {
   return spawnSync(process.execPath, [scriptPath, ...args], {
     encoding: 'utf-8',
-    timeout: 10_000,
+    // 10s → 60s: check-scope-diff.js spawns git internally; under 8-way
+    // full-suite load the node spawn + module load + git starve past 10s,
+    // so the outer spawnSync SIGKILLs the script before it emits its
+    // structured error. Fast-path cases still exit in well under a second.
+    timeout: 60_000,
     ...opts,
   });
 }
