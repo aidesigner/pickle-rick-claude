@@ -20,6 +20,9 @@ interface HandlerDecision {
   [key: string]: unknown;
 }
 
+let activeChild: ReturnType<typeof spawn> | null = null;
+let watchdogTriggered = false;
+
 // Prevent EPIPE errors from crashing the dispatcher when Claude Code closes the pipe
 const handleEpipe = (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') process.exit(0);
@@ -63,8 +66,14 @@ function armWatchdog(): void {
   const WATCHDOG_MS = Number(process.env.PICKLE_DISPATCH_TIMEOUT_MS) || 10_000;
   const watchdog = setTimeout(() => {
     log('Watchdog timeout — approving and exiting');
+    watchdogTriggered = true;
+    if (activeChild && activeChild.exitCode === null && !activeChild.killed) {
+      log('Watchdog timeout — killing hung hook child before exit');
+      killHookChild(activeChild, 'SIGKILL');
+    }
     approve();
-    process.exit(0);
+    const exitTimer = setTimeout(() => process.exit(0), 250);
+    exitTimer.unref();
   }, WATCHDOG_MS);
   watchdog.unref();
 }
@@ -135,7 +144,7 @@ async function readInputData(): Promise<string> {
 function writeChildInput(child: ReturnType<typeof spawn>, inputData: string): void {
   child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EPIPE') {
-      child.kill('SIGKILL');
+      killHookChild(child, 'SIGKILL');
       return;
     }
     logError(`Child stdin error: ${safeErrorMessage(err)}`);
@@ -146,13 +155,23 @@ function writeChildInput(child: ReturnType<typeof spawn>, inputData: string): vo
       child.stdin?.write(inputData);
     } catch (err) {
       if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPIPE') {
-        child.kill('SIGKILL');
+        killHookChild(child, 'SIGKILL');
       } else {
         throw err;
       }
     }
   }
   child.stdin?.end();
+}
+
+function killHookChild(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
+  if (process.platform !== 'win32' && typeof child.pid === 'number') {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch { /* fall through to direct kill */ }
+  }
+  try { child.kill(signal); } catch { /* child already gone */ }
 }
 
 function parseHandlerDecision(stdout: string): HandlerDecision | null {
@@ -191,17 +210,24 @@ function handleChildClose(hookName: string, stdout: string, stderr: string, code
 function runHookProcess(hookName: string, command: HookCommand, inputData: string): void {
   try {
     const child = spawn(command.cmd, command.cmdArgs, {
+      detached: process.platform !== 'win32',
       env: { ...process.env, EXTENSION_DIR },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    activeChild = child;
     let stdout = '';
     let stderr = '';
 
     writeChildInput(child, inputData);
     child.stdout?.on('data', (data) => (stdout += data.toString()));
     child.stderr?.on('data', (data) => (stderr += data.toString()));
-    child.on('close', (code) => handleChildClose(hookName, stdout, stderr, code));
+    child.on('close', (code) => {
+      activeChild = null;
+      if (watchdogTriggered) return;
+      handleChildClose(hookName, stdout, stderr, code);
+    });
     child.on('error', (err) => {
+      activeChild = null;
       logError(`Failed to start child process: ${safeErrorMessage(err)}`);
       approve();
       process.exit(0);

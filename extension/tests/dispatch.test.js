@@ -53,10 +53,10 @@ function writeHandler(handlersDir, hookName, script) {
  * @returns {{ stdout: string, stderr: string, status: number }}
  */
 function runDispatch(opts) {
-  const { extRoot, args = [], input } = opts;
+  const { extRoot, args = [], input, env = {} } = opts;
   const spawnOpts = {
     encoding: 'utf-8',
-    env: { ...process.env, EXTENSION_DIR: extRoot },
+    env: { ...process.env, EXTENSION_DIR: extRoot, ...env },
     // 10s → 30s: budget for system load when run alongside concurrent
     // codex/tmux work. Dispatch returns in <500ms typically.
     timeout: 30000,
@@ -70,6 +70,10 @@ function runDispatch(opts) {
     stderr: result.stderr || '',
     status: result.status,
   };
+}
+
+async function sleep(ms) {
+  await new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +528,41 @@ test('dispatch: EPIPE on child stdin triggers child.kill — dispatcher complete
     assert.ok(status !== null, 'dispatcher should not time out (child must be killed on EPIPE)');
     const parsed = JSON.parse(stdout.trim());
     assert.equal(parsed.decision, 'approve', 'should fail-open with approve after killing hung child');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('dispatch: watchdog kills a hung hook child before approving', async () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    const handlersDir = makeHandlersDir(tmpRoot);
+    const heartbeatFile = path.join(tmpRoot, 'hook-heartbeat.txt');
+    writeHandler(handlersDir, 'test-watchdog-kill', `
+      const fs = require('fs');
+      let ticks = 0;
+      fs.writeFileSync(${JSON.stringify(heartbeatFile)}, String(ticks));
+      setInterval(() => {
+        ticks += 1;
+        fs.writeFileSync(${JSON.stringify(heartbeatFile)}, String(ticks));
+      }, 25);
+    `);
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['test-watchdog-kill'],
+      input: '{}',
+      env: { PICKLE_DISPATCH_TIMEOUT_MS: '150' },
+    });
+
+    assert.equal(status, 0, 'watchdog must still fail open');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'approve', 'watchdog timeout still approves');
+
+    const before = fs.readFileSync(heartbeatFile, 'utf8').trim();
+    await sleep(250);
+    const after = fs.readFileSync(heartbeatFile, 'utf8').trim();
+    assert.equal(after, before, 'watchdog must stop hook heartbeats before exiting');
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }

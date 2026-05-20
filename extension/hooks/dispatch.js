@@ -7,6 +7,8 @@ import { safeErrorMessage } from '../services/pickle-utils.js';
 const EXTENSION_DIR = process.env.EXTENSION_DIR || join(os.homedir(), '.claude/pickle-rick');
 const HANDLERS_DIR = join(EXTENSION_DIR, 'extension', 'hooks', 'handlers');
 const LOG_PATH = join(EXTENSION_DIR, 'debug.log');
+let activeChild = null;
+let watchdogTriggered = false;
 // Prevent EPIPE errors from crashing the dispatcher when Claude Code closes the pipe
 const handleEpipe = (err) => {
     if (err.code === 'EPIPE')
@@ -47,8 +49,14 @@ function armWatchdog() {
     const WATCHDOG_MS = Number(process.env.PICKLE_DISPATCH_TIMEOUT_MS) || 10_000;
     const watchdog = setTimeout(() => {
         log('Watchdog timeout — approving and exiting');
+        watchdogTriggered = true;
+        if (activeChild && activeChild.exitCode === null && !activeChild.killed) {
+            log('Watchdog timeout — killing hung hook child before exit');
+            killHookChild(activeChild, 'SIGKILL');
+        }
         approve();
-        process.exit(0);
+        const exitTimer = setTimeout(() => process.exit(0), 250);
+        exitTimer.unref();
     }, WATCHDOG_MS);
     watchdog.unref();
 }
@@ -112,7 +120,7 @@ async function readInputData() {
 function writeChildInput(child, inputData) {
     child.stdin?.on('error', (err) => {
         if (err.code === 'EPIPE') {
-            child.kill('SIGKILL');
+            killHookChild(child, 'SIGKILL');
             return;
         }
         logError(`Child stdin error: ${safeErrorMessage(err)}`);
@@ -123,7 +131,7 @@ function writeChildInput(child, inputData) {
         }
         catch (err) {
             if (err instanceof Error && err.code === 'EPIPE') {
-                child.kill('SIGKILL');
+                killHookChild(child, 'SIGKILL');
             }
             else {
                 throw err;
@@ -131,6 +139,19 @@ function writeChildInput(child, inputData) {
         }
     }
     child.stdin?.end();
+}
+function killHookChild(child, signal) {
+    if (process.platform !== 'win32' && typeof child.pid === 'number') {
+        try {
+            process.kill(-child.pid, signal);
+            return;
+        }
+        catch { /* fall through to direct kill */ }
+    }
+    try {
+        child.kill(signal);
+    }
+    catch { /* child already gone */ }
 }
 function parseHandlerDecision(stdout) {
     const lines = stdout.split('\n').map(l => l.trim()).filter(l => l.length > 0);
@@ -169,16 +190,24 @@ function handleChildClose(hookName, stdout, stderr, code) {
 function runHookProcess(hookName, command, inputData) {
     try {
         const child = spawn(command.cmd, command.cmdArgs, {
+            detached: process.platform !== 'win32',
             env: { ...process.env, EXTENSION_DIR },
             stdio: ['pipe', 'pipe', 'pipe'],
         });
+        activeChild = child;
         let stdout = '';
         let stderr = '';
         writeChildInput(child, inputData);
         child.stdout?.on('data', (data) => (stdout += data.toString()));
         child.stderr?.on('data', (data) => (stderr += data.toString()));
-        child.on('close', (code) => handleChildClose(hookName, stdout, stderr, code));
+        child.on('close', (code) => {
+            activeChild = null;
+            if (watchdogTriggered)
+                return;
+            handleChildClose(hookName, stdout, stderr, code);
+        });
         child.on('error', (err) => {
+            activeChild = null;
             logError(`Failed to start child process: ${safeErrorMessage(err)}`);
             approve();
             process.exit(0);
