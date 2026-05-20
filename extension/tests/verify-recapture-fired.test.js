@@ -238,6 +238,31 @@ test('verify-recapture.corrupt-state writes unreadable-state artifact instead of
   }
 });
 
+test('verify-recapture.unreadable-orphan-tmp is preserved instead of being deleted as invalid recovery input', () => {
+  const session = realpathSync(mkdtempSync(path.join(tmpdir(), 'verify-recapture-unreadable-orphan-')));
+  const statePath = path.join(session, 'state.json');
+  const orphanPath = `${statePath}.tmp.${DEAD_TMP_PID}`;
+  writeFileSync(statePath, '{bad json\n');
+  writeFileSync(orphanPath, `${JSON.stringify(recoverableState([
+    {
+      ts: '2026-05-02T11:15:00.000Z',
+      event: 'baseline_recapture_attempted',
+      iteration: 7,
+    },
+  ]), null, 2)}\n`);
+  try {
+    chmodSync(orphanPath, 0o000);
+    const result = runVerifier(session);
+    assert.equal(result.status, 1);
+    assert.equal(result.runtimeArtifact.pass, false);
+    assert.equal(result.runtimeArtifact.failure_reason, 'state-unreadable');
+    assert.equal(existsSync(orphanPath), true, 'unreadable orphan tmp must remain available for operator recovery');
+  } finally {
+    chmodSync(orphanPath, 0o644);
+    rmSync(session, { recursive: true, force: true });
+  }
+});
+
 test('verify-recapture.recovers orphan tmp state before evaluating the latest anatomy window', () => {
   const session = realpathSync(mkdtempSync(path.join(tmpdir(), 'verify-recapture-orphan-')));
   const statePath = path.join(session, 'state.json');

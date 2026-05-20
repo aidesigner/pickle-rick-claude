@@ -45,6 +45,23 @@ function parseJsonObjectFile(filePath: string): object | null {
   }
 }
 
+function readJsonObjectFile(filePath: string): { kind: 'parsed'; parsed: object } | { kind: 'invalid' | 'unreadable' } {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? { kind: 'parsed', parsed }
+      : { kind: 'invalid' };
+  } catch (err) {
+    if (err && typeof err === 'object' && 'code' in err) {
+      const code = String(err.code);
+      if (code === 'EACCES' || code === 'EPERM' || code === 'EISDIR') {
+        return { kind: 'unreadable' };
+      }
+    }
+    return { kind: 'invalid' };
+  }
+}
+
 function listEntries(dir: string): string[] | null {
   try {
     return fs.readdirSync(dir);
@@ -57,8 +74,11 @@ function parseDeadTmp(
   tmpPath: string,
   baseMtimeMs: number,
 ): { parsed: object; mtimeMs: number } | null {
-  const parsed = parseJsonObjectFile(tmpPath);
-  if (!parsed) {
+  const parsedResult = readJsonObjectFile(tmpPath);
+  if (parsedResult.kind === 'unreadable') {
+    return null;
+  }
+  if (parsedResult.kind !== 'parsed') {
     try { fs.unlinkSync(tmpPath); } catch { /* ignore invalid tmp cleanup failure */ }
     return null;
   }
@@ -72,7 +92,7 @@ function parseDeadTmp(
     try { fs.unlinkSync(tmpPath); } catch { /* ignore stale tmp cleanup failure */ }
     return null;
   }
-  return { parsed, mtimeMs };
+  return { parsed: parsedResult.parsed, mtimeMs };
 }
 
 export function readRecoverableJsonObject(filePath: string): object | null {
