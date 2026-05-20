@@ -123,6 +123,59 @@ test('addToJar: recovers orphan tmp state before writing jar metadata', () => {
     }
 });
 
+test('addToJar: accepts tmp-only recoverable state snapshots', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-'));
+
+    try {
+        const liveRepo = path.join(dir, 'live-repo');
+        fs.mkdirSync(liveRepo, { recursive: true });
+
+        const statePath = path.join(dir, 'state.json');
+        const baseFields = {
+            session_dir: dir,
+            step: 'implement',
+            max_iterations: 10,
+            max_time_minutes: 60,
+            worker_timeout_seconds: 120,
+            start_time_epoch: Math.floor(Date.now() / 1000),
+            backend: 'claude',
+            original_prompt: 'tmp-only jar test',
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            current_ticket: null,
+            completion_promise: null,
+            schema_version: 1,
+        };
+        fs.writeFileSync(
+            `${statePath}.tmp.99999999`,
+            JSON.stringify({
+                ...baseFields,
+                active: true,
+                working_dir: liveRepo,
+                iteration: 2,
+            }),
+        );
+        fs.writeFileSync(path.join(dir, 'prd.md'), '# Tmp-only PRD');
+
+        const resultPath = addToJar(dir);
+        const meta = JSON.parse(fs.readFileSync(path.join(resultPath, 'meta.json'), 'utf-8'));
+        const updatedState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+
+        assert.equal(meta.repo_path, liveRepo, 'jar metadata must use the recovered working_dir');
+        assert.equal(updatedState.working_dir, liveRepo, 'tmp-only state should be promoted before deactivation');
+        assert.equal(updatedState.active, false, 'session should still be deactivated after jarring');
+        assert.equal(fs.existsSync(`${statePath}.tmp.99999999`), false, 'tmp snapshot should be consumed by recovery');
+
+        fs.rmSync(resultPath, { recursive: true });
+        const parentDir = path.dirname(resultPath);
+        if (fs.existsSync(parentDir) && fs.readdirSync(parentDir).length === 0) {
+            fs.rmdirSync(parentDir);
+        }
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 // --- Happy path ---
 
 test('addToJar: creates jar entry, writes meta.json, deactivates session', () => {

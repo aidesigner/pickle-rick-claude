@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { runCmd, Style, getDataRoot, safeErrorMessage, formatLocalDateKey } from './pickle-utils.js';
 import { StateManager } from './state-manager.js';
+import { readRecoverableJsonObject } from './recoverable-json.js';
 const sm = new StateManager();
 function getBranch(repoPath) {
     try {
@@ -15,8 +16,19 @@ function getBranch(repoPath) {
 export function addToJar(sessionDir) {
     // 1. Read state.json
     const statePath = path.join(sessionDir, 'state.json');
-    if (!fs.existsSync(statePath)) {
+    const hasStateSnapshot = fs.existsSync(statePath) || (() => {
+        try {
+            return fs.readdirSync(sessionDir).some((entry) => entry.startsWith('state.json.tmp.'));
+        }
+        catch {
+            return false;
+        }
+    })();
+    if (!hasStateSnapshot) {
         throw new Error(`state.json not found in ${sessionDir}`);
+    }
+    if (!fs.existsSync(statePath)) {
+        readRecoverableJsonObject(statePath);
     }
     let state;
     try {
