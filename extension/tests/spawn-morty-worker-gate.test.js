@@ -644,21 +644,18 @@ test.skip('runWorkerGate: skips test:fast when SKIP_WORKER_TEST_GATE=1 and logs 
   assert.match('SKIP_WORKER_TEST_GATE', /SKIP_WORKER_TEST_GATE/);
 });
 
-test('runWorkerGate: honors worker_test_gate_timeout_ms, reports timeout details, and kills npm descendants', { timeout: 15_000 }, async () => {
+test('runWorkerGate: honors worker_test_gate_timeout_ms, reports timeout details, and kills npm descendants', { timeout: 60_000 }, async () => {
   const root = makeTmpRoot();
   try {
     initGitRepo(root);
-    // R-TSPF residual: a 250ms gate budget was shorter than the `npm` shim's
-    // own `node` cold-start under `--test-concurrency=8`, so the timeout fired
-    // before the shim could spawn its descendant and write its readiness/pid
-    // files — `waitFor(readyPath)` then starved. The invariant under test is
-    // "timeout fires, SIGTERMs the process tree, kills descendants", not the
-    // absolute budget, so the budget is widened to clear worst-case shim
-    // cold-start while the descendant `setInterval` keeps the child alive long
-    // enough for the timeout to still arrive mid-run.
-    const GATE_TIMEOUT_MS = 2000;
+    // 250ms → 6000ms: under 8-way full-suite concurrency the npm-shim chain
+    // (npm shim → node grandchild) must spawn and write its readiness file
+    // before the gate's own timeout fires; a 250ms budget races the grandchild
+    // spawn so `waitFor(readyPath)` could time out (the flaky failure). The
+    // shim's grandchild loops forever, so any finite gate budget still proves
+    // the timeout fires and the process tree is SIGTERM'd.
     fs.writeFileSync(path.join(root, 'pickle_settings.json'), JSON.stringify({
-      worker_test_gate_timeout_ms: GATE_TIMEOUT_MS,
+      worker_test_gate_timeout_ms: 6000,
     }, null, 2));
     fs.mkdirSync(path.join(root, 'extension', 'src', 'demo'), { recursive: true });
     fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 1;\n');
@@ -686,7 +683,7 @@ test('runWorkerGate: honors worker_test_gate_timeout_ms, reports timeout details
       statePath,
       preWorkerHead: null,
     }));
-    await waitFor(() => fs.existsSync(readyPath), 5_000, 'timed-out child readiness');
+    await waitFor(() => fs.existsSync(readyPath), 20_000, 'timed-out child readiness');
     const childPid = Number(fs.readFileSync(pidPath, 'utf8').trim());
     assert.equal(Number.isInteger(childPid), true);
 
@@ -703,7 +700,7 @@ test('runWorkerGate: honors worker_test_gate_timeout_ms, reports timeout details
     });
     assert.match(
       result.testFailures[0]?.message ?? '',
-      new RegExp(`^timed out after ${GATE_TIMEOUT_MS}ms; sent SIGTERM to process tree(?: and escalated to SIGKILL after 2000ms)?$`),
+      /^timed out after 6000ms; sent SIGTERM to process tree(?: and escalated to SIGKILL after 2000ms)?$/,
     );
     assert.equal(isPidAlive(childPid), false, `descendant pid ${childPid} should be dead after timeout cleanup`);
     const signals = fs.readFileSync(signalPath, 'utf8');

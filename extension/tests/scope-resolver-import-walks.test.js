@@ -6,23 +6,22 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-// 750ms → 2500ms → 5000ms → 15_000ms → 45_000ms (R-TSPF residual): under full
-// `--test-concurrency=8` load the SUT's per-shim `spawnSync` was observed to
-// consume its entire timeout even for trivial `exit N` shims — PATH-resolved
-// exec of a freshly `mkdtemp`'d shim under `/var/folders` inode/dcache
-// pressure (thousands of concurrent temp dirs from 4900+ tests) can stall the
-// fork+exec lookup far past a 15s budget, so `rg fails and grep recovers` saw
-// BOTH internal walks time out and lose grep's recovered `b.ts`. The
-// HANG_SCRIPT sleeps 60s, so any value < 60_000 still validates the
-// timeout-bound contract — 45s absorbs worst-case exec-lookup stalls while
-// staying strictly below the 60s hang sleep so the hang tests still trip the
-// guard. findImportersTimeoutMs is a caller-supplied option, so this widening
-// stays test-side and does not touch src/.
-const HANG_TIMEOUT_MS = 45_000;
+// 750ms → 2500ms → 5000ms → 15_000ms → 40_000ms: under heavy 8-way full-suite
+// concurrency on a loaded host, the SUT's findImportersTimeoutMs needs enough
+// wall-clock to (a) fire SIGKILL on a hanging shim and execute the grep
+// fallback, AND (b) NOT accidentally fire on a fast-exiting shim whose spawn
+// was delayed by scheduler pressure (this manifested as `_runRgImportWalk`
+// writing "rg timeout" instead of "rg fail", OR a slow-cold-started SUCCESS
+// grep being SIGKILL'd before it could emit `./b.ts`, dropping b.ts from the
+// result). The HANG_SCRIPT sleeps 60s so any value < 60_000 still validates
+// the timeout-bound contract — bumping just absorbs scheduler jitter on both
+// ends, and 40s leaves a clear 20s margin below the 60s hang sleep.
+const HANG_TIMEOUT_MS = 40_000;
 // Outer subprocess wall-clock cap. Must cover the worst case: both rg and grep
-// time out at HANG_TIMEOUT_MS (= 90s) plus Node ESM cold-start and spawnSync
-// overhead.
-const RUNNER_SPAWN_TIMEOUT_MS = HANG_TIMEOUT_MS * 2 + 30_000;
+// time out at HANG_TIMEOUT_MS plus Node ESM cold-start and spawnSync overhead.
+// HANG_TIMEOUT_MS*2 + 40s slack keeps the outer cap from SIGKILL'ing the child
+// before the SUT's own per-tool timeouts have both fired and recovered.
+const RUNNER_SPAWN_TIMEOUT_MS = HANG_TIMEOUT_MS * 2 + 40_000;
 
 const FAIL_SCRIPT = (code) => `#!/bin/sh
 exit ${code}

@@ -4,9 +4,23 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawnSync as realSpawnSync } from 'node:child_process';
 
 import { restartDeadWatcherPanes } from '../../services/pickle-utils.js';
 import { RESPAWN_WATCHDOG_INTERVAL_MS } from '../../bin/monitor.js';
+
+// Load-robust spawnSync injection. `restartDeadWatcherPanes` passes a
+// hardcoded `timeout: 5_000` to every internal `tmux` spawnSync; under 8-way
+// full-suite concurrency on a loaded host even a fast `/bin/sh` tmux shim can
+// starve past 5s, so a `split-window`/`send-keys` call returns non-zero and
+// the layout-restoration assertions flake. The SUT exposes its `spawnSyncFn`
+// as an injectable parameter precisely so tests can control subprocess
+// behaviour — here we widen the per-call timeout to a value that survives
+// scheduler pressure. Real hang detection is unaffected: the shim always
+// exits promptly, this only prevents a spurious SIGKILL of a healthy shim.
+function loadRobustSpawnSync(cmd, args, opts) {
+  return realSpawnSync(cmd, args, { ...opts, timeout: 60_000 });
+}
 
 let withPathQueue = Promise.resolve();
 
@@ -136,7 +150,7 @@ test('restartDeadWatcherPanes restores a collapsed 1x2 watcher layout within the
   const f = makeCollapsedLayoutFixture();
   const startedAt = Date.now();
   try {
-    await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, f.mode));
+    await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, f.mode, loadRobustSpawnSync));
 
     const durationMs = Date.now() - startedAt;
     const calls = f.readCalls();
@@ -179,7 +193,7 @@ test('restartDeadWatcherPanes collapsed-layout fixtures share the serialized PAT
     const innerRun = inner.withPath(async () => {
       innerEntered = true;
       innerPath = process.env.PATH || '';
-      restartDeadWatcherPanes(inner.sessionDir, inner.extRoot, inner.mode);
+      restartDeadWatcherPanes(inner.sessionDir, inner.extRoot, inner.mode, loadRobustSpawnSync);
     });
 
     assert.equal(innerEntered, false, 'second fixture must wait for the serialized PATH queue');

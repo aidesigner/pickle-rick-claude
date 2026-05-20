@@ -4,8 +4,22 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawnSync as realSpawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { format } from 'node:util';
+
+// Load-robust spawnSync injection for the real-shim `ensureMonitorWindow` /
+// `restartDeadWatcherPanes` tests. The SUT passes hardcoded 5s/10s timeouts to
+// every internal tmux/bash spawnSync; under 8-way full-suite concurrency on a
+// loaded host even a fast `/bin/sh` shim can starve past 5s, so a kill-window /
+// set-option / tmux-monitor.sh call returns non-zero and the result-status or
+// calls-log assertions flake. The SUT exposes `spawnSyncFn` as an injectable
+// option precisely so tests can control subprocess behaviour — widening the
+// per-call timeout here only prevents a spurious SIGKILL of a healthy shim;
+// real hang detection is unaffected because every shim exits promptly.
+function loadRobustSpawnSync(command, args, opts) {
+    return realSpawnSync(command, args, { ...opts, timeout: 60_000 });
+}
 
 import {
     ensureMonitorWindow,
@@ -353,6 +367,7 @@ test('ensureMonitorWindow: skipped when not inside tmux', () => {
             inTmux: false,
             tmuxBin: f.tmuxBin,
             bashBin: f.bashBin,
+            spawnSyncFn: loadRobustSpawnSync,
         });
         assert.equal(result.status, 'skipped');
         assert.equal(f.readCalls(), '', 'should not invoke tmux or bash when skipped');
@@ -370,6 +385,7 @@ test('ensureMonitorWindow: creates monitor when window does not exist', () => {
             inTmux: true,
             tmuxBin: f.tmuxBin,
             bashBin: f.bashBin,
+            spawnSyncFn: loadRobustSpawnSync,
         });
         assert.equal(result.status, 'created');
         const calls = f.readCalls();
@@ -541,6 +557,7 @@ test('ensureMonitorWindow: existing monitor window runs exactly one pane-recover
                 inTmux: true,
                 tmuxBin: f.tmuxBin,
                 bashBin: f.bashBin,
+                spawnSyncFn: loadRobustSpawnSync,
             });
         });
         assert.equal(result.status, 'exists');
@@ -626,6 +643,7 @@ test('ensureMonitorWindow: phase re-entry performs a fresh recovery sweep with m
                     inTmux: true,
                     tmuxBin: f.tmuxBin,
                     bashBin: f.bashBin,
+                    spawnSyncFn: loadRobustSpawnSync,
                     mode,
                 });
             });
@@ -657,6 +675,7 @@ test('ensureMonitorWindow: same-mode refinement monitor respawns only refinement
                 inTmux: true,
                 tmuxBin: f.tmuxBin,
                 bashBin: f.bashBin,
+                spawnSyncFn: loadRobustSpawnSync,
                 mode: 'refinement',
             });
         });
@@ -719,7 +738,7 @@ test('extension root trap-door: production script resolution does not read proce
 test('restartDeadWatcherPanes: respawns dead pickle monitor and watcher panes 0, 1, 2, and 3', async () => {
     const f = makeWatcherFakes({ sessionName: 'pickle-dead', paneCommands: { 0: 'zsh', 1: 'zsh', 2: 'bash', 3: 'fish' } });
     try {
-        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
+        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle', loadRobustSpawnSync));
 
         const calls = f.readCalls();
         assert.match(calls, /tmux display-message -p #S/);
@@ -741,7 +760,7 @@ test('restartDeadWatcherPanes: respawns dead pickle monitor and watcher panes 0,
 test('restartDeadWatcherPanes: all monitor panes already running node is a no-op', async () => {
     const f = makeWatcherFakes({ paneCommands: { 0: 'node', 1: 'node', 2: 'node', 3: 'node' } });
     try {
-        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
+        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle', loadRobustSpawnSync));
 
         const calls = f.readCalls();
         assert.match(calls, /tmux display-message -p -t pickle-watch:monitor\.0 #\{pane_current_command\}/);
@@ -756,7 +775,7 @@ test('restartDeadWatcherPanes: all monitor panes already running node is a no-op
 test('restartDeadWatcherPanes: inactive session skips pane probing and respawn', async () => {
     const f = makeWatcherFakes({ active: false, paneCommands: { 0: 'zsh', 1: 'zsh', 2: 'bash', 3: 'fish' } });
     try {
-        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
+        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle', loadRobustSpawnSync));
 
         assert.equal(f.readCalls(), '');
         assert.equal(f.readRunnerLog(), '');
@@ -768,7 +787,7 @@ test('restartDeadWatcherPanes: inactive session skips pane probing and respawn',
 test('restartDeadWatcherPanes: non-node long-running command is treated as dead and logged as warn', async () => {
     const f = makeWatcherFakes({ paneCommands: { 0: 'node', 1: 'node', 2: 'vim', 3: 'node' } });
     try {
-        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
+        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle', loadRobustSpawnSync));
 
         const calls = f.readCalls();
         assert.match(calls, /tmux send-keys -t pickle-watch:monitor\.2 node .+morty-watcher\.js .+session Enter/);
@@ -793,7 +812,7 @@ test('restartDeadWatcherPanes: mode-specific pane 2 command uses refinement and 
             paneCommands: { 0: 'node', 1: 'node', 2: 'zsh', 3: 'node' },
         });
         try {
-            await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, mode));
+            await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, mode, loadRobustSpawnSync));
             const calls = f.readCalls();
             assert.match(calls, paneTwoPattern);
             assert.doesNotMatch(calls, /refine-watcher/);
@@ -810,7 +829,7 @@ test('restartDeadWatcherPanes: missing pane recreates collapsed layout via split
         missingPanes: [2, 3],
     });
     try {
-        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
+        await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle', loadRobustSpawnSync));
 
         const calls = f.readCalls();
         assert.match(calls, /tmux split-window -v -l 40% -t pickle-collapsed:monitor\.0/);
@@ -864,6 +883,7 @@ test('ensureMonitorWindow: kills and recreates when existing window has differen
                 inTmux: true,
                 tmuxBin: f.tmuxBin,
                 bashBin: f.bashBin,
+                spawnSyncFn: loadRobustSpawnSync,
             });
         });
         assert.equal(result.status, 'recreated');
@@ -910,6 +930,7 @@ test('ensureMonitorWindow: infers meeseeks mode from state.command_template', as
                 inTmux: true,
                 tmuxBin: f.tmuxBin,
                 bashBin: f.bashBin,
+                spawnSyncFn: loadRobustSpawnSync,
             });
         });
         assert.equal(result.status, 'created');
@@ -930,6 +951,7 @@ test('ensureMonitorWindow: infers council mode from state.command_template', asy
                 inTmux: true,
                 tmuxBin: f.tmuxBin,
                 bashBin: f.bashBin,
+                spawnSyncFn: loadRobustSpawnSync,
             });
         });
         assert.equal(result.status, 'created');
@@ -950,6 +972,7 @@ test('ensureMonitorWindow: explicit mode overrides state-inferred mode', async (
                 inTmux: true,
                 tmuxBin: f.tmuxBin,
                 bashBin: f.bashBin,
+                spawnSyncFn: loadRobustSpawnSync,
                 mode: 'refinement',
             });
         });
@@ -973,6 +996,7 @@ test('ensureMonitorWindow: returns error when tmux-monitor.sh is missing', async
                 inTmux: true,
                 tmuxBin: f.tmuxBin,
                 bashBin: f.bashBin,
+                spawnSyncFn: loadRobustSpawnSync,
             });
         });
         assert.equal(result.status, 'error');

@@ -13,14 +13,43 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SETUP = path.resolve(__dirname, '../bin/setup.js');
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
+// `setup.js` keys its session-map by `process.cwd()`. The fast-tier suite
+// runs setup-family test files concurrently (node --test cross-file
+// concurrency), so two setup processes can transiently claim the same cwd and
+// the loser exits with `session-map collision blocked`. The colliding sibling
+// is short-lived; retry deterministically until the cwd map slot frees, with a
+// bounded ceiling so a genuine wedge still surfaces.
+function isSessionMapCollision(message) {
+    return /session-map collision blocked/.test(message || '');
+}
+
+// Synchronous sleep — runSetup runs inside sync test bodies, so a blocking
+// back-off keeps the retry loop from spin-burning CPU between attempts.
+function sleepSync(ms) {
+    const buf = new Int32Array(new SharedArrayBuffer(4));
+    Atomics.wait(buf, 0, 0, ms);
+}
+
 function runSetup(args) {
-    const output = execFileSync(process.execPath, [SETUP, ...args], {
-        encoding: 'utf-8',
-        env: { ...process.env, FORCE_COLOR: '0' },
-    });
-    const match = output.match(/SESSION_ROOT=(.+)/);
-    if (!match) throw new Error(`SESSION_ROOT not found in output:\n${output}`);
-    return match[1].trim();
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+        try {
+            const output = execFileSync(process.execPath, [SETUP, ...args], {
+                encoding: 'utf-8',
+                env: { ...process.env, FORCE_COLOR: '0' },
+            });
+            const match = output.match(/SESSION_ROOT=(.+)/);
+            if (!match) throw new Error(`SESSION_ROOT not found in output:\n${output}`);
+            return match[1].trim();
+        } catch (err) {
+            const stderr = err && typeof err.stderr === 'string' ? err.stderr : '';
+            if (isSessionMapCollision(stderr) && Date.now() < deadline) {
+                sleepSync(100);
+                continue;
+            }
+            throw err;
+        }
+    }
 }
 
 function runSetupWithEnv(args, extraEnv) {

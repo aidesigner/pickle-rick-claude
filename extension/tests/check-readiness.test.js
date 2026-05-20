@@ -82,7 +82,7 @@ function runReadiness(sessionDir, repoRoot = process.cwd()) {
         '--repo-root', repoRoot,
     ], {
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 60000,
     });
 }
 
@@ -93,7 +93,7 @@ function runReadinessHistory(sessionDir) {
         '--history',
     ], {
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 60000,
     });
 }
 

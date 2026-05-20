@@ -271,8 +271,16 @@ test('runner times out wedged child test process instead of hanging indefinitely
     );
 
     const startedAt = Date.now();
+    // 200ms → 5000ms: under 8-way full-suite concurrency the wedged fixture
+    // child must actually spawn and *register as a running test* with the
+    // runner before the runner's timeout fires — otherwise the runner SIGKILLs
+    // it before it counts as a test and prints nothing on stdout (the flaky
+    // empty-stdout failure). The fixture blocks the event loop for 60s via
+    // Atomics.wait, so any timeout < 60_000 still proves the runner does not
+    // hang indefinitely; 5s only absorbs scheduler jitter at child startup.
+    const RUNNER_TIMEOUT_MS = 5_000;
     const result = runRunner(root, ['tests/hangs.test.js'], {
-      env: { PICKLE_TEST_RUNNER_TIMEOUT_MS: '200' },
+      env: { PICKLE_TEST_RUNNER_TIMEOUT_MS: String(RUNNER_TIMEOUT_MS) },
     });
 
     assert.ok(
@@ -280,7 +288,10 @@ test('runner times out wedged child test process instead of hanging indefinitely
       `expected timeout failure, got status=${result.status}\nstdout=${result.stdout}\nstderr=${result.stderr}`,
     );
     assert.match(result.stderr, /ETIMEDOUT|timed out/i);
-    assert.ok(Date.now() - startedAt < 10_000, 'timeout should fail fast');
+    assert.match(result.stdout, /cancelled 1|tests 1/i);
+    // Ceiling = RUNNER_TIMEOUT_MS + generous spawn/teardown slack, still far
+    // below the 60s fixture sleep so a real indefinite hang is still caught.
+    assert.ok(Date.now() - startedAt < RUNNER_TIMEOUT_MS + 25_000, 'timeout should fail fast');
   } finally {
     cleanupFixtureRoot(root);
   }

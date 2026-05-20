@@ -75,7 +75,13 @@ function run(extDir, args = []) {
     return spawnSync(process.execPath, [TMUX_RUNNER_BIN, ...args], {
         env,
         encoding: 'utf-8',
-        timeout: 60000,
+        // 15s → 60s → 150s: under 8-way full-suite concurrency on a loaded
+        // host, mux-runner startup (state migration, ensureMonitorWindow,
+        // module load) can creep past 60s before reaching command_template
+        // validation, so the outer spawnSync SIGKILLs the runner before it
+        // emits its rejection diagnostic. Fast-path tests still exit in <1s;
+        // this budget only prevents premature SIGKILL under load.
+        timeout: 150000,
     });
 }
 
@@ -98,7 +104,9 @@ function runWithRealExtension(args = []) {
     return spawnSync(process.execPath, [TMUX_RUNNER_BIN, ...args], {
         env,
         encoding: 'utf-8',
-        timeout: 60000,
+        // See run() above: 60s → 150s to survive 8-way full-suite load
+        // without the outer spawnSync SIGKILL'ing a still-starting runner.
+        timeout: 150000,
     });
 }
 

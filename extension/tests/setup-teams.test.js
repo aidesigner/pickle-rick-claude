@@ -12,14 +12,35 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SETUP = path.resolve(__dirname, '../bin/setup.js');
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
+// `setup.js` keys its session-map by `process.cwd()`. Concurrent setup-family
+// test files can transiently claim the same cwd; the loser exits with
+// `session-map collision blocked`. Retry deterministically until the sibling
+// (short-lived) frees the slot, bounded so a genuine wedge still surfaces.
+function sleepSync(ms) {
+    const buf = new Int32Array(new SharedArrayBuffer(4));
+    Atomics.wait(buf, 0, 0, ms);
+}
+
 function runSetup(args, extraEnv = {}) {
-    const output = execFileSync(process.execPath, [SETUP, ...args], {
-        encoding: 'utf-8',
-        env: { ...process.env, FORCE_COLOR: '0', ...extraEnv },
-    });
-    const match = output.match(/SESSION_ROOT=(.+)/);
-    if (!match) throw new Error(`SESSION_ROOT not found in output:\n${output}`);
-    return match[1].trim();
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+        try {
+            const output = execFileSync(process.execPath, [SETUP, ...args], {
+                encoding: 'utf-8',
+                env: { ...process.env, FORCE_COLOR: '0', ...extraEnv },
+            });
+            const match = output.match(/SESSION_ROOT=(.+)/);
+            if (!match) throw new Error(`SESSION_ROOT not found in output:\n${output}`);
+            return match[1].trim();
+        } catch (err) {
+            const stderr = err && typeof err.stderr === 'string' ? err.stderr : '';
+            if (/session-map collision blocked/.test(stderr) && Date.now() < deadline) {
+                sleepSync(100);
+                continue;
+            }
+            throw err;
+        }
+    }
 }
 
 function runSetupExpectFail(args) {

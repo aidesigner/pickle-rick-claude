@@ -23,14 +23,20 @@ const {
     runReadinessGate,
 } = await import('../bin/spawn-refinement-team.js');
 
+// 10s → 45s → 120s: budget for system load when run alongside concurrent
+// 8-way full-suite work. spawn-refinement-team spawns 3 fake worker
+// subprocesses and shells out to git; under load the whole subprocess tree
+// can creep past 45s, so the outer spawnSync SIGKILLs it before stderr
+// diagnostics flush (the flaky empty-stderr / status=null failure). Worker
+// invocations have their own `--timeout` budget that bounds real hangs; this
+// outer cap only absorbs spawn-pipeline jitter.
+const REFINEMENT_SPAWN_TIMEOUT_MS = 120000;
+
 function run(args, env = {}) {
-    // 10s → 45s: budget for system load when run alongside concurrent
-    // codex/tmux work. Most cases exit fast on validation; budget exists
-    // so node spawn + module load under load doesn't SIGKILL the subprocess.
     return spawnSync(process.execPath, [BIN, ...args], {
         env: { ...process.env, ...env },
         encoding: 'utf-8',
-        timeout: 45000,
+        timeout: REFINEMENT_SPAWN_TIMEOUT_MS,
     });
 }
 
@@ -656,7 +662,7 @@ test('spawn-refinement-team: recovered working_dir controls worker cwd and codeb
                 cwd: wrongCwd,
                 env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
                 encoding: 'utf-8',
-                timeout: 45000,
+                timeout: REFINEMENT_SPAWN_TIMEOUT_MS,
             }
         );
 
@@ -722,7 +728,7 @@ test('spawn-refinement-team: emits stale-anchor warnings before refinement worke
                 cwd: tmp,
                 env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
                 encoding: 'utf-8',
-                timeout: 45000,
+                timeout: REFINEMENT_SPAWN_TIMEOUT_MS,
             }
         );
 

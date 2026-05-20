@@ -25,21 +25,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN_PATH = path.resolve(__dirname, '..', 'bin', 'plumbus-frame-analyzer.js');
 const FIXTURE_PATH = path.resolve(__dirname, '__fixtures__', 'plumbus-frames', 'frame1-asymmetric-writer.dot');
 const EXPECTED_TIMEOUT_MS = 30_000;
-// R-TSPF residual (load-dependent-timeout): the inner BUN_TIMEOUT_MS hang
-// guard genuinely consumes ~30s. In isolation — and even under 12-way CPU
-// saturation — the analyzer exits at ~30s. But inside the full
-// `--test-concurrency=8` suite (4900+ tests, thousands of concurrent
-// `/var/folders` temp dirs) the node analyzer's own ESM module-load + cold
-// start can stall for tens of seconds before it even reaches the
-// `spawnSync('bun', …)` line — so the inner 30s timer starts late and the
-// total wall time drifts well past a 60-90s budget, killing the analyzer
-// from the outer spawnSync before its SIGTERM-driven exit can land. The
-// inner timeout still does the real hang detection (stderr diagnostic
-// proves it); the wall budget is only a fallback bound, so it is widened
-// generously to absorb worst-case full-suite startup contention. A genuine
-// unbounded-hang regression still fails — just after this larger bound.
-// BUN_TIMEOUT_MS lives in src/ and cannot be lowered from the test.
-const WALL_CLOCK_BUDGET_MS = EXPECTED_TIMEOUT_MS + 150_000;
+// 10s → 30s → 90s slack: under 8-way test concurrency on a heavily loaded
+// macOS host, bun subprocess teardown + node analyzer startup overhead — and
+// the starved event loop that *measures* the inner 30s BUN_TIMEOUT_MS — can
+// stretch the observed wall clock well past 60s, racing the inner timeout
+// firing and producing flaky "elapsed 60004ms hit the test's own budget"
+// failures. The inner BUN_TIMEOUT_MS (src-side, 30s) still bounds the actual
+// hang detection; this generous slack only absorbs spawn-pipeline jitter so
+// the outer spawnSync never SIGKILLs the analyzer before its own guard fires.
+const WALL_CLOCK_BUDGET_MS = EXPECTED_TIMEOUT_MS + 90_000;
 
 let tmpRoot;
 
