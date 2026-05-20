@@ -2,14 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'node:crypto';
 import { execFile, spawnSync } from 'child_process';
-import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { LockError, type ActivityEventType, type GateResult, type GateMode, type GateFailure, type GateBaselineFile } from '../types/index.js';
 import { withLock } from './state-manager.js';
 import { readRecoverableJsonObject } from './microverse-state.js';
 import { writeStateFile } from './pickle-utils.js';
-
-const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -460,29 +457,51 @@ interface CheckResult {
   exitCode: number;
 }
 
-async function runCheckCommand(cmd: string, cwd: string, timeout_ms: number): Promise<CheckResult> {
+async function runCheckCommand(
+  check: GateCheck,
+  cmd: string,
+  cwd: string,
+  timeout_ms: number,
+): Promise<CheckResult> {
   const parts = cmd.split(' ').filter((p) => p.length > 0);
   if (parts.length === 0) {
     throw new Error(`runCheckCommand: empty command — refusing to spawn`);
   }
   const bin = parts[0]!;
   const args = parts.slice(1);
-  try {
-    const { stdout, stderr } = await execFileAsync(bin, args, {
-      cwd,
-      timeout: timeout_ms,
-      killSignal: 'SIGKILL',
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    return { stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0 };
-  } catch (err: unknown) {
-    const e = err as { stdout?: string; stderr?: string; code?: number };
-    return {
-      stdout: e.stdout ?? '',
-      stderr: e.stderr ?? '',
-      exitCode: typeof e.code === 'number' ? e.code : 1,
-    };
-  }
+  return await new Promise<CheckResult>((resolve, reject) => {
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => {
+      controller.abort();
+      reject(new GateTimeoutError(check, timeout_ms));
+    }, timeout_ms);
+
+    execFile(
+      bin,
+      args,
+      {
+        cwd,
+        encoding: 'utf8',
+        killSignal: 'SIGKILL',
+        maxBuffer: 10 * 1024 * 1024,
+        signal: controller.signal,
+      },
+      (err, stdout, stderr) => {
+        clearTimeout(timeoutHandle);
+        if (!err) {
+          resolve({ stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0 });
+          return;
+        }
+        if (controller.signal.aborted) return;
+        const e = err as { stdout?: string; stderr?: string; code?: number };
+        resolve({
+          stdout: e.stdout ?? stdout ?? '',
+          stderr: e.stderr ?? stderr ?? '',
+          exitCode: typeof e.code === 'number' ? e.code : 1,
+        });
+      },
+    );
+  });
 }
 
 function parseTscOutput(output: string, pkgDir: string): GateFailure[] {
@@ -788,25 +807,12 @@ async function runGateCheck(
   cmd: string,
   dir: string,
   effectiveMs: number,
-  emit: GateEmit,
 ): Promise<GateFailure[]> {
-  const checkPromise = runCheckCommand(cmd, dir, effectiveMs);
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_, rej) => {
-    timeoutHandle = setTimeout(() => rej(new GateTimeoutError(check, effectiveMs)), effectiveMs);
-  });
-
   try {
-    const result = await Promise.race([checkPromise, timeoutPromise]);
-    clearTimeout(timeoutHandle);
+    const result = await runCheckCommand(check, cmd, dir, effectiveMs);
     return buildFailures(result, check, dir);
   } catch (err) {
-    clearTimeout(timeoutHandle);
     if (!(err instanceof GateTimeoutError)) throw err;
-    checkPromise.catch((raceErr) => {
-      const msg = raceErr instanceof Error ? raceErr.message : String(raceErr);
-      emit('gate_check_promise_lost', { check, message: msg });
-    });
     return [{
       check,
       file: '<timeout>',
@@ -841,7 +847,7 @@ async function collectGateFailures(
       if (!cmd) continue;
       if (!(await canRunTestScript(check, projectType, dir, emit))) continue;
       const perCheckMs = opts._timeouts?.perCheck?.[check] ?? PER_CHECK_TIMEOUT_MS[check];
-      allFailures.push(...await runGateCheck(check, cmd, dir, Math.min(perCheckMs, remaining), emit));
+      allFailures.push(...await runGateCheck(check, cmd, dir, Math.min(perCheckMs, remaining)));
     }
   }
   return allFailures;
