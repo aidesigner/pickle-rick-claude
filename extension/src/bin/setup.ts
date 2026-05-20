@@ -179,7 +179,8 @@ function readPersistedMediumWorkerTimeoutOverride(state: Pick<State, 'flags'>): 
   if (!tierCapOverride || typeof tierCapOverride !== 'object') return null;
   const medium = (tierCapOverride as Record<string, unknown>).medium;
   if (!medium || typeof medium !== 'object') return null;
-  const workerTimeout = Number((medium as Record<string, unknown>).worker_timeout_seconds);
+  const rawWorkerTimeout = Number((medium as Record<string, unknown>).worker_timeout_seconds);
+  const workerTimeout = Number.isFinite(rawWorkerTimeout) ? rawWorkerTimeout : 0;
   return Number.isInteger(workerTimeout) && workerTimeout > 0 ? workerTimeout : null;
 }
 

@@ -52,7 +52,7 @@ function readJsonObjectFile(filePath: string): { kind: 'parsed'; parsed: object 
       ? { kind: 'parsed', parsed }
       : { kind: 'invalid' };
   } catch (err) {
-    if (err && typeof err === 'object' && 'code' in err) {
+    if (err instanceof Error && 'code' in err) {
       const code = String(err.code);
       if (code === 'EACCES' || code === 'EPERM' || code === 'EISDIR') {
         return { kind: 'unreadable' };

@@ -117,7 +117,8 @@ function readPersistedMediumWorkerTimeoutOverride(state) {
     const medium = tierCapOverride.medium;
     if (!medium || typeof medium !== 'object')
         return null;
-    const workerTimeout = Number(medium.worker_timeout_seconds);
+    const rawWorkerTimeout = Number(medium.worker_timeout_seconds);
+    const workerTimeout = Number.isFinite(rawWorkerTimeout) ? rawWorkerTimeout : 0;
     return Number.isInteger(workerTimeout) && workerTimeout > 0 ? workerTimeout : null;
 }
 export function resolvePipelineContinueOnPhaseFailSetting(settings) {
