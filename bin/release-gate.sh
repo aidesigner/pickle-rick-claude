@@ -117,6 +117,28 @@ find_installable_payload_root() {
   printf '%s\n' "${roots[0]}"
 }
 
+tarball_has_unsafe_entries() {
+  local tarball="$1"
+  tar -tzf "$tarball" | awk '
+    function normalized(entry) {
+      sub(/^\.\//, "", entry)
+      sub(/\/$/, "", entry)
+      return entry
+    }
+    {
+      entry = normalized($0)
+      if (entry ~ /^\// || entry ~ /(^|\/)\.\.?($|\/)/) {
+        print entry
+        found = 1
+        exit
+      }
+    }
+    END {
+      exit(found ? 0 : 1)
+    }
+  '
+}
+
 select_installable_tarball() {
   local dir="$1"
   local tag="$2"
@@ -132,6 +154,9 @@ select_installable_tarball() {
   [ ${#downloaded[@]} -gt 0 ] || die 20 "release download produced no tar.gz asset for $tag"
 
   for tarball in "${downloaded[@]}"; do
+    if unsafe_entry="$(tarball_has_unsafe_entries "$tarball")"; then
+      die 21 "downloaded tarball contains unsafe archive entry $unsafe_entry"
+    fi
     if payload_root="$(find_installable_payload_root "$tarball")"; then
       installable+=("$tarball")
     else

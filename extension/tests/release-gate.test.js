@@ -406,7 +406,32 @@ esac
     try {
       const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
       assert.equal(result.status, 21);
-      assert.match(result.stderr, /missing install payload root shared by extension\/package\.json and install\.sh/);
+      assert.match(result.stderr, /unsafe archive entry \.\.\/escape-root\/extension\/package\.json/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(fakeTar.dir, { recursive: true, force: true });
+      rmSync(ghDir, { recursive: true, force: true });
+    }
+  });
+
+  test('exits 21 when a downloaded tarball has a safe install payload plus another parent-relative archive entry', () => {
+    const { dir: repoDir, tagName } = makeGitFixture();
+    const fakeTar = makeFakeTarFixture(
+      [
+        'pickle-rick-claude/extension/package.json',
+        'pickle-rick-claude/install.sh',
+        '../escape-root/payload.txt',
+      ],
+      {
+        'pickle-rick-claude/extension/package.json': JSON.stringify({ version: '1.67.0' }, null, 2),
+      },
+    );
+    const ghDir = makeGhFixture({ tarball: fakeTar.tarball });
+    writeFileSync(path.join(ghDir, 'tar'), readFileSync(fakeTar.tarPath, 'utf8'), { mode: 0o755 });
+    try {
+      const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
+      assert.equal(result.status, 21);
+      assert.match(result.stderr, /unsafe archive entry \.\.\/escape-root\/payload\.txt/);
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
       rmSync(fakeTar.dir, { recursive: true, force: true });
