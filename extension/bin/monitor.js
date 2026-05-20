@@ -621,13 +621,13 @@ function appendCircuitField(fields, sessionDir) {
         // circuit_breaker.json missing or corrupt — skip field
     }
 }
-function appendRateLimitField(fields, sessionDir) {
+function appendRateLimitField(fields, sessionDir, nowMs) {
     try {
         const waitPath = path.join(sessionDir, 'rate_limit_wait.json');
         const waitData = readRecoverableJsonObject(waitPath);
         if (!waitData || waitData.waiting !== true || !waitData.wait_until)
             return;
-        const remainMs = new Date(String(waitData.wait_until)).getTime() - Date.now();
+        const remainMs = new Date(String(waitData.wait_until)).getTime() - nowMs;
         const typeLabel = waitData.rate_limit_type ? ` [${String(waitData.rate_limit_type)}]` : '';
         const sourceLabel = waitData.wait_source === 'api' ? ' (API reset)' : '';
         if (remainMs > 0) {
@@ -640,9 +640,9 @@ function appendRateLimitField(fields, sessionDir) {
     }
     catch { /* no wait state */ }
 }
-function buildHeaderFields(state, tickets, width, sessionDir) {
+function buildHeaderFields(state, tickets, width, sessionDir, nowMs) {
     const startEpoch = Number(state.start_time_epoch) || 0;
-    const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
+    const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(nowMs / 1000) - startEpoch) : 0;
     const maxIter = Number(state.max_iterations) || 0;
     const maxTime = Number(state.max_time_minutes) || 0;
     const iterStr = maxIter > 0 ? `${state.iteration} / ${state.max_iterations}` : `${state.iteration}`;
@@ -660,7 +660,7 @@ function buildHeaderFields(state, tickets, width, sessionDir) {
         ['Active', state.active === true ? `${MX.BRIGHT}▣ ONLINE${MX.R}` : `${MX.ERR}▢ OFFLINE${MX.R}`],
     ];
     appendCircuitField(fields, sessionDir);
-    appendRateLimitField(fields, sessionDir);
+    appendRateLimitField(fields, sessionDir, nowMs);
     return fields;
 }
 function buildRecentOutput(sessionDir, width, sep) {
@@ -694,7 +694,8 @@ function buildRecentOutput(sessionDir, width, sep) {
 function buildPickleOutput(state, sessionDir, width) {
     const sep = matrixSeparator(width);
     const tickets = collectTickets(sessionDir);
-    const fields = buildHeaderFields(state, tickets, width, sessionDir);
+    const nowMs = Date.now();
+    const fields = buildHeaderFields(state, tickets, width, sessionDir, nowMs);
     const keyWidth = Math.max(...fields.map(([k]) => k.length)) + 1;
     const out = ['\x1b[2J\x1b[H'];
     out.push(`\n${MX.BRIGHT}◤ PICKLE RICK — LIVE MONITOR ◢${MX.R}\n`);

@@ -708,12 +708,12 @@ function appendCircuitField(fields: [string, string][], sessionDir: string): voi
   }
 }
 
-function appendRateLimitField(fields: [string, string][], sessionDir: string): void {
+function appendRateLimitField(fields: [string, string][], sessionDir: string, nowMs: number): void {
   try {
     const waitPath = path.join(sessionDir, 'rate_limit_wait.json');
     const waitData = readRecoverableJsonObject(waitPath) as Record<string, unknown> | null;
     if (!waitData || waitData.waiting !== true || !waitData.wait_until) return;
-    const remainMs = new Date(String(waitData.wait_until)).getTime() - Date.now();
+    const remainMs = new Date(String(waitData.wait_until)).getTime() - nowMs;
     const typeLabel = waitData.rate_limit_type ? ` [${String(waitData.rate_limit_type)}]` : '';
     const sourceLabel = waitData.wait_source === 'api' ? ' (API reset)' : '';
     if (remainMs > 0) {
@@ -725,9 +725,9 @@ function appendRateLimitField(fields: [string, string][], sessionDir: string): v
   } catch { /* no wait state */ }
 }
 
-function buildHeaderFields(state: State, tickets: TicketInfo[], width: number, sessionDir: string): [string, string][] {
+function buildHeaderFields(state: State, tickets: TicketInfo[], width: number, sessionDir: string, nowMs: number): [string, string][] {
   const startEpoch = Number(state.start_time_epoch) || 0;
-  const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
+  const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(nowMs / 1000) - startEpoch) : 0;
   const maxIter = Number(state.max_iterations) || 0;
   const maxTime = Number(state.max_time_minutes) || 0;
   const iterStr = maxIter > 0 ? `${state.iteration} / ${state.max_iterations}` : `${state.iteration}`;
@@ -745,7 +745,7 @@ function buildHeaderFields(state: State, tickets: TicketInfo[], width: number, s
     ['Active', state.active === true ? `${MX.BRIGHT}▣ ONLINE${MX.R}` : `${MX.ERR}▢ OFFLINE${MX.R}`],
   ];
   appendCircuitField(fields, sessionDir);
-  appendRateLimitField(fields, sessionDir);
+  appendRateLimitField(fields, sessionDir, nowMs);
   return fields;
 }
 
@@ -778,7 +778,8 @@ function buildRecentOutput(sessionDir: string, width: number, sep: string): stri
 function buildPickleOutput(state: State, sessionDir: string, width: number): string[] {
   const sep = matrixSeparator(width);
   const tickets = collectTickets(sessionDir);
-  const fields = buildHeaderFields(state, tickets, width, sessionDir);
+  const nowMs = Date.now();
+  const fields = buildHeaderFields(state, tickets, width, sessionDir, nowMs);
   const keyWidth = Math.max(...fields.map(([k]) => k.length)) + 1;
 
   const out: string[] = ['\x1b[2J\x1b[H'];

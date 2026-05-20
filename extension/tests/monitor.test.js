@@ -860,6 +860,36 @@ test('renderDashboard: idle mode renders "Pipeline complete"', () => {
     }
 });
 
+test('renderDashboard: pickle mode uses one render timestamp for elapsed and rate-limit countdown', () => {
+    const dir = tmpDir();
+    const baseNow = Date.parse('2026-05-20T12:00:00.000Z');
+    try {
+        fs.writeFileSync(path.join(dir, 'rate_limit_wait.json'), JSON.stringify({
+            waiting: true,
+            wait_until: new Date(baseNow + 10_000).toISOString(),
+            rate_limit_type: 'tokens',
+            wait_source: 'api',
+        }));
+        const state = makeMinimalState({
+            start_time_epoch: Math.floor(baseNow / 1000) - 5,
+            working_dir: '/tmp/render-clock',
+        });
+        const realNow = Date.now;
+        let calls = 0;
+        Date.now = () => baseNow + (calls++ * 1000);
+        try {
+            const out = renderDashboard(state, 'pickle', dir, 80).join('').replace(/\x1b\[[0-9;]*[mJH]/g, '');
+            assert.match(out, /Elapsed:\s+elapsed: 0m 5s/, `expected elapsed to use the first render timestamp, got: ${out}`);
+            assert.match(out, /Rate Limit:\s+⏳ Rate limited \[tokens\] \(API reset\) \(0m 10s remaining\)/, `expected rate-limit countdown to share the same render timestamp, got: ${out}`);
+            assert.equal(calls, 1, 'pickle dashboard render should sample Date.now() once per render');
+        } finally {
+            Date.now = realNow;
+        }
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test('monitor CLI: --mode bogus exits 64', () => {
     const dir = tmpDir();
     try {
