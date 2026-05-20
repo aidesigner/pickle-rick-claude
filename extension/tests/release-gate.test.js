@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -149,6 +150,39 @@ ${fakeFindNames.map((name) => `printf '%s\\n' "$dir/${name}"`).join('\n')}
     );
   }
   return binDir;
+}
+
+function makeFakeTarFixture(listing, extractedMembers = {}) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'release-gate-fake-tar-'));
+  const tarball = path.join(dir, 'pickle-release.tar.gz');
+  const tarPath = path.join(dir, 'tar');
+  writeFileSync(tarball, 'fixture');
+  writeFileSync(
+    tarPath,
+    `#!/usr/bin/env bash
+set -eu
+case "$1" in
+  -tzf)
+    cat <<'EOF'
+${listing.join('\n')}
+EOF
+    ;;
+  -xOzf)
+    case "$3" in
+${Object.entries(extractedMembers).map(([member, contents]) => `      ${JSON.stringify(member)}) cat <<'EOF'\n${contents}\nEOF\n        ;;`).join('\n')}
+      *)
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  return { dir, tarball, tarPath };
 }
 
 function gate(args, { cwd, pathPrefix } = {}) {
@@ -352,6 +386,30 @@ esac
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
       rmSync(multiRootFixture.dir, { recursive: true, force: true });
+      rmSync(ghDir, { recursive: true, force: true });
+    }
+  });
+
+  test('exits 21 when a downloaded tarball uses a parent-relative install payload root', () => {
+    const { dir: repoDir, tagName } = makeGitFixture();
+    const fakeTar = makeFakeTarFixture(
+      [
+        '../escape-root/extension/package.json',
+        '../escape-root/install.sh',
+      ],
+      {
+        '../escape-root/extension/package.json': JSON.stringify({ version: '1.67.0' }, null, 2),
+      },
+    );
+    const ghDir = makeGhFixture({ tarball: fakeTar.tarball });
+    writeFileSync(path.join(ghDir, 'tar'), readFileSync(fakeTar.tarPath, 'utf8'), { mode: 0o755 });
+    try {
+      const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
+      assert.equal(result.status, 21);
+      assert.match(result.stderr, /missing install payload root shared by extension\/package\.json and install\.sh/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(fakeTar.dir, { recursive: true, force: true });
       rmSync(ghDir, { recursive: true, force: true });
     }
   });

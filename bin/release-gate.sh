@@ -63,6 +63,9 @@ read_tag_version() {
 list_installable_payload_roots() {
   local tarball="$1"
   tar -tzf "$tarball" | awk '
+    function is_safe_root(root) {
+      return root == "" || (root !~ /^\// && root !~ /(^|\/)\.\.?($|\/)/)
+    }
     function normalized(entry) {
       sub(/^\.\//, "", entry)
       sub(/\/$/, "", entry)
@@ -75,7 +78,9 @@ list_installable_payload_roots() {
       } else if (entry ~ /\/extension\/package\.json$/) {
         root = entry
         sub(/\/extension\/package\.json$/, "", root)
-        pkg[root] = 1
+        if (is_safe_root(root)) {
+          pkg[root] = 1
+        }
       }
 
       if (entry == "install.sh") {
@@ -83,7 +88,9 @@ list_installable_payload_roots() {
       } else if (entry ~ /\/install\.sh$/) {
         root = entry
         sub(/\/install\.sh$/, "", root)
-        install[root] = 1
+        if (is_safe_root(root)) {
+          install[root] = 1
+        }
       }
     }
     END {
