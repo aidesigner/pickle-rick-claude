@@ -41,7 +41,9 @@ function anatomyWindows(history) {
     if (phaseName(entry) !== 'anatomy-park') return [];
     const start = isoMs(entry.timestamp);
     if (start === null) return [];
-    const next = history.slice(index + 1).find((candidate) => isoMs(candidate?.timestamp) !== null);
+    const next = history.slice(index + 1).find((candidate) => (
+      phaseName(candidate) !== null && isoMs(candidate?.timestamp) !== null
+    ));
     const end = next ? isoMs(next.timestamp) : Infinity;
     return [{ start, end }];
   });

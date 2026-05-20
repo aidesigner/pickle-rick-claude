@@ -192,6 +192,41 @@ test('verify-recapture.stale-earlier-anatomy-window does not satisfy the latest 
   }
 });
 
+test('verify-recapture.ignores timestamp-only history entries when closing the anatomy window', () => {
+  const session = makeSession({
+    history: [
+      { step: 'pickle', timestamp: '2026-05-02T10:00:00.000Z' },
+      { step: 'anatomy-park', timestamp: '2026-05-02T11:00:00.000Z' },
+      {
+        timestamp: '2026-05-02T11:05:00.000Z',
+        iteration: 3,
+        from: 'OPEN',
+        to: 'HALF_OPEN',
+        reason: 'no_progress',
+      },
+      { step: 'szechuan-sauce', timestamp: '2026-05-02T12:00:00.000Z' },
+    ],
+    activity: [
+      {
+        ts: '2026-05-02T11:15:00.000Z',
+        event: 'baseline_recapture_attempted',
+        iteration: 3,
+      },
+    ],
+  });
+  try {
+    const result = runVerifier(session);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.runtimeArtifact.pass, true);
+    assert.equal(result.runtimeArtifact.failure_reason, null);
+    assert.deepEqual(result.runtimeArtifact.evidence.anatomy_windows, [
+      { start: Date.parse('2026-05-02T11:00:00.000Z'), end: Date.parse('2026-05-02T12:00:00.000Z') },
+    ]);
+  } finally {
+    rmSync(session, { recursive: true, force: true });
+  }
+});
+
 test('verify-recapture.state-missing exits 2 and writes state-missing artifact', () => {
   const session = mkdtempSync(path.join(tmpdir(), 'verify-recapture-missing-'));
   try {
