@@ -155,6 +155,15 @@ function readTraceEntries(fixture) {
 
 const WARN_BANNER_TIMEOUT_MS = 45000;
 const LOAD_TIMEOUT_REGRESSION_MS = 18000;
+// R-TSPF residual (load-dependent-timeout): the no-progress halt needs three
+// real mux-runner launches (each a fresh `node` cold-start) before the
+// PROGRESS_THRESHOLD=3 stop fires. The shared `runScript` default of 30s was
+// shorter than three cold-starts plus the auto-resume loop's poll sleeps under
+// full-suite `--test-concurrency=8` load, so the outer `spawnSync` SIGTERM'd
+// the bash loop at retry 2 (status 143) before it could reach the stop
+// condition. The contract is the no-progress halt itself, not the wall-clock
+// budget, so the timeout is widened to match the warn-banner test's headroom.
+const NO_PROGRESS_TIMEOUT_MS = 45000;
 
 // CJS mock: always sets exit_reason to the given value
 function incompleteRunner() {
@@ -248,7 +257,7 @@ s.exit_reason = 'pipeline_phase_incomplete';
 s.current_ticket = 'stuck-ticket';
 fs.writeFileSync(process.argv[2] + '/state.json', JSON.stringify(s));
 `);
-      const result = runScript(fixture, { PICKLE_AUTO_RESUME_MAX_RETRIES: '20' });
+      const result = runScript(fixture, { PICKLE_AUTO_RESUME_MAX_RETRIES: '20' }, NO_PROGRESS_TIMEOUT_MS);
       assertCompleted(result);
       assert.ok(
         result.stderr.includes('no progress'),

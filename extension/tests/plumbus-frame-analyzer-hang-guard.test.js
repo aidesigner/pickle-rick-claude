@@ -25,13 +25,21 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN_PATH = path.resolve(__dirname, '..', 'bin', 'plumbus-frame-analyzer.js');
 const FIXTURE_PATH = path.resolve(__dirname, '__fixtures__', 'plumbus-frames', 'frame1-asymmetric-writer.dot');
 const EXPECTED_TIMEOUT_MS = 30_000;
-// 10s → 30s slack: under 4-way test concurrency on macOS, bun subprocess
-// teardown + node analyzer startup overhead can stretch the wall clock close
-// to the 40s budget, racing against the inner 30s BUN_TIMEOUT_MS firing and
-// producing flaky "elapsed 40004ms hit the test's own budget" failures. The
-// inner timeout still bounds the actual hang detection — this slack only
-// absorbs spawn pipeline jitter.
-const WALL_CLOCK_BUDGET_MS = EXPECTED_TIMEOUT_MS + 30_000;
+// R-TSPF residual (load-dependent-timeout): the inner BUN_TIMEOUT_MS hang
+// guard genuinely consumes ~30s. In isolation — and even under 12-way CPU
+// saturation — the analyzer exits at ~30s. But inside the full
+// `--test-concurrency=8` suite (4900+ tests, thousands of concurrent
+// `/var/folders` temp dirs) the node analyzer's own ESM module-load + cold
+// start can stall for tens of seconds before it even reaches the
+// `spawnSync('bun', …)` line — so the inner 30s timer starts late and the
+// total wall time drifts well past a 60-90s budget, killing the analyzer
+// from the outer spawnSync before its SIGTERM-driven exit can land. The
+// inner timeout still does the real hang detection (stderr diagnostic
+// proves it); the wall budget is only a fallback bound, so it is widened
+// generously to absorb worst-case full-suite startup contention. A genuine
+// unbounded-hang regression still fails — just after this larger bound.
+// BUN_TIMEOUT_MS lives in src/ and cannot be lowered from the test.
+const WALL_CLOCK_BUDGET_MS = EXPECTED_TIMEOUT_MS + 150_000;
 
 let tmpRoot;
 

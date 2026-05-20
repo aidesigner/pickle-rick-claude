@@ -4,7 +4,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import { runIteration } from '../../bin/mux-runner.js';
-import { Defaults } from '../../types/index.js';
 function makeExecutableNodeScript(filePath, source) {
     fs.writeFileSync(filePath, `#!/usr/bin/env node\n${source}`);
     fs.chmodSync(filePath, 0o755);
@@ -145,27 +144,45 @@ async function runScenario(scenario, overrides) {
         // env overrides are scoped to runIteration; only the temp session needs cleanup here.
     }
 }
+// R-TSPF residual: the OUTPUT_STALL guard inside runIteration starts counting
+// from subprocess spawn (`lastDataAt = start`). Under full-suite
+// `--test-concurrency=8` load, a fresh `node` fake-claude cold-start can take
+// many seconds before it emits its first byte — if that cold-start exceeds
+// the stall budget the guard fires against startup jitter rather than a
+// genuine output gap, killing the child before it can emit (`tmux_iteration`
+// log empty). The invariant under test is "stall fires AFTER output goes
+// silent", not the absolute budget, so the stall budget is widened well past
+// worst-case cold-start while staying far below the iteration budget — the
+// `wallSeconds` assertions still prove the stall, not the wall-clock guard,
+// did the work.
+const STALL_BUDGET_SECONDS = 12;
+const ITERATION_BUDGET_SECONDS = 30;
 test('R-APMW-6: output every 60s for 5 cycles then silence - fires at OUTPUT_STALL_SECONDS', async () => {
     const scenario = await runScenario('output-stall', {
-        MAX_ITERATION_SECONDS: 2,
-        OUTPUT_STALL_SECONDS: 0.35,
+        MAX_ITERATION_SECONDS: ITERATION_BUDGET_SECONDS,
+        OUTPUT_STALL_SECONDS: STALL_BUDGET_SECONDS,
     });
     try {
         assert.equal(scenario.outcome.completion, 'error');
         assert.equal(scenario.outcome.timedOut, true);
         assert.equal(scenario.outcome.stallReason, 'output_stall');
         assert.equal(scenario.outcome.exitCode, null);
-        assert.ok(scenario.outcome.wallSeconds >= 0.3);
-        assert.ok(scenario.outcome.wallSeconds < Defaults.MAX_ITERATION_SECONDS);
+        assert.ok(scenario.outcome.wallSeconds >= STALL_BUDGET_SECONDS - 0.05);
+        assert.ok(scenario.outcome.wallSeconds < ITERATION_BUDGET_SECONDS);
     }
     finally {
         fs.rmSync(scenario.sessionDir, { recursive: true, force: true });
     }
 });
 test('R-APMW-6: output every 10s for 4h - wall-clock guard fires', async () => {
+    // wall-clock scenario emits every 10ms forever, so the stall guard must
+    // never fire — the wall-clock budget must exceed worst-case `node`
+    // cold-start under full-suite load so the subprocess is genuinely running
+    // (and re-arming the stall guard on every emit) before the wall-clock guard
+    // trips it.
     const scenario = await runScenario('wall-clock', {
-        MAX_ITERATION_SECONDS: 1.2,
-        OUTPUT_STALL_SECONDS: 5,
+        MAX_ITERATION_SECONDS: 20,
+        OUTPUT_STALL_SECONDS: STALL_BUDGET_SECONDS,
     });
     try {
         assert.equal(scenario.outcome.completion, 'error');
@@ -179,8 +196,8 @@ test('R-APMW-6: output every 10s for 4h - wall-clock guard fires', async () => {
 });
 test('R-APMW-6: timeout waits for delayed SIGTERM cleanup before resolving', async () => {
     const scenario = await runScenario('output-stall-delayed-sigterm', {
-        MAX_ITERATION_SECONDS: 2,
-        OUTPUT_STALL_SECONDS: 0.35,
+        MAX_ITERATION_SECONDS: ITERATION_BUDGET_SECONDS,
+        OUTPUT_STALL_SECONDS: STALL_BUDGET_SECONDS,
     });
     try {
         assert.equal(scenario.outcome.completion, 'error');
@@ -195,9 +212,15 @@ test('R-APMW-6: timeout waits for delayed SIGTERM cleanup before resolving', asy
 });
 test('R-APMW-6: normal subprocess clears both timers on success', async () => {
     const timeoutCountBefore = process.getActiveResourcesInfo().filter((entry) => entry === 'Timeout').length;
+    // R-TSPF residual: the `success` scenario exits ~20ms after first output,
+    // so it should always resolve `continue` — but a 3s wall-clock budget was
+    // shorter than worst-case fake-claude `node` cold-start under full-suite
+    // 8-way load, letting the hang guard win and flip completion to `error`.
+    // Both budgets are widened past cold-start jitter; the subprocess still
+    // exits in ~20ms once running, so timer-cleanup coverage is intact.
     const scenario = await runScenario('success', {
-        MAX_ITERATION_SECONDS: 3,
-        OUTPUT_STALL_SECONDS: 5,
+        MAX_ITERATION_SECONDS: ITERATION_BUDGET_SECONDS,
+        OUTPUT_STALL_SECONDS: ITERATION_BUDGET_SECONDS,
     });
     try {
         assert.equal(scenario.outcome.completion, 'continue');

@@ -648,8 +648,17 @@ test('runWorkerGate: honors worker_test_gate_timeout_ms, reports timeout details
   const root = makeTmpRoot();
   try {
     initGitRepo(root);
+    // R-TSPF residual: a 250ms gate budget was shorter than the `npm` shim's
+    // own `node` cold-start under `--test-concurrency=8`, so the timeout fired
+    // before the shim could spawn its descendant and write its readiness/pid
+    // files — `waitFor(readyPath)` then starved. The invariant under test is
+    // "timeout fires, SIGTERMs the process tree, kills descendants", not the
+    // absolute budget, so the budget is widened to clear worst-case shim
+    // cold-start while the descendant `setInterval` keeps the child alive long
+    // enough for the timeout to still arrive mid-run.
+    const GATE_TIMEOUT_MS = 2000;
     fs.writeFileSync(path.join(root, 'pickle_settings.json'), JSON.stringify({
-      worker_test_gate_timeout_ms: 250,
+      worker_test_gate_timeout_ms: GATE_TIMEOUT_MS,
     }, null, 2));
     fs.mkdirSync(path.join(root, 'extension', 'src', 'demo'), { recursive: true });
     fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 1;\n');
@@ -694,7 +703,7 @@ test('runWorkerGate: honors worker_test_gate_timeout_ms, reports timeout details
     });
     assert.match(
       result.testFailures[0]?.message ?? '',
-      /^timed out after 250ms; sent SIGTERM to process tree(?: and escalated to SIGKILL after 2000ms)?$/,
+      new RegExp(`^timed out after ${GATE_TIMEOUT_MS}ms; sent SIGTERM to process tree(?: and escalated to SIGKILL after 2000ms)?$`),
     );
     assert.equal(isPidAlive(childPid), false, `descendant pid ${childPid} should be dead after timeout cleanup`);
     const signals = fs.readFileSync(signalPath, 'utf8');
