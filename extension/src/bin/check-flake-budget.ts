@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { basename } from 'node:path';
+import { existsSync } from 'node:fs';
+import path, { basename } from 'node:path';
 
 const DEFAULT_RUNS = 5;
 const DEFAULT_FAIL_BUDGET = 2;
@@ -26,6 +27,11 @@ interface CheckFlakeBudgetMainOpts {
 interface RunSummary {
   failures: number;
   runsCompleted: number;
+}
+
+interface RunInvocation {
+  args: string[];
+  targetPath: string;
 }
 
 function parseIntegerFlag(name: string, value: string, min: number): number {
@@ -65,12 +71,38 @@ function parseArgs(argv: string[]): ParsedArgs {
   return parsed;
 }
 
-function buildRunInvocation(env: NodeJS.ProcessEnv): string[] {
+function buildRunInvocation(env: NodeJS.ProcessEnv): RunInvocation {
   const testFile = env.PICKLE_FLAKE_BUDGET_TEST_FILE?.trim();
   if (testFile) {
-    return ['--test', '--test-concurrency=8', testFile];
+    return {
+      args: ['--test', '--test-concurrency=8', testFile],
+      targetPath: testFile,
+    };
   }
-  return ['bin/test-runner.js', '--tier', 'fast', '--test-concurrency=8'];
+  return {
+    args: ['bin/test-runner.js', '--tier', 'fast', '--test-concurrency=8'],
+    targetPath: 'bin/test-runner.js',
+  };
+}
+
+function assertInvocationTargetExists(cwd: string, invocation: RunInvocation): void {
+  const resolvedTarget = path.resolve(cwd, invocation.targetPath);
+  if (!existsSync(resolvedTarget)) {
+    throw new Error(`Flake-budget target not found: ${invocation.targetPath}`);
+  }
+}
+
+function isBudgetableTestFailure(stdout: string, stderr: string): boolean {
+  const combined = `${stdout}\n${stderr}`;
+  return /(^✖\s)|(^not ok\s)|(^ℹ tests\s+\d+)/m.test(combined);
+}
+
+function summarizeHarnessFailure(stdout: string, stderr: string): string {
+  const firstLine = `${stderr}\n${stdout}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  return firstLine ?? 'child test runner exited without test output';
 }
 
 function runIterations(
@@ -79,10 +111,12 @@ function runIterations(
 ): RunSummary {
   let failures = 0;
   const childEnv = { ...opts.env };
+  const invocation = buildRunInvocation(opts.env);
   delete childEnv.NODE_TEST_CONTEXT;
+  assertInvocationTargetExists(opts.cwd, invocation);
 
   for (let runIndex = 0; runIndex < parsed.runs; runIndex += 1) {
-    const result = opts.spawnSyncFn(opts.execPath, buildRunInvocation(opts.env), {
+    const result = opts.spawnSyncFn(opts.execPath, invocation.args, {
       cwd: opts.cwd,
       env: childEnv,
       encoding: 'utf8',
@@ -94,6 +128,9 @@ function runIterations(
     }
 
     if ((result.status ?? 1) !== 0) {
+      if (!isBudgetableTestFailure(result.stdout ?? '', result.stderr ?? '')) {
+        throw new Error(`Flake-budget child failed before reporting test results: ${summarizeHarnessFailure(result.stdout ?? '', result.stderr ?? '')}`);
+      }
       failures += 1;
       if (failures > parsed.failBudget) {
         return { failures, runsCompleted: runIndex + 1 };
