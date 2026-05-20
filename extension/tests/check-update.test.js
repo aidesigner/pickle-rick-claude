@@ -451,7 +451,13 @@ describe('checkForUpdate', () => {
             { mode: 0o755 },
         );
         const origPath = process.env.PATH;
-        process.env.PATH = `${binDir}:${origPath}`;
+        // binDir ONLY (not prepended to origPath): getLatestRelease's
+        // `spawnSync('gh', ..., {timeout: 15_000})` must resolve to the stub.
+        // With origPath present, a fixture/PATH race under --test-concurrency=8
+        // could resolve the real `gh`, whose network call hangs to the 15s
+        // timeout and returns 'error'. binDir-only makes the real gh
+        // unreachable: stub hit → fast pass, stub missing → fast ENOENT.
+        process.env.PATH = binDir;
         try {
             const future = Math.floor(Date.now() / 1000) + 48 * 3600;
             writeCache({ last_check_epoch: future, latest_version: '1.7.0', current_version: '1.7.0' });
