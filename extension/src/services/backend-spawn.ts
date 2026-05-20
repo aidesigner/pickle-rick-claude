@@ -160,7 +160,6 @@ export function assertBackendPreSpawn(input: {
   if (
     input.source === 'refinement-lock' ||
     input.source === 'cli-flag-override' ||
-    input.source === 'settings' ||
     input.source === 'env' ||
     input.source === 'default'
   ) {
@@ -189,12 +188,8 @@ export function assertBackendPreSpawn(input: {
     return { mode: 'mismatch', resolvedBackend: input.resolvedBackend, stateBackend };
   }
 
-  if (flipReason && isRecentFlipReason(flipTs, Date.now())) {
-    clearBackendFlipReasonFlags(input.statePath);
-    return { mode: 'bypass', resolvedBackend: input.resolvedBackend, stateBackend };
-  }
-
-  return { mode: 'mismatch', resolvedBackend: input.resolvedBackend, stateBackend };
+  clearBackendFlipReasonFlags(input.statePath);
+  return { mode: 'bypass', resolvedBackend: input.resolvedBackend, stateBackend };
 }
 
 function warnBadBackend(sourceLabel: string, value: string): void {
