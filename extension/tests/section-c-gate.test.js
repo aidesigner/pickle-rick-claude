@@ -357,6 +357,37 @@ test('section-c-gate.missing-explicit-session falls back to the runtime artifact
   }
 });
 
+test('section-c-gate.unreadable-explicit-session falls back to the runtime artifact instead of crashing on session bundle writes', () => {
+  const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
+  const session = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions', '2026-05-12-unreadable');
+  const runtimeArtifactPath = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'bundle', 'section-c-still-needed.json');
+  mkdirSync(session, { recursive: true });
+  writeFileSync(path.join(session, 'tmux-runner.log'), 'iteration 4 completed\n');
+  chmodSync(session, 0o000);
+
+  try {
+    const result = spawnSync(process.execPath, [CLI, '--session', session], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+      },
+    });
+    const artifact = JSON.parse(readFileSync(runtimeArtifactPath, 'utf8'));
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(artifact.still_needed, true);
+    assert.match(artifact.evidence, /not writable/);
+    assert.equal(result.stdout.includes(runtimeArtifactPath), true);
+    assert.equal(result.stdout.includes(path.join(session, 'bundle')), false);
+    assert.equal(existsSync(path.join(session, 'bundle', 'section-c-still-needed.json')), false);
+  } finally {
+    chmodSync(session, 0o755);
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('section-c-gate.cli-guard rejects unknown arguments', () => {
   const result = spawnSync(process.execPath, [CLI, '--bogus'], {
     cwd: REPO_ROOT,

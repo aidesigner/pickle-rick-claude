@@ -49,6 +49,23 @@ function canReadFile(targetPath) {
   }
 }
 
+function canWriteSessionArtifact(sessionRoot) {
+  try {
+    fs.accessSync(sessionRoot, fs.constants.R_OK | fs.constants.X_OK);
+  } catch {
+    return false;
+  }
+
+  const bundleDir = path.join(sessionRoot, 'bundle');
+  const artifactRoot = fs.existsSync(bundleDir) ? bundleDir : sessionRoot;
+  try {
+    fs.accessSync(artifactRoot, fs.constants.W_OK | fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function sessionSignal(sessionRoot) {
   const logMtimes = LOG_NAMES
     .map((logName) => path.join(sessionRoot, logName))
@@ -123,6 +140,13 @@ export function evaluateSectionC({ sessionRoot } = {}) {
     return writeArtifact(artifactPath, {
       still_needed: true,
       evidence: 'No recent session found; defaulting Section C to still needed.',
+    });
+  }
+  if (!canWriteSessionArtifact(resolvedSession)) {
+    const artifactPath = resolveArtifactPath(null);
+    return writeArtifact(artifactPath, {
+      still_needed: true,
+      evidence: `Session ${resolvedSession} is missing, unreadable, or not writable; defaulting Section C to still needed.`,
     });
   }
 
