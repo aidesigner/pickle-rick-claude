@@ -701,6 +701,46 @@ test('logActivity: buffered events flush back to the original day partition and 
     }
 });
 
+test('logActivity: stale buffered events from a prior data root are dropped on the next success', async () => {
+    _setRetryDelayMs(0);
+    _clearPendingBuffer();
+    const logActivity = await getLogActivity();
+
+    const staleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-stale-'));
+    const staleActivityDir = path.join(staleRoot, 'activity');
+    const freshRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-fresh-'));
+    const freshActivityDir = path.join(freshRoot, 'activity');
+    const originalExtDir = process.env.EXTENSION_DIR;
+
+    try {
+        process.env.EXTENSION_DIR = staleRoot;
+        fs.mkdirSync(staleActivityDir);
+        const staleFile = path.join(staleActivityDir, `${formatLocalDateKey(new Date())}.jsonl`);
+        fs.writeFileSync(staleFile, '', { mode: 0o444 });
+
+        logActivity({ event: 'commit', source: 'hook', commit_hash: 'stale-root-event' });
+        assert.equal(_getPendingBuffer().length, 1, 'failed stale-root event should be buffered');
+
+        fs.chmodSync(staleFile, 0o644);
+        fs.rmSync(staleRoot, { recursive: true, force: true });
+
+        process.env.EXTENSION_DIR = freshRoot;
+        logActivity({ event: 'feature', source: 'persona', title: 'fresh root write' });
+
+        const freshFile = path.join(freshActivityDir, `${formatLocalDateKey(new Date())}.jsonl`);
+        assert.equal(_getPendingBuffer().length, 0, 'stale-root buffer entries should be dropped after the root changes');
+        assert.equal(JSON.parse(fs.readFileSync(freshFile, 'utf8').trim()).event, 'feature');
+        assert.equal(fs.existsSync(staleFile), false, 'stale root should not be recreated during flush');
+    } finally {
+        process.env.EXTENSION_DIR = originalExtDir;
+        if (originalExtDir === undefined) delete process.env.EXTENSION_DIR;
+        fs.rmSync(staleRoot, { recursive: true, force: true });
+        fs.rmSync(freshRoot, { recursive: true, force: true });
+        _clearPendingBuffer();
+        _setRetryDelayMs(500);
+    }
+});
+
 test('logActivity: buffer capped at 100 events — excess events dropped', async () => {
     _setRetryDelayMs(0);
     _clearPendingBuffer();

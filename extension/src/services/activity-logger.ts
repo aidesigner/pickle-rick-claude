@@ -39,6 +39,10 @@ function getActivityFilepath(activityDir: string, ts: string): string {
   return path.join(activityDir, `${date}.jsonl`);
 }
 
+function filterFlushableEntries(activityDir: string, entries: PendingActivityEntry[]): PendingActivityEntry[] {
+  return entries.filter((entry) => path.dirname(entry.filepath) === activityDir);
+}
+
 function resolveActivityBackend(event: Partial<ActivityEvent>): ActivityEvent['backend'] | undefined {
   if (isBackend(event.backend)) return event.backend;
   if (isBackend(process.env.PICKLE_BACKEND)) return process.env.PICKLE_BACKEND;
@@ -81,7 +85,7 @@ export function logActivity(
 
     // Flush buffered events on success
     if (pendingBuffer.length > 0) {
-      const toFlush = pendingBuffer.splice(0);
+      const toFlush = filterFlushableEntries(activityDir, pendingBuffer.splice(0));
       const byPath = new Map<string, PendingActivityEntry[]>();
       for (const entry of toFlush) {
         const list = byPath.get(entry.filepath) || [];
