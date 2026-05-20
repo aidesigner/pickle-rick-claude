@@ -7,6 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   __setSpawnRunnerForTests,
+  classifyMicroverseHaltDecision,
   main,
 } from '../bin/pipeline-runner.js';
 
@@ -73,6 +74,31 @@ function makeSession(phases) {
   return { repo, sessionDir };
 }
 
+function writeExitReason(sessionDir, exitReason) {
+  const statePath = path.join(sessionDir, 'state.json');
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  state.exit_reason = exitReason;
+  fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+}
+
+function makeJudgeSpawnAck(sessionDir, spawnCalls, exitReason, finalizeGateExitCode = 0) {
+  let microverseSpawned = false;
+  return async (cmd, args) => {
+    spawnCalls.push({ cmd, args: [...args] });
+    const scriptName = path.basename(args[0]);
+    if (scriptName === 'microverse-runner.js') {
+      microverseSpawned = true;
+      writeExitReason(sessionDir, exitReason);
+      return { exitCode: 1, stdout: '', stderr: '' };
+    }
+    if (scriptName === 'finalize-gate.js') {
+      assert.equal(microverseSpawned, true, 'finalize-gate must only run after the judge exit reason is persisted');
+      return { exitCode: finalizeGateExitCode, stdout: '', stderr: '' };
+    }
+    throw new Error(`Unexpected runner spawn: ${scriptName}`);
+  };
+}
+
 async function expectMainExit(sessionDir, code) {
   const originalExit = process.exit;
   const originalTmux = process.env.TMUX;
@@ -99,17 +125,25 @@ afterEach(() => {
   __setSpawnRunnerForTests(null);
 });
 
+test('judge halt classification keeps judge_timeout recoverable and judge_unreachable fatal', () => {
+  assert.deepEqual(classifyMicroverseHaltDecision('judge_timeout'), {
+    action: 'run-finalize-gate',
+    recognizedExitReason: 'judge_timeout',
+  });
+  assert.deepEqual(classifyMicroverseHaltDecision('judge_unreachable'), {
+    action: 'abort',
+    recognizedExitReason: 'judge_unreachable',
+  });
+  assert.deepEqual(classifyMicroverseHaltDecision('not-a-real-exit'), {
+    action: 'abort',
+    recognizedExitReason: null,
+  });
+});
+
 test('szechuan-sauce exits judge_unreachable — pipeline halts without spawning finalize-gate', async () => {
   const { repo, sessionDir } = makeSession(['szechuan-sauce']);
   const spawnCalls = [];
-  __setSpawnRunnerForTests(async (cmd, args) => {
-    spawnCalls.push({ cmd, args: [...args] });
-    const statePath = path.join(sessionDir, 'state.json');
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    state.exit_reason = 'judge_unreachable';
-    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
-    return { exitCode: 1, stdout: '', stderr: '' };
-  });
+  __setSpawnRunnerForTests(makeJudgeSpawnAck(sessionDir, spawnCalls, 'judge_unreachable'));
   try {
     await expectMainExit(sessionDir, 1);
     assert.ok(spawnCalls.length >= 1, 'microverse-runner must have been spawned (setup must not have skipped the phase)');
@@ -126,14 +160,7 @@ test('szechuan-sauce exits judge_unreachable — pipeline halts without spawning
 test('anatomy-park exits judge_unreachable — pipeline halts without spawning finalize-gate', async () => {
   const { repo, sessionDir } = makeSession(['anatomy-park']);
   const spawnCalls = [];
-  __setSpawnRunnerForTests(async (cmd, args) => {
-    spawnCalls.push({ cmd, args: [...args] });
-    const statePath = path.join(sessionDir, 'state.json');
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    state.exit_reason = 'judge_unreachable';
-    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
-    return { exitCode: 1, stdout: '', stderr: '' };
-  });
+  __setSpawnRunnerForTests(makeJudgeSpawnAck(sessionDir, spawnCalls, 'judge_unreachable'));
   try {
     await expectMainExit(sessionDir, 1);
     assert.ok(spawnCalls.length >= 1, 'microverse-runner must have been spawned (setup must not have skipped the phase)');
@@ -141,6 +168,24 @@ test('anatomy-park exits judge_unreachable — pipeline halts without spawning f
     assert.equal(finalizeGateCalls.length, 0, 'finalize-gate.js must NOT be spawned when microverse exits with judge_unreachable');
     const runnerLog = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
     assert.match(runnerLog, /judge_unreachable/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('anatomy-park judge_timeout runs finalize-gate instead of halting pipeline', async () => {
+  const { repo, sessionDir } = makeSession(['anatomy-park']);
+  const spawnCalls = [];
+  __setSpawnRunnerForTests(makeJudgeSpawnAck(sessionDir, spawnCalls, 'judge_timeout'));
+  try {
+    await expectMainExit(sessionDir, 0);
+    const finalizeGateCalls = spawnCalls.filter((call) => call.args.some((arg) => String(arg).includes('finalize-gate.js')));
+    assert.equal(finalizeGateCalls.length, 1, 'finalize-gate.js must be spawned exactly once for anatomy-park judge_timeout');
+    assert.ok(finalizeGateCalls[0].args.includes('anatomy-park'));
+    const runnerLog = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+    assert.match(runnerLog, /running finalize-gate anyway/);
+    assert.match(runnerLog, /finalize-gate passed after judge_timeout recovery/);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
     fs.rmSync(sessionDir, { recursive: true, force: true });

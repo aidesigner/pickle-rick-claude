@@ -2270,18 +2270,14 @@ export function logPhaseHaltReason(
   }
   try {
     const runnerState = sm.read(runtime.statePath);
-    const exitReason = runnerState.exit_reason;
-    if (exitReason === 'judge_timeout') {
+    const decision = classifyMicroverseHaltDecision(runnerState.exit_reason);
+    if (decision.action === 'run-finalize-gate') {
       log(`Phase ${rawPhase}: microverse exited with judge_timeout — running finalize-gate anyway (transient measurement timeout, recoverable per R-PRJT-2)`);
-      return 'run-finalize-gate';
+      return decision.action;
     }
-    if (isMicroverseFatalReason(exitReason)) {
-      log(`Phase ${rawPhase}: microverse exited with ${exitReason} — pipeline aborting (no finalize-gate)`);
-      return 'abort';
-    }
-    if (typeof exitReason === 'string' && isMicroverseFailureExit(exitReason as MicroverseExitReason)) {
-      log(`Phase ${rawPhase}: microverse exited with ${exitReason} — pipeline aborting (no finalize-gate)`);
-      return 'abort';
+    if (decision.recognizedExitReason !== null) {
+      log(`Phase ${rawPhase}: microverse exited with ${decision.recognizedExitReason} — pipeline aborting (no finalize-gate)`);
+      return decision.action;
     }
     log(haltMsg);
     return 'abort';
@@ -2378,6 +2374,27 @@ async function runPhaseIteration(
     return { action: 'break' };
   }
   return finalizePhaseSuccess(runtime, counters, cancelMarker, rawPhase, exitCode, log);
+}
+
+export interface MicroverseHaltDecision {
+  action: 'abort' | 'run-finalize-gate';
+  recognizedExitReason: string | null;
+}
+
+export function classifyMicroverseHaltDecision(exitReason: unknown): MicroverseHaltDecision {
+  if (exitReason === 'judge_timeout') {
+    return { action: 'run-finalize-gate', recognizedExitReason: 'judge_timeout' };
+  }
+  if (
+    typeof exitReason === 'string'
+    && (
+      isMicroverseFatalReason(exitReason as MicroverseFatalReason)
+      || isMicroverseFailureExit(exitReason as MicroverseExitReason)
+    )
+  ) {
+    return { action: 'abort', recognizedExitReason: exitReason };
+  }
+  return { action: 'abort', recognizedExitReason: null };
 }
 
 /**
