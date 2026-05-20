@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   realpathSync,
@@ -200,6 +201,23 @@ test('verify-recapture.state-missing exits 2 and writes state-missing artifact',
     assert.equal(result.runtimeArtifact.failure_reason, 'state-missing');
     assert.match(result.runtimeArtifact.remediation_hint, /state\.json exists|recoverable state\.json\.tmp/);
   } finally {
+    rmSync(session, { recursive: true, force: true });
+  }
+});
+
+test('verify-recapture.unreadable-state exits 1 and writes state-unreadable artifact when state.json exists but cannot be read', () => {
+  const session = mkdtempSync(path.join(tmpdir(), 'verify-recapture-unreadable-'));
+  const statePath = path.join(session, 'state.json');
+  writeFileSync(statePath, `${JSON.stringify(baseState([]), null, 2)}\n`);
+  try {
+    chmodSync(statePath, 0o000);
+    const result = runVerifier(session);
+    assert.equal(result.status, 1);
+    assert.equal(result.runtimeArtifact.pass, false);
+    assert.equal(result.runtimeArtifact.failure_reason, 'state-unreadable');
+    assert.match(result.runtimeArtifact.remediation_hint, /StateManager\.read can parse/);
+  } finally {
+    chmodSync(statePath, 0o644);
     rmSync(session, { recursive: true, force: true });
   }
 });

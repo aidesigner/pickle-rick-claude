@@ -77,6 +77,13 @@ function runtimeArtifactPath(sessionRoot) {
     : DEFAULT_RUNTIME_ARTIFACT_PATH;
 }
 
+function failureReasonForStateReadError(err, statePath) {
+  if (!err || typeof err !== 'object' || !('code' in err) || err.code !== 'MISSING') {
+    return 'state-unreadable';
+  }
+  return fs.existsSync(statePath) ? 'state-unreadable' : 'state-missing';
+}
+
 function remediationHintForFailure(failureReason) {
   switch (failureReason) {
     case 'state-missing':
@@ -145,9 +152,7 @@ export function verifyRecaptureFired(sessionRoot) {
   try {
     state = sm.read(statePath);
   } catch (err) {
-    const failureReason = err && typeof err === 'object' && 'code' in err && err.code === 'MISSING'
-      ? 'state-missing'
-      : 'state-unreadable';
+    const failureReason = failureReasonForStateReadError(err, statePath);
     return {
       exitCode: failureReason === 'state-missing' ? 2 : 1,
       artifactPath,
