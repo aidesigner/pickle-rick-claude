@@ -6,21 +6,23 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-// 750ms → 2500ms → 5000ms → 15_000ms: under heavy full-suite concurrency (3340
-// tests, 222 suites), the SUT's findImportersTimeoutMs needs enough wall-clock
-// to (a) fire SIGKILL on a hanging shim and execute the grep fallback, AND
-// (b) NOT accidentally fire on a fast-exiting shim whose spawn was delayed by
-// scheduler pressure (this manifested as `_runRgImportWalk` writing "rg
-// timeout" instead of "rg fail" when FAIL_SCRIPT(2) cold-started slowly enough
-// for the parent's 5s timeout to expire mid-spawn). The HANG_SCRIPT sleeps 60s
-// so any value < 60_000 still validates the timeout-bound contract — bumping
-// just absorbs scheduler jitter on both ends.
-const HANG_TIMEOUT_MS = 15_000;
+// 750ms → 2500ms → 5000ms → 15_000ms → 45_000ms (R-TSPF residual): under full
+// `--test-concurrency=8` load the SUT's per-shim `spawnSync` was observed to
+// consume its entire timeout even for trivial `exit N` shims — PATH-resolved
+// exec of a freshly `mkdtemp`'d shim under `/var/folders` inode/dcache
+// pressure (thousands of concurrent temp dirs from 4900+ tests) can stall the
+// fork+exec lookup far past a 15s budget, so `rg fails and grep recovers` saw
+// BOTH internal walks time out and lose grep's recovered `b.ts`. The
+// HANG_SCRIPT sleeps 60s, so any value < 60_000 still validates the
+// timeout-bound contract — 45s absorbs worst-case exec-lookup stalls while
+// staying strictly below the 60s hang sleep so the hang tests still trip the
+// guard. findImportersTimeoutMs is a caller-supplied option, so this widening
+// stays test-side and does not touch src/.
+const HANG_TIMEOUT_MS = 45_000;
 // Outer subprocess wall-clock cap. Must cover the worst case: both rg and grep
-// time out at HANG_TIMEOUT_MS (= 30s) plus Node ESM cold-start and spawnSync
-// overhead. Was `HANG_TIMEOUT_MS + 7_500` (22.5s) which killed the child for
-// two-hang scenarios. 50s remains well below CI suite timeouts.
-const RUNNER_SPAWN_TIMEOUT_MS = HANG_TIMEOUT_MS * 2 + 20_000;
+// time out at HANG_TIMEOUT_MS (= 90s) plus Node ESM cold-start and spawnSync
+// overhead.
+const RUNNER_SPAWN_TIMEOUT_MS = HANG_TIMEOUT_MS * 2 + 30_000;
 
 const FAIL_SCRIPT = (code) => `#!/bin/sh
 exit ${code}
