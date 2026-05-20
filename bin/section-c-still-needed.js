@@ -21,20 +21,41 @@ function newestSessionRoot() {
     .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(DEFAULT_SESSIONS_DIR, entry.name))
     .map((dir) => sessionSignal(dir))
+    .filter(Boolean)
     .sort(compareSessionSignals);
   return dirs[0]?.dir ?? null;
+}
+
+function safeMtimeMs(targetPath) {
+  try {
+    return fs.statSync(targetPath).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+function canReadFile(targetPath) {
+  try {
+    fs.accessSync(targetPath, fs.constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function sessionSignal(sessionRoot) {
   const logMtimes = LOG_NAMES
     .map((logName) => path.join(sessionRoot, logName))
-    .filter((logPath) => fs.existsSync(logPath))
-    .map((logPath) => fs.statSync(logPath).mtimeMs);
+    .filter((logPath) => canReadFile(logPath))
+    .map((logPath) => safeMtimeMs(logPath))
+    .filter((mtimeMs) => mtimeMs !== null);
+  const dirMtime = safeMtimeMs(sessionRoot);
+  if (dirMtime === null) return null;
   return {
     dir: sessionRoot,
     hasWatcherLogs: logMtimes.length > 0,
     watcherLogMtime: logMtimes.length > 0 ? Math.max(...logMtimes) : Number.NEGATIVE_INFINITY,
-    dirMtime: fs.statSync(sessionRoot).mtimeMs,
+    dirMtime,
   };
 }
 
@@ -77,6 +98,18 @@ function writeArtifact(artifactPath, payload) {
   return { artifactPath, ...payload };
 }
 
+function readWatcherLogs(sessionRoot) {
+  return LOG_NAMES
+    .map((logName) => path.join(sessionRoot, logName))
+    .flatMap((logPath) => {
+      try {
+        return [{ logPath, text: fs.readFileSync(logPath, 'utf8') }];
+      } catch {
+        return [];
+      }
+    });
+}
+
 export function evaluateSectionC({ sessionRoot } = {}) {
   const resolvedSession = sessionRoot ?? newestSessionRoot();
   const artifactPath = resolveArtifactPath(resolvedSession);
@@ -87,17 +120,16 @@ export function evaluateSectionC({ sessionRoot } = {}) {
     });
   }
 
-  const logPaths = LOG_NAMES
-    .map((logName) => path.join(resolvedSession, logName))
-    .filter((logPath) => fs.existsSync(logPath));
-  if (logPaths.length === 0) {
+  const logEntries = readWatcherLogs(resolvedSession);
+  if (logEntries.length === 0) {
     return writeArtifact(artifactPath, {
       still_needed: true,
-      evidence: `${LOG_NAMES.join(' and ')} missing in ${resolvedSession}; defaulting Section C to still needed.`,
+      evidence: `${LOG_NAMES.join(' and ')} missing or unreadable in ${resolvedSession}; defaulting Section C to still needed.`,
     });
   }
 
-  const logContents = logPaths.map((logPath) => fs.readFileSync(logPath, 'utf8'));
+  const logContents = logEntries.map(({ text }) => text);
+  const logPaths = logEntries.map(({ logPath }) => logPath);
   const lines = logContents.flatMap((text) => lastLines(text));
   const stillNeeded = logContents.some((text) => text.includes(BANNER));
   const sampledBannerVisible = lines.some((line) => line.includes(BANNER));

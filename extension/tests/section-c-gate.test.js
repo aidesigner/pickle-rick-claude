@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -217,6 +218,50 @@ test('section-c-gate.default-session-selection honors PICKLE_DATA_ROOT override 
     assert.match(artifact.evidence, /iteration 5 starting/);
   } finally {
     rmSync(fakeDataRoot, { recursive: true, force: true });
+  }
+});
+
+test('section-c-gate.default-session-selection skips unreadable watcher logs and falls back to the next readable session', () => {
+  const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
+  const sessionsDir = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions');
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const unreadableSession = path.join(sessionsDir, '2026-05-12-unreadable');
+  const readableSession = path.join(sessionsDir, '2026-05-12-readable');
+  mkdirSync(unreadableSession);
+  mkdirSync(readableSession);
+
+  const unreadableLog = path.join(unreadableSession, 'tmux-runner.log');
+  const readableLog = path.join(readableSession, 'tmux-runner.log');
+  writeFileSync(unreadableLog, 'iteration 9 completed\n');
+  writeFileSync(readableLog, 'iteration 4 completed\niteration 5 starting\n');
+
+  const now = new Date();
+  const older = new Date(now.getTime() - 60_000);
+  const newer = new Date(now.getTime() + 60_000);
+  utimesSync(readableLog, older, older);
+  utimesSync(unreadableLog, newer, newer);
+  chmodSync(unreadableLog, 0o000);
+
+  const result = spawnSync(process.execPath, [CLI], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: fakeHome,
+    },
+  });
+  const artifactPath = path.join(readableSession, 'bundle', 'section-c-still-needed.json');
+  const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
+
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(artifact.still_needed, false);
+    assert.match(artifact.evidence, /iteration 5 starting/);
+    assert.equal(result.stdout.includes(unreadableSession), false, 'CLI should not pin the unreadable session');
+  } finally {
+    chmodSync(unreadableLog, 0o644);
+    rmSync(fakeHome, { recursive: true, force: true });
   }
 });
 
