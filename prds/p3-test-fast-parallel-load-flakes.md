@@ -1,6 +1,6 @@
 ---
 title: P3 — `npm run test:fast` parallel-load flakes — 4 specific tests pass in isolation but fail under `--test-concurrency=8` against the full 4500-test suite (R-TFP)
-status: Draft
+status: Superseded by prds/p2-test-fast-stability-gate-widening-2026-05-19.md
 filed: 2026-05-13
 priority: P3 (no production code regression — symptom is intermittent CI noise; release gate currently passes serially but flakes under operator-driven concurrent runs)
 type: bug
