@@ -50,6 +50,16 @@ function canReadFile(targetPath) {
 }
 
 function canWriteSessionArtifact(sessionRoot) {
+  let sessionStats;
+  try {
+    sessionStats = fs.statSync(sessionRoot);
+  } catch {
+    return false;
+  }
+  if (!sessionStats.isDirectory()) {
+    return false;
+  }
+
   try {
     fs.accessSync(sessionRoot, fs.constants.R_OK | fs.constants.X_OK);
   } catch {
@@ -57,7 +67,17 @@ function canWriteSessionArtifact(sessionRoot) {
   }
 
   const bundleDir = path.join(sessionRoot, 'bundle');
-  const artifactRoot = fs.existsSync(bundleDir) ? bundleDir : sessionRoot;
+  let artifactRoot = sessionRoot;
+  if (fs.existsSync(bundleDir)) {
+    try {
+      if (!fs.statSync(bundleDir).isDirectory()) {
+        return false;
+      }
+      artifactRoot = bundleDir;
+    } catch {
+      return false;
+    }
+  }
   try {
     fs.accessSync(artifactRoot, fs.constants.W_OK | fs.constants.X_OK);
     return true;

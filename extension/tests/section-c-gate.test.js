@@ -388,6 +388,34 @@ test('section-c-gate.unreadable-explicit-session falls back to the runtime artif
   }
 });
 
+test('section-c-gate.file-explicit-session falls back to the runtime artifact instead of crashing on non-directory bundle writes', () => {
+  const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
+  const sessionFile = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions', '2026-05-12-file');
+  const runtimeArtifactPath = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'bundle', 'section-c-still-needed.json');
+  mkdirSync(path.dirname(sessionFile), { recursive: true });
+  writeFileSync(sessionFile, 'not a session directory\n');
+
+  try {
+    const result = spawnSync(process.execPath, [CLI, '--session', sessionFile], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+      },
+    });
+    const artifact = JSON.parse(readFileSync(runtimeArtifactPath, 'utf8'));
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(artifact.still_needed, true);
+    assert.match(artifact.evidence, /not writable/);
+    assert.equal(result.stdout.includes(runtimeArtifactPath), true);
+    assert.equal(result.stdout.includes(path.join(sessionFile, 'bundle')), false);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('section-c-gate.cli-guard rejects unknown arguments', () => {
   const result = spawnSync(process.execPath, [CLI, '--bogus'], {
     cwd: REPO_ROOT,
