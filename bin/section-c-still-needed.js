@@ -118,14 +118,15 @@ function readWatcherLogs(sessionRoot) {
 
 export function evaluateSectionC({ sessionRoot } = {}) {
   const resolvedSession = sessionRoot ?? newestSessionRoot();
-  const artifactPath = resolveArtifactPath(resolvedSession);
   if (!resolvedSession || !fs.existsSync(resolvedSession)) {
+    const artifactPath = resolveArtifactPath(null);
     return writeArtifact(artifactPath, {
       still_needed: true,
       evidence: 'No recent session found; defaulting Section C to still needed.',
     });
   }
 
+  const artifactPath = resolveArtifactPath(resolvedSession);
   const logEntries = readWatcherLogs(resolvedSession);
   if (logEntries.length === 0) {
     return writeArtifact(artifactPath, {

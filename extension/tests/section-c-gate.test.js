@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -109,12 +110,27 @@ test('section-c-gate.long-log-banner retains still_needed when the banner scroll
   }
 });
 
-test('section-c-gate.no-session exits zero and defaults still_needed true', () => {
-  const missing = path.join(tmpdir(), `section-c-missing-${process.pid}-${Date.now()}`);
-  const result = runGate(missing);
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.artifact.still_needed, true);
-  assert.match(result.artifact.evidence, /No recent session found/);
+test('section-c-gate.missing-explicit-session exits zero and defaults still_needed true', () => {
+  const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
+  const missingSession = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions', '2026-05-12-missing');
+  const runtimeArtifactPath = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'bundle', 'section-c-still-needed.json');
+  const result = spawnSync(process.execPath, [CLI, '--session', missingSession], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: fakeHome,
+    },
+  });
+  const artifact = JSON.parse(readFileSync(runtimeArtifactPath, 'utf8'));
+
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(artifact.still_needed, true);
+    assert.match(artifact.evidence, /No recent session found/);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
 });
 
 test('section-c-gate.default-session-selection follows newest watcher log activity, not newest session directory', () => {
@@ -309,6 +325,33 @@ test('section-c-gate.no-session writes runtime artifact outside the tracked repo
     assert.equal(result.status, 0, result.stderr);
     assert.equal(artifact.still_needed, true);
     assert.equal(artifactPath.startsWith(path.join(REPO_ROOT, 'bundle')), false);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('section-c-gate.missing-explicit-session falls back to the runtime artifact instead of creating a fake session dir', () => {
+  const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
+  const missingSession = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions', '2026-05-12-missing');
+  const runtimeArtifactPath = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'bundle', 'section-c-still-needed.json');
+  const result = spawnSync(process.execPath, [CLI, '--session', missingSession], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: fakeHome,
+    },
+  });
+  const artifact = JSON.parse(readFileSync(runtimeArtifactPath, 'utf8'));
+
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(artifact.still_needed, true);
+    assert.equal(result.stdout.includes(runtimeArtifactPath), true);
+    assert.equal(result.stdout.includes(path.join(missingSession, 'bundle')), false);
+    assert.equal(readFileSync(runtimeArtifactPath, 'utf8').includes('No recent session found'), true);
+    assert.equal(result.stdout.includes(missingSession), false);
+    assert.equal(existsSync(missingSession), false);
   } finally {
     rmSync(fakeHome, { recursive: true, force: true });
   }
