@@ -104,8 +104,11 @@ function clearBackendFlipReasonFlags(statePath) {
 export function assertBackendPreSpawn(input) {
     if (input.source === 'refinement-lock' ||
         input.source === 'cli-flag-override' ||
+        input.source === 'settings' ||
         input.source === 'env' ||
         input.source === 'default') {
+        // 'settings' is the enable_backend_routing_heuristic flip: an intentional,
+        // configured routing decision, so resolved != state.backend is expected.
         return { mode: 'match', resolvedBackend: input.resolvedBackend };
     }
     const state = (() => {
