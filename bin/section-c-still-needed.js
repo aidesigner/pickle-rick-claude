@@ -17,7 +17,13 @@ function parseArgs(argv) {
 
 function newestSessionRoot() {
   if (!fs.existsSync(DEFAULT_SESSIONS_DIR)) return null;
-  const dirs = fs.readdirSync(DEFAULT_SESSIONS_DIR, { withFileTypes: true })
+  let entries;
+  try {
+    entries = fs.readdirSync(DEFAULT_SESSIONS_DIR, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const dirs = entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(DEFAULT_SESSIONS_DIR, entry.name))
     .map((dir) => sessionSignal(dir))

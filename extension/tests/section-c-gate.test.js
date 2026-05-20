@@ -265,6 +265,33 @@ test('section-c-gate.default-session-selection skips unreadable watcher logs and
   }
 });
 
+test('section-c-gate.default-session-selection fails open when the runtime sessions dir is unreadable', () => {
+  const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
+  const sessionsDir = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions');
+  mkdirSync(sessionsDir, { recursive: true });
+  chmodSync(sessionsDir, 0o000);
+
+  try {
+    const result = spawnSync(process.execPath, [CLI], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+      },
+    });
+    const artifactPath = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'bundle', 'section-c-still-needed.json');
+    const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(artifact.still_needed, true);
+    assert.match(artifact.evidence, /No recent session found/);
+  } finally {
+    chmodSync(sessionsDir, 0o755);
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('section-c-gate.no-session writes runtime artifact outside the tracked repo bundle tree', () => {
   const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
   const result = spawnSync(process.execPath, [CLI], {
