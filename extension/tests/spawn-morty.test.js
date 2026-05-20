@@ -10,6 +10,7 @@ import { tierToModel, resolveCodexModel } from '../bin/spawn-morty.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_MORTY_BIN = path.resolve(__dirname, '../bin/spawn-morty.js');
+const DEAD_TMP_PID = 99_999_999;
 
 /**
  * Run spawn-morty.js as a subprocess and return the result.
@@ -31,6 +32,11 @@ function run(args, env = {}) {
  */
 function makeTmpDir(prefix = 'pickle-spawn-morty-') {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
+function markTmpNewer(filePath) {
+    const future = new Date(Date.now() + 1000);
+    fs.utimesSync(filePath, future, future);
 }
 
 function stripAnsi(value) {
@@ -1320,10 +1326,12 @@ test('spawn-morty P2: recovers disabled routing heuristic from newer dead settin
     const tmpDir = makeTmpDir();
     try {
         writeSettings(tmpDir, true);
+        const recoveredSettingsPath = path.join(tmpDir, `pickle_settings.json.tmp.${DEAD_TMP_PID}`);
         fs.writeFileSync(
-            path.join(tmpDir, 'pickle_settings.json.tmp.999999'),
+            recoveredSettingsPath,
             JSON.stringify({ enable_backend_routing_heuristic: false })
         );
+        markTmpNewer(recoveredSettingsPath);
         const sessionDir = path.join(tmpDir, 'session');
         const ticketDir = path.join(sessionDir, 'ticket-routing-recovered-off');
         fs.mkdirSync(ticketDir, { recursive: true });
@@ -1366,7 +1374,7 @@ test('spawn-morty P2: recovers disabled routing heuristic from newer dead settin
         assert.ok(fs.existsSync(shimLog), 'codex shim should run when recovered heuristic is OFF');
         assert.ok(!combined.includes('backend routed: codex → claude'),
             `no routing override expected from stale enabled base, got: ${combined}`);
-        assert.equal(fs.existsSync(path.join(tmpDir, 'pickle_settings.json.tmp.999999')), false,
+        assert.equal(fs.existsSync(recoveredSettingsPath), false,
             'dead settings tmp should be promoted and removed');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1426,10 +1434,12 @@ test('spawn-morty P2: recovers disabled complexity tiers from newer dead setting
             path.join(tmpDir, 'pickle_settings.json'),
             JSON.stringify({ enable_complexity_tiers: true })
         );
+        const recoveredSettingsPath = path.join(tmpDir, `pickle_settings.json.tmp.${DEAD_TMP_PID}`);
         fs.writeFileSync(
-            path.join(tmpDir, 'pickle_settings.json.tmp.999999'),
+            recoveredSettingsPath,
             JSON.stringify({ enable_complexity_tiers: false })
         );
+        markTmpNewer(recoveredSettingsPath);
         const sessionDir = path.join(tmpDir, 'session');
         const ticketDir = path.join(sessionDir, 'ticket-model-recovered-off');
         fs.mkdirSync(ticketDir, { recursive: true });
@@ -1481,7 +1491,7 @@ process.exit(0);
         assert.notEqual(modelIndex, -1, 'claude invocation should include a model');
         assert.equal(invocation.argv[modelIndex + 1], 'sonnet',
             `recovered disabled complexity tiers should force sonnet, got: ${invocation.argv.join(' ')}`);
-        assert.equal(fs.existsSync(path.join(tmpDir, 'pickle_settings.json.tmp.999999')), false,
+        assert.equal(fs.existsSync(recoveredSettingsPath), false,
             'dead settings tmp should be promoted and removed');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

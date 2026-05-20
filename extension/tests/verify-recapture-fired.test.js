@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -19,9 +20,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CLI = path.join(REPO_ROOT, 'bin', 'verify-recapture-fired.js');
 const STABLE_ARTIFACT = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.json');
+const DEAD_TMP_PID = 99_999_999;
 
 function makeSession(state) {
-  const session = mkdtempSync(path.join(tmpdir(), 'verify-recapture-'));
+  const session = realpathSync(mkdtempSync(path.join(tmpdir(), 'verify-recapture-')));
   writeFileSync(path.join(session, 'state.json'), `${JSON.stringify(state, null, 2)}\n`);
   return session;
 }
@@ -215,9 +217,9 @@ test('verify-recapture.corrupt-state writes unreadable-state artifact instead of
 });
 
 test('verify-recapture.recovers orphan tmp state before evaluating the latest anatomy window', () => {
-  const session = mkdtempSync(path.join(tmpdir(), 'verify-recapture-orphan-'));
+  const session = realpathSync(mkdtempSync(path.join(tmpdir(), 'verify-recapture-orphan-')));
   const statePath = path.join(session, 'state.json');
-  const orphanPath = `${statePath}.tmp.999999`;
+  const orphanPath = `${statePath}.tmp.${DEAD_TMP_PID}`;
   writeFileSync(statePath, '{bad json\n');
   writeFileSync(orphanPath, `${JSON.stringify(recoverableState([
     {
@@ -238,9 +240,9 @@ test('verify-recapture.recovers orphan tmp state before evaluating the latest an
 });
 
 test('verify-recapture.recovers orphan tmp state when state.json is missing entirely', () => {
-  const session = mkdtempSync(path.join(tmpdir(), 'verify-recapture-missing-base-'));
+  const session = realpathSync(mkdtempSync(path.join(tmpdir(), 'verify-recapture-missing-base-')));
   const statePath = path.join(session, 'state.json');
-  const orphanPath = `${statePath}.tmp.999999`;
+  const orphanPath = `${statePath}.tmp.${DEAD_TMP_PID}`;
   writeFileSync(orphanPath, `${JSON.stringify(recoverableState([
     {
       ts: '2026-05-02T11:15:00.000Z',

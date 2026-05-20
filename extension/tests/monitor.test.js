@@ -28,6 +28,7 @@ import { Writable } from 'node:stream';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MONITOR_BIN = path.resolve(__dirname, '../bin/monitor.js');
+const DEAD_TMP_PID = 99_999_999;
 
 /**
  * Run monitor.js as a subprocess.
@@ -44,7 +45,11 @@ function run(args) {
 }
 
 function tmpDir() {
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-monitor-'));
+    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-monitor-')));
+}
+
+function deadTmpPath(filePath) {
+    return `${filePath}.tmp.${DEAD_TMP_PID}`;
 }
 
 // --- Startup validation ---
@@ -553,7 +558,7 @@ test('monitor CLI exits after orphan tmp recovery promotes an inactive higher-it
             pid: 999999,
         };
         fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(baseState));
-        fs.writeFileSync(path.join(dir, `state.json.tmp.999999`), JSON.stringify({
+        fs.writeFileSync(deadTmpPath(path.join(dir, 'state.json')), JSON.stringify({
             ...baseState,
             active: false,
             iteration: 2,
@@ -606,15 +611,15 @@ test('monitor CLI promotes dead writer microverse tmp before rendering trend', (
             },
         });
         fs.writeFileSync(path.join(dir, 'microverse.json'), JSON.stringify(stale, null, 2));
-        fs.writeFileSync(path.join(dir, 'microverse.json.tmp.999999'), JSON.stringify(recovered, null, 2));
+        fs.writeFileSync(deadTmpPath(path.join(dir, 'microverse.json')), JSON.stringify(recovered, null, 2));
         const future = new Date(Date.now() + 1000);
-        fs.utimesSync(path.join(dir, 'microverse.json.tmp.999999'), future, future);
+        fs.utimesSync(deadTmpPath(path.join(dir, 'microverse.json')), future, future);
 
         const result = run([dir]);
         assert.equal(result.status, 0, `expected clean exit, got status=${result.status}, stderr=${result.stderr}`);
         assert.match(result.stdout, /2:4/, `expected recovered microverse score in monitor output, got: ${result.stdout}`);
         assert.match(result.stdout, /Stall: 2\/5/, `expected recovered stall counter in monitor output, got: ${result.stdout}`);
-        assert.equal(fs.existsSync(path.join(dir, 'microverse.json.tmp.999999')), false);
+        assert.equal(fs.existsSync(deadTmpPath(path.join(dir, 'microverse.json'))), false);
         const persisted = JSON.parse(fs.readFileSync(path.join(dir, 'microverse.json'), 'utf-8'));
         assert.equal(persisted.convergence.history.length, 2);
     } finally {
@@ -907,7 +912,7 @@ test('monitor CLI promotes dead writer rate limit tmp before rendering countdown
             waiting: false,
             wait_until: new Date(Date.now() - 60_000).toISOString(),
         }));
-        fs.writeFileSync(path.join(dir, 'rate_limit_wait.json.tmp.999999'), JSON.stringify({
+        fs.writeFileSync(deadTmpPath(path.join(dir, 'rate_limit_wait.json')), JSON.stringify({
             waiting: true,
             reason: 'API rate limit',
             started_at: new Date().toISOString(),
@@ -916,12 +921,12 @@ test('monitor CLI promotes dead writer rate limit tmp before rendering countdown
             wait_source: 'api',
         }, null, 2));
         const future = new Date(Date.now() + 1000);
-        fs.utimesSync(path.join(dir, 'rate_limit_wait.json.tmp.999999'), future, future);
+        fs.utimesSync(deadTmpPath(path.join(dir, 'rate_limit_wait.json')), future, future);
 
         const result = run([dir]);
         assert.equal(result.status, 0, `expected clean exit, got status=${result.status}, stderr=${result.stderr}`);
         assert.match(result.stdout, /Rate limited \[tokens\] \(API reset\)/, `expected recovered wait in monitor output, got: ${result.stdout}`);
-        assert.equal(fs.existsSync(path.join(dir, 'rate_limit_wait.json.tmp.999999')), false);
+        assert.equal(fs.existsSync(deadTmpPath(path.join(dir, 'rate_limit_wait.json'))), false);
         const persisted = JSON.parse(fs.readFileSync(path.join(dir, 'rate_limit_wait.json'), 'utf-8'));
         assert.equal(persisted.waiting, true);
         assert.equal(persisted.rate_limit_type, 'tokens');

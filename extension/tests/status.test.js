@@ -6,6 +6,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { showStatus, computeConsecutiveNoProgress } from '../bin/status.js';
 
+const DEAD_TMP_PID = 99_999_999;
+
 /**
  * All tests use EXTENSION_DIR to isolate from the real ~/.claude/pickle-rick/.
  * A temp dir stands in as the extension root; current_sessions.json is
@@ -430,8 +432,9 @@ test('showStatus: prefers the crash-recovered orphan tmp snapshot over stale bas
                 original_prompt: 'Base state should lose to recovered tmp',
             })
         );
+        const orphanPath = `${statePath}.tmp.${DEAD_TMP_PID}`;
         fs.writeFileSync(
-            `${statePath}.tmp.999999`,
+            orphanPath,
             JSON.stringify({
                 ...baseFields,
                 active: false,
@@ -449,7 +452,7 @@ test('showStatus: prefers the crash-recovered orphan tmp snapshot over stale bas
         assert.ok(output.includes('7 of 9'), `Expected recovered iteration in output, got: ${output}`);
         assert.ok(output.includes('No'), `Expected recovered inactive status in output, got: ${output}`);
         assert.equal(persisted.current_ticket, 'T-RECOVERED', 'recovered tmp should be promoted into state.json');
-        assert.equal(fs.existsSync(`${statePath}.tmp.999999`), false, 'orphan tmp should be consumed during recovery');
+        assert.equal(fs.existsSync(orphanPath), false, 'orphan tmp should be consumed during recovery');
     });
 });
 

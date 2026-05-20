@@ -10,9 +10,15 @@ import { createHash } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../bin/check-readiness.js');
+const DEAD_TMP_PID = 99_999_999;
 
 function tmpDir(prefix = 'pickle-readiness-p0-') {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
+function markTmpNewer(filePath) {
+    const future = new Date(Date.now() + 1000);
+    fs.utimesSync(filePath, future, future);
 }
 
 function writeTicket(sessionDir, id, options = {}) {
@@ -279,7 +285,9 @@ test('check-readiness: post-correction delta recovers dead-writer snapshot tmp',
     ]));
     const snapshotPath = path.join(sessionDir, 'readiness_snapshot.json');
     fs.writeFileSync(snapshotPath, '{not valid json');
-    fs.writeFileSync(`${snapshotPath}.tmp.99999999`, JSON.stringify({ ticketsVersion: 1, hashes }, null, 2));
+    const tmpSnapshotPath = `${snapshotPath}.tmp.${DEAD_TMP_PID}`;
+    fs.writeFileSync(tmpSnapshotPath, JSON.stringify({ ticketsVersion: 1, hashes }, null, 2));
+    markTmpNewer(tmpSnapshotPath);
     fs.writeFileSync(statePath, JSON.stringify(makeState(sessionDir, {
         tickets_version: 2,
         activity: [{ event: 'course_corrected' }],
@@ -293,5 +301,5 @@ test('check-readiness: post-correction delta recovers dead-writer snapshot tmp',
     assert.equal(out.status, 'fail');
     assert.equal(out.delta, true);
     assert.deepEqual(out.findings.map((finding) => path.basename(path.dirname(finding.ticket))), ['changed']);
-    assert.equal(fs.existsSync(`${snapshotPath}.tmp.99999999`), false, 'dead-writer snapshot tmp should be promoted');
+    assert.equal(fs.existsSync(tmpSnapshotPath), false, 'dead-writer snapshot tmp should be promoted');
 }));
