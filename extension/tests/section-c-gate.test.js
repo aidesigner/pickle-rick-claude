@@ -281,6 +281,45 @@ test('section-c-gate.default-session-selection skips unreadable watcher logs and
   }
 });
 
+test('section-c-gate.default-session-selection ignores directory-shaped watcher log paths when ranking sessions', () => {
+  const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
+  const sessionsDir = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions');
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const bogusSession = path.join(sessionsDir, '2026-05-12-bogus');
+  const readableSession = path.join(sessionsDir, '2026-05-12-readable');
+  mkdirSync(path.join(bogusSession, 'tmux-runner.log'), { recursive: true });
+  mkdirSync(readableSession);
+  const readableLog = path.join(readableSession, 'tmux-runner.log');
+  writeFileSync(readableLog, 'iteration 4 completed\niteration 5 starting\n');
+
+  const now = new Date();
+  const older = new Date(now.getTime() - 60_000);
+  const newer = new Date(now.getTime() + 60_000);
+  utimesSync(readableLog, older, older);
+  utimesSync(path.join(bogusSession, 'tmux-runner.log'), newer, newer);
+
+  const result = spawnSync(process.execPath, [CLI], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: fakeHome,
+    },
+  });
+  const artifactPath = path.join(readableSession, 'bundle', 'section-c-still-needed.json');
+  const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
+
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(artifact.still_needed, false);
+    assert.match(artifact.evidence, /iteration 5 starting/);
+    assert.equal(result.stdout.includes(bogusSession), false, 'CLI should not pin the bogus session');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('section-c-gate.default-session-selection fails open when the runtime sessions dir is unreadable', () => {
   const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
   const sessionsDir = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions');

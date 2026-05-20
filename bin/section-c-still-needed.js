@@ -40,8 +40,11 @@ function safeMtimeMs(targetPath) {
   }
 }
 
-function canReadFile(targetPath) {
+function isReadableRegularFile(targetPath) {
   try {
+    if (!fs.statSync(targetPath).isFile()) {
+      return false;
+    }
     fs.accessSync(targetPath, fs.constants.R_OK);
     return true;
   } catch {
@@ -89,7 +92,7 @@ function canWriteSessionArtifact(sessionRoot) {
 function sessionSignal(sessionRoot) {
   const logMtimes = LOG_NAMES
     .map((logName) => path.join(sessionRoot, logName))
-    .filter((logPath) => canReadFile(logPath))
+    .filter((logPath) => isReadableRegularFile(logPath))
     .map((logPath) => safeMtimeMs(logPath))
     .filter((mtimeMs) => mtimeMs !== null);
   const dirMtime = safeMtimeMs(sessionRoot);
@@ -144,6 +147,7 @@ function writeArtifact(artifactPath, payload) {
 function readWatcherLogs(sessionRoot) {
   return LOG_NAMES
     .map((logName) => path.join(sessionRoot, logName))
+    .filter((logPath) => isReadableRegularFile(logPath))
     .flatMap((logPath) => {
       try {
         return [{ logPath, text: fs.readFileSync(logPath, 'utf8') }];
