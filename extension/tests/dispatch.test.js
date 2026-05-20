@@ -552,7 +552,12 @@ test('dispatch: watchdog kills a hung hook child before approving', async () => 
       extRoot: tmpRoot,
       args: ['test-watchdog-kill'],
       input: '{}',
-      env: { PICKLE_DISPATCH_TIMEOUT_MS: '150' },
+      // Load-robust budget: under --test-concurrency=8 a 150ms watchdog can
+      // fire before the hook child finishes its node cold-start, so the kill
+      // misses and the orphaned child keeps ticking. 2000ms guarantees the
+      // child is spawned + ticking before the (still-inevitable) watchdog
+      // timeout, exercising a real kill instead of a spawn race.
+      env: { PICKLE_DISPATCH_TIMEOUT_MS: '2000' },
     });
 
     assert.equal(status, 0, 'watchdog must still fail open');
