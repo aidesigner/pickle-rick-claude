@@ -373,7 +373,12 @@ function countRemainingQueuedBackendTasks(
   return count;
 }
 
-export function handleTaskEnoent(result: SpawnResult, tasks: TaskMeta[], currentTaskId: string): { skippedTasks: string[] } {
+export function handleTaskEnoent(
+  result: SpawnResult,
+  tasks: TaskMeta[],
+  currentTaskId: string,
+  sessionsRoot: string,
+): { skippedTasks: string[] } {
   if (!result.enoent || result.backend !== 'codex') return { skippedTasks: [] };
 
   const currentIndex = tasks.findIndex(meta => taskIdForMeta(meta) === currentTaskId);
@@ -384,9 +389,8 @@ export function handleTaskEnoent(result: SpawnResult, tasks: TaskMeta[], current
     if (meta.status !== 'marinating') continue;
     const taskId = taskIdForMeta(meta);
     if (!taskId) continue;
-    const sessionDir = metaSessionDirs.get(meta);
-    const taskState = sessionDir ? readTaskState(sessionDir) : null;
-    if ((sessionDir ? resolveBackend(taskState) : resolveBackend(meta as unknown as State)) === result.backend) {
+    const taskState = readTaskState(path.join(sessionsRoot, taskId));
+    if (resolveBackend(taskState ?? (meta as unknown as State)) === result.backend) {
       skippedTasks.push(taskId);
     }
   }
@@ -439,7 +443,7 @@ async function processJarTask(
     recordExitReason(path.join(execution.sessionDir, 'state.json'), 'enoent');
     deactivateTaskSession(execution.sessionDir);
     console.log(`\n${Style.YELLOW}⏸️  Task ${task.taskId} skipped (backend ${result.backend} CLI missing) — status left as '${task.meta.status}' for future retry${Style.RESET}`);
-    const { skippedTasks } = handleTaskEnoent(result, tasks.map(item => item.meta), task.taskId);
+    const { skippedTasks } = handleTaskEnoent(result, tasks.map(item => item.meta), task.taskId, sessionsRoot);
     const skipped = result.backend === 'codex'
       ? skippedTasks.length || countRemainingQueuedBackendTasks(tasks, currentIndex, sessionsRoot, result.backend)
       : 0;
