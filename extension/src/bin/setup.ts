@@ -172,6 +172,17 @@ function persistMediumWorkerTimeoutOverride(state: State, workerTimeout: number)
   state.flags = flags;
 }
 
+function readPersistedMediumWorkerTimeoutOverride(state: Pick<State, 'flags'>): number | null {
+  const flags = state.flags;
+  if (!flags || typeof flags !== 'object') return null;
+  const tierCapOverride = (flags as Record<string, unknown>).tier_cap_override;
+  if (!tierCapOverride || typeof tierCapOverride !== 'object') return null;
+  const medium = (tierCapOverride as Record<string, unknown>).medium;
+  if (!medium || typeof medium !== 'object') return null;
+  const workerTimeout = Number((medium as Record<string, unknown>).worker_timeout_seconds);
+  return Number.isInteger(workerTimeout) && workerTimeout > 0 ? workerTimeout : null;
+}
+
 export function resolvePipelineContinueOnPhaseFailSetting(settings: Record<string, unknown> | null | undefined): boolean {
   return settings?.pipeline_continue_on_phase_fail === false ? false : true;
 }
@@ -849,11 +860,16 @@ function applyResumeLimitConfig(s: State, config: SetupArgs): void {
   } else {
     const persisted = Number(s.worker_timeout_seconds);
     if (!Number.isFinite(persisted) || persisted <= 0) {
-      process.stderr.write(
-        `[setup] WARNING: --resume found no persisted worker_timeout_seconds and --worker-timeout was not passed; ` +
-        `falling back to documented default ${config.workerTimeout}. Pass --worker-timeout to override.\n`,
-      );
-      s.worker_timeout_seconds = config.workerTimeout;
+      const persistedOverride = readPersistedMediumWorkerTimeoutOverride(s);
+      if (persistedOverride !== null) {
+        s.worker_timeout_seconds = persistedOverride;
+      } else {
+        process.stderr.write(
+          `[setup] WARNING: --resume found no persisted worker_timeout_seconds and --worker-timeout was not passed; ` +
+          `falling back to documented default ${config.workerTimeout}. Pass --worker-timeout to override.\n`,
+        );
+        s.worker_timeout_seconds = config.workerTimeout;
+      }
     }
   }
 

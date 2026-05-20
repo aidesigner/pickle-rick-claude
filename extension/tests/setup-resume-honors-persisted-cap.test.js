@@ -83,6 +83,26 @@ test('setup.resume-honors-persisted-cap: persisted worker_timeout_seconds honore
     });
 });
 
+test('setup.resume-honors-persisted-cap: resume restores explicit worker timeout from tier override when runtime state was zeroed', () => {
+    withDataRoot(dataRoot => {
+        const sp = sessionRoot(run(['--worker-timeout', '999', '--task', 'icp-worker-timeout-override-restore'], dataRoot));
+        const statePath = path.join(sp, 'state.json');
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+
+        state.worker_timeout_seconds = 0;
+        fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+
+        run(['--resume', sp], dataRoot);
+
+        const resumed = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(
+            resumed.worker_timeout_seconds,
+            999,
+            'resume must restore the explicit --worker-timeout override from state.flags.tier_cap_override when runtime state was zeroed',
+        );
+    });
+});
+
 test('setup.resume-honors-persisted-cap: persisted max_time_minutes honored on resume without --max-time', () => {
     withDataRoot(dataRoot => {
         const sp = sessionRoot(run(['--max-time', '60', '--task', 'icp-max-time'], dataRoot));

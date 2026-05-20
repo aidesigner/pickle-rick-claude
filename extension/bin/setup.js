@@ -89,6 +89,9 @@ function applyPositiveIntegerSetting(settings, key, apply) {
     if (typeof value === 'number' && Number.isInteger(value) && value > 0)
         apply(value);
 }
+function hasExplicitWorkerTimeoutOverride(config) {
+    return config.explicitFlags.has('worker-timeout');
+}
 function persistMediumWorkerTimeoutOverride(state, workerTimeout) {
     const flags = state.flags && typeof state.flags === 'object'
         ? state.flags
@@ -103,6 +106,19 @@ function persistMediumWorkerTimeoutOverride(state, workerTimeout) {
     tierCapOverride.medium = medium;
     flags.tier_cap_override = tierCapOverride;
     state.flags = flags;
+}
+function readPersistedMediumWorkerTimeoutOverride(state) {
+    const flags = state.flags;
+    if (!flags || typeof flags !== 'object')
+        return null;
+    const tierCapOverride = flags.tier_cap_override;
+    if (!tierCapOverride || typeof tierCapOverride !== 'object')
+        return null;
+    const medium = tierCapOverride.medium;
+    if (!medium || typeof medium !== 'object')
+        return null;
+    const workerTimeout = Number(medium.worker_timeout_seconds);
+    return Number.isInteger(workerTimeout) && workerTimeout > 0 ? workerTimeout : null;
 }
 export function resolvePipelineContinueOnPhaseFailSetting(settings) {
     return settings?.pipeline_continue_on_phase_fail === false ? false : true;
@@ -767,16 +783,22 @@ function applyResumeLimitConfig(s, config) {
             delete s.max_time_minutes;
         }
     }
-    if (config.explicitFlags.has('worker-timeout')) {
+    if (hasExplicitWorkerTimeoutOverride(config)) {
         s.worker_timeout_seconds = config.workerTimeout;
         persistMediumWorkerTimeoutOverride(s, config.workerTimeout);
     }
     else {
         const persisted = Number(s.worker_timeout_seconds);
         if (!Number.isFinite(persisted) || persisted <= 0) {
-            process.stderr.write(`[setup] WARNING: --resume found no persisted worker_timeout_seconds and --worker-timeout was not passed; ` +
-                `falling back to documented default ${config.workerTimeout}. Pass --worker-timeout to override.\n`);
-            s.worker_timeout_seconds = config.workerTimeout;
+            const persistedOverride = readPersistedMediumWorkerTimeoutOverride(s);
+            if (persistedOverride !== null) {
+                s.worker_timeout_seconds = persistedOverride;
+            }
+            else {
+                process.stderr.write(`[setup] WARNING: --resume found no persisted worker_timeout_seconds and --worker-timeout was not passed; ` +
+                    `falling back to documented default ${config.workerTimeout}. Pass --worker-timeout to override.\n`);
+                s.worker_timeout_seconds = config.workerTimeout;
+            }
         }
     }
     if (config.promiseToken)
@@ -962,7 +984,7 @@ function createInitialState(config, sessionPath, taskStr) {
     if (config.explicitFlags.has('max-time')) {
         state.max_time_minutes = config.timeLimit;
     }
-    if (config.explicitFlags.has('worker-timeout')) {
+    if (hasExplicitWorkerTimeoutOverride(config)) {
         persistMediumWorkerTimeoutOverride(state, config.workerTimeout);
     }
     const startCommit = resolveStartCommit();
