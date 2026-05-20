@@ -3683,6 +3683,7 @@ async function runMuxRunnerMain() {
             : 0;
         const rawCurIter = Number(state.iteration);
         const curIter = Number.isFinite(rawCurIter) ? rawCurIter : 0;
+        iteration = curIter;
         const budgetIter = ticketBudgetIterationCount(state, curIter);
         // R-ICP-1 + R-CNAR-1 part 2: two independent cap exits.
         //   (a) PER-TICKET budget exhaustion — current ticket isn't progressing
@@ -3772,7 +3773,7 @@ async function runMuxRunnerMain() {
             }
             lastStateIteration = curIter;
         }
-        iteration++;
+        iteration = curIter + 1;
         {
             const checkState = readRunnerState(statePath);
             const checkDir = checkState.working_dir || process.cwd();

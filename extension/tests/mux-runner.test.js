@@ -2461,9 +2461,13 @@ test('classifyIterationExit: api_limit is distinct from other exit types', () =>
  * Run mux-runner with claude removed from PATH so spawn fails fast.
  * Returns parsed activity events from EXTENSION_DIR/activity/.
  */
+let activityFixtureCounter = 0;
+
 function runAndCollectActivity(stateOverrides = {}) {
+    const fixtureId = ++activityFixtureCounter;
     const tmpRoot = makeTmpRoot();
-    const sessionDir = path.join(tmpRoot, 'session');
+    const sessionName = `session-${fixtureId}`;
+    const sessionDir = path.join(tmpRoot, sessionName);
     fs.mkdirSync(sessionDir, { recursive: true });
     // Create templates/ and commands/ with a minimal pickle.md so runIteration
     // gets past template validation and reaches the claude spawn (which then
@@ -2476,17 +2480,22 @@ function runAndCollectActivity(stateOverrides = {}) {
     const templatesDir = path.join(tmpRoot, 'templates');
     fs.mkdirSync(templatesDir, { recursive: true });
     fs.writeFileSync(path.join(templatesDir, 'pickle.md'), 'placeholder');
-    fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+    const defaultIteration = fixtureId * 10;
+    const mergedState = {
         active: true,
         step: 'implement',
-        iteration: 0,
+        iteration: defaultIteration,
         max_iterations: 100,
         max_time_minutes: 720,
         worker_timeout_seconds: 1200,
         original_prompt: 'test iteration events',
         working_dir: tmpRoot,
         ...stateOverrides,
-    }, null, 2));
+    };
+    const initialIteration = typeof mergedState.iteration === 'number'
+        ? mergedState.iteration
+        : Number(mergedState.iteration);
+    fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify(mergedState, null, 2));
 
     // Strip claude from PATH so runIteration's spawn('claude') fails immediately
     const pathDirs = (process.env.PATH || '').split(':').filter(d => {
@@ -2520,7 +2529,12 @@ function runAndCollectActivity(stateOverrides = {}) {
     }
 
     fs.rmSync(tmpRoot, { recursive: true, force: true });
-    return { events, result, sessionDir: path.basename(sessionDir) };
+    return {
+        events,
+        result,
+        expectedIteration: Number.isFinite(initialIteration) ? initialIteration + 1 : null,
+        expectedSession: sessionName,
+    };
 }
 
 function writeMuxTicket(sessionDir, ticketId, status, order = 1) {
@@ -2609,50 +2623,52 @@ function runDesyncFixture({ currentTicket, tickets }) {
 }
 
 test('iteration events: iteration_start logged at start of iteration', () => {
-    const { events } = runAndCollectActivity();
+    const { events, expectedIteration, expectedSession } = runAndCollectActivity();
     const starts = events.filter(e => e.event === 'iteration_start');
     assert.ok(starts.length >= 1, `Expected at least 1 iteration_start event, got ${starts.length}`);
     assert.equal(starts[0].source, 'pickle');
-    assert.equal(starts[0].iteration, 1);
-    assert.ok(starts[0].session, 'iteration_start should have session ID');
+    assert.equal(starts[0].iteration, expectedIteration);
+    assert.equal(starts[0].session, expectedSession);
     assert.ok(starts[0].ts, 'iteration_start should have timestamp');
 });
 
 test('iteration events: iteration_end logged with error exit_type on spawn failure', () => {
-    const { events } = runAndCollectActivity();
+    const { events, expectedIteration, expectedSession } = runAndCollectActivity();
     const ends = events.filter(e => e.event === 'iteration_end');
     assert.ok(ends.length >= 1, `Expected at least 1 iteration_end event, got ${ends.length}`);
     assert.equal(ends[0].source, 'pickle');
-    assert.equal(ends[0].iteration, 1);
+    assert.equal(ends[0].iteration, expectedIteration);
     assert.equal(ends[0].exit_type, 'error');
-    assert.ok(ends[0].session, 'iteration_end should have session ID');
+    assert.equal(ends[0].session, expectedSession);
 });
 
 test('iteration events: session ID matches basename of session directory', () => {
-    const { events, sessionDir } = runAndCollectActivity();
+    const { events, expectedSession } = runAndCollectActivity();
     const starts = events.filter(e => e.event === 'iteration_start');
     const ends = events.filter(e => e.event === 'iteration_end');
     assert.ok(starts.length >= 1, 'Need iteration_start events');
     assert.ok(ends.length >= 1, 'Need iteration_end events');
-    assert.equal(starts[0].session, sessionDir);
-    assert.equal(ends[0].session, sessionDir);
+    assert.equal(starts[0].session, expectedSession);
+    assert.equal(ends[0].session, expectedSession);
 });
 
 test('iteration events: iteration number matches across start and end', () => {
-    const { events } = runAndCollectActivity();
+    const { events, expectedIteration } = runAndCollectActivity();
     const starts = events.filter(e => e.event === 'iteration_start');
     const ends = events.filter(e => e.event === 'iteration_end');
     assert.ok(starts.length >= 1 && ends.length >= 1, 'Need both iteration events');
+    assert.equal(starts[0].iteration, expectedIteration);
     assert.equal(starts[0].iteration, ends[0].iteration, 'Start and end should have same iteration number');
 });
 
 test('wasted-iter.emit: mux emits wasted_iter with no-progress predicate value', () => {
-    const { events } = runAndCollectActivity();
+    const { events, expectedIteration, expectedSession } = runAndCollectActivity();
     const wasted = events.filter(e => e.event === 'wasted_iter');
     assert.ok(wasted.length >= 1, 'Expected at least one wasted_iter event');
     assert.equal(wasted[0].source, 'pickle');
     assert.equal(wasted[0].runner, 'mux');
-    assert.equal(wasted[0].iteration, 1);
+    assert.equal(wasted[0].iteration, expectedIteration);
+    assert.equal(wasted[0].session, expectedSession);
     assert.equal(wasted[0].wasted, true);
     assert.equal(wasted[0].post_iter_sha, wasted[0].pre_iter_sha);
 });
