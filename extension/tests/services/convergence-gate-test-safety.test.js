@@ -155,6 +155,31 @@ test('runGate test-safety: delegated integration-named scripts that bottom out a
   });
 });
 
+test('runGate test-safety: env-prefixed delegated safe leaf is allowed through', async () => {
+  await withGitFixture(async dir => {
+    makeNpmFixture(dir, {
+      test: 'CI=1 npm run test:integration',
+      'test:integration': 'node --test',
+    });
+    execSync('git add .', { cwd: dir, stdio: 'pipe' });
+    execSync('git commit -m "init"', { cwd: dir, stdio: 'pipe' });
+
+    const events = [];
+    const result = await runGate({
+      workingDir: dir,
+      mode: 'strict',
+      scope: 'full',
+      checks: ['tests'],
+      onEvent: (event, data) => events.push({ event, data }),
+      _timeouts: { perCheck: { tests: 10_000 }, total: 30_000 },
+    });
+
+    const blocked = events.find(e => e.event === 'gate_unsafe_test_command_blocked');
+    assert.ok(!blocked, `env-prefixed safe leaf must not be blocked: ${JSON.stringify(events)}`);
+    assert.equal(result.status, 'green');
+  });
+});
+
 test('runGate test-safety: delegated unsafe leaf script is blocked', async () => {
   await withGitFixture(async dir => {
     makeNpmFixture(dir, {
@@ -178,6 +203,32 @@ test('runGate test-safety: delegated unsafe leaf script is blocked', async () =>
     const blocked = events.find(e => e.event === 'gate_unsafe_test_command_blocked');
     assert.ok(blocked, `delegated unsafe leaf must emit block event, got ${JSON.stringify(events)}`);
     assert.equal(blocked.data.script, 'npm run ci');
+    assert.equal(blocked.data.leaf_script, 'playwright test');
+  });
+});
+
+test('runGate test-safety: env-prefixed delegated unsafe leaf is blocked at the leaf command', async () => {
+  await withGitFixture(async dir => {
+    makeNpmFixture(dir, {
+      test: 'CI=1 npm run test:integration',
+      'test:integration': 'playwright test',
+    });
+    execSync('git add .', { cwd: dir, stdio: 'pipe' });
+    execSync('git commit -m "init"', { cwd: dir, stdio: 'pipe' });
+
+    const events = [];
+    const result = await runGate({
+      workingDir: dir,
+      mode: 'strict',
+      scope: 'full',
+      checks: ['tests'],
+      onEvent: (event, data) => events.push({ event, data }),
+    });
+
+    assert.equal(result.status, 'green', `Expected green (skipped), got ${result.status}`);
+    const blocked = events.find(e => e.event === 'gate_unsafe_test_command_blocked');
+    assert.ok(blocked, `env-prefixed unsafe leaf must emit block event, got ${JSON.stringify(events)}`);
+    assert.equal(blocked.data.script, 'CI=1 npm run test:integration');
     assert.equal(blocked.data.leaf_script, 'playwright test');
   });
 });

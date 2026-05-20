@@ -99,6 +99,8 @@ const WORKSPACE_ROOT_CONTROL_FILES = new Set([
 const UNSAFE_TEST_SCRIPT_REGEX = /integration|e2e|golden|smoke|baseline|playwright|cypress|hardhat/i;
 const SAFE_TEST_RUNNER_REGEX = /(vitest|jest|node|mocha)/;
 const PACKAGE_MANAGER_RUN_RE = /^(npm|pnpm|yarn)(?:\s+run)?\s+([A-Za-z0-9:_-]+)\b/;
+const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
+const ENV_WRAPPER_PREFIXES = ['cross-env-shell', 'cross-env', 'env'] as const;
 
 function buildFingerprint(f: GateFailure): string {
   return `${f.file}::${f.ruleOrCode}::${f.occurrence_index}`;
@@ -770,8 +772,28 @@ function splitScriptSegments(script: string): string[] {
 }
 
 function delegatedScriptName(segment: string): string | null {
-  const match = segment.match(PACKAGE_MANAGER_RUN_RE);
-  return match?.[2] ?? null;
+  let remaining = segment.trim();
+  while (remaining.length > 0) {
+    const match = remaining.match(PACKAGE_MANAGER_RUN_RE);
+    if (match?.[2]) return match[2];
+
+    const wrapper = ENV_WRAPPER_PREFIXES.find((prefix) =>
+      remaining === prefix || remaining.startsWith(`${prefix} `));
+    if (wrapper) {
+      remaining = remaining.slice(wrapper.length).trimStart();
+      continue;
+    }
+
+    const token = remaining.match(/^\S+/)?.[0];
+    if (token && ENV_ASSIGNMENT_RE.test(token)) {
+      remaining = remaining.slice(token.length).trimStart();
+      continue;
+    }
+
+    break;
+  }
+
+  return null;
 }
 
 function resolveDelegatedScriptLeaves(

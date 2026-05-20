@@ -2,13 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'node:crypto';
 import { execFile, spawnSync } from 'child_process';
-import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { LockError } from '../types/index.js';
 import { withLock } from './state-manager.js';
 import { readRecoverableJsonObject } from './microverse-state.js';
 import { writeStateFile } from './pickle-utils.js';
-const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 function loadGateCommands() {
@@ -87,6 +85,8 @@ const WORKSPACE_ROOT_CONTROL_FILES = new Set([
 const UNSAFE_TEST_SCRIPT_REGEX = /integration|e2e|golden|smoke|baseline|playwright|cypress|hardhat/i;
 const SAFE_TEST_RUNNER_REGEX = /(vitest|jest|node|mocha)/;
 const PACKAGE_MANAGER_RUN_RE = /^(npm|pnpm|yarn)(?:\s+run)?\s+([A-Za-z0-9:_-]+)\b/;
+const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
+const ENV_WRAPPER_PREFIXES = ['cross-env-shell', 'cross-env', 'env'];
 function buildFingerprint(f) {
     return `${f.file}::${f.ruleOrCode}::${f.occurrence_index}`;
 }
@@ -380,30 +380,41 @@ function getChangedSince(workingDir, since) {
         return [];
     return (result.stdout || '').split('\n').filter(Boolean);
 }
-async function runCheckCommand(cmd, cwd, timeout_ms) {
+async function runCheckCommand(check, cmd, cwd, timeout_ms) {
     const parts = cmd.split(' ').filter((p) => p.length > 0);
     if (parts.length === 0) {
         throw new Error(`runCheckCommand: empty command — refusing to spawn`);
     }
     const bin = parts[0];
     const args = parts.slice(1);
-    try {
-        const { stdout, stderr } = await execFileAsync(bin, args, {
+    return await new Promise((resolve, reject) => {
+        const controller = new AbortController();
+        const timeoutHandle = setTimeout(() => {
+            controller.abort();
+            reject(new GateTimeoutError(check, timeout_ms));
+        }, timeout_ms);
+        execFile(bin, args, {
             cwd,
-            timeout: timeout_ms,
+            encoding: 'utf8',
             killSignal: 'SIGKILL',
             maxBuffer: 10 * 1024 * 1024,
+            signal: controller.signal,
+        }, (err, stdout, stderr) => {
+            clearTimeout(timeoutHandle);
+            if (!err) {
+                resolve({ stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0 });
+                return;
+            }
+            if (controller.signal.aborted)
+                return;
+            const e = err;
+            resolve({
+                stdout: e.stdout ?? stdout ?? '',
+                stderr: e.stderr ?? stderr ?? '',
+                exitCode: typeof e.code === 'number' ? e.code : 1,
+            });
         });
-        return { stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0 };
-    }
-    catch (err) {
-        const e = err;
-        return {
-            stdout: e.stdout ?? '',
-            stderr: e.stderr ?? '',
-            exitCode: typeof e.code === 'number' ? e.code : 1,
-        };
-    }
+    });
 }
 function parseTscOutput(output, pkgDir) {
     const failures = [];
@@ -634,8 +645,24 @@ function splitScriptSegments(script) {
         .filter((segment) => segment.length > 0);
 }
 function delegatedScriptName(segment) {
-    const match = segment.match(PACKAGE_MANAGER_RUN_RE);
-    return match?.[2] ?? null;
+    let remaining = segment.trim();
+    while (remaining.length > 0) {
+        const match = remaining.match(PACKAGE_MANAGER_RUN_RE);
+        if (match?.[2])
+            return match[2];
+        const wrapper = ENV_WRAPPER_PREFIXES.find((prefix) => remaining === prefix || remaining.startsWith(`${prefix} `));
+        if (wrapper) {
+            remaining = remaining.slice(wrapper.length).trimStart();
+            continue;
+        }
+        const token = remaining.match(/^\S+/)?.[0];
+        if (token && ENV_ASSIGNMENT_RE.test(token)) {
+            remaining = remaining.slice(token.length).trimStart();
+            continue;
+        }
+        break;
+    }
+    return null;
 }
 function resolveDelegatedScriptLeaves(scriptName, scripts, seen = new Set()) {
     if (seen.has(scriptName))
@@ -659,25 +686,14 @@ function resolveDelegatedScriptLeaves(scriptName, scripts, seen = new Set()) {
     }
     return leaves;
 }
-async function runGateCheck(check, cmd, dir, effectiveMs, emit) {
-    const checkPromise = runCheckCommand(cmd, dir, effectiveMs);
-    let timeoutHandle;
-    const timeoutPromise = new Promise((_, rej) => {
-        timeoutHandle = setTimeout(() => rej(new GateTimeoutError(check, effectiveMs)), effectiveMs);
-    });
+async function runGateCheck(check, cmd, dir, effectiveMs) {
     try {
-        const result = await Promise.race([checkPromise, timeoutPromise]);
-        clearTimeout(timeoutHandle);
+        const result = await runCheckCommand(check, cmd, dir, effectiveMs);
         return buildFailures(result, check, dir);
     }
     catch (err) {
-        clearTimeout(timeoutHandle);
         if (!(err instanceof GateTimeoutError))
             throw err;
-        checkPromise.catch((raceErr) => {
-            const msg = raceErr instanceof Error ? raceErr.message : String(raceErr);
-            emit('gate_check_promise_lost', { check, message: msg });
-        });
         return [{
                 check,
                 file: '<timeout>',
@@ -704,7 +720,7 @@ async function collectGateFailures(opts, targetDirs, cmdMap, projectType, totalD
             if (!(await canRunTestScript(check, projectType, dir, emit)))
                 continue;
             const perCheckMs = opts._timeouts?.perCheck?.[check] ?? PER_CHECK_TIMEOUT_MS[check];
-            allFailures.push(...await runGateCheck(check, cmd, dir, Math.min(perCheckMs, remaining), emit));
+            allFailures.push(...await runGateCheck(check, cmd, dir, Math.min(perCheckMs, remaining)));
         }
     }
     return allFailures;
