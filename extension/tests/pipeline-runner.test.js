@@ -24,6 +24,7 @@ import {
   writeWatcherLivenessArtifact,
   runBundlePreflight,
   BundlePreflightError,
+  samplePhaseHistoryTimestamp,
 } from '../bin/pipeline-runner.js';
 import { backendEnvOverrides } from '../services/backend-spawn.js';
 import { AC_PHASE_MANIFEST, runAcPhaseGate } from '../services/ac-phase-gate.js';
@@ -887,6 +888,19 @@ describe('pipeline-runner.relaunch-claim', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('pipeline-runner.phase-history', () => {
+  test('samples strictly increasing timestamps across same-millisecond phase transitions', () => {
+    const prior = '2026-05-20T01:02:03.456Z';
+
+    const sampled = samplePhaseHistoryTimestamp(
+      [{ step: 'anatomy-park', timestamp: prior }],
+      Date.parse(prior),
+    );
+
+    assert.equal(sampled, '2026-05-20T01:02:03.457Z');
   });
 });
 

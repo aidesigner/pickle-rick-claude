@@ -1386,7 +1386,7 @@ function persistPhaseTransition(runtime, phaseConfig, previousState) {
         if (previousState.step !== phaseConfig.name && last?.step !== phaseConfig.name) {
             s.history = [...history, {
                     step: phaseConfig.name,
-                    timestamp: new Date().toISOString(),
+                    timestamp: samplePhaseHistoryTimestamp(history),
                 }];
         }
     });
@@ -1401,6 +1401,23 @@ function persistPhaseTransition(runtime, phaseConfig, previousState) {
         });
     }
     catch { /* telemetry best-effort */ }
+}
+export function samplePhaseHistoryTimestamp(history, nowMs = Date.now()) {
+    const fallbackNowMs = Number.isFinite(nowMs) ? nowMs : Date.now();
+    const lastTimestampMs = Array.isArray(history)
+        ? [...history].reverse().reduce((found, entry) => {
+            if (found !== null)
+                return found;
+            if (typeof entry?.timestamp !== 'string')
+                return null;
+            const parsed = Date.parse(entry.timestamp);
+            return Number.isFinite(parsed) ? parsed : null;
+        }, null)
+        : null;
+    const sampledMs = lastTimestampMs === null
+        ? fallbackNowMs
+        : Math.max(fallbackNowMs, lastTimestampMs + 1);
+    return new Date(sampledMs).toISOString();
 }
 function restampBackendIfNeeded(statePath, backend) {
     const cur = sm.read(statePath);
