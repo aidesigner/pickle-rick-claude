@@ -77,6 +77,23 @@ function runtimeArtifactPath(sessionRoot) {
     : DEFAULT_RUNTIME_ARTIFACT_PATH;
 }
 
+function remediationHintForFailure(failureReason) {
+  switch (failureReason) {
+    case 'state-missing':
+      return 'Ensure the session state.json exists or promote the newest recoverable state.json.tmp.* snapshot before rerunning AC-DR-02.';
+    case 'state-unreadable':
+      return 'Repair the session state.json so StateManager.read can parse it before rerunning AC-DR-02.';
+    case 'activity-missing':
+      return 'Ensure the session state persists activity as an array before rerunning AC-DR-02.';
+    case 'phase-window-missing':
+      return 'Ensure anatomy-park phase transitions are appended to state.history before rerunning AC-DR-02.';
+    case 'recapture-event-missing':
+      return 'Ensure anatomy-park records baseline_recapture_attempted inside its latest anatomy-park phase window.';
+    default:
+      return null;
+  }
+}
+
 function writeRuntimeArtifact(artifactPath, { pass, failureReason, evidence }) {
   const artifact = {
     ...STABLE_ARTIFACT,
@@ -84,7 +101,7 @@ function writeRuntimeArtifact(artifactPath, { pass, failureReason, evidence }) {
     checked_at: new Date().toISOString(),
     evidence,
     failure_reason: failureReason,
-    remediation_hint: pass ? null : 'Ensure anatomy-park records baseline_recapture_attempted inside its latest anatomy-park phase window.',
+    remediation_hint: pass ? null : remediationHintForFailure(failureReason),
   };
   fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
   fs.writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);

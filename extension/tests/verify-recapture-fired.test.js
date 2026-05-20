@@ -119,6 +119,7 @@ test('verify-recapture.no-event writes failing artifact when activity has no rec
     assert.equal(result.status, 1);
     assert.equal(result.runtimeArtifact.pass, false);
     assert.equal(result.runtimeArtifact.failure_reason, 'recapture-event-missing');
+    assert.match(result.runtimeArtifact.remediation_hint, /baseline_recapture_attempted/);
   } finally {
     rmSync(session, { recursive: true, force: true });
   }
@@ -197,6 +198,7 @@ test('verify-recapture.state-missing exits 2 and writes state-missing artifact',
     assert.equal(result.status, 2);
     assert.equal(result.runtimeArtifact.pass, false);
     assert.equal(result.runtimeArtifact.failure_reason, 'state-missing');
+    assert.match(result.runtimeArtifact.remediation_hint, /state\.json exists|recoverable state\.json\.tmp/);
   } finally {
     rmSync(session, { recursive: true, force: true });
   }
@@ -210,6 +212,7 @@ test('verify-recapture.corrupt-state writes unreadable-state artifact instead of
     assert.equal(result.status, 1);
     assert.equal(result.runtimeArtifact.pass, false);
     assert.equal(result.runtimeArtifact.failure_reason, 'state-unreadable');
+    assert.match(result.runtimeArtifact.remediation_hint, /StateManager\.read can parse/);
     assert.equal(result.runtimeArtifact.evidence.state_path, path.join(session, 'state.json'));
     assert.match(result.runtimeArtifact.evidence.read_error, /Expected property name|JSON/i);
   } finally {
