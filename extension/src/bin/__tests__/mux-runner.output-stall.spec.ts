@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 
 import { runIteration } from '../../bin/mux-runner.js';
-import { Defaults, type State } from '../../types/index.js';
+import { type State } from '../../types/index.js';
 
 function makeExecutableNodeScript(filePath: string, source: string): void {
   fs.writeFileSync(filePath, `#!/usr/bin/env node\n${source}`);
