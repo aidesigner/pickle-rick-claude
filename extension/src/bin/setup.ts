@@ -152,6 +152,10 @@ function applyPositiveIntegerSetting(settings: Record<string, unknown>, key: str
   if (typeof value === 'number' && Number.isInteger(value) && value > 0) apply(value);
 }
 
+function hasExplicitWorkerTimeoutOverride(config: Pick<SetupArgs, 'explicitFlags'>): boolean {
+  return config.explicitFlags.has('worker-timeout');
+}
+
 function persistMediumWorkerTimeoutOverride(state: State, workerTimeout: number): void {
   const flags = state.flags && typeof state.flags === 'object'
     ? state.flags as Record<string, unknown>
@@ -839,7 +843,7 @@ function applyResumeLimitConfig(s: State, config: SetupArgs): void {
     }
   }
 
-  if (config.explicitFlags.has('worker-timeout')) {
+  if (hasExplicitWorkerTimeoutOverride(config)) {
     s.worker_timeout_seconds = config.workerTimeout;
     persistMediumWorkerTimeoutOverride(s, config.workerTimeout);
   } else {
@@ -1036,7 +1040,7 @@ function createInitialState(config: SetupArgs, sessionPath: string, taskStr: str
   if (config.explicitFlags.has('max-time')) {
     state.max_time_minutes = config.timeLimit;
   }
-  if (config.explicitFlags.has('worker-timeout')) {
+  if (hasExplicitWorkerTimeoutOverride(config)) {
     persistMediumWorkerTimeoutOverride(state, config.workerTimeout);
   }
   const startCommit = resolveStartCommit();

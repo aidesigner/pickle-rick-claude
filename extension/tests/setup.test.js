@@ -349,6 +349,26 @@ test('setup: fresh session defaults worker_timeout_seconds to medium-tier 2400 s
     }
 });
 
+test('setup: settings-derived worker timeout persists top-level state without writing medium tier override', () => {
+    const extRoot = makeExtensionRootWithSettings({
+        default_worker_timeout_seconds: 1800,
+    });
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-worker-timeout-data-'));
+    const output = runSetupWithEnv(
+        ['--task', 'settings-worker-timeout-default-test'],
+        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot },
+    );
+    const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.worker_timeout_seconds, 1800);
+        assert.equal(state.flags?.tier_cap_override, undefined, 'settings/default-derived worker timeout must not dirty override state');
+    } finally {
+        fs.rmSync(extRoot, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('setup: --worker-timeout persists medium tier override into state.flags', () => {
     const output = runSetupWithEnv(
         ['--worker-timeout', '1800', '--task', 'worker-timeout-flag-persistence-test'],
