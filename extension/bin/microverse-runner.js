@@ -686,6 +686,30 @@ export function stageAutoCommitPaths(workingDir, excludePrefixes = []) {
         });
     }
 }
+function captureCachedDiffPatch(workingDir) {
+    return execFileSync('git', ['diff', '--cached', '--binary', '--no-color'], {
+        cwd: workingDir,
+        timeout: 30_000,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+}
+function restoreCachedDiffPatch(workingDir, patch) {
+    execFileSync('git', ['reset'], {
+        cwd: workingDir,
+        timeout: 10_000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    if (!patch.trim())
+        return;
+    execFileSync('git', ['apply', '--cached', '--whitespace=nowarn', '-'], {
+        cwd: workingDir,
+        timeout: 30_000,
+        input: patch,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+}
 export function measureMetric(validation, timeoutSeconds, cwd) {
     return measureMetricAttempt(validation, timeoutSeconds, cwd).then((result) => result.metric);
 }
@@ -1884,7 +1908,7 @@ function resetStoppedMicroverseState(state, sessionDir, log) {
     delete state.exit_reason;
     writeMicroverseState(sessionDir, state);
 }
-function preflightAutoCommit(workingDir, log) {
+export function preflightAutoCommit(workingDir, log) {
     const PREFLIGHT_DIRT_EXCLUDES = ['prds', 'docs'];
     if (!isWorkingTreeDirty(workingDir, PREFLIGHT_DIRT_EXCLUDES))
         return;
@@ -1893,6 +1917,7 @@ function preflightAutoCommit(workingDir, log) {
         throw new Error('Working tree is dirty — not a git repo, cannot auto-commit');
     }
     log('Working tree is dirty — auto-committing before microverse start');
+    const stagedSnapshot = captureCachedDiffPatch(workingDir);
     try {
         stageAutoCommitPaths(workingDir, PREFLIGHT_DIRT_EXCLUDES);
         execFileSync('git', ['commit', '-m', 'microverse: auto-commit dirty tree before start'], { cwd: workingDir, timeout: 30_000 });
@@ -1900,12 +1925,15 @@ function preflightAutoCommit(workingDir, log) {
     }
     catch (commitErr) {
         const commitMsg = safeErrorMessage(commitErr);
-        log(`Pre-flight auto-commit failed: ${commitMsg} — aborting`);
+        let restoreMsg = '';
         try {
-            execFileSync('git', ['reset'], { cwd: workingDir, timeout: 10_000 });
+            restoreCachedDiffPatch(workingDir, stagedSnapshot);
         }
-        catch { /* best effort */ }
-        throw new Error(`Working tree is dirty and auto-commit failed: ${commitMsg}`);
+        catch (restoreErr) {
+            restoreMsg = `; staged-index restore failed: ${safeErrorMessage(restoreErr)}`;
+        }
+        log(`Pre-flight auto-commit failed: ${commitMsg}${restoreMsg} — aborting`);
+        throw new Error(`Working tree is dirty and auto-commit failed: ${commitMsg}${restoreMsg}`);
     }
 }
 function installShutdownHandlers(sessionDir, statePath, log) {

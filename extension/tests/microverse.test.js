@@ -528,7 +528,7 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, measureLlmMetric, extractScore, parseLlmJudgeOutput, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths, executeMainLoop, executeGapAnalysis, measureAndClassifyIteration, classifyStall, handleNoCommitStall, runRemediatorForIteration, applyTestBackendOverrideFromEnv } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, extractScore, parseLlmJudgeOutput, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths, preflightAutoCommit, executeMainLoop, executeGapAnalysis, measureAndClassifyIteration, classifyStall, handleNoCommitStall, runRemediatorForIteration, applyTestBackendOverrideFromEnv } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { writeStateFile } from '../services/pickle-utils.js';
@@ -2625,32 +2625,36 @@ test('stageAutoCommitPaths stages untracked files without sweeping excluded docs
     }
 });
 
-test('auto-rescue: git reset unstages on commit failure', () => {
+test('preflightAutoCommit restores pre-existing staged changes when auto-commit fails', () => {
     const dir = createTempGitRepo();
     try {
-        // Create a file and stage it
-        fs.writeFileSync(path.join(dir, 'staged.txt'), 'content');
-        execSync('git add -A', { cwd: dir, timeout: 30_000 });
+        fs.writeFileSync(path.join(dir, 'keep-staged.txt'), 'v1\n');
+        execSync('git add keep-staged.txt', { cwd: dir, timeout: 30_000 });
+        execSync('git commit -m "track staged file"', { cwd: dir, timeout: 30_000 });
 
-        // Commit it first so there's nothing new to commit
-        execSync('git commit -m "commit"', { cwd: dir, timeout: 30_000 });
+        fs.writeFileSync(path.join(dir, 'keep-staged.txt'), 'v2\n');
+        execSync('git add keep-staged.txt', { cwd: dir, timeout: 30_000 });
+        fs.writeFileSync(path.join(dir, 'worker-output.txt'), 'worker changes\n');
 
-        // Now stage something, then try to commit nothing new → should fail
-        // Simulate the unstage path
-        fs.writeFileSync(path.join(dir, 'new.txt'), 'new');
-        execSync('git add -A', { cwd: dir, timeout: 30_000 });
+        const hookPath = path.join(dir, '.git', 'hooks', 'pre-commit');
+        fs.writeFileSync(hookPath, '#!/usr/bin/env sh\nexit 1\n', { mode: 0o755 });
 
-        // Verify staged changes exist
-        const stagedBefore = execSync('git diff --cached --stat', { cwd: dir, encoding: 'utf-8' }).trim();
-        assert.ok(stagedBefore.length > 0, 'should have staged changes');
+        assert.throws(
+            () => preflightAutoCommit(dir, () => { }),
+            /Working tree is dirty and auto-commit failed:/,
+        );
 
-        // git reset unstages
-        execSync('git reset', { cwd: dir, timeout: 10_000 });
-        const stagedAfter = execSync('git diff --cached --stat', { cwd: dir, encoding: 'utf-8' }).trim();
-        assert.equal(stagedAfter, '', 'should have no staged changes after reset');
+        const stagedAfter = execSync('git diff --cached --name-only', { cwd: dir, encoding: 'utf-8' })
+            .trim()
+            .split('\n')
+            .filter(Boolean);
+        assert.deepEqual(stagedAfter, ['keep-staged.txt'], 'pre-existing staged change should survive rollback');
 
-        // File still exists in working tree
-        assert.ok(fs.existsSync(path.join(dir, 'new.txt')), 'file preserved in working tree');
+        const untrackedAfter = execSync('git ls-files --others --exclude-standard', { cwd: dir, encoding: 'utf-8' })
+            .trim()
+            .split('\n')
+            .filter(Boolean);
+        assert.deepEqual(untrackedAfter, ['worker-output.txt'], 'auto-commit-added file should return to untracked state');
     } finally {
         fs.rmSync(dir, { recursive: true });
     }
