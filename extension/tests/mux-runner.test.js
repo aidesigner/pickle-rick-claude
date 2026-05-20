@@ -646,11 +646,12 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
         let stderr = '';
         child.stdout.on('data', chunk => { stdout += chunk.toString(); });
         child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+        const iterLog = path.join(sessionDir, `tmux_iteration_${baseState.iteration + 1}.log`);
 
         await waitFor(() => {
             try {
                 const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-                return state.active === true && fs.existsSync(path.join(sessionDir, 'tmux_iteration_1.log'));
+                return state.active === true && fs.existsSync(iterLog);
             } catch {
                 return false;
             }
@@ -756,7 +757,7 @@ const child = spawn(process.execPath, [runnerBin, sessionDir], {
 });
 child.stdout.on('data', (chunk) => process.stdout.write(chunk));
 child.stderr.on('data', (chunk) => process.stderr.write(chunk));
-const iterLog = path.join(sessionDir, 'tmux_iteration_1.log');
+const iterLog = path.join(sessionDir, 'tmux_iteration_2.log');
 const deadline = Date.now() + 30000;
 const timer = setInterval(() => {
   if (fs.existsSync(iterLog)) {

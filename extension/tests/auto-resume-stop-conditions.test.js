@@ -37,13 +37,54 @@ function readIfExists(file) {
   return existsSync(file) ? readFileSync(file, 'utf8') : null;
 }
 
+function waitMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function listFixtureProcessPids(sessionDir) {
+  const psResult = spawnSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' });
+  if (psResult.status !== 0) return [];
+  return psResult.stdout
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(\d+)\s+(.*)$/);
+      if (!match) return null;
+      const [, pid, command] = match;
+      if (!command.includes(sessionDir)) return null;
+      if (!command.includes('auto-resume.sh') && !command.includes('mux-runner.js')) return null;
+      return Number(pid);
+    })
+    .filter((pid) => Number.isInteger(pid));
+}
+
+function reapFixtureProcesses(sessionDir) {
+  const terminate = (signal) => {
+    for (const pid of listFixtureProcessPids(sessionDir)) {
+      try {
+        process.kill(pid, signal);
+      } catch (error) {
+        if (error?.code !== 'ESRCH') throw error;
+      }
+    }
+  };
+
+  terminate('SIGTERM');
+  waitMs(150);
+  terminate('SIGKILL');
+  waitMs(50);
+}
+
 function formatResultDiagnostics(result) {
   const stateJson = readIfExists(result.fixture.stateFile);
   const counter = readIfExists(result.fixture.counterFile);
   const trace = readIfExists(result.fixture.traceFile);
+  const livePids = listFixtureProcessPids(result.fixture.sessionDir);
   return [
     `tmp=${result.fixture.tmp}`,
     `status=${result.status} signal=${result.signal} error=${result.error?.message ?? 'null'}`,
+    `live_pids=${livePids.length ? livePids.join(',') : '<none>'}`,
     `stdout:`,
     result.stdout || '<empty>',
     `stderr:`,
@@ -58,6 +99,7 @@ function formatResultDiagnostics(result) {
 }
 
 function cleanupFixture(fixture, preserve) {
+  reapFixtureProcesses(fixture.sessionDir);
   if (!preserve) {
     rmSync(fixture.tmp, { recursive: true, force: true });
   }
@@ -322,5 +364,21 @@ fs.appendFileSync(traceFile, JSON.stringify({
         `expected delayed retry-state progression trace\n${formatResultDiagnostics(result)}`,
       );
     });
+  });
+
+  test('reaps timed-out auto-resume children during fixture cleanup', () => {
+    let sessionDir = '';
+    runFixtureTest((fixture) => {
+      sessionDir = fixture.sessionDir;
+      writeMuxRunner(fixture, `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10000);
+`);
+      const result = runScript(fixture, {}, 200);
+      assert.equal(result.error?.code, 'ETIMEDOUT', formatResultDiagnostics(result));
+    });
+    assert.deepEqual(
+      listFixtureProcessPids(sessionDir),
+      [],
+      `expected fixture cleanup to reap lingering auto-resume processes for ${sessionDir}`,
+    );
   });
 });

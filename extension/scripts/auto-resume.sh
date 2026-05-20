@@ -66,6 +66,7 @@ CHILD_PID=""
 _kill_child() {
   if [[ -n "$CHILD_PID" ]]; then
     kill "$CHILD_PID" 2>/dev/null || true
+    wait "$CHILD_PID" 2>/dev/null || true
     CHILD_PID=""
   fi
 }
@@ -130,7 +131,9 @@ while true; do
 
   _emit_auto_resumed "$retry" "$cur_ticket" "$cur_done"
 
-  node "$MUX_RUNNER" "$SESSION_DIR" &
+  # Close child stdin so sync harness pipes cannot be kept open by a background
+  # mux-runner process if the wrapper is signalled mid-retry.
+  node "$MUX_RUNNER" "$SESSION_DIR" </dev/null &
   CHILD_PID=$!
   wait "$CHILD_PID" 2>/dev/null || true
   CHILD_PID=""

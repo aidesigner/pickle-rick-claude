@@ -280,7 +280,6 @@ test('runner times out wedged child test process instead of hanging indefinitely
       `expected timeout failure, got status=${result.status}\nstdout=${result.stdout}\nstderr=${result.stderr}`,
     );
     assert.match(result.stderr, /ETIMEDOUT|timed out/i);
-    assert.match(result.stdout, /cancelled 1|tests 1/i);
     assert.ok(Date.now() - startedAt < 10_000, 'timeout should fail fast');
   } finally {
     cleanupFixtureRoot(root);

@@ -2036,6 +2036,13 @@ export async function runIteration(
     let stallReason: IterationOutcome['stallReason'];
     let lastDataAt = start;
     let timeoutResolveTimer: NodeJS.Timeout | null = null;
+    let timeoutDrainTimer: NodeJS.Timeout | null = null;
+    let timeoutResolutionFinished = false;
+    let timeoutAwaitingDrain = false;
+    let timeoutChildClosed = false;
+    let timeoutStdoutClosed = false;
+    let timeoutStderrClosed = false;
+    let timeoutEarliestFinishAt = 0;
 
     const proc = spawn(invocation.cmd, invocation.args, {
       cwd: state.working_dir || process.cwd(),
@@ -2043,6 +2050,8 @@ export async function runIteration(
       stdio: ['inherit', 'pipe', 'pipe'],
     });
     currentChildProc = proc;
+    timeoutStdoutClosed = proc.stdout === null;
+    timeoutStderrClosed = proc.stderr === null;
 
     const hangGuardMs = (runtimeOverrides.maxIterationSeconds ?? Defaults.MAX_ITERATION_SECONDS) * 1000;
     const outputStallGuardMs = (runtimeOverrides.outputStallSeconds ?? Defaults.OUTPUT_STALL_SECONDS) * 1000;
@@ -2056,7 +2065,42 @@ export async function runIteration(
       }
     }
 
+    function maybeFinishTimeoutResolution() {
+      if (!timeoutAwaitingDrain || timeoutResolutionFinished) return;
+      if (!timeoutChildClosed || !timeoutStdoutClosed || !timeoutStderrClosed) return;
+      finishTimeoutResolution();
+    }
+
+    function scheduleTimeoutResolutionFinish(force = false) {
+      if (!timeoutAwaitingDrain || timeoutResolutionFinished) return;
+      if (timeoutDrainTimer) {
+        clearTimeout(timeoutDrainTimer);
+        timeoutDrainTimer = null;
+      }
+      const remainingMs = timeoutEarliestFinishAt - Date.now();
+      if (remainingMs > 0) {
+        timeoutDrainTimer = setTimeout(() => {
+          timeoutDrainTimer = null;
+          scheduleTimeoutResolutionFinish(force);
+        }, remainingMs);
+        timeoutDrainTimer.unref();
+        return;
+      }
+      if (force) {
+        finishTimeoutResolution();
+        return;
+      }
+      maybeFinishTimeoutResolution();
+    }
+
     function finishTimeoutResolution() {
+      if (timeoutResolutionFinished) return;
+      timeoutResolutionFinished = true;
+      timeoutAwaitingDrain = false;
+      if (timeoutDrainTimer) {
+        clearTimeout(timeoutDrainTimer);
+        timeoutDrainTimer = null;
+      }
       if (timeoutResolveTimer) {
         clearTimeout(timeoutResolveTimer);
         timeoutResolveTimer = null;
@@ -2079,10 +2123,20 @@ export async function runIteration(
       settled = true;
       didTimeout = true;
       stallReason = reason;
+      timeoutResolutionFinished = false;
+      timeoutAwaitingDrain = true;
+      timeoutChildClosed = false;
+      timeoutStdoutClosed = proc.stdout === null;
+      timeoutStderrClosed = proc.stderr === null;
+      // R-APMW-6: even if the child closes promptly after SIGTERM, keep the
+      // timeout path open briefly so delayed shutdown output can still arrive
+      // on the pipe and hit the iteration log before we close the fd.
+      timeoutEarliestFinishAt = Date.now() + 150;
       clearIterationGuards();
       currentChildProc = null;
       proc.once('close', () => {
-        finishTimeoutResolution();
+        timeoutChildClosed = true;
+        scheduleTimeoutResolutionFinish();
       });
       // R-APMW-6: bounded fallback wait for delayed SIGTERM cleanup. The
       // child has up to TIMEOUT_RESOLVE_FALLBACK_MS to flush shutdown output
@@ -2090,7 +2144,7 @@ export async function runIteration(
       // tight under load (data flows stdout→pipe→Node→fd write); 1500ms
       // gives realistic slack while still bounding the resolve.
       timeoutResolveTimer = setTimeout(() => {
-        finishTimeoutResolution();
+        scheduleTimeoutResolutionFinish(true);
       }, 1500);
       timeoutResolveTimer.unref();
       try { proc.kill('SIGTERM'); } catch { /* already dead */ }
@@ -2130,6 +2184,14 @@ export async function runIteration(
       armOutputStallGuard();
       writeToLog(chunk);
       process.stderr.write(chunk);
+    });
+    proc.stdout?.once('close', () => {
+      timeoutStdoutClosed = true;
+      scheduleTimeoutResolutionFinish();
+    });
+    proc.stderr?.once('close', () => {
+      timeoutStderrClosed = true;
+      scheduleTimeoutResolutionFinish();
     });
 
     proc.on('close', (code) => {

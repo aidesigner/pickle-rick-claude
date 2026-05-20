@@ -334,8 +334,15 @@ export function handleTaskEnoent(result, tasks, currentTaskId, sessionsRoot) {
         const taskId = taskIdForMeta(meta);
         if (!taskId)
             continue;
+        const metaBackend = resolveBackend(meta);
+        if (metaBackend === result.backend) {
+            skippedTasks.push(taskId);
+            continue;
+        }
+        if (!sessionsRoot)
+            continue;
         const taskState = readTaskState(path.join(sessionsRoot, taskId));
-        if (resolveBackend(taskState ?? meta) === result.backend) {
+        if (resolveBackend(taskState) === result.backend) {
             skippedTasks.push(taskId);
         }
     }

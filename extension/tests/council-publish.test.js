@@ -172,10 +172,14 @@ $line"
 fi
 
 if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
-    # Atomic increment: read current, write current+1.
+    # Crash-safe increment: write the new counter to a temp file, then rename
+    # over state.json before any simulated hang. A timeout SIGTERM can land
+    # between truncate/write on plain > state.json, leaving an empty file and
+    # causing the next comment call to re-use call index 1 and hang again.
     IFS= read -r cur < "$DIR/state.json" || cur=0
     new=$((cur + 1))
-    printf '%s\\n' "$new" > "$DIR/state.json"
+    printf '%s\\n' "$new" > "$DIR/state.json.tmp"
+    /bin/mv -f "$DIR/state.json.tmp" "$DIR/state.json"
     IFS= read -r hang_list < "$DIR/pr-comment-hang" || hang_list=''
     IFS= read -r fail_list < "$DIR/pr-comment-fail" || fail_list=''
     for n in $hang_list; do [ "$n" = "$new" ] && _hang; done

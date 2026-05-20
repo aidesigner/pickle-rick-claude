@@ -377,7 +377,7 @@ export function handleTaskEnoent(
   result: SpawnResult,
   tasks: TaskMeta[],
   currentTaskId: string,
-  sessionsRoot: string,
+  sessionsRoot?: string,
 ): { skippedTasks: string[] } {
   if (!result.enoent || result.backend !== 'codex') return { skippedTasks: [] };
 
@@ -389,8 +389,14 @@ export function handleTaskEnoent(
     if (meta.status !== 'marinating') continue;
     const taskId = taskIdForMeta(meta);
     if (!taskId) continue;
+    const metaBackend = resolveBackend(meta as unknown as State);
+    if (metaBackend === result.backend) {
+      skippedTasks.push(taskId);
+      continue;
+    }
+    if (!sessionsRoot) continue;
     const taskState = readTaskState(path.join(sessionsRoot, taskId));
-    if (resolveBackend(taskState ?? (meta as unknown as State)) === result.backend) {
+    if (resolveBackend(taskState) === result.backend) {
       skippedTasks.push(taskId);
     }
   }
