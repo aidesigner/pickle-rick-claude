@@ -56,7 +56,10 @@ test('readRecoverableJsonObject skips a tmp owned by a live PID', () => {
     writeJson(target, { source: 'base' });
     writeJson(tmp, { source: 'live-tmp' });
     setMtime(target, BASE_TIME);
-    setMtime(tmp, BASE_TIME + 1_000);
+    // The live-PID skip heuristic only treats the tmp as in-flight when its
+    // mtime is at/after the owning process's start time. A live process cannot
+    // have authored a file older than itself, so the tmp must be stamped now.
+    setMtime(tmp, Date.now());
 
     const recovered = readRecoverableJsonObject(target);
 
