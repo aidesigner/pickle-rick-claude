@@ -33,14 +33,33 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const JAR_RUNNER_BIN = path.resolve(__dirname, '../bin/jar-runner.js');
 
 function makeTmpRoot() {
-    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-batch-')));
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-batch-')));
+    const sentinelDir = path.join(root, 'extension', 'bin');
+    fs.mkdirSync(sentinelDir, { recursive: true });
+    fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+    return root;
+}
+
+function buildRunnerEnv(extDir, overrides = {}) {
+    return {
+        HOME: process.env.HOME || '/tmp',
+        NODE_ENV: 'test',
+        EXTENSION_DIR: extDir,
+        PICKLE_DATA_ROOT: extDir,
+        PICKLE_BACKEND: '',
+        PICKLE_ROLE: '',
+        PICKLE_REFINEMENT_LOCK: '',
+        CLAUDECODE: '',
+        PATH: '',
+        ...overrides,
+    };
 }
 
 function run(extDir) {
     // 15s → 45s: budget for system load when run alongside concurrent
     // codex/tmux work. Tests validate batch processing logic, not wall-clock.
     return spawnSync(process.execPath, [JAR_RUNNER_BIN], {
-        env: { ...process.env, EXTENSION_DIR: extDir },
+        env: buildRunnerEnv(extDir),
         encoding: 'utf-8',
         timeout: 45000,
     });

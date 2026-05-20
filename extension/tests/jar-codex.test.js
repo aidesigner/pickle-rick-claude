@@ -18,6 +18,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -28,11 +29,38 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const JAR_RUNNER_BIN = path.resolve(__dirname, '../bin/jar-runner.js');
 
 function makeTmpRoot() {
-    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-codex-')));
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-codex-')));
+    const sentinelDir = path.join(root, 'extension', 'bin');
+    fs.mkdirSync(sentinelDir, { recursive: true });
+    fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+    return root;
 }
 
 function stripAnsi(value) {
     return value.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function buildRunnerEnv(tmpRoot, overrides = {}) {
+    return {
+        HOME: process.env.HOME || '/tmp',
+        NODE_ENV: 'test',
+        EXTENSION_DIR: tmpRoot,
+        PICKLE_DATA_ROOT: tmpRoot,
+        PICKLE_BACKEND: '',
+        PICKLE_ROLE: '',
+        PICKLE_REFINEMENT_LOCK: '',
+        CLAUDECODE: '',
+        PATH: '',
+        ...overrides,
+    };
+}
+
+function makeShimFixture(tmpRoot, label) {
+    const token = crypto.randomBytes(6).toString('hex');
+    return {
+        shimDir: fs.realpathSync(fs.mkdtempSync(path.join(tmpRoot, `${label}-shim-`))),
+        logPath: path.join(tmpRoot, `${label}-${token}.json`),
+    };
 }
 
 /**
@@ -42,7 +70,7 @@ function stripAnsi(value) {
 function writeCodexShim(shimDir, logPath) {
     fs.mkdirSync(shimDir, { recursive: true });
     const shimPath = path.join(shimDir, 'codex');
-    const body = `#!/usr/bin/env node
+    const body = `#!${process.execPath}
 const fs = require('fs');
 const rec = {
     argv: process.argv.slice(2),
@@ -75,13 +103,15 @@ process.exit(0);
     return shimPath;
 }
 
-function setupCodexTask(tmpRoot, taskId = 'codex-task-1') {
+function setupCodexTask(tmpRoot, taskId = 'codex-task-1', options = {}) {
+    const { metaOverrides = {}, stateOverrides = {} } = options;
     const taskDir = path.join(tmpRoot, 'jar', '2026-01-01', taskId);
     fs.mkdirSync(taskDir, { recursive: true });
     const metaPath = path.join(taskDir, 'meta.json');
     fs.writeFileSync(metaPath, JSON.stringify({
         status: 'marinating',
         repo_path: tmpRoot,
+        ...metaOverrides,
     }, null, 2));
 
     const sessionDir = path.join(tmpRoot, 'sessions', taskId);
@@ -91,6 +121,7 @@ function setupCodexTask(tmpRoot, taskId = 'codex-task-1') {
         step: 'prd',
         iteration: 0,
         backend: 'codex',  // THIS is what routes the task through codex
+        ...stateOverrides,
     }, null, 2));
 
     return { taskDir, metaPath, sessionDir };
@@ -104,19 +135,13 @@ test('jar-runner (codex): panel displays Backend: codex for codex-backed task', 
         const { metaPath } = setupCodexTask(tmpRoot);
 
         // Stub codex on PATH so we get past spawn
-        const shimDir = path.join(tmpRoot, 'bin');
-        const shimLog = path.join(tmpRoot, 'codex-invocation.json');
+        const { shimDir, logPath: shimLog } = makeShimFixture(tmpRoot, 'codex');
         writeCodexShim(shimDir, shimLog);
 
         const result = spawnSync(process.execPath, [JAR_RUNNER_BIN], {
-            env: {
-                ...process.env,
-                EXTENSION_DIR: tmpRoot,
-                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
-                // Scrub any env-level PICKLE_BACKEND so we prove the routing
-                // comes from state.backend, not a leaked env var.
-                PICKLE_BACKEND: '',
-            },
+            env: buildRunnerEnv(tmpRoot, {
+                PATH: shimDir,
+            }),
             encoding: 'utf-8',
             // 8s → 25s: budget for system load under concurrent test runs.
             timeout: 25000,
@@ -144,17 +169,13 @@ test('jar-runner (codex): shim receives exec --dangerously-bypass --skip-git --e
     try {
         setupCodexTask(tmpRoot);
 
-        const shimDir = path.join(tmpRoot, 'bin');
-        const shimLog = path.join(tmpRoot, 'codex-invocation.json');
+        const { shimDir, logPath: shimLog } = makeShimFixture(tmpRoot, 'codex');
         writeCodexShim(shimDir, shimLog);
 
         spawnSync(process.execPath, [JAR_RUNNER_BIN], {
-            env: {
-                ...process.env,
-                EXTENSION_DIR: tmpRoot,
-                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
-                PICKLE_BACKEND: '',
-            },
+            env: buildRunnerEnv(tmpRoot, {
+                PATH: shimDir,
+            }),
             encoding: 'utf-8',
             // 8s → 25s: budget for system load under concurrent test runs.
             timeout: 25000,
@@ -191,19 +212,13 @@ test('jar-runner (codex): spreads PICKLE_BACKEND=codex into child env', { timeou
     try {
         setupCodexTask(tmpRoot);
 
-        const shimDir = path.join(tmpRoot, 'bin');
-        const shimLog = path.join(tmpRoot, 'codex-invocation.json');
+        const { shimDir, logPath: shimLog } = makeShimFixture(tmpRoot, 'codex');
         writeCodexShim(shimDir, shimLog);
 
         spawnSync(process.execPath, [JAR_RUNNER_BIN], {
-            env: {
-                ...process.env,
-                EXTENSION_DIR: tmpRoot,
-                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
-                // Outer env has it unset (empty) — the runner should still
-                // inject PICKLE_BACKEND=codex before spawning the child.
-                PICKLE_BACKEND: '',
-            },
+            env: buildRunnerEnv(tmpRoot, {
+                PATH: shimDir,
+            }),
             encoding: 'utf-8',
             // 8s → 25s: budget for system load under concurrent test runs.
             timeout: 25000,
@@ -234,14 +249,11 @@ test('jar-runner (codex): ENOENT leaves task marinating and prints install hint'
         // process.execPath already covers the outer invocation; the shim isn't
         // used here because we want codex-not-found.
         const result = spawnSync(process.execPath, [JAR_RUNNER_BIN], {
-            env: {
+            env: buildRunnerEnv(tmpRoot, {
                 // Deliberately replace PATH, not extend it, so codex cannot be
                 // resolved via the user's homebrew/npm prefix.
                 PATH: emptyBin,
-                HOME: process.env.HOME || '/tmp',
-                EXTENSION_DIR: tmpRoot,
-                PICKLE_BACKEND: '',
-            },
+            }),
             encoding: 'utf-8',
             // 8s → 25s: budget for system load under concurrent test runs.
             timeout: 25000,
@@ -285,12 +297,9 @@ test('jar-runner (codex): ENOENT short-circuits remaining codex tasks', { timeou
         fs.mkdirSync(emptyBin, { recursive: true });
 
         const result = spawnSync(process.execPath, [JAR_RUNNER_BIN], {
-            env: {
+            env: buildRunnerEnv(tmpRoot, {
                 PATH: emptyBin,
-                HOME: process.env.HOME || '/tmp',
-                EXTENSION_DIR: tmpRoot,
-                PICKLE_BACKEND: '',
-            },
+            }),
             encoding: 'utf-8',
             // 8s → 25s: budget for system load under concurrent test runs.
             timeout: 25000,
@@ -337,24 +346,26 @@ test('jar-runner (codex): recovered claude task is not skipped by codex ENOENT s
             schema_version: 3,
             active: false,
         };
-        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify(baseState, null, 2));
-        fs.writeFileSync(path.join(sessionDir, 'state.json.tmp.999999'), JSON.stringify({
+        const statePath = path.join(sessionDir, 'state.json');
+        const tmpStatePath = path.join(sessionDir, 'state.json.tmp.999999');
+        fs.writeFileSync(statePath, JSON.stringify(baseState, null, 2));
+        fs.writeFileSync(tmpStatePath, JSON.stringify({
             ...baseState,
             iteration: 2,
             backend: 'claude',
         }, null, 2));
+        const stale = new Date('2026-01-01T00:00:00.000Z');
+        const newer = new Date('2026-01-01T00:00:01.000Z');
+        fs.utimesSync(statePath, stale, stale);
+        fs.utimesSync(tmpStatePath, newer, newer);
 
-        const shimDir = path.join(tmpRoot, 'bin');
-        const claudeLog = path.join(tmpRoot, 'claude-invocation.json');
+        const { shimDir, logPath: claudeLog } = makeShimFixture(tmpRoot, 'claude');
         writeClaudeShim(shimDir, claudeLog);
 
         const result = spawnSync(process.execPath, [JAR_RUNNER_BIN], {
-            env: {
+            env: buildRunnerEnv(tmpRoot, {
                 PATH: shimDir,
-                HOME: process.env.HOME || '/tmp',
-                EXTENSION_DIR: tmpRoot,
-                PICKLE_BACKEND: '',
-            },
+            }),
             encoding: 'utf-8',
             timeout: 25000,
         });

@@ -25,6 +25,21 @@ function makeTmpRoot() {
     return root;
 }
 
+function buildRunnerEnv(extDir, overrides = {}) {
+    return {
+        HOME: process.env.HOME || '/tmp',
+        NODE_ENV: 'test',
+        EXTENSION_DIR: extDir,
+        PICKLE_DATA_ROOT: extDir,
+        PICKLE_BACKEND: '',
+        PICKLE_ROLE: '',
+        PICKLE_REFINEMENT_LOCK: '',
+        CLAUDECODE: '',
+        PATH: '',
+        ...overrides,
+    };
+}
+
 /**
  * Run jar-runner.js as a subprocess with isolated EXTENSION_DIR.
  * Returns the spawnSync result with stdout, stderr, and status.
@@ -33,7 +48,7 @@ function run(extDir) {
     // 10s → 30s: budget for system load when run alongside concurrent
     // codex/tmux work. Tests validate jar processing logic, not wall-clock.
     return spawnSync(process.execPath, [JAR_RUNNER_BIN], {
-        env: { ...process.env, EXTENSION_DIR: extDir, PATH: '' },
+        env: buildRunnerEnv(extDir),
         encoding: 'utf-8',
         timeout: 30000,
     });
@@ -679,7 +694,7 @@ test('jar-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
         fs.chmodSync(fakeClaude, 0o755);
 
         const child = spawn(process.execPath, [JAR_RUNNER_BIN], {
-            env: { ...process.env, EXTENSION_DIR: tmpRoot, PATH: fakeBin },
+            env: buildRunnerEnv(tmpRoot, { PATH: fakeBin }),
             stdio: ['ignore', 'pipe', 'pipe'],
         });
         let stdout = '';
@@ -785,7 +800,7 @@ test('jar-runner: recovers a newer orphan tmp state before bootstrapping a jarre
         fs.chmodSync(fakeClaude, 0o755);
 
         const result = spawnSync(process.execPath, [JAR_RUNNER_BIN], {
-            env: { ...process.env, EXTENSION_DIR: tmpRoot, PATH: fakeBin },
+            env: buildRunnerEnv(tmpRoot, { PATH: fakeBin }),
             encoding: 'utf-8',
             timeout: 30000,
         });
