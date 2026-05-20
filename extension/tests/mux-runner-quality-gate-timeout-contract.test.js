@@ -6,6 +6,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// The integration-style quality-gate skip regressions live in mux-runner.test.js
+// with the real runner harness; this file stays focused on the static timeout
+// contract for the dedicated readiness/ticket-audit subprocess spawns.
 const muxRunnerPath = resolve(__dirname, '../src/bin/mux-runner.ts');
 
 test('mux-runner bounds readiness and ticket-audit quality gate subprocesses', () => {
