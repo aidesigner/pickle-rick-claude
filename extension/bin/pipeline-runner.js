@@ -362,6 +362,7 @@ export function runBundlePreflight(sessionRoot) {
 // ---------------------------------------------------------------------------
 let activeChild = null;
 let spawnRunnerOverride = null;
+let _closerReleaseActionsForTests = null;
 let phaseRunnerContext = null;
 function isMuxRunnerInvocation(args) {
     return path.basename(args[0] ?? '') === 'mux-runner.js';
@@ -494,6 +495,9 @@ async function runSpawnRunner(cmd, args, env) {
 }
 export function __setSpawnRunnerForTests(fn) {
     spawnRunnerOverride = fn;
+}
+export function __setCloserReleaseActionsForTests(actions) {
+    _closerReleaseActionsForTests = actions;
 }
 export function writePipelineStatus(sessionDir, status, details = {}) {
     const payload = {
@@ -1869,9 +1873,10 @@ function finalizePipeline(runtime, counters, cancelMarker, startTime, phaseIncom
         Elapsed: formatTime(totalElapsed),
     }, 'GREEN', '🧪');
     writeFinalPipelineActivity(runtime, totalElapsed, phasesSummary, pipelineFailed && !handoffStop);
-    if (!pipelineFailed) {
+    // handoff stops skip closer-release
+    if (!pipelineFailed && !handoffStop) {
         const closerPlan = buildCloserReleasePlan(sm.read(runtime.statePath));
-        executeCloserReleasePlan(closerPlan, {
+        executeCloserReleasePlan(closerPlan, _closerReleaseActionsForTests ?? {
             install: () => { },
             tag: () => { },
         }, runtime.log);

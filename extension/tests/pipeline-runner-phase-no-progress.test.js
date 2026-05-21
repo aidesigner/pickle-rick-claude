@@ -22,6 +22,7 @@ import * as path from 'node:path';
 
 import {
   __setSpawnRunnerForTests,
+  __setCloserReleaseActionsForTests,
   main,
 } from '../bin/pipeline-runner.js';
 import { PipelineRunnerExitCode } from '../types/index.js';
@@ -488,6 +489,97 @@ test('R-CCR-3: non-zero exit with stale handoff reason terminates with failure m
     );
   } finally {
     __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('R-CCR-5: closer-release install/tag NOT invoked when pipeline stops on manager_handoff_pending', async () => {
+  const repo = tmpDir('pipe-ccr5-mhp-repo-');
+  const sessionDir = tmpDir('pipe-ccr5-mhp-session-');
+  let installCalled = 0;
+  let tagCalled = 0;
+  __setCloserReleaseActionsForTests({ install: () => { installCalled++; }, tag: () => { tagCalled++; } });
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle']);
+    writeTicket(sessionDir, 'aaa11111', 1, 'Done');
+
+    const statePath = path.join(sessionDir, 'state.json');
+    __setSpawnRunnerForTests(async () => {
+      const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      s.exit_reason = 'manager_handoff_pending';
+      fs.writeFileSync(statePath, JSON.stringify(s, null, 2));
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Success);
+
+    assert.equal(installCalled, 0, 'install must NOT be called on manager_handoff_pending stop');
+    assert.equal(tagCalled, 0, 'tag must NOT be called on manager_handoff_pending stop');
+  } finally {
+    __setSpawnRunnerForTests(null);
+    __setCloserReleaseActionsForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('R-CCR-5: closer-release install/tag NOT invoked when pipeline stops on closer_handoff_terminal', async () => {
+  const repo = tmpDir('pipe-ccr5-cht-repo-');
+  const sessionDir = tmpDir('pipe-ccr5-cht-session-');
+  let installCalled = 0;
+  let tagCalled = 0;
+  __setCloserReleaseActionsForTests({ install: () => { installCalled++; }, tag: () => { tagCalled++; } });
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle']);
+    writeTicket(sessionDir, 'aaa11111', 1, 'Done');
+
+    const statePath = path.join(sessionDir, 'state.json');
+    __setSpawnRunnerForTests(async () => {
+      const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      s.exit_reason = 'closer_handoff_terminal';
+      fs.writeFileSync(statePath, JSON.stringify(s, null, 2));
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Success);
+
+    assert.equal(installCalled, 0, 'install must NOT be called on closer_handoff_terminal stop');
+    assert.equal(tagCalled, 0, 'tag must NOT be called on closer_handoff_terminal stop');
+  } finally {
+    __setSpawnRunnerForTests(null);
+    __setCloserReleaseActionsForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('R-CCR-5: closer-release plan entered on clean non-handoff successful pipeline', async () => {
+  const repo = tmpDir('pipe-ccr5-ok-repo-');
+  const sessionDir = tmpDir('pipe-ccr5-ok-session-');
+  let installCalled = 0;
+  let tagCalled = 0;
+  __setCloserReleaseActionsForTests({ install: () => { installCalled++; }, tag: () => { tagCalled++; } });
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle']);
+    writeTicket(sessionDir, 'aaa11111', 1, 'Done');
+    writeTicket(sessionDir, 'bbb22222', 2, 'Done');
+
+    __setSpawnRunnerForTests(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Success);
+
+    assert.equal(installCalled, 1, 'install must be called on clean successful pipeline');
+    assert.equal(tagCalled, 1, 'tag must be called on clean successful pipeline');
+  } finally {
+    __setSpawnRunnerForTests(null);
+    __setCloserReleaseActionsForTests(null);
     fs.rmSync(repo, { recursive: true, force: true });
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }

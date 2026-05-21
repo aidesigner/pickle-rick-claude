@@ -477,6 +477,7 @@ export function runBundlePreflight(sessionRoot: string): void {
 
 let activeChild: ChildProcess | null = null;
 let spawnRunnerOverride: SpawnRunnerFn | null = null;
+let _closerReleaseActionsForTests: CloserReleaseActions | null = null;
 let phaseRunnerContext: PhaseRunnerContext | null = null;
 
 type StallHeartbeatChild = Pick<ChildProcess, 'pid' | 'kill' | 'killed'>;
@@ -638,6 +639,10 @@ async function runSpawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessE
 
 export function __setSpawnRunnerForTests(fn: SpawnRunnerFn | null): void {
   spawnRunnerOverride = fn;
+}
+
+export function __setCloserReleaseActionsForTests(actions: CloserReleaseActions | null): void {
+  _closerReleaseActionsForTests = actions;
 }
 
 export function writePipelineStatus(
@@ -2266,9 +2271,10 @@ function finalizePipeline(
 
   writeFinalPipelineActivity(runtime, totalElapsed, phasesSummary, pipelineFailed && !handoffStop);
 
-  if (!pipelineFailed) {
+  // handoff stops skip closer-release
+  if (!pipelineFailed && !handoffStop) {
     const closerPlan = buildCloserReleasePlan(sm.read(runtime.statePath));
-    executeCloserReleasePlan(closerPlan, {
+    executeCloserReleasePlan(closerPlan, _closerReleaseActionsForTests ?? {
       install: () => {},
       tag: () => {},
     }, runtime.log);
