@@ -2038,3 +2038,33 @@ describe('runBundlePreflight', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// R-CCR-5 — AC-CCR-5-1: finalizePipeline carries the greppable closer-release
+// comment. The phrase is the audit anchor a future refactor must not strip.
+// ---------------------------------------------------------------------------
+
+describe('R-CCR-5 closer-release comment anchor', () => {
+  test('AC-CCR-5-1: finalizePipeline carries the "handoff stops skip closer-release" comment', () => {
+    const src = fs.readFileSync(
+      path.resolve(import.meta.dirname, '../src/bin/pipeline-runner.ts'),
+      'utf-8',
+    );
+    const fnStart = src.indexOf('function finalizePipeline(');
+    assert.notEqual(fnStart, -1, 'finalizePipeline must exist in pipeline-runner.ts');
+
+    // Scope the search to finalizePipeline's body — bounded by the next
+    // top-level declaration — so the anchor cannot be satisfied by an
+    // unrelated comment elsewhere in the file.
+    const after = src.slice(fnStart + 'function finalizePipeline('.length);
+    const nextDecl = after.search(/\n(?:export |function |type |interface |class )/);
+    const body = nextDecl === -1 ? after : after.slice(0, nextDecl);
+
+    assert.match(
+      body,
+      /\/\/[^\n]*handoff stops skip closer-release/,
+      'AC-CCR-5-1: finalizePipeline must carry a // comment with the literal '
+        + 'phrase "handoff stops skip closer-release"',
+    );
+  });
+});
