@@ -2246,6 +2246,112 @@ test('guardCompletionCommitBeforeDone: PICKLE_TEST_MODE=1 bypasses entire guard 
     }
 });
 
+// --- R-CCR-9: guardRereadBackoffMs env handling ---
+
+test('guardRereadBackoffMs: R-CCR-9 PICKLE_GUARD_REREAD_BACKOFF_MS=0 honored — guard returns without sleeping', async () => {
+    const { guardCompletionCommitBeforeDone } = await import('../bin/mux-runner.js');
+    const tmpRoot = makeTmpRoot();
+    const prevEnv = process.env.PICKLE_GUARD_REREAD_BACKOFF_MS;
+    process.env.PICKLE_GUARD_REREAD_BACKOFF_MS = '0';
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        const workingDir = path.join(tmpRoot, 'work');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.mkdirSync(workingDir, { recursive: true });
+        const ticketId = 'ccr9env0';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+        fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`),
+            `---\nid: ${ticketId}\ntitle: "test"\nstatus: Done\n---\n# T\n`);
+        const t0 = Date.now();
+        const result = withProductionGuard(() =>
+            guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir })
+        );
+        const elapsed = Date.now() - t0;
+        assert.ok(elapsed < 400, `env=0 must produce no sleep; elapsed=${elapsed}ms`);
+        assert.equal(result.ok, false, 'commitless ticket must still be rejected');
+    } finally {
+        if (prevEnv === undefined) delete process.env.PICKLE_GUARD_REREAD_BACKOFF_MS;
+        else process.env.PICKLE_GUARD_REREAD_BACKOFF_MS = prevEnv;
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('guardRereadBackoffMs: R-CCR-9 env above 5000ms ceiling clamped — writer at 100ms found after ~5000ms sleep', async () => {
+    // env=99999 clamped to 5000ms; without clamping the test would time out (99999ms sleep).
+    const { guardCompletionCommitBeforeDone } = await import('../bin/mux-runner.js');
+    const tmpRoot = makeTmpRoot();
+    const prevEnv = process.env.PICKLE_GUARD_REREAD_BACKOFF_MS;
+    process.env.PICKLE_GUARD_REREAD_BACKOFF_MS = '99999';
+    try {
+        initGitRepo(tmpRoot);
+        const sha = gitHead(tmpRoot);
+        const sessionDir = path.join(tmpRoot, 'session');
+        const ticketId = 'ccr9ceil';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+        const ticketFile = path.join(ticketDir, `linear_ticket_${ticketId}.md`);
+        fs.writeFileSync(ticketFile, `---\nid: ${ticketId}\ntitle: "test"\nstatus: Done\n---\n# T\n`);
+        const stamped = `---\nid: ${ticketId}\ntitle: "test"\nstatus: Done\ncompletion_commit: ${sha}\n---\n# T\n`;
+        const writer = spawn(process.execPath, ['-e',
+            `setTimeout(()=>require('fs').writeFileSync(${JSON.stringify(ticketFile)}, ${JSON.stringify(stamped)}), 100)`,
+        ], { stdio: 'ignore' });
+        const t0 = Date.now();
+        const result = withProductionGuard(() =>
+            guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir: tmpRoot })
+        );
+        const elapsed = Date.now() - t0;
+        try { writer.kill(); } catch { /* already exited */ }
+        assert.ok(elapsed >= 4000 && elapsed < 6000,
+            `ceiling must clamp env=99999 to ~5000ms; elapsed=${elapsed}ms`);
+        assert.equal(result.ok, true, 'writer found after clamped backoff');
+        assert.equal(result.sha, sha);
+    } finally {
+        if (prevEnv === undefined) delete process.env.PICKLE_GUARD_REREAD_BACKOFF_MS;
+        else process.env.PICKLE_GUARD_REREAD_BACKOFF_MS = prevEnv;
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('guardRereadBackoffMs: R-CCR-9 NaN and negative env values fall back to 500ms default', async () => {
+    // Non-finite or negative env falls back to 500ms default; writer at 100ms is found after re-read.
+    const { guardCompletionCommitBeforeDone } = await import('../bin/mux-runner.js');
+    for (const [envVal, label] of [['notanumber', 'NaN'], ['-100', 'negative']]) {
+        const tmpRoot = makeTmpRoot();
+        const prevEnv = process.env.PICKLE_GUARD_REREAD_BACKOFF_MS;
+        process.env.PICKLE_GUARD_REREAD_BACKOFF_MS = envVal;
+        try {
+            initGitRepo(tmpRoot);
+            const sha = gitHead(tmpRoot);
+            const sessionDir = path.join(tmpRoot, 'session');
+            const ticketId = label === 'NaN' ? 'ccr9dflt1' : 'ccr9dflt2';
+            const ticketDir = path.join(sessionDir, ticketId);
+            fs.mkdirSync(ticketDir, { recursive: true });
+            const ticketFile = path.join(ticketDir, `linear_ticket_${ticketId}.md`);
+            fs.writeFileSync(ticketFile, `---\nid: ${ticketId}\ntitle: "test"\nstatus: Done\n---\n# T\n`);
+            const stamped = `---\nid: ${ticketId}\ntitle: "test"\nstatus: Done\ncompletion_commit: ${sha}\n---\n# T\n`;
+            const writer = spawn(process.execPath, ['-e',
+                `setTimeout(()=>require('fs').writeFileSync(${JSON.stringify(ticketFile)}, ${JSON.stringify(stamped)}), 100)`,
+            ], { stdio: 'ignore' });
+            const t0 = Date.now();
+            const result = withProductionGuard(() =>
+                guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir: tmpRoot })
+            );
+            const elapsed = Date.now() - t0;
+            try { writer.kill(); } catch { /* already exited */ }
+            assert.ok(elapsed >= 400,
+                `${label} env must fall back to 500ms default; elapsed=${elapsed}ms`);
+            assert.equal(result.ok, true,
+                `${label} env: writer found after 500ms default backoff`);
+            assert.equal(result.sha, sha);
+        } finally {
+            if (prevEnv === undefined) delete process.env.PICKLE_GUARD_REREAD_BACKOFF_MS;
+            else process.env.PICKLE_GUARD_REREAD_BACKOFF_MS = prevEnv;
+            fs.rmSync(tmpRoot, { recursive: true, force: true });
+        }
+    }
+});
+
 test('hasSubstantiveManagerHandoff: substantive body returns true', async () => {
     const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
     const content = '## Manager Handoff\n- operator-owned release work remains\n';
@@ -4033,6 +4139,66 @@ test('R-CCR-2 detectMultiRepo: relative working_dirs resolve against stableBase 
     } finally {
         fs.rmSync(sessionDir, { recursive: true, force: true });
         fs.rmSync(repo, { recursive: true, force: true });
+    }
+});
+
+test('R-MRFP detectMultiRepo: relative working_dir with non-git stableBase falls back to resolved absolute path', () => {
+    const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mrfp3-')));
+    const stableBase = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mrfp3-base-')));
+    try {
+        // stableBase is NOT a git repo — resolveRepoRoot falls back to the absolute resolved path
+        const subA = path.join(stableBase, 'subA');
+        const subB = path.join(stableBase, 'subB');
+        fs.mkdirSync(subA, { recursive: true });
+        fs.mkdirSync(subB, { recursive: true });
+
+        const t1 = path.join(sessionDir, 't1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_t1.md'),
+            '---\nid: t1\ntitle: A\nstatus: Todo\norder: 10\nworking_dir: subA\n---\n');
+        const t2 = path.join(sessionDir, 't2');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
+            '---\nid: t2\ntitle: B\nstatus: Todo\norder: 20\nworking_dir: subB\n---\n');
+
+        // Relative paths resolve via stableBase; neither subdir is a git repo, so resolveRepoRoot falls back to the absolute path.
+        const result = detectMultiRepo(sessionDir, stableBase);
+        assert.ok(result, 'distinct non-git relative working_dirs must be detected as multi-repo');
+        assert.equal(result.length, 2);
+        assert.ok(result.some(r => r.endsWith('/subA')), `expected subA root; got ${JSON.stringify(result)}`);
+        assert.ok(result.some(r => r.endsWith('/subB')), `expected subB root; got ${JSON.stringify(result)}`);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(stableBase, { recursive: true, force: true });
+    }
+});
+
+test('R-MRFP detectMultiRepo: mixed git-repo and non-git-repo working_dirs are detected as multi-repo', () => {
+    const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mrfp4-')));
+    const gitRepo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mrfp4-repo-')));
+    const plainDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mrfp4-plain-')));
+    try {
+        initGitRepo(gitRepo);
+
+        const t1 = path.join(sessionDir, 't1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_t1.md'),
+            `---\nid: t1\ntitle: Git repo\nstatus: Todo\norder: 10\nworking_dir: ${gitRepo}\n---\n`);
+        const t2 = path.join(sessionDir, 't2');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
+            `---\nid: t2\ntitle: Plain dir\nstatus: Todo\norder: 20\nworking_dir: ${plainDir}\n---\n`);
+
+        // gitRepo resolves to its own git root; plainDir has no git root so falls back to plainDir itself — two distinct roots.
+        const result = detectMultiRepo(sessionDir, sessionDir);
+        assert.ok(result, 'git-repo + non-git-dir must be flagged as multi-repo');
+        assert.equal(result.length, 2);
+        assert.ok(result.includes(gitRepo), `expected gitRepo root; got ${JSON.stringify(result)}`);
+        assert.ok(result.includes(plainDir), `expected plainDir root; got ${JSON.stringify(result)}`);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(gitRepo, { recursive: true, force: true });
+        fs.rmSync(plainDir, { recursive: true, force: true });
     }
 });
 

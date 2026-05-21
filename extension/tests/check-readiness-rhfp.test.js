@@ -82,3 +82,26 @@ test('R-CCR-13 (AC-CCR-13-2): genuine unresolved dotted symbol is still extracte
     `genuine in-repo dotted symbol must still be extracted; got ${JSON.stringify(refs)}`,
   );
 });
+
+// R-CCR-9: PATH_RE lookbehind (?<![\w./@-]) blocks @-scoped refs; ./ is in [\w.-] so ./-prefixed paths ARE extracted.
+test('R-CCR-9 extractContractReferences: @-scoped package path is excluded from extraction', () => {
+  const refs = extractContractReferences(
+    'See `@scope/pkg/helper.ts` for the interface, also check `extension/src/bin/foo.ts`.',
+  );
+  assert.ok(
+    !refs.some((r) => r.includes('@scope') || r === 'pkg/helper.ts'),
+    `@-scoped package path must be excluded from extraction; got ${JSON.stringify(refs)}`,
+  );
+  assert.ok(
+    refs.includes('extension/src/bin/foo.ts'),
+    `plain in-repo path must still be extracted; got ${JSON.stringify(refs)}`,
+  );
+});
+
+test('R-CCR-9 extractContractReferences: ./-prefixed relative path is included in extraction', () => {
+  const refs = extractContractReferences('Edit `./src/helper.ts` to add the new function.');
+  assert.ok(
+    refs.includes('./src/helper.ts'),
+    `./-prefixed path must be extracted as a contract ref; got ${JSON.stringify(refs)}`,
+  );
+});
