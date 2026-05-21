@@ -1943,6 +1943,38 @@ export function logPhaseHaltReason(runtime, rawPhase, exitCode, log) {
         return 'abort';
     }
 }
+/**
+ * R-PRJT-2 recovery: a microverse phase that exited on a transient
+ * `judge_timeout` re-runs finalize-gate; a clean gate completes the phase,
+ * a red gate breaks the pipeline. Extracted from `runPhaseIteration` to keep
+ * that function under the eslint complexity ceiling.
+ */
+async function runJudgeTimeoutFinalizeGate(runtime, counters, rawPhase, log) {
+    try {
+        logActivity({
+            event: 'pipeline_judge_timeout_recovery_attempted',
+            source: 'pickle',
+            phase: rawPhase,
+            attempts: 4,
+            fall_through_to_finalize_gate: true,
+        });
+    }
+    catch { /* telemetry best-effort */ }
+    const skill = rawPhase === 'anatomy-park' ? 'anatomy-park' : 'szechuan';
+    const gateResult = await runSpawnRunner('node', [
+        path.join(runtime.extensionRoot, 'extension', 'bin', 'finalize-gate.js'),
+        runtime.sessionDir,
+        skill,
+    ], runtime.phaseEnv);
+    if (gateResult.exitCode === 0) {
+        counters.completed++;
+        writeRunningStatus(runtime, counters, null);
+        log(`Phase ${rawPhase} finalize-gate passed after judge_timeout recovery`);
+        return { action: 'continue' };
+    }
+    log(`Phase ${rawPhase} finalize-gate failed after judge_timeout recovery (exit ${gateResult.exitCode})`);
+    return { action: 'break' };
+}
 async function runPhaseIteration(runtime, counters, cancelMarker, rawPhase, index, log) {
     logPhaseStart(runtime, rawPhase, index);
     writeRunningStatus(runtime, counters, rawPhase);
@@ -1998,30 +2030,7 @@ async function runPhaseIteration(runtime, counters, cancelMarker, rawPhase, inde
     if (shouldHalt) {
         const haltAction = logPhaseHaltReason(runtime, rawPhase, exitCode, log);
         if (haltAction === 'run-finalize-gate') {
-            try {
-                logActivity({
-                    event: 'pipeline_judge_timeout_recovery_attempted',
-                    source: 'pickle',
-                    phase: rawPhase,
-                    attempts: 4,
-                    fall_through_to_finalize_gate: true,
-                });
-            }
-            catch { /* telemetry best-effort */ }
-            const skill = rawPhase === 'anatomy-park' ? 'anatomy-park' : 'szechuan';
-            const gateResult = await runSpawnRunner('node', [
-                path.join(runtime.extensionRoot, 'extension', 'bin', 'finalize-gate.js'),
-                runtime.sessionDir,
-                skill,
-            ], runtime.phaseEnv);
-            if (gateResult.exitCode === 0) {
-                counters.completed++;
-                writeRunningStatus(runtime, counters, null);
-                log(`Phase ${rawPhase} finalize-gate passed after judge_timeout recovery`);
-                return { action: 'continue' };
-            }
-            log(`Phase ${rawPhase} finalize-gate failed after judge_timeout recovery (exit ${gateResult.exitCode})`);
-            return { action: 'break' };
+            return runJudgeTimeoutFinalizeGate(runtime, counters, rawPhase, log);
         }
         return { action: 'break' };
     }
