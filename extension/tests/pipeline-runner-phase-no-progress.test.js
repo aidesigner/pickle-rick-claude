@@ -397,6 +397,103 @@ test('R-PRH: a manager_handoff_pending phase exit is preserved, not folded into 
   }
 });
 
+test('R-CCR-10: manager_handoff_pending + unresolved tickets preserves handoff reason', async () => {
+  const repo = tmpDir('pipe-ccr10-handoff-pending-repo-');
+  const sessionDir = tmpDir('pipe-ccr10-handoff-pending-session-');
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle']);
+
+    // 1 Done + 2 Todo: phase exits clean with a handoff reason but unresolved tickets.
+    // pipeline-runner must preserve the handoff reason instead of clobbering it with
+    // phase_incomplete_tickets.
+    writeTicket(sessionDir, 'aaa11111', 1, 'Done');
+    writeTicket(sessionDir, 'bbb22222', 2, 'Todo');
+    writeTicket(sessionDir, 'ccc33333', 3, 'Todo');
+
+    // mux-runner exits clean (code 0) and stamps a handoff exit_reason.
+    // maybeStampPhaseIncompleteTickets should NOT overwrite this with phase_incomplete_tickets.
+    const statePath = path.join(sessionDir, 'state.json');
+    __setSpawnRunnerForTests(async () => {
+      const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      s.exit_reason = 'manager_handoff_pending';
+      fs.writeFileSync(statePath, JSON.stringify(s, null, 2));
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Success);
+
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.equal(
+      state.exit_reason,
+      'manager_handoff_pending',
+      'pipeline-runner must preserve manager_handoff_pending even with unresolved tickets',
+    );
+
+    const log = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+    assert.ok(
+      /stopped for manager handoff/.test(log),
+      `log must describe the handoff stop; got:\n${log.split('\n').slice(-10).join('\n')}`,
+    );
+    assert.ok(
+      !/tickets remain unresolved/.test(log),
+      'log must NOT describe incomplete-ticket condition when handoff is present',
+    );
+  } finally {
+    __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('R-CCR-10: closer_handoff_terminal + unresolved tickets preserves handoff reason', async () => {
+  const repo = tmpDir('pipe-ccr10-handoff-closer-repo-');
+  const sessionDir = tmpDir('pipe-ccr10-handoff-closer-session-');
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle']);
+
+    // 1 Done + 2 Todo: phase exits clean with a closer_handoff_terminal reason but unresolved tickets.
+    // Same test as manager_handoff_pending but covering the second handoff reason.
+    writeTicket(sessionDir, 'aaa11111', 1, 'Done');
+    writeTicket(sessionDir, 'bbb22222', 2, 'Todo');
+    writeTicket(sessionDir, 'ccc33333', 3, 'Todo');
+
+    const statePath = path.join(sessionDir, 'state.json');
+    __setSpawnRunnerForTests(async () => {
+      const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      s.exit_reason = 'closer_handoff_terminal';
+      fs.writeFileSync(statePath, JSON.stringify(s, null, 2));
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Success);
+
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.equal(
+      state.exit_reason,
+      'closer_handoff_terminal',
+      'pipeline-runner must preserve closer_handoff_terminal even with unresolved tickets',
+    );
+
+    const log = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+    assert.ok(
+      /stopped for manager handoff/.test(log),
+      `log must describe the handoff stop; got:\n${log.split('\n').slice(-10).join('\n')}`,
+    );
+    assert.ok(
+      !/tickets remain unresolved/.test(log),
+      'log must NOT describe incomplete-ticket condition when handoff is present',
+    );
+  } finally {
+    __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
 test('R-CCR-4: real failure (no handoff) still exits Failure with status failed', async () => {
   const repo = tmpDir('pipe-ccr4-fail-repo-');
   const sessionDir = tmpDir('pipe-ccr4-fail-session-');
