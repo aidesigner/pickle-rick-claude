@@ -495,7 +495,7 @@ function resolvePerIterationGateDeps(opts: {
   };
 }
 
-async function runChangedPerIterationGate(opts: {
+interface RunChangedPerIterationGateOpts {
   currentMv: MicroverseSessionState;
   preIterSha: string;
   workingDir: string;
@@ -505,46 +505,53 @@ async function runChangedPerIterationGate(opts: {
   iteration?: number;
   log: (msg: string) => void;
   deps: ResolvedPerIterationGateDeps;
-}): Promise<MicroverseSessionState> {
+}
+
+async function attemptStrictBaselineRecapture(opts: RunChangedPerIterationGateOpts): Promise<'baseline' | 'strict'> {
+  try {
+    opts.log('[anatomy-park] per-iteration gate baseline missing after commit — attempting one recapture from pre-iteration tree');
+    const attemptedAtMs = Date.now();
+    opts.deps.logActivityFn({
+      ts: new Date(attemptedAtMs).toISOString(),
+      event: 'baseline_recapture_attempted',
+      source: 'pickle',
+      session: path.basename(opts.sessionDir),
+      iteration: opts.iteration,
+    });
+    await withCleanTemporaryCheckout(opts.workingDir, opts.preIterSha, () => capturePerIterationGateBaseline({
+      currentMv: opts.currentMv,
+      workingDir: opts.workingDir,
+      sessionDir: opts.sessionDir,
+      baselinePath: opts.baselinePath,
+      currentIteration: opts.iteration,
+      log: opts.log,
+      deps: opts.deps,
+      failureEvent: 'baseline_recapture_failed',
+      failureMessage: `[anatomy-park] per-iteration gate baseline recapture failed - expected baseline at ${opts.baselinePath}`,
+      successMessage: (result) =>
+        `[anatomy-park] recaptured per-iteration gate baseline ` +
+        `(captured ${result.total_raw_failure_count} pre-existing failure(s))`,
+    }));
+    const succeededAtMs = Math.max(Date.now(), attemptedAtMs + 1);
+    opts.deps.logActivityFn({
+      ts: new Date(succeededAtMs).toISOString(),
+      event: 'baseline_recapture_succeeded',
+      source: 'pickle',
+      session: path.basename(opts.sessionDir),
+      iteration: opts.iteration,
+    });
+    return 'baseline';
+  } catch (err) {
+    opts.log(`[anatomy-park] per-iteration gate baseline recapture failed (${safeErrorMessage(err)})`);
+    return 'strict';
+  }
+}
+
+async function runChangedPerIterationGate(opts: RunChangedPerIterationGateOpts): Promise<MicroverseSessionState> {
   let gateMode = opts.gateMode;
 
   if (gateMode === 'strict') {
-    try {
-      opts.log('[anatomy-park] per-iteration gate baseline missing after commit — attempting one recapture from pre-iteration tree');
-      const attemptedAtMs = Date.now();
-      opts.deps.logActivityFn({
-        ts: new Date(attemptedAtMs).toISOString(),
-        event: 'baseline_recapture_attempted',
-        source: 'pickle',
-        session: path.basename(opts.sessionDir),
-        iteration: opts.iteration,
-      });
-      await withCleanTemporaryCheckout(opts.workingDir, opts.preIterSha, () => capturePerIterationGateBaseline({
-        currentMv: opts.currentMv,
-        workingDir: opts.workingDir,
-        sessionDir: opts.sessionDir,
-        baselinePath: opts.baselinePath,
-        currentIteration: opts.iteration,
-        log: opts.log,
-        deps: opts.deps,
-        failureEvent: 'baseline_recapture_failed',
-        failureMessage: `[anatomy-park] per-iteration gate baseline recapture failed - expected baseline at ${opts.baselinePath}`,
-        successMessage: (result) =>
-          `[anatomy-park] recaptured per-iteration gate baseline ` +
-          `(captured ${result.total_raw_failure_count} pre-existing failure(s))`,
-      }));
-      gateMode = 'baseline';
-      const succeededAtMs = Math.max(Date.now(), attemptedAtMs + 1);
-      opts.deps.logActivityFn({
-        ts: new Date(succeededAtMs).toISOString(),
-        event: 'baseline_recapture_succeeded',
-        source: 'pickle',
-        session: path.basename(opts.sessionDir),
-        iteration: opts.iteration,
-      });
-    } catch (err) {
-      opts.log(`[anatomy-park] per-iteration gate baseline recapture failed (${safeErrorMessage(err)})`);
-    }
+    gateMode = await attemptStrictBaselineRecapture(opts);
   }
 
   if (gateMode === 'strict') {
@@ -579,6 +586,14 @@ async function runChangedPerIterationGate(opts: {
     return opts.currentMv;
   }
 
+  return recordPerIterationGateRegression(opts, result, gateMode);
+}
+
+function recordPerIterationGateRegression(
+  opts: RunChangedPerIterationGateOpts,
+  result: GateResult,
+  gateMode: 'baseline' | 'strict',
+): MicroverseSessionState {
   const gatePayload = {
     mode: gateMode,
     scope: 'changed',
