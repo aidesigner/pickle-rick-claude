@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { validateStartupState } from '../bin/mux-runner.js';
+import { validateStartupState, repairZeroWorkerTimeout } from '../bin/mux-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MUX_RUNNER_BIN = path.resolve(__dirname, '../bin/mux-runner.js');
@@ -92,7 +92,6 @@ test('startup-validation: setup tmux max_iterations=0 is accepted as unlimited',
 // --- worker_timeout_seconds validation ---
 
 for (const [label, value] of [
-    ['zero', 0],
     ['negative', -1],
     ['86401 (implausible)', 86401],
     ['NaN', NaN],
@@ -122,6 +121,61 @@ test('startup-validation: worker_timeout_seconds=86400 → not exit 2', () => {
         const sessionDir = makeSessionDir(root, { worker_timeout_seconds: 86400, iteration: 10, max_iterations: 10 });
         const result = run(sessionDir, root);
         assert.notEqual(result.status, 2, `Expected exit != 2 for boundary value 86400, got: ${result.stderr}`);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+// --- R-WTZ: worker_timeout_seconds=0 is repaired at load, not fatal ---
+
+test('R-WTZ: repairZeroWorkerTimeout repairs 0 → default budget', () => {
+    const state = { worker_timeout_seconds: 0 };
+    const result = repairZeroWorkerTimeout(state);
+    assert.equal(result.repaired, true);
+    assert.ok(result.value > 0, `Expected positive repaired value, got ${result.value}`);
+    assert.equal(state.worker_timeout_seconds, result.value);
+});
+
+test('R-WTZ: repairZeroWorkerTimeout recovers operator tier_cap_override', () => {
+    const state = {
+        worker_timeout_seconds: 0,
+        flags: { tier_cap_override: { medium: { worker_timeout_seconds: 3000 } } },
+    };
+    const result = repairZeroWorkerTimeout(state);
+    assert.equal(result.repaired, true);
+    assert.equal(result.value, 3000, 'should recover the explicit operator override');
+    assert.equal(state.worker_timeout_seconds, 3000);
+});
+
+test('R-WTZ: repairZeroWorkerTimeout leaves a valid timeout untouched', () => {
+    const state = { worker_timeout_seconds: 1800 };
+    const result = repairZeroWorkerTimeout(state);
+    assert.equal(result.repaired, false);
+    assert.equal(state.worker_timeout_seconds, 1800);
+});
+
+test('R-WTZ: repairZeroWorkerTimeout does not repair negative or NaN', () => {
+    for (const bad of [-1, NaN]) {
+        const state = { worker_timeout_seconds: bad };
+        assert.equal(repairZeroWorkerTimeout(state).repaired, false, `${bad} must stay corrupt`);
+    }
+});
+
+test('startup-validation: worker_timeout_seconds=0 → repaired, not exit 2', () => {
+    const root = makeTmpRoot();
+    try {
+        const sessionDir = makeSessionDir(root, {
+            worker_timeout_seconds: 0,
+            iteration: 10,
+            max_iterations: 10,
+        });
+        const result = run(sessionDir, root);
+        assert.notEqual(result.status, 2, `0 timeout should be repaired, not exit 2. stderr: ${result.stderr}`);
+        const finalState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        assert.ok(
+            finalState.worker_timeout_seconds > 0,
+            `state.json worker_timeout_seconds should be repaired to > 0, got ${finalState.worker_timeout_seconds}`,
+        );
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -169,7 +223,7 @@ test('startup-validation: multiple bad fields → all issues in stderr', () => {
     try {
         const sessionDir = makeSessionDir(root, {
             max_iterations: -1,
-            worker_timeout_seconds: 0,
+            worker_timeout_seconds: -1,
             iteration: -1,
         });
         const result = run(sessionDir, root);

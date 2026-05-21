@@ -12,7 +12,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 usage: auto-resume.sh <session-dir>
 
 Foreground wrapper that relaunches mux-runner.js after a transient phase-incomplete exit
-(pipeline_phase_incomplete OR R-PIPE-2 phase_no_progress).
+(pipeline_phase_incomplete OR R-PIPE-2 phase_no_progress OR R-PPPA phase_incomplete_tickets).
 
 Environment:
   PICKLE_AUTO_RESUME_ON_CAP_HIT=1       enable auto-resume (required to activate loop)
@@ -25,7 +25,8 @@ parent shell. Child mux-runner is killed when the wrapper receives SIGTERM or SI
 
 Stop conditions (any one triggers halt):
   - exit_reason is 'closer_handoff_terminal' or 'manager_handoff_pending'
-  - exit_reason is not 'pipeline_phase_incomplete' or 'phase_no_progress' (R-PIPE-2)
+  - exit_reason is not 'pipeline_phase_incomplete', 'phase_no_progress' (R-PIPE-2),
+    or 'phase_incomplete_tickets' (R-PPPA)
   - MAX_RETRIES exhausted
   - wall-clock exceeds MAX_WALL_SECONDS
   - no progress (same ticket + done count) for >= PROGRESS_THRESHOLD consecutive retries
@@ -148,7 +149,9 @@ while true; do
   # R-PIPE-2: phase_no_progress is the same transient retry class as
   # pipeline_phase_incomplete — pipeline-runner stamps it when the pickle
   # phase exits clean (code 0) with 0 Done + 0 commits since session start.
-  if [[ "$exit_reason" != "pipeline_phase_incomplete" && "$exit_reason" != "phase_no_progress" ]]; then
+  # R-PPPA: phase_incomplete_tickets is the same transient class for the
+  # N-of-M case — pickle exits clean with some but not all tickets resolved.
+  if [[ "$exit_reason" != "pipeline_phase_incomplete" && "$exit_reason" != "phase_no_progress" && "$exit_reason" != "phase_incomplete_tickets" ]]; then
     echo "[auto-resume] stopped: exit_reason='$exit_reason'" >&2
     break
   fi

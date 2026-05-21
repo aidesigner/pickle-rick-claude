@@ -7,6 +7,10 @@ on:
         description: Number of consecutive test:fast passes required
         required: false
         default: '10'
+      ref:
+        description: Git ref (branch, tag, or commit SHA) to test. Defaults to the dispatch ref.
+        required: false
+        default: ''
   pull_request:
     paths:
       - extension/tests/auto-resume-stop-conditions.test.js
@@ -22,6 +26,8 @@ jobs:
       RUN_COUNT: ${{ inputs.run_count || '10' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - uses: actions/setup-node@v4
         with:

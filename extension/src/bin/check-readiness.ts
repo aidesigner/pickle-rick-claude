@@ -86,8 +86,20 @@ const DEFAULT_MAX_WALL_MS = 60_000;
 const FIND_IMPORTERS_TIMEOUT_MS = 3_000;
 const MACHINE_HINT_RE = /\b(\d+(?:\.\d+)?%?|exit\s+\d+|<\s*\d+|>\s*\d+|<=\s*\d+|>=\s*\d+|under\s+\d+|within\s+\d+|exact(?:ly)?|regex|matches?|JSON|field|file exists|writes?|emits?|test|describe\.each|node --test|npm test|tsc|eslint|table|input\/output)\b/i;
 const PURE_PROSE_RE = /\b(must|should)\s+(?:be|feel)\s+(?:intuitive|performant|fast|easy|simple|clear|usable|nice|good|robust|reliable)\b/i;
-const PATH_RE = /\b(?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)\b/g;
+// R-RHFP: lead with a negative lookbehind instead of `\b`. A bare `\b` sits at
+// the word boundary INSIDE `.github/...` (between `.` and `g`), so the leading
+// `.` of a dotfile path was silently dropped — `.github/workflows/x.yml`
+// resolved as `github/workflows/x.yml` and produced a phantom file_path finding.
+const PATH_RE = /(?<![\w./@-])(?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)\b/g;
 const SYMBOL_RE = /\b[A-Z][A-Za-z0-9]*(?:\.[A-Za-z_$][\w$]*)+\b|\b[A-Za-z_$][\w$]*\(\)/g;
+// R-RHFP: refinement writes correction notes like
+//   *(refined: the PRD cited `old/path.ts` — use `new/path.ts`)*
+// into ticket bodies. Paths/symbols quoted inside are the DELIBERATELY-stale
+// originals; the resolver must not flag them as unresolved references.
+const CORRECTION_NOTE_RE = /\*\(refined:[\s\S]*?\)\*/g;
+function stripCorrectionNotes(content: string): string {
+  return content.replace(CORRECTION_NOTE_RE, ' ');
+}
 // R-RTRC-7 forward-reference annotation: backticked token followed by exactly
 // one ASCII space and either a legacy `(forward-created)` marker, the hybrid
 // `(forward-created by ticket <hash>)` marker, a canonical
@@ -298,7 +310,8 @@ export function extractForwardRefAnnotations(content: string): { valid: Set<stri
   return { valid, malformed };
 }
 
-export function extractContractReferences(content: string): string[] {
+export function extractContractReferences(rawContent: string): string[] {
+  const content = stripCorrectionNotes(rawContent);
   const annotations = extractForwardRefAnnotations(content);
   const refs = new Set<string>();
   for (const match of content.matchAll(PATH_RE)) refs.add(match[0]);
@@ -760,7 +773,9 @@ function findPrdMapFindings(tickets: TicketInfo[], manifest: unknown, sourceRequ
 }
 
 function findPathFindings(ticket: TicketInfo, repoRoot: string, sessionDir: string, cache?: ResolverCache): ReadinessFinding[] {
-  const content = fs.readFileSync(ticket.file, 'utf-8');
+  // R-RHFP: drop `*(refined: ...)*` correction notes so stale old paths
+  // quoted inside them are not flagged as unresolved.
+  const content = stripCorrectionNotes(fs.readFileSync(ticket.file, 'utf-8'));
   // R-RTRC-2: skip annotated forward-references — they're documented as
   // forward-created so the resolver MUST not flag them as unresolved paths.
   const annotatedTokens = extractForwardRefAnnotations(content).valid;

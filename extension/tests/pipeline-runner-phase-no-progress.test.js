@@ -174,7 +174,7 @@ test('R-PIPE-2: pickle phase clean-exit with 0 Done + 0 commits stamps phase_no_
   }
 });
 
-test('R-PIPE-2: pickle phase passes when at least one ticket is Done', async () => {
+test('R-PIPE-2: pickle phase passes when all tickets are Done', async () => {
   const repo = tmpDir('pipe-pnp-done-repo-');
   const sessionDir = tmpDir('pipe-pnp-done-session-');
   try {
@@ -182,9 +182,10 @@ test('R-PIPE-2: pickle phase passes when at least one ticket is Done', async () 
     writeState(sessionDir, repo, startCommit);
     writePipeline(sessionDir, repo, ['pickle']);
 
-    // 2 Done, 1 Todo — progress happened
+    // All tickets Done — bundle fully resolved (R-PPPA: a leftover Todo would
+    // now stamp phase_incomplete_tickets instead of advancing).
     writeTicket(sessionDir, 'aaa11111', 1, 'Done');
-    writeTicket(sessionDir, 'bbb22222', 2, 'Todo');
+    writeTicket(sessionDir, 'bbb22222', 2, 'Done');
 
     __setSpawnRunnerForTests(async () => {
       return { exitCode: 0, stdout: '', stderr: '' };
@@ -224,8 +225,11 @@ test('R-PIPE-2: pickle phase passes when commits landed since start_commit (no D
     writeState(sessionDir, repo, startCommit);
     writePipeline(sessionDir, repo, ['pickle']);
 
-    // No Done tickets; but worker committed something after start_commit
-    writeTicket(sessionDir, 'aaa11111', 1, 'Todo');
+    // No Done tickets; ticket Skipped (terminal, not pending) + worker
+    // committed something after start_commit. commitCount>0 keeps
+    // phase_no_progress from firing; Skipped keeps phase_incomplete_tickets
+    // from firing (R-PPPA — only Todo/In Progress count as unresolved).
+    writeTicket(sessionDir, 'aaa11111', 1, 'Skipped');
 
     __setSpawnRunnerForTests(async () => {
       // Simulate a worker landing a real commit during the pickle phase.
@@ -248,6 +252,93 @@ test('R-PIPE-2: pickle phase passes when commits landed since start_commit (no D
     assert.ok(
       /Phase pickle completed successfully/.test(log),
       'log must claim success when a commit landed since start_commit',
+    );
+  } finally {
+    __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('R-PPPA: pickle phase clean-exit with N-of-M tickets Done stamps phase_incomplete_tickets', async () => {
+  const repo = tmpDir('pipe-pppa-repo-');
+  const sessionDir = tmpDir('pipe-pppa-session-');
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle', 'citadel']);
+
+    // 2 of 5 Done, 3 still Todo — the codex-manager hallucinated EPIC_COMPLETED
+    // and mux-runner exited clean. pipeline-runner must NOT advance to citadel.
+    writeTicket(sessionDir, 'aaa11111', 1, 'Done');
+    writeTicket(sessionDir, 'bbb22222', 2, 'Done');
+    writeTicket(sessionDir, 'ccc33333', 3, 'Todo');
+    writeTicket(sessionDir, 'ddd44444', 4, 'Todo');
+    writeTicket(sessionDir, 'eee55555', 5, 'In Progress');
+
+    __setSpawnRunnerForTests(async () => {
+      // A worker did land a commit, so phase_no_progress does NOT fire — this
+      // is exactly the N-of-M case that gate misses.
+      fs.writeFileSync(path.join(repo, 'partial.ts'), 'export const z = 3;\n');
+      git(['add', '.'], repo);
+      git(['commit', '-q', '-m', 'partial work'], repo);
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.PhaseIncomplete);
+
+    const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+    assert.equal(
+      state.exit_reason,
+      'phase_incomplete_tickets',
+      'pipeline-runner must stamp phase_incomplete_tickets when pickle exits clean with unresolved tickets',
+    );
+
+    const log = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+    assert.ok(
+      /3\/5 tickets remain unresolved/.test(log),
+      `log must describe the incomplete-bundle condition; got:\n${log.split('\n').slice(-10).join('\n')}`,
+    );
+    assert.ok(
+      !/Phase pickle completed successfully/.test(log),
+      'log must NOT claim success on an incomplete bundle',
+    );
+    assert.ok(
+      !/Phase citadel/.test(log),
+      'pipeline must NOT advance to citadel on an incomplete pickle phase',
+    );
+  } finally {
+    __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('R-PPPA: pickle phase with Done + Skipped tickets and no pending advances normally', async () => {
+  const repo = tmpDir('pipe-pppa-ok-repo-');
+  const sessionDir = tmpDir('pipe-pppa-ok-session-');
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle']);
+
+    // Done + Skipped = all terminal, zero pending — a legitimately complete bundle.
+    writeTicket(sessionDir, 'aaa11111', 1, 'Done');
+    writeTicket(sessionDir, 'bbb22222', 2, 'Skipped');
+
+    __setSpawnRunnerForTests(async () => {
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Success);
+
+    const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+    assert.equal(state.exit_reason, 'completed', 'Done + Skipped with no pending must advance');
+
+    const log = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+    assert.ok(
+      !/tickets remain unresolved/.test(log),
+      'Skipped tickets must not count as unresolved',
     );
   } finally {
     __setSpawnRunnerForTests(null);

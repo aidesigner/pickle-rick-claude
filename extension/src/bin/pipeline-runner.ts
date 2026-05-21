@@ -2154,10 +2154,17 @@ function collectPicklePhaseProgress(runtime: PipelineRuntime): {
   doneCount: number;
   commitCount: number;
   ticketCount: number;
+  pendingCount: number;
   startCommit: string | null;
 } {
   const tickets = collectTickets(runtime.sessionDir);
   const doneCount = tickets.filter(t => (t.status || '').toLowerCase() === 'done').length;
+  // Pending = still runnable: not Done, not Skipped. Skipped tickets are
+  // intentionally terminal, so they must NOT count as incomplete (R-PPPA).
+  const pendingCount = tickets.filter(t => {
+    const s = (t.status || '').toLowerCase();
+    return s !== 'done' && s !== 'skipped';
+  }).length;
   let commitCount = 0;
   let startCommit: string | null = null;
   try {
@@ -2178,7 +2185,31 @@ function collectPicklePhaseProgress(runtime: PipelineRuntime): {
       }
     } catch { /* git failure → treat as 0 commits */ }
   }
-  return { doneCount, commitCount, ticketCount: tickets.length, startCommit };
+  return { doneCount, commitCount, ticketCount: tickets.length, pendingCount, startCommit };
+}
+
+/**
+ * R-PPPA (Finding #59): catch the false phase-advance where pickle's mux-runner
+ * exits clean (code 0) with SOME but not all tickets resolved — the codex
+ * manager hallucinating `EPIC_COMPLETED` triggers an early clean exit.
+ * `maybeStampPhaseNoProgress` only catches the 0-Done/0-commit case; the
+ * N-of-M-Done case (2/13, 3/13) sails through. When runnable tickets remain,
+ * stamp the transient `phase_incomplete_tickets` exit_reason and break so the
+ * pipeline does NOT advance pickle→citadel→anatomy-park on an incomplete bundle.
+ */
+function maybeStampPhaseIncompleteTickets(
+  runtime: PipelineRuntime,
+  rawPhase: PhaseName,
+  exitCode: number,
+  log: (msg: string) => void,
+): PhaseIterationOutcome | null {
+  if (rawPhase !== 'pickle' || exitCode !== 0) return null;
+  const progress = collectPicklePhaseProgress(runtime);
+  if (progress.ticketCount === 0) return null;
+  if (progress.pendingCount === 0) return null;
+  log(`Phase ${rawPhase} exited clean but ${progress.pendingCount}/${progress.ticketCount} tickets remain unresolved (${progress.doneCount} Done) — incomplete bundle`);
+  recordExitReason(runtime.statePath, 'phase_incomplete_tickets');
+  return { action: 'break', phaseIncomplete: true };
 }
 
 function finalizePipeline(
@@ -2412,6 +2443,8 @@ function finalizePhaseSuccess(
 ): PhaseIterationOutcome {
   const noProgressBreak = maybeStampPhaseNoProgress(runtime, rawPhase, exitCode, log);
   if (noProgressBreak) return noProgressBreak;
+  const incompleteBreak = maybeStampPhaseIncompleteTickets(runtime, rawPhase, exitCode, log);
+  if (incompleteBreak) return incompleteBreak;
   counters.completed++;
   writeRunningStatus(runtime, counters, null);
   if (fs.existsSync(cancelMarker)) {

@@ -2101,7 +2101,7 @@ test('guardCompletionCommitBeforeDone: rejects ticket with no completion_commit'
         fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`),
           `---\nid: ${ticketId}\ntitle: "test"\nstatus: Done\n---\n# T\n`);
         const result = withProductionGuard(() =>
-            guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir })
+            guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir, rereadBackoffMs: 0 })
         );
         assert.equal(result.ok, false, 'guard should reject ticket with no commit');
         assert.equal(result.source, 'absent');
@@ -2126,12 +2126,47 @@ test('guardCompletionCommitBeforeDone: bypass flag accepts inferred when set', a
           `---\nid: ${ticketId}\ntitle: "test"\nstatus: Done\n---\n# T\n`);
         withProductionGuard(() => {
             // No bypass: reject
-            const r1 = guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir, flags: {} });
+            const r1 = guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir, flags: {}, rereadBackoffMs: 0 });
             assert.equal(r1.ok, false);
             // With bypass flag: also reject because there's no sha at all (bypass requires inferred sha, not absent)
-            const r2 = guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir, flags: { allow_inferred_completion_commit: true } });
+            const r2 = guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir, flags: { allow_inferred_completion_commit: true }, rereadBackoffMs: 0 });
             assert.equal(r2.ok, false, 'bypass alone without any sha still rejects (absent source)');
         });
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('R-CCGR guardCompletionCommitBeforeDone: backoff re-read recovers a completion_commit stamped during the window', async () => {
+    const { guardCompletionCommitBeforeDone } = await import('../bin/mux-runner.js');
+    const tmpRoot = makeTmpRoot();
+    try {
+        initGitRepo(tmpRoot);
+        const sha = gitHead(tmpRoot);
+        const sessionDir = path.join(tmpRoot, 'session');
+        const ticketId = 'ccgr0001';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+        const ticketFile = path.join(ticketDir, `linear_ticket_${ticketId}.md`);
+        // Initial frontmatter: status Done but NO completion_commit — the
+        // exact state the guard sees before the worker's stamp lands.
+        fs.writeFileSync(ticketFile, `---\nid: ${ticketId}\ntitle: ccgr\nstatus: Done\n---\n# T\n`);
+
+        // A separate process stamps completion_commit ~150ms in — well inside
+        // the 800ms guard backoff window. The guard blocks synchronously via
+        // Atomics.wait, so only a real concurrent process can win this race.
+        const stamped = `---\nid: ${ticketId}\ntitle: ccgr\nstatus: Done\ncompletion_commit: ${sha}\n---\n# T\n`;
+        const writer = spawn(process.execPath, ['-e',
+            `setTimeout(()=>require('fs').writeFileSync(${JSON.stringify(ticketFile)}, ${JSON.stringify(stamped)}), 150)`,
+        ], { stdio: 'ignore' });
+
+        const result = withProductionGuard(() =>
+            guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir: tmpRoot, rereadBackoffMs: 800 })
+        );
+        try { writer.kill(); } catch { /* already exited */ }
+
+        assert.equal(result.ok, true, 'guard must accept a completion_commit that landed during the backoff');
+        assert.equal(result.sha, sha);
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
@@ -3244,6 +3279,92 @@ test('R-CCC-5 correctPhantomDoneTickets: completion_commit in frontmatter is NOT
         });
 
         assert.equal(corrected, 0, 'ticket with valid completion_commit must NOT be reverted');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Done');
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('R-PDWR correctPhantomDoneTickets: allow_inferred_completion_commit flag suppresses the revert', () => {
+    const tmpDir = makeTmpRoot();
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rpdwr-flag-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'rpdwrflag';
+        // Done frontmatter with NO completion_commit and no matching commit —
+        // normally a phantom-Done revert.
+        writeAutoMarkTicketWithStatus(sessionDir, ticketId, 'Done', true);
+
+        const corrected = correctPhantomDoneTickets({
+            sessionDir,
+            workingDir: tmpDir,
+            startCommit,
+            iteration: 2,
+            flags: { allow_inferred_completion_commit: true },
+        });
+
+        assert.equal(corrected, 0, 'allow_inferred_completion_commit must suppress the watcher revert');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Done');
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('R-PDWR correctPhantomDoneTickets: backtick-decorated completion_commit resolving to HEAD-reachable commit is NOT reverted', () => {
+    const tmpDir = makeTmpRoot();
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rpdwr-tick-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        fs.writeFileSync(path.join(tmpDir, 'worker.txt'), 'work');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+        // Subject carries no ticket hash and no R-* code, so the git --grep
+        // inference path also misses — hasCompletionCommit returns 'absent'.
+        spawnSync('git', ['commit', '-m', 'misc cleanup', '--no-gpg-sign'], { cwd: tmpDir });
+        const completionSha = gitHead(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'rpdwrtick';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+        // completion_commit stamped with backtick decoration — defeats the
+        // strict hasCompletionCommit hex check, which then returns 'absent'.
+        fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
+            '---',
+            `id: ${ticketId}`,
+            'title: plain stamp ticket',
+            'status: Done',
+            'order: 1',
+            `completion_commit: \`${completionSha}\``,
+            '---',
+            '# Description',
+            '',
+        ].join('\n'));
+
+        // hasCompletionCommit returns 'absent' for the decorated value...
+        const evidence = hasCompletionCommit({ sessionDir, ticketId, workingDir: tmpDir });
+        assert.equal(evidence.source, 'absent', 'precondition: strict check misses the decorated SHA');
+
+        // ...but the watcher's lenient HEAD-reachability re-check keeps it Done.
+        const corrected = correctPhantomDoneTickets({
+            sessionDir,
+            workingDir: tmpDir,
+            startCommit,
+            iteration: 3,
+        });
+
+        assert.equal(corrected, 0, 'a HEAD-reachable completion_commit must not be reverted');
         assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Done');
     } finally {
         if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;

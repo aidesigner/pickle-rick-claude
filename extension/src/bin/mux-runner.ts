@@ -812,7 +812,55 @@ export interface CorrectPhantomDoneTicketsInput {
   workingDir: string;
   startCommit: string | null;
   iteration: number;
+  /** Persisted state flags; honors `allow_inferred_completion_commit` (R-PDWR). */
+  flags?: Record<string, unknown> | null;
   log?: (msg: string) => void;
+}
+
+/**
+ * R-PDWR: a lenient, watcher-only re-check before a destructive revert.
+ * `hasCompletionCommit`'s strict explicit path can return 'absent' for a
+ * genuinely-complete ticket — a stamped `completion_commit` carrying
+ * decoration (backticks), a stale `workingDir`, or a transient read all
+ * defeat it. Reverting a real completion to Todo costs a full redo, so before
+ * the phantom-Done watcher reverts, give the stamped field the benefit of the
+ * doubt: if it resolves to a real commit reachable from HEAD, the ticket is
+ * genuinely done.
+ */
+function frontmatterCompletionCommitReachable(ticketPath: string, workingDir: string): boolean {
+  let content: string;
+  try {
+    content = fs.readFileSync(ticketPath, 'utf8');
+  } catch {
+    return false;
+  }
+  for (const field of ['completion_commit', 'completion_commit_inferred']) {
+    const raw = readFrontmatterField(content, field);
+    if (!raw) continue;
+    const sha = raw.replace(/[`'"]/g, '').trim();
+    if (!/^[0-9a-f]{7,40}$/i.test(sha)) continue;
+    try {
+      execFileSync('git', ['-C', workingDir, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
+        timeout: 5000,
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+      return true;
+    } catch { /* not a HEAD-reachable commit — try the next field */ }
+  }
+  return false;
+}
+
+/**
+ * R-PDWR: decides whether the phantom-Done watcher must leave a Done ticket
+ * alone despite `hasCompletionCommit` returning 'absent'.
+ */
+function phantomDoneShouldKeepDone(
+  input: CorrectPhantomDoneTicketsInput,
+  ticketId: string,
+  workingDir: string,
+): boolean {
+  if ((input.flags ?? {})['allow_inferred_completion_commit'] === true) return true;
+  return frontmatterCompletionCommitReachable(ticketFilePath(input.sessionDir, ticketId), workingDir);
 }
 
 export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput): number {
@@ -836,6 +884,13 @@ export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput)
     // closes the second revert path.
     const evidence = hasCompletionCommit({ sessionDir: input.sessionDir, ticketId: ticket.id, workingDir });
     if (evidence.source !== 'absent') continue;
+    // R-PDWR: keep the ticket Done when the operator bypass is set, or when a
+    // stamped completion_commit resolves to a real HEAD-reachable commit that
+    // the strict hasCompletionCommit check missed.
+    if (phantomDoneShouldKeepDone(input, ticket.id, workingDir)) {
+      input.log?.(`Phantom-Done watcher kept ticket ${ticket.id} Done — valid completion_commit evidence`);
+      continue;
+    }
     if (!writeTicketStatus(input.sessionDir, ticket.id, 'Todo')) continue;
 
     corrected++;
@@ -2614,11 +2669,31 @@ type CloserTerminalDecision =
  * attributable commit. mux-runner trusted the prose; the bundle bookkeeping
  * shipped while the actual fix never landed. This is the surgical guard.
  */
+/**
+ * R-CCGR: a process-blocking sleep, used only for the guard's single backoff
+ * re-read. `Atomics.wait` blocks without spawning a child process.
+ */
+function sleepSyncMs(ms: number): void {
+  if (!(ms > 0)) return;
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch { /* SharedArrayBuffer disabled — skip the backoff */ }
+}
+
+/** R-CCGR backoff before the guard's single re-read; env-overridable, clamped. */
+function guardRereadBackoffMs(): number {
+  const raw = Number(process.env.PICKLE_GUARD_REREAD_BACKOFF_MS);
+  if (Number.isFinite(raw) && raw >= 0) return Math.min(raw, 5000);
+  return 500;
+}
+
 export function guardCompletionCommitBeforeDone(args: {
   sessionDir: string;
   ticketId: string;
   workingDir: string;
   flags?: Record<string, unknown> | null;
+  /** R-CCGR: backoff (ms) before the single re-read; pass 0 in test fixtures. */
+  rereadBackoffMs?: number;
 }): { ok: true; sha: string } | { ok: false; reason: string; source: 'explicit' | 'inferred' | 'absent' } {
   // R-WSRC-4 parity: PICKLE_TEST_MODE=1 bypasses for sandboxed test fixtures
   // whose workingDir is a synthetic temp dir without a real git repo.
@@ -2627,11 +2702,22 @@ export function guardCompletionCommitBeforeDone(args: {
     return { ok: true, sha: 'pickle-test-mode-bypass' };
   }
   const allowInferred = (args.flags ?? {})['allow_inferred_completion_commit'] === true;
-  const evidence = hasCompletionCommit({
+  const probe = {
     sessionDir: args.sessionDir,
     ticketId: args.ticketId,
     workingDir: args.workingDir,
-  });
+  };
+  const guardPasses = (e: { source: string; sha: string | null }): boolean =>
+    (e.source === 'explicit' && !!e.sha) || (allowInferred && !!e.sha);
+  let evidence = hasCompletionCommit(probe);
+  if (!guardPasses(evidence)) {
+    // R-CCGR: the worker commits + stamps `completion_commit`, then emits its
+    // done-promise; mux-runner can read this guard before that frontmatter
+    // write is durably visible. Re-read once after a short backoff so a
+    // genuinely-complete ticket is not FATAL'd on a flush race.
+    sleepSyncMs(args.rereadBackoffMs ?? guardRereadBackoffMs());
+    evidence = hasCompletionCommit(probe);
+  }
   if (evidence.source === 'explicit' && evidence.sha) {
     return { ok: true, sha: evidence.sha };
   }
@@ -3151,7 +3237,34 @@ function unlinkLoopPath(ctx: LoopContext, targetPath: string): void {
   try { fs.unlinkSync(targetPath); } catch { /* ok */ }
 }
 
+/**
+ * R-WTZ: a zeroed `worker_timeout_seconds` (microverse's own sentinel value, or
+ * a resume-path bug landing 0) bricks every pickle-phase mux-runner launch with
+ * exit 2 in milliseconds — masquerading as a "Session inactive" fast-exit.
+ * Repair it in place at load instead of fatally exiting: recover the explicit
+ * operator override from `state.flags.tier_cap_override.medium` (R-ICP-3),
+ * otherwise fall back to the default worker budget. Only the exact value `0` is
+ * repaired — negative / NaN / missing remain genuine corruption and stay fatal.
+ */
+export function repairZeroWorkerTimeout(state: State): { repaired: boolean; value: number } {
+  const raw = (state as unknown as Record<string, unknown>).worker_timeout_seconds;
+  if (raw !== 0) return { repaired: false, value: Number(raw) };
+  const override = state.flags?.tier_cap_override as
+    | { medium?: { worker_timeout_seconds?: unknown } }
+    | undefined;
+  const mediumOverride = Number(override?.medium?.worker_timeout_seconds);
+  const recovered = Number.isInteger(mediumOverride) && mediumOverride > 0
+    ? mediumOverride
+    : Defaults.WORKER_TIMEOUT_SECONDS;
+  state.worker_timeout_seconds = recovered;
+  return { repaired: true, value: recovered };
+}
+
 export function validateStartupState(state: State, statePath: string): void {
+  const repair = repairZeroWorkerTimeout(state);
+  if (repair.repaired) {
+    sm.update(statePath, s => { s.worker_timeout_seconds = repair.value; });
+  }
   const rawObj = state as unknown as Record<string, unknown>;
   const issues: string[] = [];
   const maxIterField = rawObj.max_iterations;
@@ -3891,6 +4004,13 @@ async function runMuxRunnerMain() {
   // (worker_timeout_seconds=0 disables per-iteration timeout there; max_iterations=0
   // means unlimited iterations there). These rules must NOT be shared.
   {
+    // R-WTZ: repair a zeroed worker_timeout_seconds before validation so a
+    // poisoned sentinel value does not brick the phase with exit 2.
+    const timeoutRepair = repairZeroWorkerTimeout(ownerState);
+    if (timeoutRepair.repaired) {
+      sm.update(statePath, s => { s.worker_timeout_seconds = timeoutRepair.value; });
+      log(`[mux-runner] R-WTZ: repaired worker_timeout_seconds 0 → ${timeoutRepair.value}s at load`);
+    }
     // Use raw object to detect null (JSON-serialized NaN) vs absent vs zero
     const rawObj = ownerState as unknown as Record<string, unknown>;
     const issues: string[] = [];
@@ -4366,6 +4486,7 @@ async function runMuxRunnerMain() {
         workingDir: state.working_dir || process.cwd(),
         startCommit: state.start_commit || null,
         iteration,
+        flags: state.flags,
         log,
       });
     }
