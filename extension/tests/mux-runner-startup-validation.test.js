@@ -161,6 +161,23 @@ test('R-WTZ: repairZeroWorkerTimeout does not repair negative or NaN', () => {
     }
 });
 
+test('R-WTZ: repairZeroWorkerTimeout non-repaired result has finite positive value for NaN/negative/missing', () => {
+    const cases = [
+        { label: 'NaN', state: { worker_timeout_seconds: NaN } },
+        { label: 'negative', state: { worker_timeout_seconds: -1 } },
+        { label: 'missing', state: {} },
+    ];
+    for (const { label, state } of cases) {
+        const before = Object.assign({}, state);
+        const result = repairZeroWorkerTimeout(state);
+        assert.equal(result.repaired, false, `${label}: repaired must be false`);
+        assert.ok(Number.isFinite(result.value), `${label}: value must be finite, got ${result.value}`);
+        assert.ok(result.value > 0, `${label}: value must be > 0, got ${result.value}`);
+        // State must not be mutated
+        assert.deepEqual(state, before, `${label}: state must not be mutated`);
+    }
+});
+
 test('startup-validation: worker_timeout_seconds=0 → repaired, not exit 2', () => {
     const root = makeTmpRoot();
     try {

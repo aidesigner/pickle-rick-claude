@@ -3333,7 +3333,13 @@ function unlinkLoopPath(ctx: LoopContext, targetPath: string): void {
  */
 export function repairZeroWorkerTimeout(state: State): { repaired: boolean; value: number } {
   const raw = (state as unknown as Record<string, unknown>).worker_timeout_seconds;
-  if (raw !== 0) return { repaired: false, value: Number(raw) };
+  if (raw !== 0) {
+    const rawNum = Number(raw);
+    const value = Number.isFinite(rawNum) && rawNum > 0
+      ? rawNum
+      : Defaults.WORKER_TIMEOUT_SECONDS;
+    return { repaired: false, value };
+  }
   const override = state.flags?.tier_cap_override as
     | { medium?: { worker_timeout_seconds?: unknown } }
     | undefined;
