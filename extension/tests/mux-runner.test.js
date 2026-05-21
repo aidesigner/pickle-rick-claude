@@ -2152,13 +2152,27 @@ test('R-CCGR guardCompletionCommitBeforeDone: backoff re-read recovers a complet
         // exact state the guard sees before the worker's stamp lands.
         fs.writeFileSync(ticketFile, `---\nid: ${ticketId}\ntitle: ccgr\nstatus: Done\n---\n# T\n`);
 
-        // A separate process stamps completion_commit ~150ms in — well inside
-        // the 800ms guard backoff window. The guard blocks synchronously via
-        // Atomics.wait, so only a real concurrent process can win this race.
+        // A separate process signals readiness, then stamps completion_commit
+        // ~150ms later — well inside the 800ms guard backoff window. The guard
+        // blocks synchronously via Atomics.wait, so only a real concurrent
+        // process can win this race. Blocking on the ready marker before the
+        // guard starts absorbs Node subprocess cold-start jitter; without it a
+        // slow cold-start could push the 150ms stamp past the 800ms re-read.
         const stamped = `---\nid: ${ticketId}\ntitle: ccgr\nstatus: Done\ncompletion_commit: ${sha}\n---\n# T\n`;
+        const readyMarker = path.join(tmpRoot, 'writer-ready');
         const writer = spawn(process.execPath, ['-e',
-            `setTimeout(()=>require('fs').writeFileSync(${JSON.stringify(ticketFile)}, ${JSON.stringify(stamped)}), 150)`,
+            `const fs=require('fs');`
+            + `fs.writeFileSync(${JSON.stringify(readyMarker)},'r');`
+            + `setTimeout(()=>fs.writeFileSync(${JSON.stringify(ticketFile)}, ${JSON.stringify(stamped)}), 150);`,
         ], { stdio: 'ignore' });
+        const readyDeadline = Date.now() + 10000;
+        while (!fs.existsSync(readyMarker)) {
+            if (Date.now() > readyDeadline) {
+                try { writer.kill(); } catch { /* already exited */ }
+                throw new Error('R-CCGR: writer subprocess never signaled ready');
+            }
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+        }
 
         const result = withProductionGuard(() =>
             guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir: tmpRoot, rereadBackoffMs: 800 })
@@ -2314,7 +2328,9 @@ test('guardRereadBackoffMs: R-CCR-9 env above 5000ms ceiling clamped — writer 
 });
 
 test('guardRereadBackoffMs: R-CCR-9 NaN and negative env values fall back to 500ms default', async () => {
-    // Non-finite or negative env falls back to 500ms default; writer at 100ms is found after re-read.
+    // Non-finite or negative env falls back to the 500ms default backoff; a
+    // concurrent writer stamps completion_commit inside that window and the
+    // guard's single re-read after the backoff must find it.
     const { guardCompletionCommitBeforeDone } = await import('../bin/mux-runner.js');
     for (const [envVal, label] of [['notanumber', 'NaN'], ['-100', 'negative']]) {
         const tmpRoot = makeTmpRoot();
@@ -2330,9 +2346,26 @@ test('guardRereadBackoffMs: R-CCR-9 NaN and negative env values fall back to 500
             const ticketFile = path.join(ticketDir, `linear_ticket_${ticketId}.md`);
             fs.writeFileSync(ticketFile, `---\nid: ${ticketId}\ntitle: "test"\nstatus: Done\n---\n# T\n`);
             const stamped = `---\nid: ${ticketId}\ntitle: "test"\nstatus: Done\ncompletion_commit: ${sha}\n---\n# T\n`;
+            // The writer signals readiness, then stamps the ticket 150ms later.
+            // Blocking on the ready marker before starting the guard absorbs
+            // Node subprocess cold-start jitter — without it, a slow cold-start
+            // could push the 100ms write past the guard's 500ms re-read (flake).
+            // The 150ms stamp delay reliably lands AFTER the guard's first read
+            // (so the backoff path is exercised) and BEFORE its 500ms re-read.
+            const readyMarker = path.join(tmpRoot, 'writer-ready');
             const writer = spawn(process.execPath, ['-e',
-                `setTimeout(()=>require('fs').writeFileSync(${JSON.stringify(ticketFile)}, ${JSON.stringify(stamped)}), 100)`,
+                `const fs=require('fs');`
+                + `fs.writeFileSync(${JSON.stringify(readyMarker)},'r');`
+                + `setTimeout(()=>fs.writeFileSync(${JSON.stringify(ticketFile)}, ${JSON.stringify(stamped)}), 150);`,
             ], { stdio: 'ignore' });
+            const readyDeadline = Date.now() + 10000;
+            while (!fs.existsSync(readyMarker)) {
+                if (Date.now() > readyDeadline) {
+                    try { writer.kill(); } catch { /* already exited */ }
+                    throw new Error(`${label}: writer subprocess never signaled ready`);
+                }
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+            }
             const t0 = Date.now();
             const result = withProductionGuard(() =>
                 guardCompletionCommitBeforeDone({ sessionDir, ticketId, workingDir: tmpRoot })
