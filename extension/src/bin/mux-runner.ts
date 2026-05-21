@@ -913,9 +913,9 @@ function frontmatterCompletionCommitReachable(
       _gitReachabilityCache.set(fallbackDir, true);
       return { reachable: true, usedFallback: true };
     } catch (fallbackErr) {
-      const fs2 = (fallbackErr as { status?: number }).status;
-      const fc = (fallbackErr as { code?: string }).code;
-      _gitReachabilityCache.set(fallbackDir, fs2 === 128 || fc === 'ENOENT' ? false : true);
+      const fStatus = (fallbackErr as { status?: number }).status;
+      const fCode = (fallbackErr as { code?: string }).code;
+      _gitReachabilityCache.set(fallbackDir, fStatus === 128 || fCode === 'ENOENT' ? false : true);
     }
   }
   return { reachable: false, usedFallback: false };
