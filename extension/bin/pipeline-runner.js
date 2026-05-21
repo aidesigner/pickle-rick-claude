@@ -1827,12 +1827,30 @@ function maybeStampPhaseIncompleteTickets(runtime, rawPhase, exitCode, log) {
     recordExitReason(runtime.statePath, 'phase_incomplete_tickets');
     return { action: 'break', phaseIncomplete: true };
 }
+/**
+ * R-PRH: exit reasons that a phase runner stamps for a documented clean stop
+ * where the worker shipped and a human/manager must finish the handoff (closer
+ * release work, manager-handoff section). pipeline-runner must preserve these
+ * verbatim — folding them into the generic `failed` mislabels a clean handoff
+ * as a fatal failure to anyone reading `state.exit_reason`.
+ */
+const PIPELINE_HANDOFF_EXIT_REASONS = new Set(['manager_handoff_pending', 'closer_handoff_terminal']);
+function readHandoffExitReason(statePath) {
+    try {
+        const reason = sm.read(statePath).exit_reason;
+        return typeof reason === 'string' && PIPELINE_HANDOFF_EXIT_REASONS.has(reason) ? reason : null;
+    }
+    catch {
+        return null;
+    }
+}
 function finalizePipeline(runtime, counters, cancelMarker, startTime, phaseIncomplete) {
     const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
     const pipelineFailed = (counters.completed + counters.skipped) < runtime.config.phases.length;
-    if (phaseIncomplete) {
-        // Preserve the 'pipeline_phase_incomplete' exit_reason already stamped by
-        // reportPhaseIncomplete; do not let finalizeTerminalState overwrite it.
+    if (phaseIncomplete || readHandoffExitReason(runtime.statePath)) {
+        // Preserve the exit_reason already stamped by reportPhaseIncomplete or by a
+        // phase runner's manager/closer handoff; do not let finalizeTerminalState
+        // overwrite it with the generic 'failed' (R-PRH).
         finalizeTerminalState(runtime.statePath, { step: 'completed' });
     }
     else {
@@ -1928,6 +1946,14 @@ async function runPhaseIteration(runtime, counters, cancelMarker, rawPhase, inde
     }
     const exitCode = result.exitCode ?? 1;
     log(`Phase ${rawPhase} exited with code ${exitCode}`);
+    // R-PRH: a manager/closer handoff is a documented clean stop — the worker
+    // shipped and a human must finish. Stop the pipeline here, preserving the
+    // handoff exit_reason, instead of advancing or mislabeling it as 'failed'.
+    const handoffReason = readHandoffExitReason(runtime.statePath);
+    if (handoffReason) {
+        log(`Phase ${rawPhase} stopped for manager handoff (exit_reason=${handoffReason}) — pipeline paused for operator/closer work`);
+        return { action: 'break' };
+    }
     const skipWarning = shouldSkipAnatomyPhaseWithWarning(rawPhase, {
         exitCode,
         stdout: '',

@@ -3540,13 +3540,75 @@ test('detectMultiRepo: returns dirs when tickets have 2+ distinct working_dir va
         fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
             '---\nid: t2\ntitle: Web work\nstatus: Todo\norder: 20\nworking_dir: web/\n---\n');
 
+        // api/ and web/ are not git repos — each resolves to its own
+        // distinct absolute path, so this is still flagged as multi-repo.
         const result = detectMultiRepo(dir);
         assert.ok(result, 'should return an array');
-        assert.ok(result.includes('api/'), 'should contain api/');
-        assert.ok(result.includes('web/'), 'should contain web/');
+        assert.equal(result.length, 2);
+        assert.ok(result.some(r => r.endsWith('/api')), `should contain an api root; got ${JSON.stringify(result)}`);
+        assert.ok(result.some(r => r.endsWith('/web')), `should contain a web root; got ${JSON.stringify(result)}`);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('R-MRFP detectMultiRepo: monorepo workspace subdirs of one repo are NOT multi-repo', () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mrfp-')));
+    const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mrfp-repo-')));
+    try {
+        initGitRepo(repo);
+        const apiDir = path.join(repo, 'packages', 'api');
+        const appDir = path.join(repo, 'packages', 'app');
+        fs.mkdirSync(apiDir, { recursive: true });
+        fs.mkdirSync(appDir, { recursive: true });
+
+        const t1 = path.join(dir, 't1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_t1.md'),
+            `---\nid: t1\ntitle: API work\nstatus: Todo\norder: 10\nworking_dir: ${apiDir}\n---\n`);
+        const t2 = path.join(dir, 't2');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
+            `---\nid: t2\ntitle: App work\nstatus: Todo\norder: 20\nworking_dir: ${appDir}\n---\n`);
+        const t3 = path.join(dir, 't3');
+        fs.mkdirSync(t3);
+        fs.writeFileSync(path.join(t3, 'linear_ticket_t3.md'),
+            `---\nid: t3\ntitle: Root work\nstatus: Todo\norder: 30\nworking_dir: ${repo}\n---\n`);
+
+        assert.equal(
+            detectMultiRepo(dir),
+            null,
+            'workspace subdirs of one git repo must not trip the multi-repo warning',
+        );
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(repo, { recursive: true, force: true });
+    }
+});
+
+test('R-MRFP detectMultiRepo: tickets in two genuinely distinct git repos are multi-repo', () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mrfp2-')));
+    const repoA = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mrfp-a-')));
+    const repoB = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mrfp-b-')));
+    try {
+        initGitRepo(repoA);
+        initGitRepo(repoB);
+        const t1 = path.join(dir, 't1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_t1.md'),
+            `---\nid: t1\ntitle: A\nstatus: Todo\norder: 10\nworking_dir: ${repoA}\n---\n`);
+        const t2 = path.join(dir, 't2');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
+            `---\nid: t2\ntitle: B\nstatus: Todo\norder: 20\nworking_dir: ${repoB}\n---\n`);
+
+        const result = detectMultiRepo(dir);
+        assert.ok(result, 'genuinely distinct repos must still be flagged');
         assert.equal(result.length, 2);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(repoA, { recursive: true, force: true });
+        fs.rmSync(repoB, { recursive: true, force: true });
     }
 });
 

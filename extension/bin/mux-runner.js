@@ -513,16 +513,40 @@ export function truncateTaskNotes(content, maxChars = 2000) {
     return result.slice(0, maxChars - (TASK_NOTE_TRUNC_MARKER.length + 2)) + `\n${TASK_NOTE_TRUNC_MARKER}`;
 }
 /**
+ * R-MRFP: resolves a directory to its enclosing git repository root. Falls
+ * back to the absolute directory path when it is not inside a git repo (or
+ * does not exist), so forward-created dirs still get a stable identity.
+ */
+function resolveRepoRoot(dir) {
+    try {
+        const out = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], {
+            encoding: 'utf8',
+            timeout: 5000,
+            stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+        if (out)
+            return out;
+    }
+    catch { /* not a git repo / missing dir — fall back to the path itself */ }
+    return path.resolve(dir);
+}
+/**
  * Detects whether tickets in a session span multiple repositories.
- * Returns an array of distinct working_dir values if 2+, null otherwise.
+ * Returns an array of distinct repo roots if 2+, null otherwise.
  * Tickets with working_dir: null are excluded (they use session default).
+ *
+ * R-MRFP: dedupe by the enclosing git repo root, not the raw working_dir
+ * string. A monorepo with per-workspace working_dirs (`packages/api`,
+ * `packages/app`, repo root) is ONE repo — flagging it as multi-repo is a
+ * false positive that spams the iteration-1 log on every relaunch.
  */
 export function detectMultiRepo(sessionDir) {
     const tickets = collectTickets(sessionDir);
     const dirs = new Set(tickets
         .map(t => t.working_dir)
         .filter((d) => d !== null && d !== undefined));
-    return dirs.size >= 2 ? [...dirs] : null;
+    const roots = new Set([...dirs].map(resolveRepoRoot));
+    return roots.size >= 2 ? [...roots] : null;
 }
 const MUX_LIFECYCLE_ORDER = {
     research: 0,
@@ -735,6 +759,15 @@ function frontmatterCompletionCommitReachable(ticketPath, workingDir) {
     }
     return false;
 }
+/**
+ * R-PDWR: decides whether the phantom-Done watcher must leave a Done ticket
+ * alone despite `hasCompletionCommit` returning 'absent'.
+ */
+function phantomDoneShouldKeepDone(input, ticketId, workingDir) {
+    if ((input.flags ?? {})['allow_inferred_completion_commit'] === true)
+        return true;
+    return frontmatterCompletionCommitReachable(ticketFilePath(input.sessionDir, ticketId), workingDir);
+}
 export function correctPhantomDoneTickets(input) {
     let corrected = 0;
     for (const ticket of collectTickets(input.sessionDir)) {
@@ -759,13 +792,11 @@ export function correctPhantomDoneTickets(input) {
         const evidence = hasCompletionCommit({ sessionDir: input.sessionDir, ticketId: ticket.id, workingDir });
         if (evidence.source !== 'absent')
             continue;
-        // R-PDWR: never revert when the operator bypass is set...
-        if ((input.flags ?? {})['allow_inferred_completion_commit'] === true)
-            continue;
-        // ...or when a stamped completion_commit resolves to a real HEAD-reachable
-        // commit that the strict hasCompletionCommit check missed.
-        if (frontmatterCompletionCommitReachable(ticketFilePath(input.sessionDir, ticket.id), workingDir)) {
-            input.log?.(`Phantom-Done watcher kept ticket ${ticket.id} Done — completion_commit resolves to a HEAD-reachable commit`);
+        // R-PDWR: keep the ticket Done when the operator bypass is set, or when a
+        // stamped completion_commit resolves to a real HEAD-reachable commit that
+        // the strict hasCompletionCommit check missed.
+        if (phantomDoneShouldKeepDone(input, ticket.id, workingDir)) {
+            input.log?.(`Phantom-Done watcher kept ticket ${ticket.id} Done — valid completion_commit evidence`);
             continue;
         }
         if (!writeTicketStatus(input.sessionDir, ticket.id, 'Todo'))
@@ -2786,8 +2817,9 @@ export function repairZeroWorkerTimeout(state) {
 }
 export function validateStartupState(state, statePath) {
     const repair = repairZeroWorkerTimeout(state);
-    if (repair.repaired)
-        writeStateFile(statePath, state);
+    if (repair.repaired) {
+        sm.update(statePath, s => { s.worker_timeout_seconds = repair.value; });
+    }
     const rawObj = state;
     const issues = [];
     const maxIterField = rawObj.max_iterations;
@@ -3501,7 +3533,7 @@ async function runMuxRunnerMain() {
         // poisoned sentinel value does not brick the phase with exit 2.
         const timeoutRepair = repairZeroWorkerTimeout(ownerState);
         if (timeoutRepair.repaired) {
-            writeStateFile(statePath, ownerState);
+            sm.update(statePath, s => { s.worker_timeout_seconds = timeoutRepair.value; });
             log(`[mux-runner] R-WTZ: repaired worker_timeout_seconds 0 → ${timeoutRepair.value}s at load`);
         }
         // Use raw object to detect null (JSON-serialized NaN) vs absent vs zero

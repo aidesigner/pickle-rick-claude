@@ -346,3 +346,49 @@ test('R-PPPA: pickle phase with Done + Skipped tickets and no pending advances n
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
 });
+
+test('R-PRH: a manager_handoff_pending phase exit is preserved, not folded into failed', async () => {
+  const repo = tmpDir('pipe-prh-repo-');
+  const sessionDir = tmpDir('pipe-prh-session-');
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle', 'citadel']);
+    writeTicket(sessionDir, 'aaa11111', 1, 'Done');
+    writeTicket(sessionDir, 'bbb22222', 2, 'Todo');
+
+    // mux-runner exits clean (code 0) but stamps a manager_handoff_pending
+    // exit_reason — the worker shipped and the manager must finish the handoff.
+    const statePath = path.join(sessionDir, 'state.json');
+    __setSpawnRunnerForTests(async () => {
+      const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      s.exit_reason = 'manager_handoff_pending';
+      fs.writeFileSync(statePath, JSON.stringify(s, null, 2));
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Failure);
+
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.equal(
+      state.exit_reason,
+      'manager_handoff_pending',
+      'pipeline-runner must preserve the handoff exit_reason, not overwrite it with failed',
+    );
+
+    const log = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+    assert.ok(
+      /stopped for manager handoff/.test(log),
+      `log must describe the handoff stop; got:\n${log.split('\n').slice(-10).join('\n')}`,
+    );
+    assert.ok(
+      !/Phase pickle completed successfully/.test(log),
+      'a handoff stop is not a phase success',
+    );
+    assert.ok(!/Phase citadel/.test(log), 'pipeline must not advance to citadel after a handoff');
+  } finally {
+    __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});

@@ -601,9 +601,31 @@ export function truncateTaskNotes(content: string, maxChars: number = 2000): str
 }
 
 /**
+ * R-MRFP: resolves a directory to its enclosing git repository root. Falls
+ * back to the absolute directory path when it is not inside a git repo (or
+ * does not exist), so forward-created dirs still get a stable identity.
+ */
+function resolveRepoRoot(dir: string): string {
+  try {
+    const out = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (out) return out;
+  } catch { /* not a git repo / missing dir — fall back to the path itself */ }
+  return path.resolve(dir);
+}
+
+/**
  * Detects whether tickets in a session span multiple repositories.
- * Returns an array of distinct working_dir values if 2+, null otherwise.
+ * Returns an array of distinct repo roots if 2+, null otherwise.
  * Tickets with working_dir: null are excluded (they use session default).
+ *
+ * R-MRFP: dedupe by the enclosing git repo root, not the raw working_dir
+ * string. A monorepo with per-workspace working_dirs (`packages/api`,
+ * `packages/app`, repo root) is ONE repo — flagging it as multi-repo is a
+ * false positive that spams the iteration-1 log on every relaunch.
  */
 export function detectMultiRepo(sessionDir: string): string[] | null {
   const tickets = collectTickets(sessionDir);
@@ -612,7 +634,8 @@ export function detectMultiRepo(sessionDir: string): string[] | null {
       .map(t => t.working_dir)
       .filter((d): d is string => d !== null && d !== undefined)
   );
-  return dirs.size >= 2 ? [...dirs] : null;
+  const roots = new Set([...dirs].map(resolveRepoRoot));
+  return roots.size >= 2 ? [...roots] : null;
 }
 
 type MuxLifecycleStep = Extract<Step, 'research' | 'plan' | 'implement' | 'review'>;
