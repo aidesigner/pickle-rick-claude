@@ -90,6 +90,7 @@ const PURE_PROSE_RE = /\b(must|should)\s+(?:be|feel)\s+(?:intuitive|performant|f
 // the word boundary INSIDE `.github/...` (between `.` and `g`), so the leading
 // `.` of a dotfile path was silently dropped — `.github/workflows/x.yml`
 // resolved as `github/workflows/x.yml` and produced a phantom file_path finding.
+// The @ in the lookbehind (?<![\w./@-]) deliberately excludes @`-scoped package paths (npm @scope/pkg refs, not in-repo paths).
 const PATH_RE = /(?<![\w./@-])(?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)\b/g;
 const SYMBOL_RE = /\b[A-Z][A-Za-z0-9]*(?:\.[A-Za-z_$][\w$]*)+\b|\b[A-Za-z_$][\w$]*\(\)/g;
 // R-RHFP: refinement writes correction notes like
