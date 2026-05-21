@@ -889,6 +889,28 @@ describe('pipeline-runner.relaunch-claim', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test('R-CCR-3: claimPipelineRunnerActive clears manager_handoff_pending and closer_handoff_terminal at phase entry', () => {
+    for (const stalReason of ['manager_handoff_pending', 'closer_handoff_terminal']) {
+      const dir = tmpDir();
+      try {
+        const statePath = path.join(dir, 'state.json');
+        writeRelaunchClaimState(statePath, { exit_reason: stalReason });
+
+        claimPipelineRunnerActive(statePath);
+        const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+
+        assert.equal(
+          persisted.exit_reason,
+          null,
+          `claimPipelineRunnerActive must clear stale ${stalReason} at phase entry`,
+        );
+        assert.equal(persisted.active, true);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
 });
 
 describe('pipeline-runner.phase-history', () => {

@@ -392,3 +392,75 @@ test('R-PRH: a manager_handoff_pending phase exit is preserved, not folded into 
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
 });
+
+test('R-CCR-3: non-zero exit + stale manager_handoff_pending does NOT take clean-handoff break', async () => {
+  const repo = tmpDir('pipe-ccr3-nonzero-repo-');
+  const sessionDir = tmpDir('pipe-ccr3-nonzero-session-');
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle', 'citadel']);
+    writeTicket(sessionDir, 'aaa11111', 1, 'Todo');
+
+    // Phase runner exits non-zero and leaves a stale manager_handoff_pending
+    // in state — this simulates the cross-phase leak scenario.
+    const statePath = path.join(sessionDir, 'state.json');
+    __setSpawnRunnerForTests(async () => {
+      const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      s.exit_reason = 'manager_handoff_pending';
+      fs.writeFileSync(statePath, JSON.stringify(s, null, 2));
+      return { exitCode: 1, stdout: '', stderr: '' };
+    });
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Failure);
+
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.notEqual(
+      state.exit_reason,
+      'manager_handoff_pending',
+      'non-zero exit must NOT preserve a stale handoff exit_reason',
+    );
+    assert.ok(!/Phase citadel/.test(
+      fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8'),
+    ), 'pipeline must not advance to citadel on a failed phase');
+  } finally {
+    __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('R-CCR-3: non-zero exit with stale handoff reason terminates with failure marker, not step:completed+handoff', async () => {
+  const repo = tmpDir('pipe-ccr3-twin-repo-');
+  const sessionDir = tmpDir('pipe-ccr3-twin-session-');
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle']);
+    writeTicket(sessionDir, 'aaa11111', 1, 'Todo');
+
+    // Phase runner exits non-zero and stamps closer_handoff_terminal — the
+    // twin-read leak scenario: finalizePipeline must NOT see this and produce
+    // step:'completed' instead of a failure marker.
+    const statePath = path.join(sessionDir, 'state.json');
+    __setSpawnRunnerForTests(async () => {
+      const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      s.exit_reason = 'closer_handoff_terminal';
+      fs.writeFileSync(statePath, JSON.stringify(s, null, 2));
+      return { exitCode: 1, stdout: '', stderr: '' };
+    });
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Failure);
+
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.notEqual(
+      state.exit_reason,
+      'closer_handoff_terminal',
+      'stale handoff exit_reason must be cleared on non-zero exit (twin-read leak fix)',
+    );
+  } finally {
+    __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});

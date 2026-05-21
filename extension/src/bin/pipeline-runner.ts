@@ -723,7 +723,10 @@ export function claimPipelineRunnerActive(statePath: string): State {
   return sm.update(statePath, (s: State) => {
     s.active = true;
     s.pid = process.pid;
-    if (s.exit_reason === 'failed' || s.exit_reason === 'completed') {
+    if (
+      s.exit_reason === 'failed' || s.exit_reason === 'completed'
+      || s.exit_reason === 'manager_handoff_pending' || s.exit_reason === 'closer_handoff_terminal'
+    ) {
       s.exit_reason = null;
     }
   });
@@ -2359,10 +2362,17 @@ async function runPhaseIteration(
   // R-PRH: a manager/closer handoff is a documented clean stop — the worker
   // shipped and a human must finish. Stop the pipeline here, preserving the
   // handoff exit_reason, instead of advancing or mislabeling it as 'failed'.
+  // R-CCR-3: gate the handoff break on exitCode === 0. A non-zero exit carrying
+  // a stale handoff reason must be treated as a failure, not a clean stop.
   const handoffReason = readHandoffExitReason(runtime.statePath);
   if (handoffReason) {
-    log(`Phase ${rawPhase} stopped for manager handoff (exit_reason=${handoffReason}) — pipeline paused for operator/closer work`);
-    return { action: 'break' };
+    if (exitCode === 0) {
+      log(`Phase ${rawPhase} stopped for manager handoff (exit_reason=${handoffReason}) — pipeline paused for operator/closer work`);
+      return { action: 'break' };
+    }
+    // Non-zero exit — stale handoff reason must be cleared so finalizePipeline
+    // does not preserve it as a clean handoff (R-CCR-3 twin-read leak).
+    clearExitReason(runtime.statePath);
   }
   const skipWarning = shouldSkipAnatomyPhaseWithWarning(rawPhase, {
     exitCode,
