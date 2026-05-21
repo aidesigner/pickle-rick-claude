@@ -1853,6 +1853,8 @@ function finalizePipeline(runtime, counters, cancelMarker, startTime, phaseIncom
     const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
     const pipelineFailed = (counters.completed + counters.skipped) < runtime.config.phases.length;
     const handoffStop = !!readHandoffExitReason(runtime.statePath);
+    // A handoff stop is a deliberate pause, not a failure — fold it out once.
+    const effectiveFailed = pipelineFailed && !handoffStop;
     if (phaseIncomplete || handoffStop) {
         // Preserve the exit_reason already stamped by reportPhaseIncomplete or by a
         // phase runner's manager/closer handoff; do not let finalizeTerminalState
@@ -1872,7 +1874,7 @@ function finalizePipeline(runtime, counters, cancelMarker, startTime, phaseIncom
         Phases: phasesSummary,
         Elapsed: formatTime(totalElapsed),
     }, 'GREEN', '🧪');
-    writeFinalPipelineActivity(runtime, totalElapsed, phasesSummary, pipelineFailed && !handoffStop);
+    writeFinalPipelineActivity(runtime, totalElapsed, phasesSummary, effectiveFailed);
     // handoff stops skip closer-release
     if (!pipelineFailed && !handoffStop) {
         const closerPlan = buildCloserReleasePlan(sm.read(runtime.statePath));
@@ -1885,7 +1887,7 @@ function finalizePipeline(runtime, counters, cancelMarker, startTime, phaseIncom
         fs.unlinkSync(cancelMarker);
     }
     catch { /* may not exist */ }
-    writePipelineStatus(runtime.sessionDir, (pipelineFailed && !handoffStop) ? 'failed' : 'completed', {
+    writePipelineStatus(runtime.sessionDir, effectiveFailed ? 'failed' : 'completed', {
         current_phase: null,
         completed_phases: counters.completed,
         skipped_phases: counters.skipped,
@@ -1894,7 +1896,7 @@ function finalizePipeline(runtime, counters, cancelMarker, startTime, phaseIncom
     if (phaseIncomplete) {
         process.exit(PipelineRunnerExitCode.PhaseIncomplete);
     }
-    process.exit((pipelineFailed && !handoffStop) ? PipelineRunnerExitCode.Failure : PipelineRunnerExitCode.Success);
+    process.exit(effectiveFailed ? PipelineRunnerExitCode.Failure : PipelineRunnerExitCode.Success);
 }
 function emitHeadMismatchStderr(statePath) {
     try {
