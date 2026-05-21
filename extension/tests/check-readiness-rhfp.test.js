@@ -10,6 +10,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { extractContractReferences } from '../bin/check-readiness.js';
 
 test('R-RHFP (a): dotfile path keeps its leading dot', () => {
@@ -103,5 +105,57 @@ test('R-CCR-9 extractContractReferences: ./-prefixed relative path is included i
   assert.ok(
     refs.includes('./src/helper.ts'),
     `./-prefixed path must be extracted as a contract ref; got ${JSON.stringify(refs)}`,
+  );
+});
+
+/**
+ * R-CCR-12 (AC-CCR-12-1): the intentional `@`-scoped-path exclusion must be
+ * documented by a source comment immediately above `const PATH_RE =`. The
+ * behavioral test above proves the regex EXCLUDES @-scoped refs; this pins the
+ * comment that tells a future maintainer the exclusion is deliberate, so a
+ * refactor cannot silently strip the rationale and leave the lookbehind
+ * looking like a bug.
+ */
+test('R-CCR-12 (AC-CCR-12-1): PATH_RE carries a comment marking @-scoped paths as a deliberate exclusion', () => {
+  const src = fs.readFileSync(
+    path.resolve(import.meta.dirname, '../src/bin/check-readiness.ts'),
+    'utf-8',
+  );
+  const lines = src.split('\n');
+  const declIdx = lines.findIndex((l) => l.includes('const PATH_RE ='));
+  assert.notEqual(declIdx, -1, 'const PATH_RE = must exist in check-readiness.ts');
+
+  // Walk upward to collect the contiguous block of // comment lines directly
+  // above the declaration — the AC requires the comment to sit "near PATH_RE",
+  // so an unrelated comment elsewhere in the file cannot satisfy it.
+  const commentLines = [];
+  for (let i = declIdx - 1; i >= 0 && lines[i].trim().startsWith('//'); i -= 1) {
+    commentLines.unshift(lines[i]);
+  }
+  assert.notEqual(
+    commentLines.length, 0,
+    'AC-CCR-12-1: PATH_RE must be immediately preceded by an explanatory // comment block',
+  );
+  const block = commentLines.join('\n');
+
+  assert.match(
+    block,
+    /@`?-scoped/,
+    'AC-CCR-12-1: the comment block must name `@`-scoped paths literally',
+  );
+  assert.match(
+    block,
+    /deliberately|intentional/i,
+    'AC-CCR-12-1: the comment must state the exclusion is deliberate, not an oversight',
+  );
+  assert.match(
+    block,
+    /exclude/i,
+    'AC-CCR-12-1: the comment must state @-scoped paths are excluded',
+  );
+  assert.match(
+    block,
+    /not in-repo/i,
+    'AC-CCR-12-1: the comment must explain @-scoped paths are not in-repo refs',
   );
 });
