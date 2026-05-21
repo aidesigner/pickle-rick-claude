@@ -3374,6 +3374,176 @@ test('R-PDWR correctPhantomDoneTickets: backtick-decorated completion_commit res
     }
 });
 
+// --- R-CCR-1: session-dir fallback for frontmatterCompletionCommitReachable ---
+
+function writeTicketWithWorkingDir(sessionDir, ticketId, sha, ticketWorkingDir) {
+    const ticketDir = path.join(sessionDir, ticketId);
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
+        '---',
+        `id: ${ticketId}`,
+        'title: Fallback test ticket',
+        'status: Done',
+        'order: 1',
+        `completion_commit: ${sha}`,
+        `working_dir: ${ticketWorkingDir}`,
+        '---',
+        '# Description',
+        '',
+    ].join('\n'));
+}
+
+test('R-CCR-1 fallback keeps Done: stale ticket working_dir, real commit in session dir', () => {
+    // ticket.working_dir points at a non-git dir; the commit is reachable in
+    // input.workingDir (the session's real repo). Ticket must NOT be reverted.
+    const tmpDir = makeTmpRoot();
+    const staleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rccr1-stale-'));
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rccr1-data-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        // Real git repo — this is the session working dir.
+        initGitRepo(tmpDir);
+        fs.writeFileSync(path.join(tmpDir, 'work.txt'), 'done');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', 'work done R-CCR-1', '--no-gpg-sign'], { cwd: tmpDir });
+        const completionSha = gitHead(tmpDir);
+        const startCommit = completionSha;
+
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'rccr1keep';
+        // Ticket's working_dir is the stale non-git dir.
+        writeTicketWithWorkingDir(sessionDir, ticketId, completionSha, staleDir);
+
+        const logMessages = [];
+        const corrected = correctPhantomDoneTickets({
+            sessionDir,
+            workingDir: tmpDir,   // session fallback dir (real repo with the commit)
+            startCommit,
+            iteration: 1,
+            log: (msg) => logMessages.push(msg),
+        });
+
+        assert.equal(corrected, 0, 'ticket with valid completion_commit in session dir must NOT be reverted');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Done');
+        // Fallback fired: log must name both the stale dir and the session dir.
+        const fallbackLog = logMessages.find(msg => msg.includes(staleDir) && msg.includes(tmpDir));
+        assert.ok(fallbackLog, `expected log naming both dirs; got: ${JSON.stringify(logMessages)}`);
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(staleDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('R-CCR-1 no-fallback on clean miss: git runs, SHA is valid but not ancestor', () => {
+    // The per-ticket working_dir is a real git repo. The SHA is a valid commit
+    // but not an ancestor of HEAD (exit 1). The SHA uses backtick decoration so
+    // hasCompletionCommit (strict hex check) returns 'absent' — reaching the
+    // frontmatterCompletionCommitReachable path. Since git runs fine (exit 1,
+    // not exit 128), the fallback must NOT fire — ticket reverts.
+    const tmpDir = makeTmpRoot();
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rccr1-miss-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        // Create a side-branch commit that is NOT an ancestor of the main HEAD.
+        spawnSync('git', ['checkout', '-b', 'rccr1-side'], { cwd: tmpDir });
+        fs.writeFileSync(path.join(tmpDir, 'side.txt'), 'side');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', 'side commit', '--no-gpg-sign'], { cwd: tmpDir });
+        const notAncestorSha = gitHead(tmpDir);
+        // Return to original HEAD — notAncestorSha exists in repo but is not an ancestor.
+        spawnSync('git', ['checkout', '-'], { cwd: tmpDir });
+
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'rccr1miss';
+        // Use backtick-decorated SHA so hasCompletionCommit (strict hex check)
+        // misses it and returns 'absent', reaching frontmatterCompletionCommitReachable.
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+        fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
+            '---',
+            `id: ${ticketId}`,
+            'title: clean miss test',
+            'status: Done',
+            'order: 1',
+            `completion_commit: \`${notAncestorSha}\``,
+            '---',
+            '# Description',
+            '',
+        ].join('\n'));
+
+        const logMessages = [];
+        const corrected = correctPhantomDoneTickets({
+            sessionDir,
+            workingDir: tmpDir,   // git runs fine here (exit 1 for non-ancestor)
+            startCommit,
+            iteration: 1,
+            log: (msg) => logMessages.push(msg),
+        });
+
+        // SHA is valid but not ancestor → exit 1 → no fallback → ticket reverts.
+        assert.equal(corrected, 1, 'clean not-ancestor must trigger revert (no fallback)');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Todo');
+        // Verify fallback did NOT fire (no log message about fallback dirs).
+        const fallbackLog = logMessages.find(msg => msg.includes('retried in session dir'));
+        assert.ok(!fallbackLog, `fallback must not fire on clean exit 1; log: ${JSON.stringify(logMessages)}`);
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('R-CCR-1 genuine phantom: dir unusable AND SHA absent in fallback repo', () => {
+    // ticket.working_dir is stale; commit SHA is NOT in the session repo either.
+    // The ticket must still be reverted.
+    const tmpDir = makeTmpRoot();
+    const staleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rccr1-gphantom-stale-'));
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rccr1-gphantom-data-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        // SHA belongs to a different repo (another tmpDir) — not reachable in tmpDir.
+        const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rccr1-other-'));
+        initGitRepo(otherDir);
+        fs.writeFileSync(path.join(otherDir, 'x.txt'), 'x');
+        spawnSync('git', ['add', '.'], { cwd: otherDir });
+        spawnSync('git', ['commit', '-m', 'other', '--no-gpg-sign'], { cwd: otherDir });
+        const foreignSha = gitHead(otherDir);
+        fs.rmSync(otherDir, { recursive: true, force: true });
+
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'rccr1gph';
+        // Ticket working_dir = stale; SHA not in tmpDir either.
+        writeTicketWithWorkingDir(sessionDir, ticketId, foreignSha, staleDir);
+
+        const corrected = correctPhantomDoneTickets({
+            sessionDir,
+            workingDir: tmpDir,
+            startCommit,
+            iteration: 1,
+        });
+
+        assert.equal(corrected, 1, 'dir unusable + SHA absent in fallback must trigger revert');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Todo');
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(staleDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('classifyTicketCompletion: uncommitted git changes + lifecycle artifact → completed', () => {
     const tmpDir = makeTmpRoot();
     try {

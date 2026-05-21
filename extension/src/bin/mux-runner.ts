@@ -841,6 +841,11 @@ export interface CorrectPhantomDoneTicketsInput {
   log?: (msg: string) => void;
 }
 
+// R-CCR-1: memoize "can git run in this dir" per process lifetime to avoid
+// redundant probes across multiple tickets with the same stale working_dir.
+// true = git ran successfully, false = exit 128 or ENOENT (git-could-not-run).
+const _gitReachabilityCache = new Map<string, boolean>();
+
 /**
  * R-PDWR: a lenient, watcher-only re-check before a destructive revert.
  * `hasCompletionCommit`'s strict explicit path can return 'absent' for a
@@ -850,41 +855,91 @@ export interface CorrectPhantomDoneTicketsInput {
  * the phantom-Done watcher reverts, give the stamped field the benefit of the
  * doubt: if it resolves to a real commit reachable from HEAD, the ticket is
  * genuinely done.
+ *
+ * R-CCR-1: when `workingDir` is a stale/non-existent dir and git exits 128
+ * (or ENOENT), retry once against `fallbackDir` (the session working dir).
+ * A clean not-an-ancestor exit (1) does NOT trigger the fallback.
  */
-function frontmatterCompletionCommitReachable(ticketPath: string, workingDir: string): boolean {
+function frontmatterCompletionCommitReachable(
+  ticketPath: string,
+  workingDir: string,
+  fallbackDir?: string,
+): { reachable: boolean; usedFallback: boolean } {
   let content: string;
   try {
     content = fs.readFileSync(ticketPath, 'utf8');
   } catch {
-    return false;
+    return { reachable: false, usedFallback: false };
   }
   for (const field of ['completion_commit', 'completion_commit_inferred']) {
     const raw = readFrontmatterField(content, field);
     if (!raw) continue;
     const sha = raw.replace(/[`'"]/g, '').trim();
     if (!/^[0-9a-f]{7,40}$/i.test(sha)) continue;
+
+    const primaryCanRun = _gitReachabilityCache.get(workingDir) !== false;
+    if (primaryCanRun) {
+      try {
+        execFileSync('git', ['-C', workingDir, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
+          timeout: 5000,
+          stdio: ['ignore', 'ignore', 'ignore'],
+        });
+        _gitReachabilityCache.set(workingDir, true);
+        return { reachable: true, usedFallback: false };
+      } catch (primaryErr) {
+        const status = (primaryErr as { status?: number }).status;
+        const code = (primaryErr as { code?: string }).code;
+        const gitCouldNotRun = status === 128 || code === 'ENOENT';
+        if (!gitCouldNotRun) {
+          // Clean not-ancestor (exit 1): git ran fine, SHA just not reachable.
+          // Do NOT retry against fallback — only git-could-not-run triggers it.
+          _gitReachabilityCache.set(workingDir, true);
+          continue;
+        }
+        _gitReachabilityCache.set(workingDir, false);
+      }
+    }
+
+    // workingDir is unusable for git — retry once against fallbackDir.
+    if (!fallbackDir || fallbackDir === workingDir) continue;
+    const fallbackCanRun = _gitReachabilityCache.get(fallbackDir) !== false;
+    if (!fallbackCanRun) continue;
+
     try {
-      execFileSync('git', ['-C', workingDir, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
+      execFileSync('git', ['-C', fallbackDir, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
         timeout: 5000,
         stdio: ['ignore', 'ignore', 'ignore'],
       });
-      return true;
-    } catch { /* not a HEAD-reachable commit — try the next field */ }
+      _gitReachabilityCache.set(fallbackDir, true);
+      return { reachable: true, usedFallback: true };
+    } catch (fallbackErr) {
+      const fs2 = (fallbackErr as { status?: number }).status;
+      const fc = (fallbackErr as { code?: string }).code;
+      _gitReachabilityCache.set(fallbackDir, fs2 === 128 || fc === 'ENOENT' ? false : true);
+    }
   }
-  return false;
+  return { reachable: false, usedFallback: false };
 }
 
 /**
  * R-PDWR: decides whether the phantom-Done watcher must leave a Done ticket
  * alone despite `hasCompletionCommit` returning 'absent'.
+ * R-CCR-1: threads `input.workingDir` as the session-dir fallback.
  */
 function phantomDoneShouldKeepDone(
   input: CorrectPhantomDoneTicketsInput,
   ticketId: string,
   workingDir: string,
-): boolean {
-  if ((input.flags ?? {})['allow_inferred_completion_commit'] === true) return true;
-  return frontmatterCompletionCommitReachable(ticketFilePath(input.sessionDir, ticketId), workingDir);
+): { keepDone: boolean; fallbackFired: boolean } {
+  if ((input.flags ?? {})['allow_inferred_completion_commit'] === true) {
+    return { keepDone: true, fallbackFired: false };
+  }
+  const result = frontmatterCompletionCommitReachable(
+    ticketFilePath(input.sessionDir, ticketId),
+    workingDir,
+    input.workingDir,
+  );
+  return { keepDone: result.reachable, fallbackFired: result.usedFallback };
 }
 
 export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput): number {
@@ -911,7 +966,13 @@ export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput)
     // R-PDWR: keep the ticket Done when the operator bypass is set, or when a
     // stamped completion_commit resolves to a real HEAD-reachable commit that
     // the strict hasCompletionCommit check missed.
-    if (phantomDoneShouldKeepDone(input, ticket.id, workingDir)) {
+    // R-CCR-1: fallbackFired is true when the per-ticket dir was unusable and
+    // the session dir was used as the fallback probe.
+    const keepDoneResult = phantomDoneShouldKeepDone(input, ticket.id, workingDir);
+    if (keepDoneResult.keepDone) {
+      if (keepDoneResult.fallbackFired) {
+        input.log?.(`Phantom-Done watcher: per-ticket working_dir '${workingDir}' unusable for git; retried in session dir '${input.workingDir}'. Ticket ${ticket.id} kept Done.`);
+      }
       input.log?.(`Phantom-Done watcher kept ticket ${ticket.id} Done — valid completion_commit evidence`);
       continue;
     }
