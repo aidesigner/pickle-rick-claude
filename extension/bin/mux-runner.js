@@ -729,6 +729,25 @@ function withFreshTicketStatuses(sessionDir, tickets) {
 // true = git ran successfully, false = exit 128 or ENOENT (git-could-not-run).
 const _gitReachabilityCache = new Map();
 /**
+ * R-CCR-1: probe whether `sha` is an ancestor of HEAD in `dir`. Distinguishes a
+ * clean not-an-ancestor result (exit 1) from git being unable to run at all
+ * (exit 128 / ENOENT) — only the latter justifies a fallback-dir retry.
+ */
+function probeCommitReachable(dir, sha) {
+    try {
+        execFileSync('git', ['-C', dir, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
+            timeout: 5000,
+            stdio: ['ignore', 'ignore', 'ignore'],
+        });
+        return 'reachable';
+    }
+    catch (err) {
+        const status = err.status;
+        const code = err.code;
+        return status === 128 || code === 'ENOENT' ? 'git-could-not-run' : 'not-reachable';
+    }
+}
+/**
  * R-PDWR: a lenient, watcher-only re-check before a destructive revert.
  * `hasCompletionCommit`'s strict explicit path can return 'absent' for a
  * genuinely-complete ticket — a stamped `completion_commit` carrying
@@ -759,26 +778,18 @@ function frontmatterCompletionCommitReachable(ticketPath, workingDir, fallbackDi
             continue;
         const primaryCanRun = _gitReachabilityCache.get(workingDir) !== false;
         if (primaryCanRun) {
-            try {
-                execFileSync('git', ['-C', workingDir, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
-                    timeout: 5000,
-                    stdio: ['ignore', 'ignore', 'ignore'],
-                });
+            const primary = probeCommitReachable(workingDir, sha);
+            if (primary === 'reachable') {
                 _gitReachabilityCache.set(workingDir, true);
                 return { reachable: true, usedFallback: false };
             }
-            catch (primaryErr) {
-                const status = primaryErr.status;
-                const code = primaryErr.code;
-                const gitCouldNotRun = status === 128 || code === 'ENOENT';
-                if (!gitCouldNotRun) {
-                    // Clean not-ancestor (exit 1): git ran fine, SHA just not reachable.
-                    // Do NOT retry against fallback — only git-could-not-run triggers it.
-                    _gitReachabilityCache.set(workingDir, true);
-                    continue;
-                }
-                _gitReachabilityCache.set(workingDir, false);
+            if (primary === 'not-reachable') {
+                // Clean not-ancestor (exit 1): git ran fine, SHA just not reachable.
+                // Do NOT retry against fallback — only git-could-not-run triggers it.
+                _gitReachabilityCache.set(workingDir, true);
+                continue;
             }
+            _gitReachabilityCache.set(workingDir, false); // git-could-not-run
         }
         // workingDir is unusable for git — retry once against fallbackDir.
         if (!fallbackDir || fallbackDir === workingDir)
@@ -786,19 +797,12 @@ function frontmatterCompletionCommitReachable(ticketPath, workingDir, fallbackDi
         const fallbackCanRun = _gitReachabilityCache.get(fallbackDir) !== false;
         if (!fallbackCanRun)
             continue;
-        try {
-            execFileSync('git', ['-C', fallbackDir, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
-                timeout: 5000,
-                stdio: ['ignore', 'ignore', 'ignore'],
-            });
+        const fallback = probeCommitReachable(fallbackDir, sha);
+        if (fallback === 'reachable') {
             _gitReachabilityCache.set(fallbackDir, true);
             return { reachable: true, usedFallback: true };
         }
-        catch (fallbackErr) {
-            const fStatus = fallbackErr.status;
-            const fCode = fallbackErr.code;
-            _gitReachabilityCache.set(fallbackDir, fStatus === 128 || fCode === 'ENOENT' ? false : true);
-        }
+        _gitReachabilityCache.set(fallbackDir, fallback === 'git-could-not-run' ? false : true);
     }
     return { reachable: false, usedFallback: false };
 }
@@ -813,6 +817,17 @@ function phantomDoneShouldKeepDone(input, ticketId, workingDir) {
     }
     const result = frontmatterCompletionCommitReachable(ticketFilePath(input.sessionDir, ticketId), workingDir, input.workingDir);
     return { keepDone: result.reachable, fallbackFired: result.usedFallback };
+}
+/**
+ * R-CCR-1: emit the phantom-Done "kept" log lines, including the fallback-probe
+ * note. Extracted from `correctPhantomDoneTickets` to keep that loop under the
+ * eslint complexity ceiling.
+ */
+function logPhantomDoneKept(input, ticketId, workingDir, fallbackFired) {
+    if (fallbackFired) {
+        input.log?.(`Phantom-Done watcher: per-ticket working_dir '${workingDir}' unusable for git; retried in session dir '${input.workingDir}'. Ticket ${ticketId} kept Done.`);
+    }
+    input.log?.(`Phantom-Done watcher kept ticket ${ticketId} Done — valid completion_commit evidence`);
 }
 export function correctPhantomDoneTickets(input) {
     let corrected = 0;
@@ -845,10 +860,7 @@ export function correctPhantomDoneTickets(input) {
         // the session dir was used as the fallback probe.
         const keepDoneResult = phantomDoneShouldKeepDone(input, ticket.id, workingDir);
         if (keepDoneResult.keepDone) {
-            if (keepDoneResult.fallbackFired) {
-                input.log?.(`Phantom-Done watcher: per-ticket working_dir '${workingDir}' unusable for git; retried in session dir '${input.workingDir}'. Ticket ${ticket.id} kept Done.`);
-            }
-            input.log?.(`Phantom-Done watcher kept ticket ${ticket.id} Done — valid completion_commit evidence`);
+            logPhantomDoneKept(input, ticket.id, workingDir, keepDoneResult.fallbackFired);
             continue;
         }
         if (!writeTicketStatus(input.sessionDir, ticket.id, 'Todo'))
@@ -3555,7 +3567,6 @@ async function main() {
 async function runMuxRunnerMain() {
     const sessionDir = process.argv[2];
     const statePath = sessionDir ? path.join(sessionDir, 'state.json') : '';
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (!sessionDir
         || sessionDir.startsWith('--')
         || readRecoverableJsonObject(statePath) === null) {
