@@ -579,6 +579,20 @@ test('R-CCR-3: non-zero exit with stale handoff reason terminates with failure m
     await captureMainExit(sessionDir, PipelineRunnerExitCode.Failure);
 
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    // AC-CCR-3-4 positive contract: a non-zero phase exit carrying a stale
+    // handoff reason MUST terminate with the 'failed' failure marker. The
+    // earlier `notEqual` alone also passed for null / 'completed' / any other
+    // non-handoff value — it never proved the failure marker the AC and this
+    // test name ("terminates with failure marker") promise.
+    assert.equal(
+      state.exit_reason,
+      'failed',
+      `non-zero phase exit must stamp exit_reason='failed' (the terminal failure `
+        + `marker), not leave it null or a handoff reason; got ${JSON.stringify(state.exit_reason)}`,
+    );
+    // Retained alongside the positive check: documents the specific leak
+    // closed — the stale closer_handoff_terminal reason must not survive into
+    // finalizePipeline's readHandoffExitReason twin read.
     assert.notEqual(
       state.exit_reason,
       'closer_handoff_terminal',
