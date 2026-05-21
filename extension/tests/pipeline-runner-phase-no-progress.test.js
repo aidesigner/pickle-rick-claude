@@ -367,7 +367,7 @@ test('R-PRH: a manager_handoff_pending phase exit is preserved, not folded into 
       return { exitCode: 0, stdout: '', stderr: '' };
     });
 
-    await captureMainExit(sessionDir, PipelineRunnerExitCode.Failure);
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Success);
 
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     assert.equal(
@@ -375,6 +375,9 @@ test('R-PRH: a manager_handoff_pending phase exit is preserved, not folded into 
       'manager_handoff_pending',
       'pipeline-runner must preserve the handoff exit_reason, not overwrite it with failed',
     );
+
+    const ps = JSON.parse(fs.readFileSync(path.join(sessionDir, 'pipeline-status.json'), 'utf-8'));
+    assert.equal(ps.status, 'completed', 'handoff stop must write pipeline-status completed');
 
     const log = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
     assert.ok(
@@ -386,6 +389,31 @@ test('R-PRH: a manager_handoff_pending phase exit is preserved, not folded into 
       'a handoff stop is not a phase success',
     );
     assert.ok(!/Phase citadel/.test(log), 'pipeline must not advance to citadel after a handoff');
+  } finally {
+    __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('R-CCR-4: real failure (no handoff) still exits Failure with status failed', async () => {
+  const repo = tmpDir('pipe-ccr4-fail-repo-');
+  const sessionDir = tmpDir('pipe-ccr4-fail-session-');
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle', 'citadel']);
+    writeTicket(sessionDir, 'aaa11111', 1, 'Todo');
+
+    // Phase runner exits non-zero with no handoff reason — genuine failure.
+    __setSpawnRunnerForTests(async () => ({ exitCode: 1, stdout: '', stderr: '' }));
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Failure);
+
+    const pipelineStatus = JSON.parse(
+      fs.readFileSync(path.join(sessionDir, 'pipeline-status.json'), 'utf-8'),
+    );
+    assert.equal(pipelineStatus.status, 'failed', 'real failure must write pipeline-status failed');
   } finally {
     __setSpawnRunnerForTests(null);
     fs.rmSync(repo, { recursive: true, force: true });
