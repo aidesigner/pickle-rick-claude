@@ -605,16 +605,17 @@ export function truncateTaskNotes(content: string, maxChars: number = 2000): str
  * back to the absolute directory path when it is not inside a git repo (or
  * does not exist), so forward-created dirs still get a stable identity.
  */
-function resolveRepoRoot(dir: string): string {
+function resolveRepoRoot(dir: string, stableBase: string): string {
+  const absDir = path.isAbsolute(dir) ? dir : path.resolve(stableBase, dir);
   try {
-    const out = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], {
+    const out = execFileSync('git', ['-C', absDir, 'rev-parse', '--show-toplevel'], {
       encoding: 'utf8',
       timeout: 5000,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
     if (out) return out;
   } catch { /* not a git repo / missing dir — fall back to the path itself */ }
-  return path.resolve(dir);
+  return absDir;
 }
 
 /**
@@ -627,14 +628,14 @@ function resolveRepoRoot(dir: string): string {
  * `packages/app`, repo root) is ONE repo — flagging it as multi-repo is a
  * false positive that spams the iteration-1 log on every relaunch.
  */
-export function detectMultiRepo(sessionDir: string): string[] | null {
+export function detectMultiRepo(sessionDir: string, stableBase: string): string[] | null {
   const tickets = collectTickets(sessionDir);
   const dirs = new Set(
     tickets
       .map(t => t.working_dir)
       .filter((d): d is string => d !== null && d !== undefined)
   );
-  const roots = new Set([...dirs].map(resolveRepoRoot));
+  const roots = new Set([...dirs].map(d => resolveRepoRoot(d, stableBase)));
   return roots.size >= 2 ? [...roots] : null;
 }
 
@@ -4704,7 +4705,7 @@ async function runMuxRunnerMain() {
 
     // Multi-repo advisory check (once, on first iteration)
     if (iteration === 1) {
-      const multiRepoDirs = detectMultiRepo(sessionDir);
+      const multiRepoDirs = detectMultiRepo(sessionDir, state.working_dir || process.cwd());
       if (multiRepoDirs) {
         log(`⚠️  MULTI-REPO DETECTED: Tickets span [${multiRepoDirs.join(', ')}]. Pickle Rick works best with single-repo sessions.`);
         logActivity({ event: 'multi_repo_warning', source: 'pickle', session: path.basename(sessionDir) });

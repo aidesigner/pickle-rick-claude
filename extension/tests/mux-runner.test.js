@@ -3542,7 +3542,7 @@ test('detectMultiRepo: returns dirs when tickets have 2+ distinct working_dir va
 
         // api/ and web/ are not git repos — each resolves to its own
         // distinct absolute path, so this is still flagged as multi-repo.
-        const result = detectMultiRepo(dir);
+        const result = detectMultiRepo(dir, dir);
         assert.ok(result, 'should return an array');
         assert.equal(result.length, 2);
         assert.ok(result.some(r => r.endsWith('/api')), `should contain an api root; got ${JSON.stringify(result)}`);
@@ -3576,7 +3576,7 @@ test('R-MRFP detectMultiRepo: monorepo workspace subdirs of one repo are NOT mul
             `---\nid: t3\ntitle: Root work\nstatus: Todo\norder: 30\nworking_dir: ${repo}\n---\n`);
 
         assert.equal(
-            detectMultiRepo(dir),
+            detectMultiRepo(dir, dir),
             null,
             'workspace subdirs of one git repo must not trip the multi-repo warning',
         );
@@ -3602,7 +3602,7 @@ test('R-MRFP detectMultiRepo: tickets in two genuinely distinct git repos are mu
         fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
             `---\nid: t2\ntitle: B\nstatus: Todo\norder: 20\nworking_dir: ${repoB}\n---\n`);
 
-        const result = detectMultiRepo(dir);
+        const result = detectMultiRepo(dir, dir);
         assert.ok(result, 'genuinely distinct repos must still be flagged');
         assert.equal(result.length, 2);
     } finally {
@@ -3624,7 +3624,7 @@ test('detectMultiRepo: returns null when all tickets share same working_dir', ()
         fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
             '---\nid: t2\ntitle: Task B\nstatus: Todo\norder: 20\nworking_dir: api/\n---\n');
 
-        assert.equal(detectMultiRepo(dir), null);
+        assert.equal(detectMultiRepo(dir, dir), null);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -3642,7 +3642,7 @@ test('detectMultiRepo: returns null when all tickets have working_dir null', () 
         fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
             '---\nid: t2\ntitle: Task B\nstatus: Todo\norder: 20\n---\n');
 
-        assert.equal(detectMultiRepo(dir), null);
+        assert.equal(detectMultiRepo(dir, dir), null);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -3660,9 +3660,39 @@ test('detectMultiRepo: returns null when only one ticket has a working_dir', () 
         fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
             '---\nid: t2\ntitle: Task B\nstatus: Todo\norder: 20\n---\n');
 
-        assert.equal(detectMultiRepo(dir), null);
+        assert.equal(detectMultiRepo(dir, dir), null);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('R-CCR-2 detectMultiRepo: relative working_dirs resolve against stableBase not process.cwd', () => {
+    const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-ccr2-sess-')));
+    const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-ccr2-repo-')));
+    try {
+        initGitRepo(repo);
+        fs.mkdirSync(path.join(repo, 'api'), { recursive: true });
+        fs.mkdirSync(path.join(repo, 'app'), { recursive: true });
+
+        const t1 = path.join(sessionDir, 't1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_t1.md'),
+            '---\nid: t1\ntitle: API work\nstatus: Todo\norder: 10\nworking_dir: api\n---\n');
+        const t2 = path.join(sessionDir, 't2');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
+            '---\nid: t2\ntitle: App work\nstatus: Todo\norder: 20\nworking_dir: app\n---\n');
+
+        // With stableBase=repo, relative 'api' → <repo>/api and 'app' → <repo>/app.
+        // Both are inside the same git repo — resolveRepoRoot returns the same root for both.
+        assert.equal(
+            detectMultiRepo(sessionDir, repo),
+            null,
+            'relative working_dirs anchored to a monorepo must not false-flag as multi-repo',
+        );
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(repo, { recursive: true, force: true });
     }
 });
 
