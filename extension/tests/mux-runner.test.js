@@ -4191,9 +4191,16 @@ test('R-MRFP detectMultiRepo: relative working_dir with non-git stableBase falls
         // Relative paths resolve via stableBase; neither subdir is a git repo, so resolveRepoRoot falls back to the absolute path.
         const result = detectMultiRepo(sessionDir, stableBase);
         assert.ok(result, 'distinct non-git relative working_dirs must be detected as multi-repo');
-        assert.equal(result.length, 2);
-        assert.ok(result.some(r => r.endsWith('/subA')), `expected subA root; got ${JSON.stringify(result)}`);
-        assert.ok(result.some(r => r.endsWith('/subB')), `expected subB root; got ${JSON.stringify(result)}`);
+        // Exact structural match against the known absolute roots. A `.endsWith('/subA')`
+        // suffix check would also pass for a wrong base (e.g. `/other/subA`) — sorting
+        // both sides and comparing the full resolved paths proves detectMultiRepo
+        // anchored the relative working_dirs to stableBase, not merely produced a
+        // path whose final segment happens to match.
+        assert.deepEqual(
+            [...result].sort(),
+            [subA, subB].sort(),
+            `detectMultiRepo must return exactly the resolved subA/subB roots; got ${JSON.stringify(result)}`,
+        );
     } finally {
         fs.rmSync(sessionDir, { recursive: true, force: true });
         fs.rmSync(stableBase, { recursive: true, force: true });
