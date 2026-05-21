@@ -112,6 +112,9 @@ const FORWARD_REF_ANNOTATION_HASH_RE = /^[A-Za-z0-9]{6,12}$/;
 const FORWARD_REF_REQUIREMENT_RE = /^R-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+$/;
 const FORWARD_REF_ANNOTATION_RE = /`([^`]+)`(\s*)\((forward-created(?:\s+by\s+ticket\s+[A-Za-z0-9]{6,12})?|((created|introduced) by ticket ([^)]+))|(created by (R-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)))\)/g;
 const ALLOWLIST_FILE_REL = 'extension/.readiness-allowlist.json';
+// R-CCR-13: head segments that identify inline code snippets (test-runner
+// context or workflow inputs) rather than in-repo contract references.
+const SNIPPET_HEAD_SEGMENTS = new Set(['t', 'inputs']);
 const GIT_LS_FILES_TIMEOUT_MS = 30_000;
 const DOC_EXTENSION_ALLOWLIST = new Set([
   'md',
@@ -320,7 +323,11 @@ export function extractContractReferences(rawContent: string): string[] {
     const value = match[1].trim();
     if (PATH_RE.test(value)) refs.add(value);
     PATH_RE.lastIndex = 0;
-    if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+(?:\(\))?$/.test(value) || /^[A-Za-z_$][\w$]*\(\)$/.test(value)) refs.add(value);
+    if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+(?:\(\))?$/.test(value)) {
+      if (!SNIPPET_HEAD_SEGMENTS.has(value.split('.')[0])) refs.add(value);
+    } else if (/^[A-Za-z_$][\w$]*\(\)$/.test(value)) {
+      refs.add(value);
+    }
   }
   for (const match of content.matchAll(SYMBOL_RE)) refs.add(match[0]);
   return [...refs]

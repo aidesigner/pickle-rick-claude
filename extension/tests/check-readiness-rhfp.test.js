@@ -48,3 +48,37 @@ test('R-RHFP (b): symbols quoted inside a *(refined: ...)* note are not extracte
   assert.ok(refs.includes('realHelper()'));
   assert.ok(!refs.includes('staleHelper()'), `stale symbol in correction note must be skipped; got ${JSON.stringify(refs)}`);
 });
+
+/**
+ * R-CCR-13: inline code-snippet suppression (AC-CCR-13-1, AC-CCR-13-2, AC-CCR-13-3)
+ */
+test('R-CCR-13 (AC-CCR-13-1): test-runner and workflow-input dotted tokens are not extracted', () => {
+  const content = [
+    'Use `t.skip()` to skip a test.',
+    'Enable fake timers with `t.mock.timers.enable()`.',
+    'The run count is available as `inputs.run_count`.',
+  ].join('\n');
+  const refs = extractContractReferences(content);
+  assert.ok(
+    !refs.includes('t.skip()'),
+    `t.skip() must be suppressed (inline snippet); got ${JSON.stringify(refs)}`,
+  );
+  assert.ok(
+    !refs.some((r) => r.startsWith('t.')),
+    `no t.* ref must appear; got ${JSON.stringify(refs)}`,
+  );
+  assert.ok(
+    !refs.some((r) => r.startsWith('inputs.')),
+    `no inputs.* ref must appear; got ${JSON.stringify(refs)}`,
+  );
+});
+
+test('R-CCR-13 (AC-CCR-13-2): genuine unresolved dotted symbol is still extracted', () => {
+  // MyService is not a known snippet head, so this ref must pass through extraction
+  // and appear in the returned set (the caller can then check resolution).
+  const refs = extractContractReferences('Call `MyService.doWork` to process the job.');
+  assert.ok(
+    refs.includes('MyService.doWork'),
+    `genuine in-repo dotted symbol must still be extracted; got ${JSON.stringify(refs)}`,
+  );
+});
