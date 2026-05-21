@@ -733,6 +733,20 @@ const _gitReachabilityCache = new Map();
  * clean not-an-ancestor result (exit 1) from git being unable to run at all
  * (exit 128 / ENOENT) — only the latter justifies a fallback-dir retry.
  */
+/**
+ * Classify a thrown `git merge-base --is-ancestor` error. A clean exit 1 is a
+ * definitive "not an ancestor". Exit 128, ENOENT, and timeouts (the child was
+ * SIGTERM-killed before it could answer) all mean git produced no answer —
+ * return 'git-could-not-run' so the R-CCR-1 fallback-dir retry fires. A timeout
+ * misclassified as 'not-reachable' dead-ends the fallback and reverts a
+ * genuinely-Done ticket to Todo.
+ */
+export function classifyGitProbeError(err) {
+    const e = err;
+    if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM')
+        return 'git-could-not-run';
+    return e.status === 128 || e.code === 'ENOENT' ? 'git-could-not-run' : 'not-reachable';
+}
 function probeCommitReachable(dir, sha) {
     try {
         execFileSync('git', ['-C', dir, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
@@ -742,9 +756,7 @@ function probeCommitReachable(dir, sha) {
         return 'reachable';
     }
     catch (err) {
-        const status = err.status;
-        const code = err.code;
-        return status === 128 || code === 'ENOENT' ? 'git-could-not-run' : 'not-reachable';
+        return classifyGitProbeError(err);
     }
 }
 /**

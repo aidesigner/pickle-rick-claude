@@ -853,6 +853,20 @@ type GitCommitReachability = 'reachable' | 'not-reachable' | 'git-could-not-run'
  * clean not-an-ancestor result (exit 1) from git being unable to run at all
  * (exit 128 / ENOENT) — only the latter justifies a fallback-dir retry.
  */
+/**
+ * Classify a thrown `git merge-base --is-ancestor` error. A clean exit 1 is a
+ * definitive "not an ancestor". Exit 128, ENOENT, and timeouts (the child was
+ * SIGTERM-killed before it could answer) all mean git produced no answer —
+ * return 'git-could-not-run' so the R-CCR-1 fallback-dir retry fires. A timeout
+ * misclassified as 'not-reachable' dead-ends the fallback and reverts a
+ * genuinely-Done ticket to Todo.
+ */
+export function classifyGitProbeError(err: unknown): 'not-reachable' | 'git-could-not-run' {
+  const e = err as { status?: number | null; code?: string; signal?: string | null };
+  if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM') return 'git-could-not-run';
+  return e.status === 128 || e.code === 'ENOENT' ? 'git-could-not-run' : 'not-reachable';
+}
+
 function probeCommitReachable(dir: string, sha: string): GitCommitReachability {
   try {
     execFileSync('git', ['-C', dir, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
@@ -861,9 +875,7 @@ function probeCommitReachable(dir: string, sha: string): GitCommitReachability {
     });
     return 'reachable';
   } catch (err) {
-    const status = (err as { status?: number }).status;
-    const code = (err as { code?: string }).code;
-    return status === 128 || code === 'ENOENT' ? 'git-could-not-run' : 'not-reachable';
+    return classifyGitProbeError(err);
   }
 }
 
