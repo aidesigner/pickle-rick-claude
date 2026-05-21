@@ -3594,6 +3594,126 @@ test('R-CCR-1 genuine phantom: dir unusable AND SHA absent in fallback repo', ()
     }
 });
 
+// --- R-CCR-8: coverage backfill for completion_commit_inferred and non-reachable SHA ---
+
+test('R-CCR-8 R-PDWR correctPhantomDoneTickets: completion_commit_inferred-only HEAD-reachable SHA is NOT reverted', () => {
+    const tmpDir = makeTmpRoot();
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rccr8-inferred-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        // Create a real commit reachable from HEAD.
+        fs.writeFileSync(path.join(tmpDir, 'work.txt'), 'done');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', 'misc work (no ticket ref)', '--no-gpg-sign'], { cwd: tmpDir });
+        const completionSha = gitHead(tmpDir);
+
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'rccr8inf';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+        // completion_commit_inferred with backtick decoration: hasCompletionCommit strict
+        // hex check misses it (returns 'absent'), but frontmatterCompletionCommitReachable
+        // strips the decoration and finds the SHA is reachable from HEAD.
+        // NO completion_commit field — only completion_commit_inferred.
+        fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
+            '---',
+            `id: ${ticketId}`,
+            'title: inferred-only reachable test',
+            'status: Done',
+            'order: 1',
+            `completion_commit_inferred: \`${completionSha}\``,
+            '---',
+            '# Description',
+            '',
+        ].join('\n'));
+
+        // Precondition: hasCompletionCommit strict hex check misses the decorated value.
+        const evidence = hasCompletionCommit({ sessionDir, ticketId, workingDir: tmpDir });
+        assert.equal(evidence.source, 'absent', 'precondition: strict check misses the decorated inferred SHA');
+
+        const corrected = correctPhantomDoneTickets({
+            sessionDir,
+            workingDir: tmpDir,
+            startCommit,
+            iteration: 1,
+        });
+
+        assert.equal(corrected, 0, 'HEAD-reachable completion_commit_inferred must not be reverted');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Done');
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('R-CCR-8 R-PDWR correctPhantomDoneTickets: completion_commit SHA that is a git object but not HEAD-reachable is reverted (single-repo)', () => {
+    const tmpDir = makeTmpRoot();
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rccr8-orphan-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+
+        // Create a commit then reset it — the SHA still exists as a git object
+        // (in the object database) but is no longer reachable from HEAD.
+        fs.writeFileSync(path.join(tmpDir, 'orphan.txt'), 'orphan work');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', 'orphan commit (no ticket ref)', '--no-gpg-sign'], { cwd: tmpDir });
+        const orphanedSha = gitHead(tmpDir);
+        // Reset back — SHA is now orphaned from HEAD but still in the object db.
+        spawnSync('git', ['reset', '--hard', startCommit], { cwd: tmpDir });
+        assert.equal(gitHead(tmpDir), startCommit, 'precondition: HEAD is back to startCommit');
+
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'rccr8orp';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+        // Backtick-decorated SHA: hasCompletionCommit strict hex check returns 'absent',
+        // allowing frontmatterCompletionCommitReachable to exercise the reachability path.
+        // Single-repo: no working_dir in ticket → uses input.workingDir, so fallbackDir ===
+        // workingDir → R-CCR-1 session-dir fallback does not fire.
+        fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
+            '---',
+            `id: ${ticketId}`,
+            'title: orphan SHA revert test',
+            'status: Done',
+            'order: 1',
+            `completion_commit: \`${orphanedSha}\``,
+            '---',
+            '# Description',
+            '',
+        ].join('\n'));
+
+        // Precondition: the SHA still exists as a git object.
+        const catFile = spawnSync('git', ['-C', tmpDir, 'cat-file', '-e', `${orphanedSha}^{commit}`]);
+        assert.equal(catFile.status, 0, 'precondition: orphaned SHA still exists as git object');
+        // Precondition: the SHA is NOT reachable from HEAD.
+        const ancestorCheck = spawnSync('git', ['-C', tmpDir, 'merge-base', '--is-ancestor', orphanedSha, 'HEAD']);
+        assert.notEqual(ancestorCheck.status, 0, 'precondition: orphaned SHA is not reachable from HEAD');
+
+        const corrected = correctPhantomDoneTickets({
+            sessionDir,
+            workingDir: tmpDir,
+            startCommit,
+            iteration: 1,
+        });
+
+        assert.equal(corrected, 1, 'non-reachable orphaned SHA must trigger revert');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Todo');
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('classifyTicketCompletion: uncommitted git changes + lifecycle artifact → completed', () => {
     const tmpDir = makeTmpRoot();
     try {
