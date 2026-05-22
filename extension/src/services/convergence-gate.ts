@@ -553,9 +553,32 @@ function parseEslintOutput(output: string, pkgDir: string): GateFailure[] {
   return failures;
 }
 
-function buildFailures(result: CheckResult, check: 'typecheck' | 'lint' | 'tests', pkgDir: string): GateFailure[] {
+// R-FGNC-1: pnpm prints `WARN  Issue while reading ".../.npmrc". Failed to
+// replace env in config: ${...TOKEN}` to stderr on every invocation when a
+// token env var referenced by an `.npmrc` is unset. It is benign config-read
+// noise — never a check failure — but the classifier's fallback path promoted
+// it to the sole reported "failure", masking the real TS/lint errors. Strip
+// any pnpm `WARN Issue while reading "<file>"` line (covers the canonical
+// `.npmrc`/`${TOKEN}` form and the truncated continuation pnpm emits).
+const ENV_NOISE_WARN_RE = /^\s*WARN\s+Issue while reading\s+"/;
+
+export function stripEnvNoise(output: string): string {
+  return output
+    .split('\n')
+    .filter((line) => !ENV_NOISE_WARN_RE.test(line))
+    .join('\n');
+}
+
+export function buildFailures(result: CheckResult, check: 'typecheck' | 'lint' | 'tests', pkgDir: string): GateFailure[] {
+  // R-FGNC-2: the subprocess exit code is the source of truth for "did this
+  // check fail" — stdout/stderr is scraped only to enumerate WHICH failures
+  // exist. Exit 0 → no failures, regardless of stderr WARN content.
   if (result.exitCode === 0) return [];
-  const output = (result.stderr || result.stdout).trim();
+  // R-FGNC-1: tsc/eslint errors land on stdout while pnpm env-noise lands on
+  // stderr — combine BOTH streams (the prior `stderr || stdout` dropped the
+  // real errors whenever stderr carried the `.npmrc` WARN) then strip the
+  // benign noise before the failure-line classifier runs.
+  const output = stripEnvNoise(`${result.stdout}\n${result.stderr}`).trim();
 
   if (check === 'typecheck') {
     const parsed = parseTscOutput(output, pkgDir);
