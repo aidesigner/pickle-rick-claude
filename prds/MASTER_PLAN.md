@@ -59,7 +59,6 @@ one-line + PRD pointer.
 |---|---|---|---|
 | 11 | R-APWS | anatomy-park worker edits bypass `scope.json:allowed_paths` at fix time | `p2-anatomy-park-worker-edits-bypass-scope-allowlist.md`. |
 | 12 | R-PSAI | `/pickle-pipeline` ignores branch/subset signals in operator kickoff | `p2-pickle-pipeline-no-scope-auto-inference.md`. |
-| 18 | R-FGNC | finalize-gate mistakes `.npmrc` env WARN for real failures; masks lint/TS errors | `p2-szechuan-anatomy-finalize-gate-npmrc-warn-pollution-masks-real-failures.md`. **B-GATE.** |
 | 30 | R-RSU | refinement collapses `composes:` bundle PRDs to N section-umbrellas | R-RSU-1..5; B2-RSU residuals. **B-QSRC / B-WEDGE.** |
 | 33 | R-WMW | manager wedges on oversized ticket; spawns worker, no artifact progress | `p2-worker-manager-wedge-oversized-ticket-no-artifact-progress.md`. **B-WEDGE.** |
 | 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check | PRD not drafted (~4 tickets). **B-GATE.** |
@@ -88,6 +87,7 @@ one-line + PRD pointer.
 #57 R-RPRA — verified already fixed: the R-RHFP PATH_RE negative lookbehind `(?<![\w./@-])` refuses to start a match after `/`, so an absolute path outside TARGET extracts nothing — no leading-`/`-stripped phantom `file_path` finding. Regression test added. The R-FRA facets (Files-to-modify forward-create, prose-hedged ellipsis paths) from the same bug report remain under R-FRA.
 #49 R-PSSS — anatomy-park / szechuan-sauce empty-scope skips are now operator-visible: structured WARN + `anatomy_park_empty_scope_skip` / `szechuan_sauce_empty_scope_skip` activity events; phase-setup returns `PhaseSetupResult` and `pipeline-status.json` records per-phase `phase_skips` dispositions (`988ed55a`, `9020c26b`). B-PIPE-LAUNCH-FRICTION fully shipped under v1.77.0.
 #51 R-PPSD — verified already satisfied: both `pickle-pipeline.md` and `pickle-tmux.md` document the unified `skip_quality_gates_reason` flag with legacy flags labelled. No code change needed.
+#18 R-FGNC — `convergence-gate` `buildFailures` no longer lets pnpm `.npmrc` `${TOKEN}` WARN noise mask real TS/lint failures: combines stdout+stderr, strips the WARN before classification, exit code is the pass/fail signal; finalize-gate escalation summarises failures by check; szechuan worker runs lint-autofix before commit (`48718c63`, `b5500da8`). R-FGNC-6 (setup token preflight, R-MAY) deferred.
 #32 R-TFP gate-blocking portion — **B-FLAKE** flake-tail serialization shipped in v1.76.0; finding retained as a watch item only (see P3).
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31,
 #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
@@ -116,7 +116,7 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 | **B-FLAKE** | SHIPPED | R-TFP-W | `test:fast` + `test:integration` green; flake tail serialized via `.serial-tests.json`. Shipped in v1.76.0. |
 | **B-PIPE-LAUNCH-FRICTION** | SHIPPED | R-PSSS + R-SRGT + R-PPSD | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. All three findings closed 2026-05-22 (#49/#50/#51) — shipped under the **v1.77.0** tag. R-PSSS implemented directly against `pipeline-runner.ts` after the PRD re-scope. |
 | **B-MONITOR** | QUEUED | R-MMRT + R-MWCL residuals | Shared `pickle-utils.ts` + `monitor.ts`. Closes #27/#29. |
-| **B-GATE** | QUEUED | R-FGNC + R-PVTA + R-VSGE | R-PVTA/R-VSGE need PRDs drafted. Closes #18/#39/#40. |
+| **B-GATE** | PARTIAL | R-FGNC + R-PVTA + R-VSGE | **R-FGNC (#18) shipped 2026-05-22** (`48718c63`+`b5500da8`). R-PVTA (#39) / R-VSGE (#40) still need PRDs drafted. |
 | **B-WEDGE** | QUEUED | R-RSU residuals + R-WMW | Only if B2's R-RSU doesn't fully close #30. Closes #30/#33. |
 | **B-PNTR** | QUEUED | remove bare `/pickle` non-tmux loop | `p2-remove-non-tmux-pickle-loop.md`. Refinement recommended pre-launch. |
 
