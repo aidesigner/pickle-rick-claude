@@ -10,10 +10,10 @@ status, open findings, queue, feature epics.
 
 | Item | Value |
 |---|---|
-| Source / deployed version | **v1.76.0** — tagged, pushed, deployed (`bash install.sh`, parity gate green) 2026-05-22 |
-| **v1.76.0** | **SHIPPED 2026-05-22** — full release gate green (tsc / eslint / 6 audits / test:fast 4958 / test:integration 254+201 / test:expensive 9). Tagged `v1.76.0`, pushed `origin/main`, deployed. Detail in `## Recently Shipped`. |
-| Active pipeline | none — R-CCR (`e448b714`) **complete 2026-05-22**, 16/16, 4/4 phases |
-| Latest GitHub release | v1.76.0 — 2026-05-22 |
+| Source / deployed version | **v1.77.0** — 2026-05-22 |
+| **v1.77.0** | **SHIPPED 2026-05-22** — readiness/scope false-positive cluster (#64 R-RHFP, #65 R-RCEX, #57 R-RPRA, #50 R-SRGT, #51 R-PPSD) + B-PIPE-LAUNCH-FRICTION R-PSSS (#49). Full release gate green (tsc / eslint / 6 audits / test:fast 4987 / test:integration 201 / test:expensive 9). Detail in `## Recently Shipped`. |
+| Active pipeline | none |
+| Latest GitHub release | v1.77.0 — 2026-05-22 |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive (operator, reaffirmed 2026-05-21):** drain bug bundles
@@ -65,7 +65,6 @@ one-line + PRD pointer.
 | 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check | PRD not drafted (~4 tickets). **B-GATE.** |
 | 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4 tickets). **B-GATE.** |
 | 48 | R-PCFG | runner logs `Phase pickle completed successfully` after exit code 1 / 0 workers | Folded into B-PIPE-FIX R-PIPE-2 (`phase_no_progress` gate). |
-| 49 | R-PSSS | anatomy-park / szechuan-sauce silently skip phases when scope filter excludes all subsystems | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. **B-PIPE-LAUNCH-FRICTION.** |
 | 52 | R-WUWC | worker writes on-spec code but `markTicketDone` blocked then ticket wedges Failed, output lost | `BUG-REPORT-2026-05-18-pipeline-launch-friction.md` Addendum 5. Likely covered by B-PIPE-FIX. |
 | 53 | R-SRAA | anatomy-park `[FATAL] refreshScope: archive already exists` on every pipeline relaunch | `BUG-REPORT-2026-05-18-pipeline-launch-friction.md` Addendum 6. NOTE finding-number collision — commit `5501d4ed` cites "#53 R-PRH"; operator to reconcile numbering. |
 
@@ -87,6 +86,7 @@ one-line + PRD pointer.
 #65 R-RCEX — `check-readiness` `resolveSymbolRef` now resolves external SDK symbols against declared-dependency `node_modules` `.d.ts` files (`8cb5ba79`).
 #50 R-SRGT — `scope-resolver` `computeOneHop` empty-seed short-circuit + aggregate wall-clock cap; per-grep timeout 30s→5s (`6f71dd6a`).
 #57 R-RPRA — verified already fixed: the R-RHFP PATH_RE negative lookbehind `(?<![\w./@-])` refuses to start a match after `/`, so an absolute path outside TARGET extracts nothing — no leading-`/`-stripped phantom `file_path` finding. Regression test added. The R-FRA facets (Files-to-modify forward-create, prose-hedged ellipsis paths) from the same bug report remain under R-FRA.
+#49 R-PSSS — anatomy-park / szechuan-sauce empty-scope skips are now operator-visible: structured WARN + `anatomy_park_empty_scope_skip` / `szechuan_sauce_empty_scope_skip` activity events; phase-setup returns `PhaseSetupResult` and `pipeline-status.json` records per-phase `phase_skips` dispositions (`988ed55a`, `9020c26b`). B-PIPE-LAUNCH-FRICTION fully shipped under v1.77.0.
 #51 R-PPSD — verified already satisfied: both `pickle-pipeline.md` and `pickle-tmux.md` document the unified `skip_quality_gates_reason` flag with legacy flags labelled. No code change needed.
 #32 R-TFP gate-blocking portion — **B-FLAKE** flake-tail serialization shipped in v1.76.0; finding retained as a watch item only (see P3).
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31,
@@ -114,7 +114,7 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 | Bundle | Status | Composes | Notes |
 |---|---|---|---|
 | **B-FLAKE** | SHIPPED | R-TFP-W | `test:fast` + `test:integration` green; flake tail serialized via `.serial-tests.json`. Shipped in v1.76.0. |
-| **B-PIPE-LAUNCH-FRICTION** | PARTIAL → NEXT | R-PSSS + R-SRGT + R-PPSD | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. R-SRGT (#50) + R-PPSD (#51) shipped 2026-05-22. **R-PSSS (#49) re-scoped 2026-05-22** — ticket bodies rewritten against the real `pipeline-runner.ts` architecture (`anatomy-park.ts`/`szechuan-sauce.ts` never existed) and marked pipeline-ready. Remaining 4 tickets (R-PSSS-1/2/3 + T-HARDEN + closer); launch via `/pickle-tmux`. |
+| **B-PIPE-LAUNCH-FRICTION** | SHIPPED | R-PSSS + R-SRGT + R-PPSD | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. All three findings closed 2026-05-22 (#49/#50/#51) — shipped under the **v1.77.0** tag. R-PSSS implemented directly against `pipeline-runner.ts` after the PRD re-scope. |
 | **B-MONITOR** | QUEUED | R-MMRT + R-MWCL residuals | Shared `pickle-utils.ts` + `monitor.ts`. Closes #27/#29. |
 | **B-GATE** | QUEUED | R-FGNC + R-PVTA + R-VSGE | R-PVTA/R-VSGE need PRDs drafted. Closes #18/#39/#40. |
 | **B-WEDGE** | QUEUED | R-RSU residuals + R-WMW | Only if B2's R-RSU doesn't fully close #30. Closes #30/#33. |
@@ -174,6 +174,7 @@ All six steps complete:
 
 | Release | Date | Content |
 |---|---|---|
+| v1.77.0 | 2026-05-22 | Readiness/scope false-positive cluster + B-PIPE-LAUNCH-FRICTION. `check-readiness`: `performance` wall-budget findings demoted to advisory, telemetry-event literals skipped (#64 R-RHFP), external SDK symbols resolve against `node_modules/*.d.ts` (#65 R-RCEX), absolute-path no-false-finding pinned (#57 R-RPRA). `scope-resolver` `computeOneHop` empty-seed short-circuit + 60s wall cap (#50 R-SRGT). `/pickle-pipeline` skip-flag docs verified (#51 R-PPSD). anatomy-park/szechuan-sauce empty-scope skips now emit operator WARNs + `*_empty_scope_skip` activity events + `pipeline-status.json:phase_skips` dispositions (#49 R-PSSS). Full gate green. |
 | v1.76.0 | 2026-05-22 | Release-gate stabilization. R-CCR review-hardening epic (16/16) shipped under this tag. 1 real regression fixed (codex-spark worker-gate fixture), 6 stale tests repaired, concurrency-flake tail serialized via `.serial-tests.json`, 3 subprocess-timeout files retiered fast→integration, 6 complexity carve-outs reviewed. Full gate green. |
 | v1.75.5 | 2026-05-17 | Surgical sweep F1-F3+F5 (readiness hybrid-annotation, handoff None/N/A, explicit `completion_commit` guard, analyst-output wiring). Closes #2 hallucinated-acceptance subclass. |
 | v1.75.4 | 2026-05-17 | B-SJET partial — R-SJET-5 telemetry + command-metric async. Finding #47 stays open. |
