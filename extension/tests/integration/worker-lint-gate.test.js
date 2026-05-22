@@ -142,11 +142,22 @@ test('spawn-morty: persistent lint gate failure marks ticket Failed, emits event
     const state = readState(sessionRoot);
     const autofixEvents = state.activity.filter((entry) => entry.event === 'worker_lint_autofix_applied');
     assert.equal(autofixEvents.length, 1);
-    const failedEvent = state.activity.find((entry) => entry.event === 'worker_lint_gate_failed');
-    assert.ok(failedEvent, `missing worker_lint_gate_failed in ${JSON.stringify(state.activity)}`);
-    assert.equal(failedEvent.lint_errors >= 1, true);
-    assert.equal(failedEvent.tsc_errors, 0);
-    assert.deepEqual(failedEvent.file_list, ['extension/src/lint-fixture.ts']);
+    assert.deepEqual(autofixEvents[0].file_list, ['extension/src/lint-fixture.ts']);
+    // Worker gate telemetry consolidated to a single `worker_gate_failed` event
+    // with a `gate_phase` discriminator in commit b4a2a282 (2026-05-11); the
+    // lint-specific assertions track the post-consolidation shape.
+    const failedEvent = state.activity.find(
+      (entry) => entry.event === 'worker_gate_failed' && entry.gate_phase === 'lint',
+    );
+    assert.ok(failedEvent, `missing worker_gate_failed{gate_phase:'lint'} in ${JSON.stringify(state.activity)}`);
+    assert.ok(
+      Array.isArray(failedEvent.failures) && failedEvent.failures.some((f) => f.name === 'eslint'),
+      `expected an eslint failure in ${JSON.stringify(failedEvent.failures)}`,
+    );
+    assert.ok(
+      !failedEvent.failures.some((f) => f.name === 'tsc'),
+      'tsc must not be a failure in a lint-only gate failure',
+    );
 
     const ticketContent = fs.readFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), 'utf8');
     assert.match(ticketContent, /status: "Failed"/);

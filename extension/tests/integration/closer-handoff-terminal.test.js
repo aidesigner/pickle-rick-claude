@@ -19,7 +19,13 @@ test('closer-handoff-terminal source: failed-handoff terminal detection is keyed
 
 test('closer-handoff-terminal source: done-plus-manager-handoff exits manager_handoff_pending', () => {
   assert.match(muxRunnerSource, /readLatestTicketConformanceSnapshot/);
-  assert.match(muxRunnerSource, /hasManagerHandoff:\s*\/\^##\\s\+Manager Handoff\\b\/m/);
+  // The Manager Handoff detector was extracted into hasSubstantiveManagerHandoff()
+  // — it carries the `^## Manager Handoff` regex and additionally rejects
+  // "none"/"n/a"/empty bodies (F2 hardening). The conformance snapshot delegates
+  // to it rather than matching an inline regex.
+  assert.match(muxRunnerSource, /function hasSubstantiveManagerHandoff\(/);
+  assert.match(muxRunnerSource, /\/\^##\\s\+Manager Handoff\\b/);
+  assert.match(muxRunnerSource, /hasManagerHandoff:\s*hasSubstantiveManagerHandoff\(content\)/);
   assert.match(muxRunnerSource, /status === 'done' && conformance\.hasManagerHandoff/);
   assert.match(muxRunnerSource, /reason:\s*'manager_handoff_pending'/);
 });

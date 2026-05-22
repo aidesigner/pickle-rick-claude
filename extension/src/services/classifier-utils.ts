@@ -13,6 +13,19 @@ function isAssistantJsonLine(line: string): boolean {
   }
 }
 
+/** True when the line parses as a JSON object (any `type`) — i.e. structured
+ *  stream-json output, not free prose. Keeps the plain-text fallback from
+ *  leaking promise tokens embedded in non-assistant JSON lines. */
+function isJsonObjectLine(line: string): boolean {
+  if (!line.trim()) return false;
+  try {
+    const parsed = JSON.parse(line);
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
+
 function extractStreamJsonContent(lines: string[]): string[] {
   const parts: string[] = [];
   for (const line of lines) {
@@ -192,7 +205,9 @@ export function detectOutputFormat(output: string): 'stream-json' | 'codex-block
  * 2. Codex plain-text: >=1 line matches CODEX_DELIMITER_RE. Extracts content
  *    between 'codex' delimiters only; user/exec/tokens/reasoning/tool_call
  *    blocks are dropped. Multi-turn: union of all surviving codex blocks.
- * 3. Pure plain-text fallback: returns output as-is.
+ * 3. Plain-text fallback: genuine prose returns as-is. JSON-structured output
+ *    that merely lacks an assistant line (e.g. only user/tool_result lines)
+ *    yields empty assistant content rather than leaking the whole payload.
  *
  * Promise tokens embedded in reviewed source (tool_result, user prompts,
  * codex user blocks) are excluded in all modes.
@@ -203,8 +218,17 @@ export function extractAssistantContent(output: string): string {
       return extractStreamJsonContent(output.split('\n')).join('\n');
     case 'codex-block':
       return extractCodexBlockContent(output.split('\n')).join('\n');
-    default:
-      // Mode 3: pure plain-text fallback - return everything.
+    default: {
+      // Mode 3: plain-text fallback. JSON-structured output lacking an
+      // assistant line is NOT prose — its assistant content is empty, so
+      // promise tokens embedded in user/tool_result lines must not leak.
+      // Only genuine non-JSON prose returns as-is.
+      const lines = output.split('\n');
+      const nonEmpty = lines.filter(line => line.trim());
+      if (nonEmpty.length > 0 && nonEmpty.every(isJsonObjectLine)) {
+        return extractStreamJsonContent(lines).join('\n');
+      }
       return output;
+    }
   }
 }
