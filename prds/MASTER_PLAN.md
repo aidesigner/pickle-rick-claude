@@ -1,8 +1,8 @@
 ---
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Updated 2026-05-21.** Compressed this date — historical narrative (mega-campaign
-saga, per-commit blow-by-blow, pre-2026-05-15 releases) lives in
+**Updated 2026-05-22.** Compressed 2026-05-21 — historical narrative
+(mega-campaign saga, per-commit blow-by-blow, pre-2026-05-15 releases) lives in
 `MASTER_PLAN-archive.md` and in git history. This file is the live ledger:
 status, open findings, queue, feature epics.
 
@@ -76,7 +76,7 @@ one-line + PRD pointer.
 | 5 | — | Subsystem CLAUDE.md drift; audit 5 subsystems under `extension/src/` | No PRD; **B-AUDIT.** |
 | 19 | R-MMTR | claude manager max-turns family closeout pending | R-MMTR-1/5 shipped; 2/3/4 Skipped+commit; 6 force-skipped; 7 closer pending. **B-R-MMTR / B-E2E.** |
 | 29 | R-MWCL | monitor `inferMonitorMode` falls through to `'pickle'` for szechuan/anatomy | R-MWCL-1 shipped; 3..7 residual. **B-MONITOR.** |
-| 32 | R-TFP | `test:fast` parallel-load flakes — substantially closed; asymptotic ~1-2-flake/4-run tail remains | `p2-test-fast-stability-gate-widening-2026-05-19.md`. Residual of B-FLAKE. |
+| 32 | R-TFP | `test:fast` + `test:integration` parallel-load flakes | `p2-test-fast-stability-gate-widening-2026-05-19.md`. v1.76.0 serialized the subprocess-heavy tail via `.serial-tests.json` and retiered `council-publish` / `mux-runner.output-stall` / `check-update` fast→integration — gate verified green. B-FLAKE SHIPPED; watch item only. |
 | 34 | R-WTB | `Defaults.WORKER_TIMEOUT_SECONDS: 1200` too short for R-PTG worker lifecycle | R-WTB-1..4; B2-RSU residual. **B-QSRC.** |
 | 37e | R-PIWG-5 | git-isolation residual: `lsof` launch-time concurrent-access probe | **B-LSOF** (~2-3 tickets). |
 | 50 | R-SRGT | `scope-resolver` import walk loops on timing-out greps when `--scope branch` diff is empty | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. **B-PIPE-LAUNCH-FRICTION.** |
@@ -86,8 +86,9 @@ one-line + PRD pointer.
 | 64 | R-RHFP | READINESS HALT false-positive surface broad (path strips, prose paths, wall-budget perf timeouts) | `BUG-REPORT-2026-05-21-readiness-contract-resolver-wall-budget-false-positives.md`. Highest-value fix: demote `kind:'performance'` out of the blocking set. |
 | 65 | R-RCEX | `check-readiness` flags external-package (`node_modules`) SDK symbols as unresolved `contract` findings | Same bug report as #64. One `resolveSymbolRef` change covers #64 + #65. |
 
-### Closed since last update (2026-05-21)
-#58-#64 — **B-BABYSIT-FIX** (`bf89a1a3`) + **R-CCR** review-hardening (`e448b714`) — code complete on `main` 2026-05-22; v1.75.6 release tag blocked on the test:integration gate.
+### Closed since last update (2026-05-22)
+#58-#64 — **B-BABYSIT-FIX** (`bf89a1a3`) + **R-CCR** review-hardening (`e448b714`) — shipped under the **v1.76.0** tag 2026-05-22.
+#32 R-TFP gate-blocking portion — **B-FLAKE** flake-tail serialization shipped in v1.76.0; finding retained as a watch item only (see P3).
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31,
 #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
 
