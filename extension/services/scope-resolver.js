@@ -22,8 +22,21 @@ const ONE_HOP_FILE_CAP = 100;
  * catastrophic regex backtracking) blocks scope resolution indefinitely with
  * no log output — the same silent-hang class as the council-publish `gh`
  * timeout gap. See `extension/CLAUDE.md` trap doors.
+ *
+ * R-SRGT-2: lowered 30s → 5s. `rg -l` over even a large monorepo completes in
+ * 1-3s; a slower run is a wedged process, not legitimate work. The smaller
+ * per-grep budget also lets more export names be walked before the aggregate
+ * {@link ONE_HOP_WALK_WALL_MS} cap fires.
  */
-const FIND_IMPORTERS_TIMEOUT_MS = 30_000;
+const FIND_IMPORTERS_TIMEOUT_MS = 5_000;
+/**
+ * R-SRGT-2: aggregate wall-clock cap for the whole {@link computeOneHop}
+ * importer walk. A seed file with many exports in a large repo runs one grep
+ * per export name; without this cap that is `N × FIND_IMPORTERS_TIMEOUT_MS`
+ * with no aggregate bound (Finding #50 — the readiness gate spent 67s here).
+ * On exceed, the walk returns its partial importer set instead of grinding on.
+ */
+const ONE_HOP_WALK_WALL_MS = 60_000;
 export class ScopeError extends Error {
     code;
     constructor(code, message) {
@@ -428,18 +441,33 @@ export function buildScopeV1Schema() {
  * Throws `SCOPE_ONE_HOP_TOO_LARGE` if `diffFiles.length > ONE_HOP_FILE_CAP`.
  *
  * `options.findImportersTimeoutMs` caps the rg/grep subprocess wall-time used
- * by the importer walk. Defaults to {@link FIND_IMPORTERS_TIMEOUT_MS} (30s).
- * Tests inject small values to assert the hang-guard fires.
+ * by the importer walk. Defaults to {@link FIND_IMPORTERS_TIMEOUT_MS} (5s).
+ * `options.walkWallMs` caps the aggregate walk across all export names,
+ * defaulting to {@link ONE_HOP_WALK_WALL_MS} (60s). Tests inject small values
+ * to assert the hang-guard and the wall-clock cap fire.
  */
 export function computeOneHop(diffFiles, repoRoot, options = {}) {
+    // R-SRGT-1: an empty seed set has no exports to walk — short-circuit before
+    // spawning any grep. `--scope branch` on an empty branch diff lands here.
+    if (diffFiles.length === 0)
+        return [];
     if (diffFiles.length > ONE_HOP_FILE_CAP) {
         throw new ScopeError('SCOPE_ONE_HOP_TOO_LARGE', `--scope branch:one-hop diff has ${diffFiles.length} files (max ${ONE_HOP_FILE_CAP}). ` +
             `Use --scope paths:<glob> to narrow scope or omit :one-hop for strict mode.`);
     }
     const timeoutMs = options.findImportersTimeoutMs ?? FIND_IMPORTERS_TIMEOUT_MS;
+    const walkWallMs = options.walkWallMs ?? ONE_HOP_WALK_WALL_MS;
+    const walkDeadline = Date.now() + walkWallMs;
     const exportNames = extractExportNames(diffFiles, repoRoot);
     const importerSet = new Set(diffFiles.map(toPosix));
     for (const name of exportNames) {
+        // R-SRGT-2: aggregate wall-clock cap. Without it a many-export seed file
+        // in a large repo runs one slow grep per name with no total bound.
+        if (Date.now() > walkDeadline) {
+            console.warn(`scope-resolver import walk: wall-clock cap ${walkWallMs}ms reached; ` +
+                `returning partial one-hop set (${importerSet.size} files)`);
+            break;
+        }
         for (const f of findImporters(name, repoRoot, timeoutMs)) {
             importerSet.add(f);
         }
