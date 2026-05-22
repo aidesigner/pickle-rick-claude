@@ -262,6 +262,27 @@ test('check-readiness: R-RCEX (#65) a symbol absent from every dependency still 
     }
 }));
 
+test('check-readiness: R-RPRA (#57) an absolute path outside TARGET is not a file_path finding', () => runFixture((sessionDir) => {
+    // A ticket whose body cites an absolute session-PRD path outside the repo
+    // (the `source_prd` shape that produced 13 false findings pre-R-RHFP). The
+    // PATH_RE negative lookbehind `(?<![\w./@-])` now refuses to start a match
+    // after a `/`, so an absolute path extracts nothing — no phantom finding,
+    // no leading-`/`-stripped variant.
+    writeTicket(sessionDir, 'rpra01', {
+        extra: 'Source PRD: /Users/dev/.local/share/pickle-rick/sessions/2026-05-19-abc/prd.md (outside target).\n',
+    });
+    writeManifest(sessionDir, { tickets: [{ id: 'rpra01', key: 'RPRA-1' }] });
+
+    const result = runReadiness(sessionDir);
+    assert.equal(result.status, 0, result.stderr);
+    const out = JSON.parse(result.stdout);
+    assert.equal(out.status, 'pass');
+    assert.ok(
+        !out.findings.some((finding) => finding.kind === 'file_path'),
+        `absolute path outside TARGET must not produce a file_path finding; got ${JSON.stringify(out.findings)}`,
+    );
+}));
+
 test('check-readiness: missing dependency fails independently', () => runFixture((sessionDir) => {
     writeTicket(sessionDir, 'dep001', { dependencies: ['DEP-MISSING'] });
     writeManifest(sessionDir, { tickets: [{ id: 'dep001', key: 'DEP-1' }] });

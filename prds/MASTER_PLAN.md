@@ -80,13 +80,13 @@ one-line + PRD pointer.
 | 34 | R-WTB | `Defaults.WORKER_TIMEOUT_SECONDS: 1200` too short for R-PTG worker lifecycle | R-WTB-1..4; B2-RSU residual. **B-QSRC.** |
 | 37e | R-PIWG-5 | git-isolation residual: `lsof` launch-time concurrent-access probe | **B-LSOF** (~2-3 tickets). |
 | 54 | R-MRFP | `MULTI-REPO DETECTED` false-positive on monorepos with per-ticket `working_dir:` | Closed by `5501d4ed` (pending verification). |
-| 57 | R-RPRA | `check-readiness.ts` strips leading `/` from absolute paths then false-positive findings | `BUG-REPORT-2026-05-19-readiness-absolute-path-outside-target.md`. Folds into R-RPRA/R-FRA readiness-gate hardening. |
 
 ### Closed since last update (2026-05-22)
 #58-#63 — **B-BABYSIT-FIX** (`bf89a1a3`) + **R-CCR** review-hardening (`e448b714`) — shipped under the **v1.76.0** tag 2026-05-22.
 #64 R-RHFP — `check-readiness` `performance` wall-budget findings demoted to advisory + telemetry-event-name literals skipped (`a0604987`). Path-strip / correction-note facets already shipped earlier.
 #65 R-RCEX — `check-readiness` `resolveSymbolRef` now resolves external SDK symbols against declared-dependency `node_modules` `.d.ts` files (`8cb5ba79`).
 #50 R-SRGT — `scope-resolver` `computeOneHop` empty-seed short-circuit + aggregate wall-clock cap; per-grep timeout 30s→5s (`6f71dd6a`).
+#57 R-RPRA — verified already fixed: the R-RHFP PATH_RE negative lookbehind `(?<![\w./@-])` refuses to start a match after `/`, so an absolute path outside TARGET extracts nothing — no leading-`/`-stripped phantom `file_path` finding. Regression test added. The R-FRA facets (Files-to-modify forward-create, prose-hedged ellipsis paths) from the same bug report remain under R-FRA.
 #51 R-PPSD — verified already satisfied: both `pickle-pipeline.md` and `pickle-tmux.md` document the unified `skip_quality_gates_reason` flag with legacy flags labelled. No code change needed.
 #32 R-TFP gate-blocking portion — **B-FLAKE** flake-tail serialization shipped in v1.76.0; finding retained as a watch item only (see P3).
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31,
