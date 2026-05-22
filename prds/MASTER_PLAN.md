@@ -10,7 +10,7 @@ status, open findings, queue, feature epics.
 
 | Item | Value |
 |---|---|
-| Source / deployed version | **v1.75.5** — R-CCR code merged to `main` + deployed; **v1.75.6 release tag BLOCKED** on the test:integration gate |
+| Source / deployed version | **v1.75.5** — R-CCR code merged to `main` + deployed; **v1.75.6 release tag BLOCKED** on the `test:integration` flake tail (all real regressions fixed `eb91ebc9`) |
 | **v1.76.0** | **BLOCKED — release gate red.** `test:fast` green/stabilized; `test:integration` ~27 fails (~75% concurrency-flakes + ≥1 real `worker-lint-gate` regression); `test:expensive` unverified. Resume plan in `## v1.76.0 Completion`. |
 | Active pipeline | none — R-CCR (`e448b714`) **complete 2026-05-22**, 16/16, 4/4 phases |
 | Latest GitHub release | v1.69.0 — local-only mode; HEAD ~390+ commits ahead of origin |
@@ -25,11 +25,26 @@ before feature epics. Feature epics do not count toward the open-bug ceiling.
 3-agent review hardening of the B-BABYSIT-FIX commits. Survived 5 false-advances
 on the stale pre-bundle runtime — resolved by deploying the bundle mid-run
 (`install.sh`) so the runtime carried its own R-WTZ/R-PPPA/R-PRH fixes; the
-runtime is deployed. **Release tag blocked**: the full release gate fails on
-`test:integration` (~20 fails — confirmed real regressions `worker-lint-gate` +
-`mux-loop` ML-6, both isolation-reproduced; same blocker as v1.76.0 — plus a
-flake tail). `tsc`/`eslint`/audits/`test:fast` all green. Closes the review
-residue of findings #58-#64.
+runtime is deployed. Closes the review residue of findings #58-#64.
+
+**Release-gate progress (2026-05-22, commit `eb91ebc9`).** The three
+isolation-reproduced real regressions blocking the v1.75.6 gate were fixed:
+(1) `mux-loop` ML-6 — `extractAssistantContent`'s plain-text fallback leaked
+promise tokens from JSON-structured non-assistant output into
+`classifyCompletion` (false epic-exit) — source fix; (2) `worker-lint-gate`
+test — stale, asserted the retired `worker_lint_gate_failed` event name
+(consolidated to `worker_gate_failed{gate_phase:'lint'}` in `b4a2a282`) —
+test fix; (3) `closer-handoff-terminal` test — stale, asserted an inline
+Manager-Handoff regex since extracted into `hasSubstantiveManagerHandoff()` —
+test fix. `tsc` / `eslint` / 6 audits / `test:fast` all green.
+
+**v1.75.6 release tag still BLOCKED** — purely on the `test:integration`
+concurrency-flake tail (~19 fails, all timeout-shaped, isolation-passing;
+includes the master-plan-documented flakes `worker-partial-lifecycle-exit`,
+`worker-timeout-tier-budget`, `mux-runner-claude-max-turns-relaunch`). This is
+the **same Finding #32 R-TFP tail that blocks v1.76.0**. Tagging needs the
+flake-stabilization effort scoped in `## v1.76.0 Completion` — not a new
+blocker.
 
 ---
 
