@@ -114,7 +114,7 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 | Bundle | Status | Composes | Notes |
 |---|---|---|---|
 | **B-FLAKE** | SHIPPED | R-TFP-W | `test:fast` + `test:integration` green; flake tail serialized via `.serial-tests.json`. Shipped in v1.76.0. |
-| **B-PIPE-LAUNCH-FRICTION** | PARTIAL | R-PSSS + R-SRGT + R-PPSD | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. R-SRGT (#50) + R-PPSD (#51) shipped 2026-05-22. **R-PSSS (#49) remains** — PRD file map is stale (`anatomy-park.ts`/`szechuan-sauce.ts` do not exist; the skip lives in `pipeline-runner.ts:resolveAnatomySubsystems`, and szechuan no-ops rather than skipping). Needs PRD re-scope + new activity events; route via `/pickle-tmux`. |
+| **B-PIPE-LAUNCH-FRICTION** | PARTIAL → NEXT | R-PSSS + R-SRGT + R-PPSD | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. R-SRGT (#50) + R-PPSD (#51) shipped 2026-05-22. **R-PSSS (#49) re-scoped 2026-05-22** — ticket bodies rewritten against the real `pipeline-runner.ts` architecture (`anatomy-park.ts`/`szechuan-sauce.ts` never existed) and marked pipeline-ready. Remaining 4 tickets (R-PSSS-1/2/3 + T-HARDEN + closer); launch via `/pickle-tmux`. |
 | **B-MONITOR** | QUEUED | R-MMRT + R-MWCL residuals | Shared `pickle-utils.ts` + `monitor.ts`. Closes #27/#29. |
 | **B-GATE** | QUEUED | R-FGNC + R-PVTA + R-VSGE | R-PVTA/R-VSGE need PRDs drafted. Closes #18/#39/#40. |
 | **B-WEDGE** | QUEUED | R-RSU residuals + R-WMW | Only if B2's R-RSU doesn't fully close #30. Closes #30/#33. |

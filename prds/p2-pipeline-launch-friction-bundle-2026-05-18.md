@@ -1,6 +1,6 @@
 ---
 title: P2 — B-PIPE-LAUNCH-FRICTION bundle — anatomy/szechuan silent-skip, scope-resolver grep-loop, pickle-pipeline doc drift
-status: Queued (P2)
+status: Partial (P2) — R-SRGT (#50) + R-PPSD (#51) shipped 2026-05-22; R-PSSS (#49) re-scoped and pipeline-ready
 filed: 2026-05-18
 priority: P2
 type: bug-cluster
@@ -10,10 +10,10 @@ related:
   - prds/BUG-REPORT-2026-05-18-pipeline-launch-friction.md  # operator-authored bug report; this PRD is its decomposition
   - prds/p1-pipeline-fix-bundle-2026-05-18.md  # B-PIPE-FIX — sibling bundle. Bug #48 R-PCFG folds into R-PIPE-2 (phase_no_progress); NOT duplicated here.
   - extension/src/services/scope-resolver.ts
-  - extension/src/bin/anatomy-park.ts
-  - extension/src/bin/szechuan-sauce.ts
-  - extension/src/bin/pipeline-runner.ts
+  - extension/src/bin/pipeline-runner.ts  # anatomy-park + szechuan-sauce are skill prompts orchestrated here; setupAnatomyPark / setupSzechuanSauce / resolveAnatomySubsystems live in this file
+  - extension/src/types/activity-events.schema.json  # new-event registration (R-PSSS-1/2)
   - extension/.claude/commands/pickle-pipeline.md
+rescoped: "2026-05-22 — R-SRGT (#50) + R-PPSD (#51) shipped surgically; R-SRGT/R-PPSD ticket bodies left as historical record. R-PSSS (#49) ticket bodies REWRITTEN below against the real pipeline-runner.ts architecture (the original anatomy-park.ts/szechuan-sauce.ts files never existed)."
 findings_closed:
   - "#49 R-PSSS — anatomy-park/szechuan-sauce silent phase-skip"
   - "#50 R-SRGT — scope-resolver grep timeout loop on empty diff"
@@ -58,41 +58,90 @@ Structural cost: any operator launching with `--scope branch` and an empty or do
 
 ## Atomic ticket scope
 
-### R-PSSS-1 (small, ≤30m) — anatomy-park emit top-level WARN on empty-scope skip
+> **⚠ R-PSSS RE-SCOPED 2026-05-22.** The original R-PSSS-1/2/3 ticket bodies
+> named `extension/src/bin/anatomy-park.ts` and `extension/src/bin/szechuan-sauce.ts`
+> — **those files do not exist and never did.** anatomy-park and szechuan-sauce
+> are skill prompts (`.claude/commands/*.md`) executed by `microverse-runner.js`;
+> the pipeline orchestration — phase setup, scope filtering, the empty-scope
+> skip — all lives in `extension/src/bin/pipeline-runner.ts`. The ticket bodies
+> below are rewritten against that real architecture. Verified at HEAD
+> `d7db89d0`. R-SRGT (#50) + R-PPSD (#51) already shipped surgically 2026-05-22.
+
+### R-PSSS-1 (small) — anatomy-park: structured WARN + activity event on empty-scope skip
+
+**Architecture (verified)**: `pipeline-runner.ts:resolveAnatomySubsystems()` (≈ line 1093) has two `return null` skip branches — `discovered.length === 0` ("No subsystems discovered") and `kept.size === 0` ("scope filter excluded all subsystems"). `null` propagates: `setupAnatomyPark` returns `false` → `runConfiguredPhase` returns `{skipped:true}` → `runPhaseIteration` (≈ line 2400) logs the generic `Phase anatomy-park skipped (setup returned false)`. The skip is therefore real but undistinguished and carries no activity event. `scope.allowedPaths` IS in hand at the `resolveAnatomySubsystems` call site.
 
 **Files to modify**:
-- `extension/src/bin/anatomy-park.ts` — locate the `setup returned false` path (the `scope filter excluded all subsystems` branch). Before returning false, emit a top-level WARN that surfaces in `${SESSION_ROOT}/anatomy-park-runner.log` AND `${SESSION_ROOT}/state.json.activity`:
+- `extension/src/bin/pipeline-runner.ts` — in `resolveAnatomySubsystems`, replace the plain `log('anatomy-park: scope filter excluded all subsystems — skipping phase')` with a structured, operator-actionable WARN AND a `logActivity` emission:
   ```
-  ⚠ anatomy-park did not run: scope=<mode> produced 0 in-scope subsystems.
-    Branch diff contained: <comma-list of file paths>
-    Hint: this phase inspects code subsystems; doc-only diffs do not qualify.
+  ⚠ anatomy-park did not run: scope filter excluded all subsystems.
+    In-scope diff (<N> path(s)): <comma-joined scope.allowedPaths, capped ~20>
+    Hint: anatomy-park inspects code subsystems; a doc-only or test-only diff
+    yields 0 in-scope subsystems. Widen with --scope paths:<glob>.
   ```
-- Add `anatomy_park_empty_scope_skip` to `VALID_ACTIVITY_EVENTS` (`extension/src/types/index.ts`) + `extension/src/types/activity-events.schema.json` (per R-PDD-oneOf 5-touchpoint).
+  Emit `logActivity({ event: 'anatomy_park_empty_scope_skip', source: 'pickle', session: path.basename(sessionDir), gate_payload: { in_scope_paths: scope.allowedPaths, discovered_subsystems: discovered.map(s => s.name) } })`. (`resolveAnatomySubsystems` must receive `sessionDir` — thread it from `setupAnatomyPark`.)
+- Register `anatomy_park_empty_scope_skip` per **New activity event registration** below.
 
-**Acceptance**:
-- Fixture: launch anatomy-park on a fixture session where branch diff is `docs/foo.md` only → log line + activity event present; phase still skipped (no false-positive run).
-- Schema-conformance test passes.
+**Acceptance** (machine-checkable):
+- `grep -c "anatomy_park_empty_scope_skip" extension/src/types/index.ts` ≥ 1.
+- R-PDD-oneOf grep (see types/CLAUDE.md) emits zero lines — event has both a `definitions` entry and an `oneOf` `$ref`.
+- Integration fixture: a session whose `scope.json.allowed_paths` are all `docs/*.md` → `resolveAnatomySubsystems` returns `null`; `pipeline-runner.log` contains the `⚠ anatomy-park did not run` line; `state.json.activity` has exactly one `anatomy_park_empty_scope_skip` entry; the phase is still skipped (no microverse spawn).
+- `<event>-schema-conformance.test.js` passes.
 
-### R-PSSS-2 (small, ≤30m) — szechuan-sauce emit top-level WARN on empty-scope skip
+### R-PSSS-2 (small) — szechuan-sauce: skip code-free scope with WARN + activity event
 
-**Files to modify**:
-- `extension/src/bin/szechuan-sauce.ts` — symmetric fix to R-PSSS-1. Same WARN template, same activity event family (`szechuan_sauce_empty_scope_skip`).
-- Register the event in schema + types as in R-PSSS-1.
-
-**Acceptance**:
-- Same shape as R-PSSS-1 with szechuan-sauce-specific fixture.
-
-### R-PSSS-3 (small, ≤30m) — pipeline-status.json distinguish skip dispositions
+**Architecture (verified)**: `pipeline-runner.ts:setupSzechuanSauce()` (≈ line 1297) has **no empty-scope skip**. On a doc-only diff it still spawns `init-microverse.js` and the szechuan worker no-ops over the doc files — the bug report's "szechuan-sauce ran no-op against doc-only diff". The original PRD's "symmetric to R-PSSS-1, phase still skipped" assumption was wrong: szechuan does not skip today and its scope is the diff itself (`allowed_paths`), not a subsystem set.
 
 **Files to modify**:
-- `extension/src/bin/pipeline-runner.ts` — extend `pipeline-status.json` per-phase record to include `skip_reason` (string enum: `"empty_scope"`, `"config_disabled"`, `"prerequisite_failed"`, `null`) alongside the existing `"skipped" / "succeeded" / "failed"` status. When anatomy-park / szechuan-sauce emit empty-scope WARN, runner sets `skip_reason: "empty_scope"`.
-- Final pipeline report line (`Phases:` summary) renders e.g. `anatomy-park ⏭ (empty scope)` instead of generic `anatomy-park ⏭`.
+- `extension/src/bin/pipeline-runner.ts` — in `setupSzechuanSauce`, after `effectiveAllowedPaths` is resolved, classify it: if it is empty OR every entry has a non-code extension, emit the WARN + `szechuan_sauce_empty_scope_skip` event and `return false` (skip) **before** the `init-microverse.js` spawn — making szechuan's empty-scope behaviour observable and symmetric with anatomy-park.
+  - Define a `CODE_EXTENSIONS` set near the top of `pipeline-runner.ts` (`ts,tsx,js,jsx,mjs,cjs,py,go,rs,java,rb,php,c,cc,cpp,h,hpp,cs,kt,swift,scala,sh`). Do NOT import check-readiness's `DOC_EXTENSION_ALLOWLIST` — different module, inverse semantics.
+  - WARN template mirrors R-PSSS-1 with "szechuan-sauce" substituted.
+- Register `szechuan_sauce_empty_scope_skip` per **New activity event registration** below.
 
 **Acceptance**:
-- Integration fixture: doc-only diff → `pipeline-status.json` records `phases.anatomy_park.skip_reason: "empty_scope"`.
-- Final report distinguishes empty-scope skip from config-disabled skip.
+- Integration fixture: `setupSzechuanSauce` with `scope.json.allowed_paths` all `docs/*.md` → returns `false`; WARN line present; one `szechuan_sauce_empty_scope_skip` activity event; `init-microverse.js` NOT spawned.
+- Integration fixture: a scope with ≥1 code file → `setupSzechuanSauce` proceeds unchanged (no skip, no event).
+- R-PDD-oneOf + schema-conformance ACs as in R-PSSS-1.
+
+### R-PSSS-3 (small) — pipeline-status.json: record per-phase skip disposition
+
+**Architecture (verified)**: `pipeline-status.json` is currently a FLAT aggregate — `PipelineStatus = {status, current_phase, completed_phases, skipped_phases, total_phases, updated_at}` (see `writePipelineStatus`, ≈ line 648). There is **no per-phase record array**, so the original PRD's `phases.anatomy_park.skip_reason` path does not exist. Adding skip dispositions is an additive schema extension. The setup contract is `boolean` (`PhaseConfig.setup` returns `boolean`; `runConfiguredPhase` collapses every falsey setup into `{skipped:true}` — the reason is lost there).
+
+**Files to modify**:
+- `extension/src/bin/pipeline-runner.ts`:
+  - Introduce `type PhaseSkipReason = 'empty_scope' | 'no_subsystems' | 'setup_error'`. Change the phase-setup return contract from `boolean` to `PhaseSetupResult = true | { skipReason: PhaseSkipReason }` (a falsey/object result means skip). `setupAnatomyPark` / `setupSzechuanSauce` / `resolveAnatomySubsystems` return the specific reason (`resolveAnatomySubsystems` distinguishes its two `null` causes: `no_subsystems` vs `empty_scope`).
+  - `runConfiguredPhase` (≈ line 1822) threads the reason: return `{ skipped: boolean; skipReason?: PhaseSkipReason; exitCode; stderr }`.
+  - `runPhaseIteration` (≈ line 2400, the `result.skipped` branch) passes `skipReason` onward.
+  - Extend `PipelineStatus` with an additive `phase_skips?: Record<string, PhaseSkipReason>`; `writePipelineStatus` / `writeRunningStatus` populate it. The field is OPTIONAL so existing recoverable readers (`monitor.ts`) tolerate its absence.
+  - The final `Phases:` summary line (≈ line 2265) renders e.g. `anatomy-park ⏭ (empty scope)` rather than a bare count.
+- Update any `pipeline-status.json` schema/parity test for the new optional field.
+
+**Acceptance**:
+- Integration fixture: doc-only diff pipeline → `pipeline-status.json.phase_skips["anatomy-park"] === "empty_scope"`.
+- The final report line distinguishes an empty-scope skip from a setup-error skip.
+- `monitor.ts` recoverable read of a `pipeline-status.json` WITHOUT `phase_skips` still parses (additive-field regression).
+
+### New activity event registration (R-PSSS-1 + R-PSSS-2)
+
+Each of `anatomy_park_empty_scope_skip` and `szechuan_sauce_empty_scope_skip` MUST land all **7 touchpoints** — the R-PDD-oneOf trap door (`extension/src/types/CLAUDE.md`) plus the per-event schema-conformance pattern (`ticket-audit-failed` / `time-cap-disabled-default` / `worker-partial-lifecycle-exit`):
+
+1. `extension/src/types/index.ts` — add to `VALID_ACTIVITY_EVENTS`.
+2. `extension/src/types/activity-events.schema.json` — add a `definitions/<event>` object. `required: ["event","ts","session","gate_payload"]`; `gate_payload` carries `in_scope_paths: string[]` (+ `discovered_subsystems: string[]` for the anatomy event).
+3. Same file — add `{ "$ref": "#/definitions/<event>" }` to the top-level `oneOf` array.
+4. `extension/tests/activity-event-payload.test.js` — add an `EVENT_CASES` row.
+5. `extension/src/bin/spawn-refinement-team.ts` — add a row to `ACTIVITY_EVENT_SCHEMA_SECTION`.
+6. `extension/tests/<event>-schema-conformance.test.js` — new per-event test mirroring `ticket-audit-failed-schema-conformance.test.js`, asserting emitter↔schema parity AND the R-PDD-oneOf membership invariant.
+7. `npx tsc` so the compiled mirror `extension/types/index.js` matches source.
+
+Prefer `logActivity` (auto-stamps `ts`) over `writeActivityEntry` (does NOT auto-stamp — see the R-WSE-2 / R-CCPM-1 trap doors; a `writeActivityEntry` emitter MUST pass `ts: new Date().toISOString()` explicitly).
 
 ### R-SRGT-1 (small, ≤30m) — scope-resolver short-circuit import walk on empty initial diff
+
+> **✅ SHIPPED 2026-05-22 (`6f71dd6a`).** `computeOneHop` returns `[]` immediately
+> for an empty seed set. NOTE: the actual short-circuit lives in `computeOneHop`
+> (the one-hop expander), not a separate "2-pass walk" function — empty-diff
+> modes already throw `SCOPE_EMPTY_DIFF` upstream in `resolveAllowedFromDiffMode`.
+> Ticket body below is historical. R-SRGT-1 + R-SRGT-2 shipped together.
 
 **Files to modify**:
 - `extension/src/services/scope-resolver.ts` — locate the 2-pass walk (build initial file set from `git diff` → "import walk" expand via grep). When initial file set is empty:
@@ -109,6 +158,13 @@ Structural cost: any operator launching with `--scope branch` and an empty or do
 
 ### R-SRGT-2 (small, ≤30m) — scope-resolver grep timeout caps
 
+> **✅ SHIPPED 2026-05-22 (`6f71dd6a`).** Per-grep timeout lowered 30s→5s
+> (`FIND_IMPORTERS_TIMEOUT_MS`); aggregate wall-clock cap added
+> (`ONE_HOP_WALK_WALL_MS`, 60s) — on exceed, log + return partial importer set.
+> The "3-retry per target" cap was dropped: there is no retry loop in
+> `findImporters` (rg-then-grep fallback, single attempt each), so it was a
+> no-op AC. Trap door + `scope-srgt.test.js` added.
+
 **Files to modify**:
 - `extension/src/services/scope-resolver.ts` — even when initial diff is non-empty, add defensive caps on grep import-walk:
   - Per-grep timeout: 5s (currently unbounded / inherits default).
@@ -120,6 +176,12 @@ Structural cost: any operator launching with `--scope branch` and an empty or do
 - Integration regression: empty-diff case still completes in <100ms (R-SRGT-1 path); non-empty case completes <60s.
 
 ### R-PPSD-1 (small, ≤15m, DOC-ONLY) — pickle-pipeline.md unified skip flag docs
+
+> **✅ ALREADY SATISFIED (verified 2026-05-22).** Both `.claude/commands/pickle-pipeline.md`
+> and `.claude/commands/pickle-tmux.md` already document `skip_quality_gates_reason`
+> as primary with the legacy flags labelled `**Legacy**:`. No change needed — a
+> prior commit (the R-QGSK-2 ship or a follow-up) already closed this. Ticket
+> body below is historical.
 
 **Files to modify**:
 - `extension/.claude/commands/pickle-pipeline.md` § "Skip-flag overrides" — replace the legacy-only doc block:
@@ -146,35 +208,37 @@ Structural cost: any operator launching with `--scope branch` and an empty or do
 
 ## Hardening (1)
 
-### T-HARDEN-PLF-TESTS (small, ≤30m) — integration tests for empty-diff / doc-only-diff launch
+### T-HARDEN-PLF-TESTS (small) — integration tests for the R-PSSS empty-scope launch fixtures
+
+**Note**: the scope-resolver coverage the original ticket scoped (empty-diff
+short-circuit, slow-grep caps) already SHIPPED in `extension/tests/scope-srgt.test.js`
+with R-SRGT. This ticket now covers only the R-PSSS fixtures.
 
 **Files to modify**:
 - `extension/tests/integration/pipeline-launch-friction.test.js` (new file).
 
 **Coverage**:
-1. Fixture: branch with 0 commits ahead → scope-resolver returns empty allowlist in <100ms; pipeline-status.json records `pickle.skip_reason: "empty_scope"` if applicable.
-2. Fixture: branch with `docs/foo.md` only → anatomy-park emits `anatomy_park_empty_scope_skip` activity event; final report distinguishes skip type.
-3. Fixture: branch with intentionally-slow grep target → scope-resolver R-SRGT-2 caps fire correctly.
+1. Fixture: `scope.json.allowed_paths` all `docs/*.md` → `setupAnatomyPark` skips, `anatomy_park_empty_scope_skip` activity event emitted, WARN line present (R-PSSS-1).
+2. Fixture: same code-free scope → `setupSzechuanSauce` returns `false`, `szechuan_sauce_empty_scope_skip` emitted, `init-microverse.js` not spawned (R-PSSS-2); and a scope with ≥1 code file proceeds normally.
+3. Fixture: doc-only diff pipeline → `pipeline-status.json.phase_skips["anatomy-park"] === "empty_scope"` (R-PSSS-3).
 
 **Acceptance**:
 - All three test cases pass under `npm run test:integration`.
 
 ## Closer (1)
 
-### C-PLF-CLOSER [manager] (small, ≤30m) — bundle ship
+### C-PLF-CLOSER [manager] (small) — bundle ship
 
-**Conditional on B-PIPE-FIX ship strategy**:
-- **Option A** (release-train economy): co-ship as v1.75.6 alongside B-PIPE-FIX. Then C-PIPE-CLOSER does the version bump + release work for both bundles together.
-- **Option B** (separate release): bump v1.75.6 → v1.75.7, rebuild, install.sh parity, release notes, MASTER_PLAN update.
+The bundle now ships only R-PSSS-1/2/3 + T-HARDEN-PLF-TESTS (R-SRGT and R-PPSD
+already shipped on `main` 2026-05-22; #50/#51 already closed in MASTER_PLAN).
 
-Operator picks Option A or B at ship time. Default: B (lower coupling).
-
-Common closer work either way:
+Closer work:
+- Minor version bump from the current `extension/package.json` version (v1.76.0 at re-scope time → v1.77.0; the closer reads the live version, does not hardcode).
 - `cd extension && npx tsc` rebuild compiled mirrors.
 - `bash install.sh` parity check (manager-only).
 - Full release-gate audit (`npx tsc --noEmit && npx eslint && audit-* && test:fast && test:integration`).
-- Commit + push.
-- Update `prds/MASTER_PLAN.md`: mark findings #49 / #50 / #51 closed; B-PIPE-LAUNCH-FRICTION row → Shipped.
+- Commit + tag + push.
+- Update `prds/MASTER_PLAN.md`: mark finding #49 closed; B-PIPE-LAUNCH-FRICTION row → Shipped.
 
 ## Acceptance criteria (bundle-level)
 
@@ -183,11 +247,11 @@ Common closer work either way:
 | AC-PLF-01 | anatomy-park emits top-level WARN + activity event on empty-scope skip | log line + jq on state.json.activity |
 | AC-PLF-02 | szechuan-sauce emits top-level WARN + activity event on empty-scope skip | symmetric to AC-PLF-01 |
 | AC-PLF-03 | pipeline-status.json records `skip_reason` per phase; final report renders disposition | jq + grep on report |
-| AC-PLF-04 | scope-resolver short-circuits on empty diff (<100ms, no grep spawn) | unit test + instrumentation |
-| AC-PLF-05 | scope-resolver grep cap (5s / 3 retries / 60s total) fires correctly | unit test |
-| AC-PLF-06 | `/pickle-pipeline` skill prompt documents `skip_quality_gates_reason` as primary; legacy flags clearly labeled | grep + manual read |
-| AC-PLF-07 | Integration test suite covers all three launch-friction fixtures | npm run test:integration |
-| AC-PLF-CLOSER | Bundle shipped (v1.75.6 co-ship OR v1.75.7); MASTER_PLAN findings #49/#50/#51 closed | git log + gh release view + MASTER_PLAN diff |
+| AC-PLF-04 | ✅ scope-resolver short-circuits on empty diff (<100ms, no grep spawn) | SHIPPED `6f71dd6a` — `scope-srgt.test.js` |
+| AC-PLF-05 | ✅ scope-resolver grep cap (5s per-grep / 60s total) fires correctly | SHIPPED `6f71dd6a` — `scope-srgt.test.js`. 3-retry cap dropped (no retry loop exists) |
+| AC-PLF-06 | ✅ `/pickle-pipeline` skill prompt documents `skip_quality_gates_reason` as primary; legacy flags labeled | SHIPPED earlier — verified 2026-05-22 |
+| AC-PLF-07 | Integration test suite covers the R-PSSS fixtures (anatomy empty-scope, szechuan code-free scope, pipeline-status `phase_skips`) | npm run test:integration |
+| AC-PLF-CLOSER | R-PSSS shipped; MASTER_PLAN finding #49 closed; B-PIPE-LAUNCH-FRICTION row → Shipped | git log + MASTER_PLAN diff |
 
 ## Out of scope
 
@@ -200,10 +264,13 @@ Common closer work either way:
 
 **Pickle-friendly bundle** — unlike B-PIPE-FIX, this bundle does NOT modify the runner contract or worker prompts in ways that block pipeline self-hosting. Safe to ship via `/pickle-tmux` once B-PIPE-FIX R-PIPE-1 (max-turns 400) lands.
 
-**Recommended order**:
-1. B-PIPE-FIX completes (R-PIPE-1 verdict + R-PIPE-2/3/4 + closer).
-2. B-PLF runs via `/pickle-tmux` on the same v1.75.6 base.
-3. Operator picks co-ship (A) or separate release (B) at C-PLF-CLOSER time.
+**Recommended order (post re-scope, 2026-05-22)**:
+1. R-SRGT + R-PPSD already shipped surgically — skip their (historical) ticket bodies.
+2. Run the remaining bundle — R-PSSS-1/2/3 + T-HARDEN-PLF-TESTS + C-PLF-CLOSER —
+   via `/pickle-tmux prds/p2-pipeline-launch-friction-bundle-2026-05-18.md`.
+   All four tickets touch `pipeline-runner.ts` (sequential, not parallel-safe
+   on that file). Each R-PSSS ticket also touches the activity-event schema —
+   workers must run the R-PDD-oneOf grep before commit.
 
 ## Post-validation gaps
 
@@ -219,7 +286,14 @@ Common closer work either way:
 
 ## Bundle sizing
 
-- 6 atomic + 1 hardening + 1 closer = 8 tickets.
-- Tier mix: 6 small + 1 small + 1 small = all small-tier (≤30m each). Total worker effort ≤4h.
-- R-PPSD-1 (15min doc-only) can land independently / first.
-- No refinement required — bundle is small enough to ship from this PRD directly.
+Original: 6 atomic + 1 hardening + 1 closer = 8 tickets. **Remaining after the
+2026-05-22 surgical ship of R-SRGT-1/2 + R-PPSD-1: 4 tickets** —
+R-PSSS-1, R-PSSS-2, R-PSSS-3, T-HARDEN-PLF-TESTS + C-PLF-CLOSER.
+
+- Tier: R-PSSS-1/2 small; R-PSSS-3 small-to-medium (it changes the phase-setup
+  return contract `boolean → PhaseSetupResult` and extends `PipelineStatus` —
+  more touchpoints than a pure additive change, classify medium if the
+  auto-sizer is unsure). T-HARDEN + closer small.
+- R-PSSS-1/2 each add a new activity event → 7-touchpoint registration each.
+- Sequential on `pipeline-runner.ts` — do NOT parallelize these tickets.
+- No further refinement required — these re-scoped bodies are pipeline-ready.
