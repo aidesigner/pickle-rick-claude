@@ -209,6 +209,59 @@ test('check-readiness: missing contract fails independently', () => runFixture((
     assert.ok(out.findings.some((finding) => finding.kind === 'contract' && finding.detail === symbol));
 }));
 
+test('check-readiness: R-RCEX (#65) external SDK symbol resolves against node_modules .d.ts', () => runFixture((sessionDir) => {
+    const repoRoot = tmpDir('pickle-readiness-repo-');
+    try {
+        // A declared dependency whose `.d.ts` surface declares the cited symbol.
+        fs.writeFileSync(
+            path.join(repoRoot, 'package.json'),
+            JSON.stringify({ name: 'rcex-fixture', dependencies: { reductoish: '0.1.0' } }),
+        );
+        const depDir = path.join(repoRoot, 'node_modules', 'reductoish');
+        fs.mkdirSync(depDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(depDir, 'index.d.ts'),
+            'export interface JobGetResponse { result: string; }\n',
+        );
+        writeTicket(sessionDir, 'rcex01', { extra: '## Interface Contracts\n\n- `JobGetResponse.result` must exist.\n' });
+        writeManifest(sessionDir, { tickets: [{ id: 'rcex01', key: 'RCEX-1' }] });
+
+        const result = runReadiness(sessionDir, repoRoot);
+        assert.equal(result.status, 0, result.stderr);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'pass');
+        assert.ok(
+            !out.findings.some((finding) => finding.kind === 'contract'),
+            `external SDK symbol must not produce a contract finding; got ${JSON.stringify(out.findings)}`,
+        );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+}));
+
+test('check-readiness: R-RCEX (#65) a symbol absent from every dependency still fails', () => runFixture((sessionDir) => {
+    const repoRoot = tmpDir('pickle-readiness-repo-');
+    try {
+        fs.writeFileSync(
+            path.join(repoRoot, 'package.json'),
+            JSON.stringify({ name: 'rcex-fixture', dependencies: { reductoish: '0.1.0' } }),
+        );
+        const depDir = path.join(repoRoot, 'node_modules', 'reductoish');
+        fs.mkdirSync(depDir, { recursive: true });
+        fs.writeFileSync(path.join(depDir, 'index.d.ts'), 'export interface JobGetResponse { result: string; }\n');
+        const symbol = 'Phantom' + 'SdkType' + 'Xyz.' + 'never' + 'DeclaredMember';
+        writeTicket(sessionDir, 'rcex02', { extra: `## Interface Contracts\n\n- \`${symbol}\` must exist.\n` });
+        writeManifest(sessionDir, { tickets: [{ id: 'rcex02', key: 'RCEX-2' }] });
+
+        const result = runReadiness(sessionDir, repoRoot);
+        assert.equal(result.status, 2);
+        const out = JSON.parse(result.stdout);
+        assert.ok(out.findings.some((finding) => finding.kind === 'contract' && finding.detail === symbol));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+}));
+
 test('check-readiness: missing dependency fails independently', () => runFixture((sessionDir) => {
     writeTicket(sessionDir, 'dep001', { dependencies: ['DEP-MISSING'] });
     writeManifest(sessionDir, { tickets: [{ id: 'dep001', key: 'DEP-1' }] });

@@ -390,10 +390,98 @@ function gitTrackedFiles(repoRoot: string): string[] {
 interface ResolverCache {
   trackedSourceFiles: string[];
   trackedAllFiles?: string[];
+  externalDtsFiles?: string[];
   fileContents: Map<string, string>;
   deadline: number;
   truncated: boolean;
   allowlist: Set<string>;
+}
+
+// R-RCEX (Finding #65): bounds for the node_modules `.d.ts` resolution scan.
+const EXTERNAL_DTS_FILE_CAP = 3_000;
+const EXTERNAL_DTS_MAX_BYTES = 512 * 1024;
+
+/**
+ * R-RCEX (Finding #65): declared dependency names from the target repo's
+ * `package.json` (and the `extension/` sub-package, mirroring `resolvePathRef`
+ * bases). `@types/*` stub packages are EXCLUDED here at the call site — a
+ * ticket citing a stdlib type is a separate false-positive class handled by
+ * `.readiness-allowlist.json`, and the TS lib `.d.ts` files are huge.
+ */
+function declaredDependencyNames(repoRoot: string): string[] {
+  const names = new Set<string>();
+  for (const dir of [repoRoot, path.join(repoRoot, 'extension')]) {
+    const pkg = readJsonFile(path.join(dir, 'package.json'));
+    if (!isRecord(pkg)) continue;
+    for (const key of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+      const section = pkg[key];
+      if (isRecord(section)) {
+        for (const name of Object.keys(section)) names.add(name);
+      }
+    }
+  }
+  return [...names];
+}
+
+function collectDtsFilesUnder(dir: string, acc: string[]): void {
+  if (acc.length >= EXTERNAL_DTS_FILE_CAP) return;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (acc.length >= EXTERNAL_DTS_FILE_CAP) return;
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules') continue; // do not descend into nested deps
+      collectDtsFilesUnder(path.join(dir, entry.name), acc);
+    } else if (entry.isFile() && entry.name.endsWith('.d.ts')) {
+      acc.push(path.join(dir, entry.name));
+    }
+  }
+}
+
+function collectExternalDtsFiles(repoRoot: string): string[] {
+  const files: string[] = [];
+  const deps = declaredDependencyNames(repoRoot).filter((dep) => !dep.startsWith('@types/'));
+  const moduleRoots = [
+    path.join(repoRoot, 'node_modules'),
+    path.join(repoRoot, 'extension', 'node_modules'),
+  ].filter((root) => fs.existsSync(root));
+  for (const root of moduleRoots) {
+    for (const dep of deps) {
+      if (files.length >= EXTERNAL_DTS_FILE_CAP) return files;
+      const depDir = path.join(root, dep); // path.join handles @scope/pkg
+      if (fs.existsSync(depDir)) collectDtsFilesUnder(depDir, files);
+    }
+  }
+  return files;
+}
+
+/**
+ * R-RCEX (Finding #65): after in-repo resolution misses, grep-match the ref's
+ * parts against the declared dependencies' `.d.ts` surface — same
+ * all-parts-in-one-file semantics as the in-repo resolver. A ticket that
+ * legitimately uses a third-party SDK symbol no longer trips a `contract`
+ * finding. Oversized `.d.ts` files (TS lib stubs) are skipped to bound memory.
+ */
+function resolveExternalSymbolRef(partPatterns: RegExp[], repoRoot: string, cache: ResolverCache): boolean {
+  if (cache.externalDtsFiles === undefined) {
+    cache.externalDtsFiles = collectExternalDtsFiles(repoRoot);
+  }
+  return cache.externalDtsFiles.some((file) => {
+    if (cache.fileContents.get(file) === undefined) {
+      try {
+        if (fs.statSync(file).size > EXTERNAL_DTS_MAX_BYTES) return false;
+      } catch {
+        return false;
+      }
+    }
+    const content = readCachedFile(file, cache);
+    if (content === undefined) return false;
+    return partPatterns.every((pattern) => pattern.test(content));
+  });
 }
 
 function createResolverCache(repoRoot: string, maxWallMs: number, allowlist: Set<string> = new Set()): ResolverCache {
@@ -434,7 +522,7 @@ function resolveSymbolRef(ref: string, repoRoot: string, cache: ResolverCache): 
     if (content === undefined) return false;
     return partPatterns.every((pattern) => pattern.test(content));
   });
-  if (candidates.length === 0) return false;
+  if (candidates.length === 0) return resolveExternalSymbolRef(partPatterns, repoRoot, cache);
   if (candidates.length === 1) return true;
   try {
     computeOneHop(candidates.slice(0, 1), repoRoot, { findImportersTimeoutMs: FIND_IMPORTERS_TIMEOUT_MS });
