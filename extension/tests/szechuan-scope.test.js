@@ -164,6 +164,18 @@ describe('szechuan scope injection', () => {
   // Step 8 wiring: --allowed-paths-file referenced after Step 7 in szechuan-sauce.md
   // ---------------------------------------------------------------------------
 
+  test('R-FGNC-5: szechuan-sauce iteration loop runs lint autofix before commit', () => {
+    const content = fs.readFileSync(SZECHUAN_MD, 'utf-8');
+    const iterIdx = content.indexOf('### Each subsequent iteration');
+    assert.ok(iterIdx > 0, '"Each subsequent iteration" section must exist');
+    const section = content.slice(iterIdx, iterIdx + 1200);
+    assert.match(section, /R-FGNC-5/, 'the iteration loop must carry the R-FGNC-5 lint-autofix step');
+    assert.match(section, /lint autofix|lint:fix|--fix/i, 'the step must instruct a lint-autofix run');
+    const fixIdx = section.search(/lint autofix/i);
+    const commitIdx = section.indexOf('. Commit');
+    assert.ok(fixIdx > 0 && commitIdx > fixIdx, 'the lint-autofix step must come BEFORE the commit step');
+  });
+
   test('Step 8 references --allowed-paths-file after Step 7 (scope wiring for standalone mode)', () => {
     const content = fs.readFileSync(SZECHUAN_MD, 'utf-8');
     const step7Idx = content.indexOf('### Step 7: Resolve Scope');

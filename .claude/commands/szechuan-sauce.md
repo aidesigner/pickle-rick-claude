@@ -189,8 +189,15 @@ Violations matching this focus are elevated by one priority level. When tied, fi
 3. Identify the highest-priority violation (P0 > P1 > P2 > P3 > P4)
 4. Fix it — one logical change per iteration
 5. Run tests — ensure green
-6. Commit
-7. Re-check contract map for new mismatches introduced by the fix
+6. **Lint autofix before commit (R-FGNC-5):** if the project has a lint script
+   with autofix (`lint`, `lint:fix`, or equivalent — most repos bake `--fix`
+   into `lint`), run it and stage the autofixed result. Formatting/style drift
+   the deslop refactors introduce is autofixable noise — clear it here rather
+   than letting it accumulate as gate debt. If lint errors REMAIN after
+   autofix, do NOT commit dirty: surface the residual errors as this
+   iteration's principle violation in `gap_analysis.md`.
+7. Commit
+8. Re-check contract map for new mismatches introduced by the fix
 
 ## Rules
 - One fix per iteration (atomic, revertible)

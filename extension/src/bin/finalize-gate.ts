@@ -323,8 +323,16 @@ async function runStrictGateCycle(ctx: FinalizeContext, rt: FinalizeRuntime, cyc
 
 function writeEscalation(ctx: FinalizeContext, rt: FinalizeRuntime, lastResult: GateResult | undefined): string {
   const escalationPath = path.join(ctx.gateDir, `escalation_${rt.iso()}.md`);
-  const failureLines = (lastResult?.failures ?? []).map(
-    f => `- \`${f.file}\` [${f.check}] ${f.ruleOrCode}: ${f.message.slice(0, 200)}`
+  const failures = lastResult?.failures ?? [];
+  // R-FGNC-3: the escalation must show what the gate actually saw. With the
+  // R-FGNC-1/2 classifier fix `failures` enumerates the REAL TS/lint errors
+  // (no longer just `.npmrc` WARN noise) — group them by check so the operator
+  // sees the true shape, and keep messages long enough to be actionable.
+  const byCheck = new Map<string, number>();
+  for (const f of failures) byCheck.set(f.check, (byCheck.get(f.check) ?? 0) + 1);
+  const checkSummary = [...byCheck.entries()].map(([c, n]) => `${c}: ${n}`).join(', ') || 'none';
+  const failureLines = failures.map(
+    f => `- \`${f.file}\`${f.line ? `:${f.line}` : ''} [${f.check}] ${f.ruleOrCode}: ${f.message.slice(0, 400)}`
   );
   rt.writeFile(
     escalationPath,
@@ -334,11 +342,13 @@ function writeEscalation(ctx: FinalizeContext, rt: FinalizeRuntime, lastResult: 
       `Skill: ${ctx.skill}`,
       `Cap: ${ctx.cap} cycles`,
       `Timestamp: ${new Date().toISOString()}`,
-      `Remaining failures: ${lastResult?.failures.length ?? 0}`,
+      `Remaining failures: ${failures.length} (${checkSummary})`,
       ``,
       `## Failures`,
       ``,
-      ...failureLines,
+      ...(failureLines.length > 0
+        ? failureLines
+        : ['(none enumerated — inspect gate/ per-cycle result files for raw output)']),
       ``,
       `Manual remediation required. Check gate/ for per-cycle result files.`,
     ].join('\n')
