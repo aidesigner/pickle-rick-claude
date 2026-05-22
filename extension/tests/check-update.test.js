@@ -1,4 +1,10 @@
-// @tier: fast
+// @tier: integration
+// Integration-tiered (not fast): several tests mutate process.env.PATH directly
+// to point `gh`/subprocess resolution at on-disk stubs. Under the fast tier's
+// 8-way concurrency a sibling test clobbers PATH mid-call (process-global-state
+// race, R-TSPF), the real `gh` resolves, and its network call hangs to the 15s
+// timeout. This file is in tests/integration/.serial-tests.json so it runs
+// serialized — no concurrent PATH mutation.
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';

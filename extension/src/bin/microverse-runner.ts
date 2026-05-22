@@ -2062,7 +2062,7 @@ export async function probeJudgeBackendAvailability(backend: ProbeJudgeBackend, 
   }
 }
 
-// eslint-disable-next-line complexity -- R-LINT-2 owns the structural refactor; keep the judge trap-door logic explicit here.
+// eslint-disable-next-line complexity -- HT-1 reviewed: R-LINT-2 owns the structural refactor; judge trap-door logic kept explicit here pending that PR.
 export async function measureLlmMetricWithBackoff(
   goal: string,
   timeoutSeconds: number,

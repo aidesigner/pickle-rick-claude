@@ -2202,7 +2202,7 @@ export async function runIteration(
     try { fs.writeSync(logFd, chunk); } catch { /* fd closed — ignore late writes */ }
   }
 
-  // eslint-disable-next-line max-lines-per-function -- legacy spawn-wait callback retained behavior-preserving for global bin acceptance
+  // eslint-disable-next-line max-lines-per-function -- HT-1 reviewed: legacy spawn-wait callback retained behavior-preserving for global bin acceptance; refactor deferred.
   return new Promise((resolve) => {
     let settled = false;
     const start = Date.now();
@@ -3730,7 +3730,7 @@ function readPostIterationState(state: State, ctx: LoopContext): State {
   }
 }
 
-// eslint-disable-next-line complexity -- legacy completion branch retained behavior-preserving; pre-existing violation
+// eslint-disable-next-line complexity -- HT-1 reviewed: legacy completion branch retained behavior-preserving; pre-existing violation, refactor deferred to a focused PR.
 export async function processCompletionBranch(state: State, result: IterationOutcome['completion'], ctx: LoopContext): Promise<LoopAction> {
   if (result === 'task_completed') return processTaskCompleted(state, ctx);
   if (result === 'review_clean') return processReviewClean(ctx);
@@ -3802,7 +3802,7 @@ export async function processCompletionBranch(state: State, result: IterationOut
   return { kind: 'noop' };
 }
 
-// eslint-disable-next-line complexity -- F3 R-DWC: completion_commit guard adds branches to an already-large completion handler; refactoring the surrounding flow is out of scope for the surgical sweep
+// eslint-disable-next-line complexity -- HT-1 reviewed: F3 R-DWC completion_commit guard adds branches to an already-large completion handler; surrounding-flow refactor out of scope for the surgical sweep.
 function processTaskCompleted(state: State, ctx: LoopContext): LoopAction {
   let curState: State;
   try { curState = ctxReadState(ctx); } catch (err) {

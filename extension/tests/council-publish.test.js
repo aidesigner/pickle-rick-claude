@@ -1,4 +1,8 @@
-// @tier: fast
+// @tier: integration
+// Integration-tiered (not fast): the hung-`gh` regression tests deliberately
+// drive subprocess timeout/SIGTERM paths. Under the fast tier's 8-way
+// concurrency those real subprocesses are starved and spuriously time out;
+// this file is in tests/integration/.serial-tests.json so it runs serialized.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';

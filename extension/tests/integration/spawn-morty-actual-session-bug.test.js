@@ -1,7 +1,11 @@
 // @tier: integration
 // R-XBL-7b — Reproduces actual session 2026-05-03-7d9ee8cc conditions.
-// state.backend='claude', PICKLE_REFINEMENT_LOCK=1, codex-manager-relaunch path triggered.
-// Assert claude wins. Bug was NOT env poisoning (that is R-XBL-7).
+// state.backend='claude', PICKLE_REFINEMENT_LOCK=1, manager-relaunch path triggered.
+// Since c271a1f7 ("generalize manager relaunch handling") the relaunch evaluator
+// is backend-agnostic: claude managers DO relaunch (R-MMTR-3), so the protection
+// is no longer "no relaunch" but "the relaunch targets the claude backend, never
+// codex". Assert decision.backend resolves to 'claude' — no codex hijack of a
+// claude session. Bug was NOT env poisoning (that is R-XBL-7).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
@@ -55,9 +59,9 @@ function withRefinementLock(value, fn) {
   }
 }
 
-test('R-XBL-7b: spawn-morty-actual-session-bug — state.backend=claude + PICKLE_REFINEMENT_LOCK=1 wins over codex-manager-relaunch', () => {
+test('R-XBL-7b: spawn-morty-actual-session-bug — state.backend=claude + PICKLE_REFINEMENT_LOCK=1 relaunches as claude, never codex', () => {
   // Reproduces actual session 2026-05-03-7d9ee8cc: session was running as claude,
-  // PICKLE_REFINEMENT_LOCK=1 was active, codex-manager-relaunch path evaluated.
+  // PICKLE_REFINEMENT_LOCK=1 was active, the manager-relaunch path evaluated.
   const tmpDir = makeTmpDir();
   try {
     const sessionDir = path.join(tmpDir, 'session');
@@ -70,8 +74,7 @@ test('R-XBL-7b: spawn-morty-actual-session-bug — state.backend=claude + PICKLE
 
       const decision = evaluateCodexManagerRelaunch(state, PENDING_TICKETS, null);
 
-      assert.equal(decision.shouldRelaunch, false, 'claude backend must not trigger codex manager relaunch');
-      assert.equal(decision.reason, 'not_codex', 'reason must be not_codex when state.backend=claude + PICKLE_REFINEMENT_LOCK=1');
+      assert.equal(decision.backend, 'claude', 'claude session must never be hijacked into a codex manager relaunch');
     });
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -80,8 +83,8 @@ test('R-XBL-7b: spawn-morty-actual-session-bug — state.backend=claude + PICKLE
 
 test('R-XBL-7b: spawn-morty-actual-session-bug — PICKLE_REFINEMENT_LOCK=1 forces claude even if state.backend=codex', () => {
   // Defense layer: even if state.backend='codex' (stale/mismatch scenario),
-  // PICKLE_REFINEMENT_LOCK=1 forces resolveBackend to return 'claude', which
-  // makes evaluateCodexManagerRelaunch return not_codex. The lock is non-overridable.
+  // PICKLE_REFINEMENT_LOCK=1 forces resolveBackend to return 'claude', so the
+  // relaunch decision resolves to the claude backend. The lock is non-overridable.
   const tmpDir = makeTmpDir();
   try {
     const sessionDir = path.join(tmpDir, 'session');
@@ -95,14 +98,9 @@ test('R-XBL-7b: spawn-morty-actual-session-bug — PICKLE_REFINEMENT_LOCK=1 forc
       const decision = evaluateCodexManagerRelaunch(state, PENDING_TICKETS, null);
 
       assert.equal(
-        decision.shouldRelaunch,
-        false,
-        'refinement lock must prevent codex relaunch even when state.backend=codex',
-      );
-      assert.equal(
-        decision.reason,
-        'not_codex',
-        'reason must be not_codex when PICKLE_REFINEMENT_LOCK=1 forces claude',
+        decision.backend,
+        'claude',
+        'refinement lock must force claude even when state.backend=codex',
       );
     });
   } finally {
@@ -110,10 +108,10 @@ test('R-XBL-7b: spawn-morty-actual-session-bug — PICKLE_REFINEMENT_LOCK=1 forc
   }
 });
 
-test('R-XBL-7b: spawn-morty-actual-session-bug — without PICKLE_REFINEMENT_LOCK, state.backend=claude still wins', () => {
+test('R-XBL-7b: spawn-morty-actual-session-bug — without PICKLE_REFINEMENT_LOCK, state.backend=claude still resolves claude', () => {
   // Belt-and-suspenders: even without the refinement lock, state.backend=claude
-  // alone is sufficient to prevent codex-manager-relaunch. State is the single
-  // source of truth (R-XBL-2).
+  // alone resolves the relaunch backend to claude. State is the single source
+  // of truth (R-XBL-2) — no codex hijack.
   const tmpDir = makeTmpDir();
   try {
     const sessionDir = path.join(tmpDir, 'session');
@@ -126,8 +124,7 @@ test('R-XBL-7b: spawn-morty-actual-session-bug — without PICKLE_REFINEMENT_LOC
 
       const decision = evaluateCodexManagerRelaunch(state, PENDING_TICKETS, null);
 
-      assert.equal(decision.shouldRelaunch, false, 'state.backend=claude must win without refinement lock too');
-      assert.equal(decision.reason, 'not_codex', 'reason must be not_codex from state.backend=claude alone');
+      assert.equal(decision.backend, 'claude', 'state.backend=claude must resolve claude without the refinement lock too');
     });
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });

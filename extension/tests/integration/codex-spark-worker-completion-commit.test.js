@@ -27,9 +27,18 @@ function initGitRepo(dir) {
   execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: dir });
   writeExtensionSentinel(dir);
   fs.mkdirSync(path.join(dir, 'extension', 'src'), { recursive: true });
+  // The worker lint gate runs `npm run test:fast` for non-small tickets
+  // (R-PTG contract). This fixture exercises a clean codex worker turn, so the
+  // test phase must resolve to a passing no-op script — without it the gate
+  // fails on a missing-script error and the ticket is wrongly marked Failed.
   fs.writeFileSync(
     path.join(dir, 'extension', 'package.json'),
-    JSON.stringify({ name: 'fixture', private: true, type: 'module' }, null, 2),
+    JSON.stringify({
+      name: 'fixture',
+      private: true,
+      type: 'module',
+      scripts: { 'test:fast': 'node -e ""', 'test:integration': 'node -e ""' },
+    }, null, 2),
   );
   fs.writeFileSync(path.join(dir, 'extension', 'src', 'baseline.ts'), 'export const baseline = 1;\n');
   fs.writeFileSync(path.join(dir, 'README.md'), 'fixture\n');

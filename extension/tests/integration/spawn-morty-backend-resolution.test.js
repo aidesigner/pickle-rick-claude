@@ -15,8 +15,6 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_MORTY_BIN = path.resolve(__dirname, '../../bin/spawn-morty.js');
-const ACTIVITY_EVENT_SCHEMA_PATH = path.resolve(__dirname, '../../src/types/activity-events.schema.json');
-const ACTIVITY_EVENT_SCHEMA = JSON.parse(fs.readFileSync(ACTIVITY_EVENT_SCHEMA_PATH, 'utf-8'));
 
 function makeTmpDir(prefix = 'pickle-xbl2-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -122,38 +120,6 @@ function readActivityEvents(sessionDir, eventName) {
   return activity.filter((entry) => entry?.event === eventName);
 }
 
-function resolveSchemaRef(ref) {
-  return ACTIVITY_EVENT_SCHEMA.definitions[ref.replace('#/definitions/', '')];
-}
-
-function validateActivityEventAgainstSchema(payload, defName) {
-  const def = ACTIVITY_EVENT_SCHEMA.definitions[defName];
-  assert.ok(def, `missing schema definition for ${defName}`);
-  for (const field of def.required ?? []) {
-    assert.ok(field in payload, `${defName}: missing required field ${field}`);
-  }
-  for (const [field, rawProp] of Object.entries(def.properties ?? {})) {
-    if (!(field in payload)) continue;
-    const prop = rawProp.$ref ? resolveSchemaRef(rawProp.$ref) : rawProp;
-    const value = payload[field];
-    if (Array.isArray(prop.type)) {
-      const matchesType = prop.type.some((typeName) => {
-        if (typeName === 'null') return value === null;
-        if (typeName === 'integer') return Number.isInteger(value);
-        return typeof value === typeName;
-      });
-      assert.ok(matchesType, `${defName}.${field}: value ${JSON.stringify(value)} does not match ${prop.type.join('|')}`);
-    } else if (prop.type === 'integer') {
-      assert.ok(Number.isInteger(value), `${defName}.${field}: expected integer, got ${JSON.stringify(value)}`);
-    } else if (prop.type === 'string') {
-      assert.equal(typeof value, 'string', `${defName}.${field}: expected string, got ${typeof value}`);
-    }
-    if (Array.isArray(prop.enum)) {
-      assert.ok(prop.enum.includes(value), `${defName}.${field}: ${JSON.stringify(value)} not in enum ${prop.enum.join(',')}`);
-    }
-  }
-}
-
 function which(harness) {
   // Determine which shim was invoked by checking the log files.
   const invoked = [];
@@ -245,83 +211,62 @@ test('R-XBL-2: state.backend=hermes spawns hermes (single source of truth)', () 
   }
 });
 
-// NOTE: this test forces mismatch only via the existing heuristic path:
-// state.backend=codex + settings heuristic ON + large ticket => resolved claude.
-test('backend-spawn-assertion: stale state/backend + heuristic mismatch exits non-zero', () => {
+// Since 138427b5 ("allow heuristic backend flip past pre-spawn guard") the
+// enable_backend_routing_heuristic codex→claude flip resolves with source
+// 'settings' — an intentional configured routing decision. assertBackendPreSpawn
+// treats 'settings' as a match source, so the flip spawns claude directly: no
+// worker_spawn_backend_mismatch, no backend_flip_reason carve-out.
+test('backend-spawn-assertion: heuristic codex→claude flip is allowed past the pre-spawn guard', () => {
   const harness = makeHarness({ stateBackend: 'codex' });
   writePickleSettings(harness.tmpDir, { enable_backend_routing_heuristic: true });
   const ticketFile = writeTicketFile(harness.ticketDir, harness.ticketId);
   try {
     const result = runMorty(harness, ['--ticket-file', ticketFile]);
-    assert.equal(result.status, 1);
+    assert.equal(result.status, 1); // shim path: no WORKER_DONE — see NOTE above
     const invoked = which(harness);
-    assert.equal(invoked.length, 0, `expected spawn-block before exec; got ${JSON.stringify(invoked.map(i => i.backend))}`);
+    assert.equal(invoked.length, 1, `expected the heuristic flip to spawn; got ${JSON.stringify(invoked.map(i => i.backend))}`);
+    assert.equal(invoked[0].backend, 'claude', 'large-ticket heuristic flips codex→claude');
     const mismatch = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_mismatch');
-    assert.equal(mismatch.length, 1);
-    validateActivityEventAgainstSchema(mismatch[0], 'worker_spawn_backend_mismatch');
-    assert.equal(mismatch[0].resolved_backend, 'claude');
-    assert.equal(mismatch[0].state_backend, 'codex');
-    assert.equal(mismatch[0].source, 'settings');
-  } finally {
-    fs.rmSync(harness.tmpDir, { recursive: true, force: true });
-  }
-});
-
-test('backend-spawn-assertion: fresh backend_flip_reason bypasses mismatch once and clears flags', () => {
-  const harness = makeHarness({
-    stateBackend: 'codex',
-    extras: {
-      flags: {
-        backend_flip_reason: 'codex-spark-429',
-        backend_flip_reason_ts: new Date(Date.now() - 30_000).toISOString(),
-      },
-    },
-  });
-  writePickleSettings(harness.tmpDir, { enable_backend_routing_heuristic: true });
-  const ticketFile = writeTicketFile(harness.ticketDir, harness.ticketId);
-  try {
-    const result = runMorty(harness, ['--ticket-file', ticketFile]);
-    assert.equal(result.status, 1);
-    const invoked = which(harness);
-    assert.equal(invoked.length, 1);
-    assert.equal(invoked[0].backend, 'claude', 'expected mismatch-bypass to continue with resolved backend');
-    const state = JSON.parse(fs.readFileSync(path.join(harness.sessionDir, 'state.json'), 'utf-8'));
-    assert.equal(state.flags?.backend_flip_reason, undefined);
-    assert.equal(state.flags?.backend_flip_reason_ts, undefined);
-    const mismatch = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_mismatch');
-    assert.equal(mismatch.length, 0);
+    assert.equal(mismatch.length, 0, 'a configured heuristic flip is not a mismatch');
     const resolved = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_resolved');
     assert.equal(resolved.length, 1);
+    assert.equal(resolved[0].backend, 'claude');
     assert.equal(resolved[0].source, 'settings');
   } finally {
     fs.rmSync(harness.tmpDir, { recursive: true, force: true });
   }
 });
 
-test('backend-spawn-assertion: stale backend_flip_reason does not bypass mismatch', () => {
-  const harness = makeHarness({
-    stateBackend: 'codex',
-    extras: {
-      flags: {
-        backend_flip_reason: 'codex-spark-429',
-        backend_flip_reason_ts: new Date(Date.now() - 120_000).toISOString(),
+test('backend-spawn-assertion: backend_flip_reason flags do not gate the heuristic flip', () => {
+  // The legacy backend_flip_reason carve-out is vestigial post-138427b5: the
+  // 'settings' source is accepted outright, so neither a fresh nor a stale
+  // backend_flip_reason changes the outcome and the flags are left untouched.
+  for (const ageMs of [30_000, 120_000]) {
+    const harness = makeHarness({
+      stateBackend: 'codex',
+      extras: {
+        flags: {
+          backend_flip_reason: 'codex-spark-429',
+          backend_flip_reason_ts: new Date(Date.now() - ageMs).toISOString(),
+        },
       },
-    },
-  });
-  writePickleSettings(harness.tmpDir, { enable_backend_routing_heuristic: true });
-  const ticketFile = writeTicketFile(harness.ticketDir, harness.ticketId);
-  try {
-    const result = runMorty(harness, ['--ticket-file', ticketFile]);
-    assert.equal(result.status, 1);
-    const state = JSON.parse(fs.readFileSync(path.join(harness.sessionDir, 'state.json'), 'utf-8'));
-    const mismatch = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_mismatch');
-    assert.equal(mismatch.length, 1);
-    assert.equal(mismatch[0].resolved_backend, 'claude');
-    assert.equal(mismatch[0].state_backend, 'codex');
-    assert.equal(state.flags?.backend_flip_reason, 'codex-spark-429');
-    assert.equal(typeof state.flags?.backend_flip_reason_ts, 'string');
-  } finally {
-    fs.rmSync(harness.tmpDir, { recursive: true, force: true });
+    });
+    writePickleSettings(harness.tmpDir, { enable_backend_routing_heuristic: true });
+    const ticketFile = writeTicketFile(harness.ticketDir, harness.ticketId);
+    try {
+      const result = runMorty(harness, ['--ticket-file', ticketFile]);
+      assert.equal(result.status, 1); // shim path: no WORKER_DONE — see NOTE above
+      const invoked = which(harness);
+      assert.equal(invoked.length, 1);
+      assert.equal(invoked[0].backend, 'claude', `flip spawns claude (flip-reason age ${ageMs}ms)`);
+      const mismatch = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_mismatch');
+      assert.equal(mismatch.length, 0);
+      const state = JSON.parse(fs.readFileSync(path.join(harness.sessionDir, 'state.json'), 'utf-8'));
+      assert.equal(state.flags?.backend_flip_reason, 'codex-spark-429', 'flip-reason flag untouched');
+      assert.equal(typeof state.flags?.backend_flip_reason_ts, 'string');
+    } finally {
+      fs.rmSync(harness.tmpDir, { recursive: true, force: true });
+    }
   }
 });
 

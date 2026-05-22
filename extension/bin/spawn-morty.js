@@ -795,7 +795,7 @@ function didWorkerGateFail(lintOk, tscOk, testsOk) {
 }
 // TODO(R-LINT): refactor — pre-existing 123 lines / complexity 16 introduced
 // 2026-05-11 (c5e7f92a7); extract per-phase helpers in a focused PR.
-// eslint-disable-next-line max-lines-per-function, complexity
+// eslint-disable-next-line max-lines-per-function, complexity -- HT-1 reviewed: pre-existing length/complexity tracked by R-LINT; per-phase helper extraction deferred to a focused refactor PR.
 export async function runWorkerGate(changedFiles, args) {
     const fileList = [...changedFiles];
     const extensionDir = path.join(args.workingDir, 'extension');

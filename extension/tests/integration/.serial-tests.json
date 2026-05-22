@@ -9,6 +9,25 @@
     "tests/integration/install-chmod-coverage.test.js",
     "tests/integration/timeout-e2e.test.js",
     "tests/integration/worker-backend-split.test.js",
-    "tests/integration/concurrent-state.test.js"
+    "tests/integration/concurrent-state.test.js",
+    "tests/integration/auto-resume-on-cap-hit.test.js",
+    "tests/integration/codex-spark-worker-completion-commit.test.js",
+    "tests/integration/gate-ergonomics-keystone.test.js",
+    "tests/integration/gate-skip-activity-events.test.js",
+    "tests/integration/lock-scope-rejects-live-runner.test.js",
+    "tests/integration/microverse-runner-judge-failure.test.js",
+    "tests/integration/microverse-runner.worker-subprocess-error.test.js",
+    "tests/integration/pipeline-runner-dirty-tree-guard.test.js",
+    "tests/integration/readiness-bundle-prd.test.js",
+    "tests/integration/session-map-collision-block.test.js",
+    "tests/integration/worker-lint-gate-forensic.test.js",
+    "tests/integration/worker-lint-gate.test.js",
+    "tests/integration/worker-partial-lifecycle-exit.test.js",
+    "tests/integration/worker-timeout-tier-budget.test.js",
+    "tests/mux-runner-claude-max-turns-relaunch.test.js",
+    "tests/install-script-real.test.js",
+    "tests/council-publish.test.js",
+    "tests/mux-runner.output-stall.test.js",
+    "tests/check-update.test.js"
   ]
 }
