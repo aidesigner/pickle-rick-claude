@@ -10,41 +10,31 @@ status, open findings, queue, feature epics.
 
 | Item | Value |
 |---|---|
-| Source / deployed version | **v1.75.5** — R-CCR code merged to `main` + deployed; **v1.75.6 release tag BLOCKED** on the `test:integration` flake tail (all real regressions fixed `eb91ebc9`) |
-| **v1.76.0** | **BLOCKED — release gate red.** `test:fast` green/stabilized; `test:integration` ~27 fails (~75% concurrency-flakes + ≥1 real `worker-lint-gate` regression); `test:expensive` unverified. Resume plan in `## v1.76.0 Completion`. |
+| Source / deployed version | **v1.76.0** — tagged, pushed, deployed (`bash install.sh`, parity gate green) 2026-05-22 |
+| **v1.76.0** | **SHIPPED 2026-05-22** — full release gate green (tsc / eslint / 6 audits / test:fast 4958 / test:integration 254+201 / test:expensive 9). Tagged `v1.76.0`, pushed `origin/main`, deployed. Detail in `## Recently Shipped`. |
 | Active pipeline | none — R-CCR (`e448b714`) **complete 2026-05-22**, 16/16, 4/4 phases |
-| Latest GitHub release | v1.69.0 — local-only mode; HEAD ~390+ commits ahead of origin |
+| Latest GitHub release | v1.76.0 — 2026-05-22 |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive (operator, reaffirmed 2026-05-21):** drain bug bundles
 before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**R-CCR — code COMPLETE on `main` 2026-05-22; v1.75.6 release tag BLOCKED.** Epic
-`prds/p2-bbabysit-review-hardening-2026-05-21.md`, 16/16 tickets Done, 4/4 phases
-(pickle → citadel → anatomy-park → szechuan-sauce), 27 commits `5a20c921..2be05865`.
-3-agent review hardening of the B-BABYSIT-FIX commits. Survived 5 false-advances
-on the stale pre-bundle runtime — resolved by deploying the bundle mid-run
-(`install.sh`) so the runtime carried its own R-WTZ/R-PPPA/R-PRH fixes; the
-runtime is deployed. Closes the review residue of findings #58-#64.
+**R-CCR — code COMPLETE on `main` 2026-05-22; shipped under the v1.76.0 tag.**
+Epic `prds/p2-bbabysit-review-hardening-2026-05-21.md`, 16/16 tickets Done,
+4/4 phases (pickle → citadel → anatomy-park → szechuan-sauce), 27 commits
+`5a20c921..2be05865`. 3-agent review hardening of the B-BABYSIT-FIX commits.
+Closes the review residue of findings #58-#64.
 
-**Release-gate progress (2026-05-22, commit `eb91ebc9`).** The three
-isolation-reproduced real regressions blocking the v1.75.6 gate were fixed:
-(1) `mux-loop` ML-6 — `extractAssistantContent`'s plain-text fallback leaked
-promise tokens from JSON-structured non-assistant output into
-`classifyCompletion` (false epic-exit) — source fix; (2) `worker-lint-gate`
-test — stale, asserted the retired `worker_lint_gate_failed` event name
-(consolidated to `worker_gate_failed{gate_phase:'lint'}` in `b4a2a282`) —
-test fix; (3) `closer-handoff-terminal` test — stale, asserted an inline
-Manager-Handoff regex since extracted into `hasSubstantiveManagerHandoff()` —
-test fix. `tsc` / `eslint` / 6 audits / `test:fast` all green.
-
-**v1.75.6 release tag still BLOCKED** — purely on the `test:integration`
-concurrency-flake tail (~19 fails, all timeout-shaped, isolation-passing;
-includes the master-plan-documented flakes `worker-partial-lifecycle-exit`,
-`worker-timeout-tier-budget`, `mux-runner-claude-max-turns-relaunch`). This is
-the **same Finding #32 R-TFP tail that blocks v1.76.0**. Tagging needs the
-flake-stabilization effort scoped in `## v1.76.0 Completion` — not a new
-blocker.
+**v1.76.0 SHIPPED 2026-05-22.** The `test:integration` concurrency-flake tail
+that blocked the gate (Finding #32 R-TFP) was drained: one real regression
+fixed (`codex-spark-worker-completion-commit` fixture missing test scripts);
+6 stale tests repaired (`spawn-morty-actual-session-bug`,
+`spawn-morty-backend-resolution` — both asserted source contracts retired by
+`c271a1f7` / `138427b5`); subprocess-heavy timeout/process-global-state tests
+serialized via `.serial-tests.json` and `council-publish` /
+`mux-runner.output-stall` / `check-update` retiered fast→integration. Full
+gate green, tagged `v1.76.0`, pushed, deployed. Commits `cf600408` (gate
+fixes) + `784f1d99` (version bump).
 
 ---
 
@@ -111,7 +101,7 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 
 | Bundle | Status | Composes | Notes |
 |---|---|---|---|
-| **R-CCR** | DONE on `main` · tag blocked | B-BABYSIT-FIX review hardening | 16/16, 4/4 phases, `e448b714`; v1.75.6 tag blocked on the test:integration gate. |
+| **R-CCR** | SHIPPED | B-BABYSIT-FIX review hardening | 16/16, 4/4 phases, `e448b714`; shipped under the v1.76.0 tag 2026-05-22. |
 | **B-BABYSIT-FIX** | SHIPPED | findings #58-#64 | `bf89a1a3`. R-CCR hardens the review residue. |
 | **R-MEGA-SELF-FIX** | IN-FLIGHT | B-PIPE-FIX + B-SJET-2 + B-SSDF + launch-friction + R-CSI | `p1-self-fix-mega-campaign-2026-05-19.md`. Combined self-fix pipeline. |
 | **B-QSRC** | NEXT | R-QGSK + R-RSU residuals from B2-RSU partial-ship | New bundle PRD needs scoping. Closes residue of #29/#30/#34. |
@@ -122,7 +112,7 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 
 | Bundle | Status | Composes | Notes |
 |---|---|---|---|
-| **B-FLAKE** | RELEASE-GATE IN FLIGHT | R-TFP-W | `test:fast` stabilized; v1.76.0 untagged — see `## v1.76.0 Completion`. |
+| **B-FLAKE** | SHIPPED | R-TFP-W | `test:fast` + `test:integration` green; flake tail serialized via `.serial-tests.json`. Shipped in v1.76.0. |
 | **B-PIPE-LAUNCH-FRICTION** | QUEUED | R-PSSS + R-SRGT + R-PPSD | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. Closes #49/#50/#51. |
 | **B-MONITOR** | QUEUED | R-MMRT + R-MWCL residuals | Shared `pickle-utils.ts` + `monitor.ts`. Closes #27/#29. |
 | **B-GATE** | QUEUED | R-FGNC + R-PVTA + R-VSGE | R-PVTA/R-VSGE need PRDs drafted. Closes #18/#39/#40. |
@@ -166,17 +156,16 @@ graph-query layer are infrastructure R-PIAP-A5's classifier can consume), then R
 
 ---
 
-## v1.76.0 Completion (release BLOCKED)
+## v1.76.0 Completion (SHIPPED 2026-05-22)
 
-`test:fast` stabilized + green. `test:integration` RED. `test:expensive`
-unverified. Release-gate fix commits are on `main`, **local only — unpushed, no tag**.
+All six steps complete:
 
-1. **Triage ~27 `test:integration` failures**: `cd extension && npm run test:integration 2>&1 | grep '^x'`; run each failing file in isolation — flake (passes alone) vs real (fails alone).
-2. **Fix real regression(s)** — start with `worker-lint-gate.test.js` (`0 !== 1` at :144) + `worker-lint-gate-forensic`.
-3. **Stabilize concurrency-flakes** — load-robust budgets / deterministic barriers / fixture isolation; edits confined to `extension/tests/`, no `t.skip()`.
-4. **Run `test:expensive`** (`RUN_EXPENSIVE_TESTS=1 npm run test:expensive`, 30-min soak); triage.
-5. **Gate green** then bump `extension/package.json` 1.75.5 to 1.76.0, commit `chore: bump version to 1.76.0`, `git push origin main`, `gh release create v1.76.0`, `bash install.sh` (verify md5 parity, top-5 compiled files).
-6. **Cleanup** — `git worktree prune`; `git branch -D worktree-agent-*`.
+1. **Triaged** the `test:integration` failures by isolation — 1 real regression, the rest concurrency-flakes.
+2. **Real regression fixed** — `codex-spark-worker-completion-commit` fixture lacked `test:fast`/`test:integration` scripts so the worker gate failed (the `worker-lint-gate` entries flagged earlier were already-fixed stale tests; 6 other stale tests in `spawn-morty-actual-session-bug` / `spawn-morty-backend-resolution` repaired to current source contracts).
+3. **Concurrency-flakes stabilized** via fixture isolation — 19 subprocess-heavy integration files plus `council-publish` / `mux-runner.output-stall` / `check-update` (retiered fast→integration) added to `tests/integration/.serial-tests.json`; no `t.skip()`.
+4. **`test:expensive` ran green** (`RUN_EXPENSIVE_TESTS=1`, 9 pass / 2 skip / 0 fail).
+5. **Gate green** → bumped to 1.76.0, committed `784f1d99`, pushed `origin/main`, `gh release create v1.76.0`, `bash install.sh` (parity gate green, deployed version 1.76.0).
+6. **Cleanup** — `git worktree prune` done; two `worktree-agent-*` worktrees remain **locked** and were left intact (forcible removal risks live agent work).
 
 ---
 
@@ -184,9 +173,8 @@ unverified. Release-gate fix commits are on `main`, **local only — unpushed, n
 
 | Release | Date | Content |
 |---|---|---|
+| v1.76.0 | 2026-05-22 | Release-gate stabilization. R-CCR review-hardening epic (16/16) shipped under this tag. 1 real regression fixed (codex-spark worker-gate fixture), 6 stale tests repaired, concurrency-flake tail serialized via `.serial-tests.json`, 3 subprocess-timeout files retiered fast→integration, 6 complexity carve-outs reviewed. Full gate green. |
 | v1.75.5 | 2026-05-17 | Surgical sweep F1-F3+F5 (readiness hybrid-annotation, handoff None/N/A, explicit `completion_commit` guard, analyst-output wiring). Closes #2 hallucinated-acceptance subclass. |
-
-_R-CCR is code-complete on `main` but **not** a tagged release — see Status._
 | v1.75.4 | 2026-05-17 | B-SJET partial — R-SJET-5 telemetry + command-metric async. Finding #47 stays open. |
 | v1.75.3 | 2026-05-17 | B-CCPM-1b — codex manager no-signal framing + signal-sender attribution + codex command guidance. Closes #45. |
 | v1.75.2 | 2026-05-17 | B-CTSF — closer ownership tags + terminal closer-handoff detection + runbook. Closes #44. |
