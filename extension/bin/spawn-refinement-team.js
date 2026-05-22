@@ -145,6 +145,8 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`tsc_gate_override_consumed\` | \`gate_payload.override_reason\`, \`gate_payload.command\` | tsc-gate PreToolUse hook clean-pass auto-clear path |
 | \`tsc_gate_crashed\` | \`gate_payload.failure_kind\`, \`gate_payload.error\`, \`gate_payload.command\` | tsc-gate PreToolUse hook fail-open crash path |
 | \`manager_max_turns_relaunch\` | \`backend\`, \`relaunch_count\`, \`cap\`, \`pending_count\`, \`last_ticket_seen\` | manager-relaunch Claude max-turn relaunch path |
+| \`anatomy_park_empty_scope_skip\` | \`session\`, \`gate_payload.in_scope_paths\`, \`gate_payload.discovered_subsystems\` | pipeline-runner resolveAnatomySubsystems empty-scope skip |
+| \`szechuan_sauce_empty_scope_skip\` | \`session\`, \`gate_payload.in_scope_paths\` | pipeline-runner setupSzechuanSauce code-free-scope skip |
 
 | \`setup_resume_ticket_status_preserved\` | \`ticket_id\`, \`observed_status\`, \`expected_status\`, \`reason\` | setup.ts resume path (default, preserves operator edit) |
 | \`setup_resume_overrode_ticket_status\` | \`ticket_id\`, \`prior_status\`, \`new_status\`, \`source\` | setup.ts --force-ticket-status-sync path |

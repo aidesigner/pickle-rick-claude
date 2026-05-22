@@ -653,6 +653,26 @@ const EVENT_CASES = [
     },
     drop: 'cwd',
   },
+  {
+    type: 'anatomy_park_empty_scope_skip',
+    valid: {
+      event: 'anatomy_park_empty_scope_skip',
+      ts: TS,
+      session: 'session-1',
+      gate_payload: { in_scope_paths: ['docs/foo.md'], discovered_subsystems: ['bin'] },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    type: 'szechuan_sauce_empty_scope_skip',
+    valid: {
+      event: 'szechuan_sauce_empty_scope_skip',
+      ts: TS,
+      session: 'session-1',
+      gate_payload: { in_scope_paths: ['docs/foo.md'] },
+    },
+    drop: 'session',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -904,6 +924,8 @@ test('activity-event-payload: schema defines all registered event type definitio
     'session_map_collision_blocked',
     'state_write_override_used',
     'state_write_schema_version_violation',
+    'anatomy_park_empty_scope_skip',
+    'szechuan_sauce_empty_scope_skip',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

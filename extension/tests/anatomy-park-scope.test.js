@@ -90,6 +90,35 @@ test('pipeline filter: 4 subsystems, scope covering 2 → anatomy-park.json has 
   }
 });
 
+test('R-PSSS-1: anatomy-park scope excluding all subsystems skips with a structured WARN', () => {
+  const session = makeSession();
+  const target = makeTarget();
+  try {
+    makeSubsystem(target, 'alpha');
+    makeSubsystem(target, 'beta');
+
+    const logs = [];
+    // allowed_paths touch only docs — they match no discovered subsystem.
+    const ok = setupAnatomyPark(session, target, 3, EXTENSION_ROOT, (m) => logs.push(m), {
+      allowedPaths: ['docs/guide.md', 'README.md'],
+      repoRoot: target,
+    });
+
+    assert.equal(ok, false, 'setup must skip when the scope filter excludes every subsystem');
+    const warn = logs.join('\n');
+    assert.match(warn, /⚠ anatomy-park did not run/);
+    assert.match(warn, /scope filter excluded all subsystems/);
+    assert.match(warn, /docs\/guide\.md/, 'WARN must name the in-scope diff paths');
+    assert.equal(
+      fs.existsSync(path.join(session, 'anatomy-park.json')), false,
+      'no anatomy-park.json must be written on an empty-scope skip',
+    );
+  } finally {
+    fs.rmSync(session, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
 test('pipeline setup writes anatomy-park.json through shared atomic writer before init-microverse consumes it', () => {
   const session = makeSession();
   const target = makeTarget();

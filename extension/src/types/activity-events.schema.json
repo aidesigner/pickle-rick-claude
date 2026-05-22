@@ -1109,6 +1109,41 @@
           }
         }
       }
+    },
+    "anatomy_park_empty_scope_skip": {
+      "type": "object",
+      "required": ["event", "ts", "session", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "anatomy_park_empty_scope_skip" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "source": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["in_scope_paths", "discovered_subsystems"],
+          "properties": {
+            "in_scope_paths": { "type": "array", "items": { "type": "string" } },
+            "discovered_subsystems": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "szechuan_sauce_empty_scope_skip": {
+      "type": "object",
+      "required": ["event", "ts", "session", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "szechuan_sauce_empty_scope_skip" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "source": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["in_scope_paths"],
+          "properties": {
+            "in_scope_paths": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -1180,6 +1215,8 @@
     { "$ref": "#/definitions/session_map_collision_blocked" },
     { "$ref": "#/definitions/state_write_override_used" },
     { "$ref": "#/definitions/state_write_schema_version_violation" },
-    { "$ref": "#/definitions/install_sh_override_used" }
+    { "$ref": "#/definitions/install_sh_override_used" },
+    { "$ref": "#/definitions/anatomy_park_empty_scope_skip" },
+    { "$ref": "#/definitions/szechuan_sauce_empty_scope_skip" }
   ]
 }

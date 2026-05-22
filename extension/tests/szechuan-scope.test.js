@@ -176,4 +176,44 @@ describe('szechuan scope injection', () => {
       '--allowed-paths-file must appear after Step 7 so scope.json has been written before init-microverse is invoked',
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // R-PSSS-2: code-free (doc-only) scope is skipped with an operator-visible WARN
+  // ---------------------------------------------------------------------------
+
+  test('R-PSSS-2: szechuan-sauce skips a code-free (doc-only) scope with a WARN', () => {
+    const dir = makeTempDir();
+    try {
+      fs.writeFileSync(
+        path.join(dir, 'scope.json'),
+        JSON.stringify({ allowed_paths: ['docs/guide.md', 'CHANGELOG.md'], mode: 'diff', strategy: 'strict', head_sha: 'abc' }),
+      );
+      const logs = [];
+      const ok = setupSzechuanSauce(dir, '/some/target', 5, EXTENSION_ROOT, undefined, undefined, (m) => logs.push(m));
+      assert.equal(ok, false, 'szechuan must skip a code-free scope');
+      const warn = logs.join('\n');
+      assert.match(warn, /⚠ szechuan-sauce did not run/);
+      assert.match(warn, /no code files/);
+      assert.equal(
+        fs.existsSync(path.join(dir, 'microverse.json')), false,
+        'init-microverse must NOT be spawned on an empty-scope skip',
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  test('R-PSSS-2: szechuan-sauce proceeds when the scope has at least one code file', () => {
+    const dir = makeTempDir();
+    try {
+      fs.writeFileSync(
+        path.join(dir, 'scope.json'),
+        JSON.stringify({ allowed_paths: ['docs/guide.md', 'src/real.ts'], mode: 'diff', strategy: 'strict', head_sha: 'abc' }),
+      );
+      const ok = setupSzechuanSauce(dir, '/some/target', 5, EXTENSION_ROOT, undefined, undefined, () => {});
+      assert.equal(ok, true, 'a scope with >=1 code file must NOT skip');
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
 });

@@ -275,6 +275,8 @@ export const VALID_ACTIVITY_EVENTS = [
     'state_write_override_used',
     'state_write_schema_version_violation',
     'install_sh_override_used',
+    'anatomy_park_empty_scope_skip',
+    'szechuan_sauce_empty_scope_skip',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

@@ -916,7 +916,62 @@ function buildAnatomyPrd(target, subsystems, stallLimit, runnerStallLimit, citad
         ...buildCitadelAnatomyContext(citadelReport),
     ].join('\n');
 }
-function resolveAnatomySubsystems(target, scope, log) {
+// R-PSSS-1/2: file extensions that count as a reviewable code surface. A
+// scope (branch diff) containing none of these is doc-only / test-fixture-only
+// and makes anatomy-park / szechuan-sauce a no-op.
+const CODE_EXTENSIONS = new Set([
+    'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'go', 'rs', 'java', 'rb', 'php',
+    'c', 'cc', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala', 'sh',
+]);
+function isCodePath(p) {
+    const dot = p.lastIndexOf('.');
+    return dot >= 0 && CODE_EXTENSIONS.has(p.slice(dot + 1).toLowerCase());
+}
+/**
+ * R-PSSS-2: a resolved-but-code-free scope (a doc-only / fixture-only branch
+ * diff). An UNSCOPED run — empty `paths` — is the whole-repo case and is NOT
+ * code-free for this purpose, so szechuan-sauce still runs.
+ */
+function isCodeFreeScope(paths) {
+    return Array.isArray(paths) && paths.length > 0 && !paths.some(isCodePath);
+}
+/**
+ * R-PSSS-2: when szechuan-sauce's effective scope contains zero code files,
+ * emit the operator WARN + `szechuan_sauce_empty_scope_skip` event and return
+ * true so `setupSzechuanSauce` skips the phase. Returns false (no emission)
+ * for an unscoped run or a scope with at least one code file.
+ */
+function shouldSkipSzechuanForEmptyScope(sessionDir, effectiveAllowedPaths, log) {
+    const paths = isCodeFreeScope(effectiveAllowedPaths) ? effectiveAllowedPaths : null;
+    if (!paths)
+        return false;
+    log(formatEmptyScopeWarn('szechuan-sauce', 'scope contains no code files', paths));
+    logActivity({
+        event: 'szechuan_sauce_empty_scope_skip',
+        source: 'pickle',
+        session: path.basename(sessionDir),
+        gate_payload: { in_scope_paths: paths },
+    });
+    return true;
+}
+/**
+ * R-PSSS-1/2: operator-visible WARN for an empty/code-free-scope phase skip.
+ * The original silent `Phase X skipped (setup returned false)` log forced
+ * operators to read raw logs to discover why a phase did nothing.
+ */
+function formatEmptyScopeWarn(phase, cause, inScopePaths) {
+    const shown = inScopePaths.slice(0, 20);
+    const more = inScopePaths.length > shown.length
+        ? `, …(+${inScopePaths.length - shown.length} more)`
+        : '';
+    return [
+        `⚠ ${phase} did not run: ${cause}.`,
+        `  In-scope diff (${inScopePaths.length} path(s)): ${shown.join(', ') || '(none)'}${more}`,
+        `  Hint: ${phase} reviews code subsystems; a doc-only or test-fixture-only`,
+        `  diff has no review surface. Widen with --scope paths:<glob>.`,
+    ].join('\n');
+}
+function resolveAnatomySubsystems(sessionDir, target, scope, log) {
     const discovered = discoverSubsystems(target);
     if (discovered.length === 0) {
         log('No subsystems discovered — skipping anatomy-park phase');
@@ -928,7 +983,19 @@ function resolveAnatomySubsystems(target, scope, log) {
     }
     const kept = new Set(filterBySubsystem(discovered.map(s => s.name), scope.allowedPaths, target, scope.repoRoot));
     if (kept.size === 0) {
-        log('anatomy-park: scope filter excluded all subsystems — skipping phase');
+        // R-PSSS-1: the scope filter excluding every subsystem is a real skip the
+        // operator must see — not a silent `setup returned false`. Emit the
+        // structured WARN plus an `anatomy_park_empty_scope_skip` activity event.
+        log(formatEmptyScopeWarn('anatomy-park', 'scope filter excluded all subsystems', scope.allowedPaths));
+        logActivity({
+            event: 'anatomy_park_empty_scope_skip',
+            source: 'pickle',
+            session: path.basename(sessionDir),
+            gate_payload: {
+                in_scope_paths: scope.allowedPaths,
+                discovered_subsystems: discovered.map((s) => s.name),
+            },
+        });
         return null;
     }
     const filtered = discovered.filter(s => kept.has(s.name));
@@ -965,7 +1032,7 @@ export function setupAnatomyPark(sessionDir, target, stallLimit, extensionRoot, 
     if (!scope && effectiveScope) {
         log(`anatomy-park: reusing persisted scope.json with ${effectiveScope.allowedPaths.length} allowed path(s)`);
     }
-    const subsystems = resolveAnatomySubsystems(target, effectiveScope, log);
+    const subsystems = resolveAnatomySubsystems(sessionDir, target, effectiveScope, log);
     if (!subsystems)
         return false;
     const citadelReport = readCitadelReport(sessionDir);
@@ -1071,6 +1138,14 @@ export function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot
     if ((!scope || scope.allowedPaths.length === 0) && effectiveAllowedPaths && effectiveAllowedPaths.length > 0) {
         log(`szechuan-sauce: reusing persisted scope.json with ${effectiveAllowedPaths.length} allowed path(s)`);
     }
+    // R-PSSS-2: a scoped pipeline whose effective scope contains zero code files
+    // (a doc-only / fixture-only branch diff) makes szechuan-sauce a no-op —
+    // unlike anatomy-park it does not skip on its own. Skip with an
+    // operator-visible WARN + `szechuan_sauce_empty_scope_skip` event instead of
+    // silently grinding the worker over docs. An UNSCOPED run (empty
+    // effectiveAllowedPaths) is the whole-repo case and is left to run.
+    if (shouldSkipSzechuanForEmptyScope(sessionDir, effectiveAllowedPaths, log))
+        return false;
     archiveFile(sessionDir, 'microverse.json', 'pre-szechuan');
     const initArgs = [
         path.join(extensionRoot, 'extension', 'bin', 'init-microverse.js'),
