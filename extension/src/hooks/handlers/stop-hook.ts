@@ -234,28 +234,34 @@ function isPidAlive(pid: number | null | undefined): boolean {
   }
 }
 
+const MANAGER_IDLE_BACKOFF_FALLBACK_MIN_MS = 1_000;
+const MANAGER_IDLE_BACKOFF_FALLBACK_MAX_MS = 600_000;
+
+/** Single source of truth for the accepted `manager_idle_backoff_fallback_ms` range. */
+function isValidManagerIdleBackoffFallbackMs(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isInteger(value)
+    && value >= MANAGER_IDLE_BACKOFF_FALLBACK_MIN_MS
+    && value <= MANAGER_IDLE_BACKOFF_FALLBACK_MAX_MS;
+}
+
 export function resolveManagerIdleBackoffFallbackMs(
   settings: Record<string, unknown> | null,
   fallback = DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS,
 ): number {
   const value = settings?.manager_idle_backoff_fallback_ms;
-  if (typeof value === 'number' && Number.isInteger(value) && value >= 1_000 && value <= 600_000) {
-    return value;
-  }
-  return fallback;
+  return isValidManagerIdleBackoffFallbackMs(value) ? value : fallback;
 }
 
 function readManagerIdleBackoffFallbackMs(log: (msg: string) => void): number {
   try {
     const settingsPath = path.join(getExtensionRoot(), 'pickle_settings.json');
     const settings = readRecoverableJsonObject(settingsPath) as Record<string, unknown> | null;
-    const resolved = resolveManagerIdleBackoffFallbackMs(settings);
     const raw = settings?.manager_idle_backoff_fallback_ms;
-    const valid = typeof raw === 'number' && Number.isInteger(raw) && raw >= 1_000 && raw <= 600_000;
-    if (settings && raw !== undefined && !valid) {
+    if (settings && raw !== undefined && !isValidManagerIdleBackoffFallbackMs(raw)) {
       log(`WARN: invalid manager_idle_backoff_fallback_ms in settings; using default ${DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS}ms`);
     }
-    return resolved;
+    return resolveManagerIdleBackoffFallbackMs(settings);
   } catch (err) {
     log(`WARN: failed to read manager_idle_backoff_fallback_ms; using default ${DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS}ms (${safeErrorMessage(err)})`);
     return DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS;
