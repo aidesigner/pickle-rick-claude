@@ -10,20 +10,26 @@ status, open findings, queue, feature epics.
 
 | Item | Value |
 |---|---|
-| Source / deployed version | **v1.75.5** (`extension/package.json`) |
+| Source / deployed version | **v1.75.5** — R-CCR code merged to `main` + deployed; **v1.75.6 release tag BLOCKED** on the test:integration gate |
 | **v1.76.0** | **BLOCKED — release gate red.** `test:fast` green/stabilized; `test:integration` ~27 fails (~75% concurrency-flakes + ≥1 real `worker-lint-gate` regression); `test:expensive` unverified. Resume plan in `## v1.76.0 Completion`. |
-| Active pipeline | `e448b714` — **R-CCR** (B-BABYSIT-FIX review hardening), pickle phase, ~10/16 tickets Done |
+| Active pipeline | none — R-CCR (`e448b714`) **complete 2026-05-22**, 16/16, 4/4 phases |
 | Latest GitHub release | v1.69.0 — local-only mode; HEAD ~390+ commits ahead of origin |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive (operator, reaffirmed 2026-05-21):** drain bug bundles
 before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**In flight — R-CCR.** Epic `prds/p2-bbabysit-review-hardening-2026-05-21.md`,
-16 tickets, 3-agent review hardening of the B-BABYSIT-FIX commits (`bf89a1a3`).
-Pipeline `e448b714` (pickle then citadel then anatomy-park then szechuan-sauce).
-Babysat on a 30-min cron; self-healed one spurious-Failed transient. Closes the
-review residue of findings #58-#64.
+**R-CCR — code COMPLETE on `main` 2026-05-22; v1.75.6 release tag BLOCKED.** Epic
+`prds/p2-bbabysit-review-hardening-2026-05-21.md`, 16/16 tickets Done, 4/4 phases
+(pickle → citadel → anatomy-park → szechuan-sauce), 27 commits `5a20c921..2be05865`.
+3-agent review hardening of the B-BABYSIT-FIX commits. Survived 5 false-advances
+on the stale pre-bundle runtime — resolved by deploying the bundle mid-run
+(`install.sh`) so the runtime carried its own R-WTZ/R-PPPA/R-PRH fixes; the
+runtime is deployed. **Release tag blocked**: the full release gate fails on
+`test:integration` (~20 fails — confirmed real regressions `worker-lint-gate` +
+`mux-loop` ML-6, both isolation-reproduced; same blocker as v1.76.0 — plus a
+flake tail). `tsc`/`eslint`/audits/`test:fast` all green. Closes the review
+residue of findings #58-#64.
 
 ---
 
@@ -76,7 +82,7 @@ one-line + PRD pointer.
 | 65 | R-RCEX | `check-readiness` flags external-package (`node_modules`) SDK symbols as unresolved `contract` findings | Same bug report as #64. One `resolveSymbolRef` change covers #64 + #65. |
 
 ### Closed since last update (2026-05-21)
-#58-#64 — **B-BABYSIT-FIX** (`bf89a1a3`); R-CCR (`e448b714`) review-hardening in flight.
+#58-#64 — **B-BABYSIT-FIX** (`bf89a1a3`) + **R-CCR** review-hardening (`e448b714`) — code complete on `main` 2026-05-22; v1.75.6 release tag blocked on the test:integration gate.
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31,
 #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
 
@@ -90,7 +96,7 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 
 | Bundle | Status | Composes | Notes |
 |---|---|---|---|
-| **R-CCR** | IN-FLIGHT | B-BABYSIT-FIX review hardening | Pipeline `e448b714`, 16 tickets, ~10 Done. |
+| **R-CCR** | DONE on `main` · tag blocked | B-BABYSIT-FIX review hardening | 16/16, 4/4 phases, `e448b714`; v1.75.6 tag blocked on the test:integration gate. |
 | **B-BABYSIT-FIX** | SHIPPED | findings #58-#64 | `bf89a1a3`. R-CCR hardens the review residue. |
 | **R-MEGA-SELF-FIX** | IN-FLIGHT | B-PIPE-FIX + B-SJET-2 + B-SSDF + launch-friction + R-CSI | `p1-self-fix-mega-campaign-2026-05-19.md`. Combined self-fix pipeline. |
 | **B-QSRC** | NEXT | R-QGSK + R-RSU residuals from B2-RSU partial-ship | New bundle PRD needs scoping. Closes residue of #29/#30/#34. |
@@ -164,6 +170,8 @@ unverified. Release-gate fix commits are on `main`, **local only — unpushed, n
 | Release | Date | Content |
 |---|---|---|
 | v1.75.5 | 2026-05-17 | Surgical sweep F1-F3+F5 (readiness hybrid-annotation, handoff None/N/A, explicit `completion_commit` guard, analyst-output wiring). Closes #2 hallucinated-acceptance subclass. |
+
+_R-CCR is code-complete on `main` but **not** a tagged release — see Status._
 | v1.75.4 | 2026-05-17 | B-SJET partial — R-SJET-5 telemetry + command-metric async. Finding #47 stays open. |
 | v1.75.3 | 2026-05-17 | B-CCPM-1b — codex manager no-signal framing + signal-sender attribution + codex command guidance. Closes #45. |
 | v1.75.2 | 2026-05-17 | B-CTSF — closer ownership tags + terminal closer-handoff detection + runbook. Closes #44. |
