@@ -5,7 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { setupAnatomyPark } from '../bin/pipeline-runner.js';
+import { setupAnatomyPark, writePipelineStatus } from '../bin/pipeline-runner.js';
 import { finalizeGateMain } from '../bin/finalize-gate.js';
 import { filterBySubsystem } from '../services/scope-resolver.js';
 
@@ -104,7 +104,7 @@ test('R-PSSS-1: anatomy-park scope excluding all subsystems skips with a structu
       repoRoot: target,
     });
 
-    assert.equal(ok, false, 'setup must skip when the scope filter excludes every subsystem');
+    assert.deepStrictEqual(ok, { skipReason: 'empty_scope' }, 'setup must skip with an empty_scope disposition');
     const warn = logs.join('\n');
     assert.match(warn, /⚠ anatomy-park did not run/);
     assert.match(warn, /scope filter excluded all subsystems/);
@@ -116,6 +116,33 @@ test('R-PSSS-1: anatomy-park scope excluding all subsystems skips with a structu
   } finally {
     fs.rmSync(session, { recursive: true, force: true });
     fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test('R-PSSS-3: anatomy-park with no subsystems returns a no_subsystems skip disposition', () => {
+  const session = makeSession();
+  const target = makeTarget(); // empty target — no subsystem directories
+  try {
+    const ok = setupAnatomyPark(session, target, 3, EXTENSION_ROOT, () => {});
+    assert.deepStrictEqual(ok, { skipReason: 'no_subsystems' });
+  } finally {
+    fs.rmSync(session, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test('R-PSSS-3: writePipelineStatus persists non-empty phase_skips and omits an empty map', () => {
+  const dir = makeSession();
+  try {
+    writePipelineStatus(dir, 'running', { phase_skips: { 'anatomy-park': 'empty_scope' } });
+    const withSkips = JSON.parse(fs.readFileSync(path.join(dir, 'pipeline-status.json'), 'utf-8'));
+    assert.deepStrictEqual(withSkips.phase_skips, { 'anatomy-park': 'empty_scope' });
+
+    writePipelineStatus(dir, 'running', { phase_skips: {} });
+    const noSkips = JSON.parse(fs.readFileSync(path.join(dir, 'pipeline-status.json'), 'utf-8'));
+    assert.equal('phase_skips' in noSkips, false, 'an empty phase_skips map must be omitted from the status file');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

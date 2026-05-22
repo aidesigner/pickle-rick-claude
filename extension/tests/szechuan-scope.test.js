@@ -190,7 +190,7 @@ describe('szechuan scope injection', () => {
       );
       const logs = [];
       const ok = setupSzechuanSauce(dir, '/some/target', 5, EXTENSION_ROOT, undefined, undefined, (m) => logs.push(m));
-      assert.equal(ok, false, 'szechuan must skip a code-free scope');
+      assert.deepStrictEqual(ok, { skipReason: 'empty_scope' }, 'szechuan must skip a code-free scope');
       const warn = logs.join('\n');
       assert.match(warn, /⚠ szechuan-sauce did not run/);
       assert.match(warn, /no code files/);

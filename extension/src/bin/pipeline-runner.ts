@@ -82,12 +82,22 @@ const DIRTY_ALLOWED_FILE_REL = path.join('extension', '.pipeline-runner-dirty-al
 
 type PipelineStatusKind = 'running' | 'completed' | 'failed' | 'cancelled';
 
+// R-PSSS-3: why a phase did not run. `empty_scope` = the scope filter / branch
+// diff left no review surface; `no_subsystems` = no subsystem directories at
+// all; `setup_error` = the phase setup step itself failed.
+export type PhaseSkipReason = 'empty_scope' | 'no_subsystems' | 'setup_error';
+
+/** R-PSSS-3: a phase setup returns `true` on success, or a skip reason. */
+export type PhaseSetupResult = true | { skipReason: PhaseSkipReason };
+
 interface PipelineStatus {
   status: PipelineStatusKind;
   current_phase: PipelinePhase | null;
   completed_phases: number;
   skipped_phases: number;
   total_phases: number;
+  // R-PSSS-3: per-phase skip disposition (additive — absent on older statuses).
+  phase_skips?: Record<string, PhaseSkipReason>;
   updated_at: string;
 }
 
@@ -104,7 +114,7 @@ export type PhaseConfig = {
   name: PhaseName;
   prevPhase: 'pickle' | 'citadel' | 'anatomy-park' | null;
   runnerScript: 'mux-runner.js' | 'microverse-runner.js' | null;
-  setup: null | ((args: SetupArgs) => boolean);
+  setup: null | ((args: SetupArgs) => PhaseSetupResult);
   setupExtraArgs?: { domain?: string; focus?: string };
   refreshScope: boolean;
   throwOnEmptyScope: boolean;
@@ -658,6 +668,11 @@ export function writePipelineStatus(
     total_phases: details.total_phases ?? 0,
     updated_at: new Date().toISOString(),
   };
+  // R-PSSS-3: carry per-phase skip dispositions only when non-empty so older
+  // status consumers and clean runs see no spurious key.
+  if (details.phase_skips && Object.keys(details.phase_skips).length > 0) {
+    payload.phase_skips = details.phase_skips;
+  }
   const statusPath = path.join(sessionDir, 'pipeline-status.json');
   const tmpPath = `${statusPath}.tmp.${process.pid}`;
   fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2));
@@ -1158,11 +1173,11 @@ function resolveAnatomySubsystems(
   target: string,
   scope: { allowedPaths: string[]; repoRoot: string } | undefined,
   log: (msg: string) => void,
-): Array<{ name: string; fileCount: number }> | null {
+): Array<{ name: string; fileCount: number }> | { skipReason: PhaseSkipReason } {
   const discovered = discoverSubsystems(target);
   if (discovered.length === 0) {
     log('No subsystems discovered — skipping anatomy-park phase');
-    return null;
+    return { skipReason: 'no_subsystems' };
   }
   if (!scope || scope.allowedPaths.length === 0) {
     log(`Discovered ${discovered.length} subsystems: ${discovered.map(s => s.name).join(', ')}`);
@@ -1183,7 +1198,7 @@ function resolveAnatomySubsystems(
         discovered_subsystems: discovered.map((s) => s.name),
       },
     });
-    return null;
+    return { skipReason: 'empty_scope' };
   }
   const filtered = discovered.filter(s => kept.has(s.name));
   log(`anatomy-park: scope filtered ${discovered.length} → ${filtered.length} subsystems: ${filtered.map(s => s.name).join(', ')}`);
@@ -1217,7 +1232,7 @@ export function setupAnatomyPark(
   extensionRoot: string,
   log: (msg: string) => void,
   scope?: { allowedPaths: string[]; repoRoot: string },
-): boolean {
+): PhaseSetupResult {
   const persistedAllowedPaths = !scope || scope.allowedPaths.length === 0
     ? readPersistedAllowedPaths(sessionDir)
     : undefined;
@@ -1234,7 +1249,7 @@ export function setupAnatomyPark(
   }
 
   const subsystems = resolveAnatomySubsystems(sessionDir, target, effectiveScope, log);
-  if (!subsystems) return false;
+  if (!Array.isArray(subsystems)) return subsystems;
 
   const citadelReport = readCitadelReport(sessionDir);
   if (citadelReport) log(`anatomy-park: read citadel_report.json with ${citadelReport.findings.length} finding(s)`);
@@ -1262,7 +1277,7 @@ export function setupAnatomyPark(
     execFileSync('node', initArgs, { timeout: 30_000, encoding: 'utf-8' });
   } catch (err) {
     log(`init-microverse.js failed: ${safeErrorMessage(err)}`);
-    return false;
+    return { skipReason: 'setup_error' };
   }
 
   archiveFile(sessionDir, 'prd.md', 'pickle');
@@ -1379,7 +1394,7 @@ export function setupSzechuanSauce(
   focus: string | undefined,
   log: (msg: string) => void,
   scope?: { allowedPaths: string[] },
-): boolean {
+): PhaseSetupResult {
   const principlesPath = path.join(extensionRoot, 'szechuan-sauce-principles.md');
   const judgeContextArg = buildSzechuanJudgeContext(sessionDir, principlesPath, extensionRoot, domain, focus, log);
   const citadelReport = readCitadelReport(sessionDir);
@@ -1397,7 +1412,9 @@ export function setupSzechuanSauce(
   // operator-visible WARN + `szechuan_sauce_empty_scope_skip` event instead of
   // silently grinding the worker over docs. An UNSCOPED run (empty
   // effectiveAllowedPaths) is the whole-repo case and is left to run.
-  if (shouldSkipSzechuanForEmptyScope(sessionDir, effectiveAllowedPaths, log)) return false;
+  if (shouldSkipSzechuanForEmptyScope(sessionDir, effectiveAllowedPaths, log)) {
+    return { skipReason: 'empty_scope' };
+  }
 
   archiveFile(sessionDir, 'microverse.json', 'pre-szechuan');
   const initArgs = [
@@ -1415,7 +1432,7 @@ export function setupSzechuanSauce(
     execFileSync('node', initArgs, { timeout: 30_000, encoding: 'utf-8' });
   } catch (err) {
     log(`init-microverse.js failed: ${safeErrorMessage(err)}`);
-    return false;
+    return { skipReason: 'setup_error' };
   }
 
   archiveFile(sessionDir, 'prd.md', 'anatomy-park');
@@ -1446,6 +1463,9 @@ interface PipelineRuntime {
 interface PhaseCounters {
   completed: number;
   skipped: number;
+  // R-PSSS-3: phase name → skip disposition, accumulated across the run and
+  // surfaced in `pipeline-status.json:phase_skips` + the final summary.
+  phaseSkips: Record<string, PhaseSkipReason>;
 }
 
 export interface CloserReleasePlan {
@@ -1907,11 +1927,11 @@ async function runConfiguredPhase(
   runtime: PipelineRuntime,
   phaseConfig: PhaseConfig,
   counters: PhaseCounters,
-): Promise<{ skipped: boolean; exitCode: number | null; stderr?: string }> {
+): Promise<{ skipped: boolean; skipReason?: PhaseSkipReason; exitCode: number | null; stderr?: string }> {
   await postPhaseCleanup(phaseConfig.name, runtime.sessionDir);
   preparePhaseState(phaseConfig, runtime);
   const scope = refreshPhaseScope(phaseConfig, runtime, counters);
-  const setupOk = phaseConfig.setup ? phaseConfig.setup({
+  const setupResult: PhaseSetupResult = phaseConfig.setup ? phaseConfig.setup({
     sessionDir: runtime.sessionDir,
     target: runtime.target,
     workingDir: runtime.workingDir,
@@ -1919,7 +1939,8 @@ async function runConfiguredPhase(
     log: runtime.log,
     scope,
   }) : true;
-  if (!setupOk) return { skipped: true, exitCode: null };
+  // R-PSSS-3: a non-`true` setup result carries the skip reason.
+  if (setupResult !== true) return { skipped: true, skipReason: setupResult.skipReason, exitCode: null };
   if (phaseConfig.name === 'citadel') return { skipped: false, exitCode: (await executeCitadelPhase(runtime)).exitCode };
   const result = await executePhaseRunner(phaseConfig, runtime.phaseEnv);
   return { skipped: false, exitCode: result.exitCode, stderr: result.stderr };
@@ -2131,6 +2152,7 @@ function writeRunningStatus(runtime: PipelineRuntime, counters: PhaseCounters, c
     completed_phases: counters.completed,
     skipped_phases: counters.skipped,
     total_phases: runtime.config.phases.length,
+    phase_skips: counters.phaseSkips,
   });
 }
 
@@ -2346,8 +2368,13 @@ function finalizePipeline(
     });
   }
 
+  // R-PSSS-3: name each skip disposition (`anatomy-park: empty_scope`) so the
+  // final summary distinguishes an empty-scope skip from a setup error.
+  const skipDetail = Object.entries(counters.phaseSkips)
+    .map(([phase, reason]) => `${phase}: ${reason}`)
+    .join('; ');
   const phasesSummary = counters.skipped > 0
-    ? `${counters.completed}/${runtime.config.phases.length} (${counters.skipped} skipped)`
+    ? `${counters.completed}/${runtime.config.phases.length} (${counters.skipped} skipped${skipDetail ? ` — ${skipDetail}` : ''})`
     : `${counters.completed}/${runtime.config.phases.length}`;
 
   printMinimalPanel('Pipeline Complete', {
@@ -2483,8 +2510,11 @@ async function runPhaseIteration(
   const result = await runConfiguredPhase(runtime, setupPhase(rawPhase, runtime.config), counters);
   if (result.skipped) {
     counters.skipped++;
+    // R-PSSS-3: record the specific skip disposition for pipeline-status.json
+    // and the final summary instead of the generic "setup returned false".
+    if (result.skipReason) counters.phaseSkips[rawPhase] = result.skipReason;
     writeRunningStatus(runtime, counters, null);
-    log(`Phase ${rawPhase} skipped (setup returned false)`);
+    log(`Phase ${rawPhase} skipped (${result.skipReason ?? 'setup returned false'})`);
     return { action: 'continue' };
   }
   const exitCode = result.exitCode ?? 1;
@@ -2643,7 +2673,7 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
   const log = createPipelineLog(sessionDir);
   log('pipeline-runner started');
   const runtime = loadPipelineRuntime(sessionDir, opts, log);
-  const counters: PhaseCounters = { completed: 0, skipped: 0 };
+  const counters: PhaseCounters = { completed: 0, skipped: 0, phaseSkips: {} };
   const cancelMarker = path.join(sessionDir, 'pipeline-cancel');
   const cleanupShutdownHandlers = installShutdownHandlers(runtime, counters, cancelMarker);
   const startTime = Date.now();
