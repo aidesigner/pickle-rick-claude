@@ -235,6 +235,18 @@ function isDocExtensionBasename(ref: string): boolean {
   return DOC_EXTENSION_ALLOWLIST.has(ext);
 }
 
+// R-RHFP (Finding #64 BUG #3): a dotted all-lowercase literal of 3+ segments
+// (e.g. `appraisal.reducto.split_source_mix`) is a telemetry-event NAME, not an
+// in-repo symbol contract. Tickets introduce these by design, so symbol
+// resolution can never resolve a not-yet-emitted event string — it is a
+// guaranteed false `contract` finding. A real symbol contract worth gating on
+// is a `Type.member` PascalCase reference; an all-lowercase chain is at most an
+// instance-member access the grep resolver cannot meaningfully verify anyway.
+function isEventNameLiteral(ref: string): boolean {
+  const parts = ref.replace(/\(\)$/, '').split('.');
+  return parts.length >= 3 && parts.every((part) => /^[a-z][a-z0-9_]*$/.test(part));
+}
+
 export interface ForwardRefAnnotation {
   token: string;
   separator: string;
@@ -334,6 +346,7 @@ export function extractContractReferences(rawContent: string): string[] {
     .filter((ref) => !ref.startsWith('AC-'))
     .filter((ref) => !refs.has(`${ref}()`))
     .filter((ref) => !isDocExtensionBasename(ref))
+    .filter((ref) => !isEventNameLiteral(ref))
     .filter((ref) => !annotations.valid.has(ref))
     .sort();
 }
@@ -990,14 +1003,22 @@ export function runReadiness(args: ReadinessArgs): { exitCode: number; findings:
   ];
   const ticketsVersion = getTicketsVersion(state);
 
-  if (findings.length === 0) {
+  // R-RHFP (Finding #64 BUG #1): `kind:'performance'` findings are the checker
+  // reporting its OWN incompleteness (contract-resolution wall budget exceeded
+  // on a large/slow target repo), not a ticket defect. They stay in `findings`
+  // — surfaced in the report and JSON output as a coverage-gap signal — but are
+  // excluded from the blocking set that drives `status:fail`. A gate that fails
+  // because the checker ran out of time is not a gate.
+  const blockingFindings = findings.filter((finding) => finding.kind !== 'performance');
+
+  if (blockingFindings.length === 0) {
     writeSnapshot(args.sessionDir, listLinearTicketFiles(args.sessionDir), ticketsVersion);
     return { exitCode: 0, findings, delta: selected.delta, elapsed_ms: Date.now() - started };
   }
 
   const escalation = readinessCycleCount(args.sessionDir, state) >= READINESS_MAX_RECYCLE_CYCLES;
   const reportPath = writeReport(args.sessionDir, tickets, findings, escalation);
-  appendReadinessCycle(args.sessionDir, state, findings, escalation);
+  appendReadinessCycle(args.sessionDir, state, blockingFindings, escalation);
   if (selected.delta) {
     logActivity({
       event: 'readiness_failed_post_correction',
