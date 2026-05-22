@@ -83,11 +83,11 @@ one-line + PRD pointer.
 | 51 | R-PPSD | `/pickle-pipeline` skill prompt documents legacy split skip-flags only | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. R-PPSD-1 unblocked to ship independently. |
 | 54 | R-MRFP | `MULTI-REPO DETECTED` false-positive on monorepos with per-ticket `working_dir:` | Closed by `5501d4ed` (pending verification). |
 | 57 | R-RPRA | `check-readiness.ts` strips leading `/` from absolute paths then false-positive findings | `BUG-REPORT-2026-05-19-readiness-absolute-path-outside-target.md`. Folds into R-RPRA/R-FRA readiness-gate hardening. |
-| 64 | R-RHFP | READINESS HALT false-positive surface broad (path strips, prose paths, wall-budget perf timeouts) | `BUG-REPORT-2026-05-21-readiness-contract-resolver-wall-budget-false-positives.md`. Highest-value fix: demote `kind:'performance'` out of the blocking set. |
-| 65 | R-RCEX | `check-readiness` flags external-package (`node_modules`) SDK symbols as unresolved `contract` findings | Same bug report as #64. One `resolveSymbolRef` change covers #64 + #65. |
+| 65 | R-RCEX | `check-readiness` flags external-package (`node_modules`) SDK symbols as unresolved `contract` findings | `BUG-REPORT-2026-05-21-readiness-contract-resolver-wall-budget-false-positives.md` BUG #2. Needs `resolveSymbolRef` node_modules `.d.ts` resolution. |
 
 ### Closed since last update (2026-05-22)
-#58-#64 — **B-BABYSIT-FIX** (`bf89a1a3`) + **R-CCR** review-hardening (`e448b714`) — shipped under the **v1.76.0** tag 2026-05-22.
+#58-#63 — **B-BABYSIT-FIX** (`bf89a1a3`) + **R-CCR** review-hardening (`e448b714`) — shipped under the **v1.76.0** tag 2026-05-22.
+#64 R-RHFP — `check-readiness` `performance` wall-budget findings demoted to advisory + telemetry-event-name literals skipped (`a0604987`). Path-strip / correction-note facets already shipped earlier. #65 R-RCEX (node_modules SDK symbols) remains open.
 #32 R-TFP gate-blocking portion — **B-FLAKE** flake-tail serialization shipped in v1.76.0; finding retained as a watch item only (see P3).
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31,
 #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
