@@ -79,8 +79,6 @@ one-line + PRD pointer.
 | 32 | R-TFP | `test:fast` + `test:integration` parallel-load flakes | `p2-test-fast-stability-gate-widening-2026-05-19.md`. v1.76.0 serialized the subprocess-heavy tail via `.serial-tests.json` and retiered `council-publish` / `mux-runner.output-stall` / `check-update` fast→integration — gate verified green. B-FLAKE SHIPPED; watch item only. |
 | 34 | R-WTB | `Defaults.WORKER_TIMEOUT_SECONDS: 1200` too short for R-PTG worker lifecycle | R-WTB-1..4; B2-RSU residual. **B-QSRC.** |
 | 37e | R-PIWG-5 | git-isolation residual: `lsof` launch-time concurrent-access probe | **B-LSOF** (~2-3 tickets). |
-| 50 | R-SRGT | `scope-resolver` import walk loops on timing-out greps when `--scope branch` diff is empty | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. **B-PIPE-LAUNCH-FRICTION.** |
-| 51 | R-PPSD | `/pickle-pipeline` skill prompt documents legacy split skip-flags only | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. R-PPSD-1 unblocked to ship independently. |
 | 54 | R-MRFP | `MULTI-REPO DETECTED` false-positive on monorepos with per-ticket `working_dir:` | Closed by `5501d4ed` (pending verification). |
 | 57 | R-RPRA | `check-readiness.ts` strips leading `/` from absolute paths then false-positive findings | `BUG-REPORT-2026-05-19-readiness-absolute-path-outside-target.md`. Folds into R-RPRA/R-FRA readiness-gate hardening. |
 
@@ -88,6 +86,8 @@ one-line + PRD pointer.
 #58-#63 — **B-BABYSIT-FIX** (`bf89a1a3`) + **R-CCR** review-hardening (`e448b714`) — shipped under the **v1.76.0** tag 2026-05-22.
 #64 R-RHFP — `check-readiness` `performance` wall-budget findings demoted to advisory + telemetry-event-name literals skipped (`a0604987`). Path-strip / correction-note facets already shipped earlier.
 #65 R-RCEX — `check-readiness` `resolveSymbolRef` now resolves external SDK symbols against declared-dependency `node_modules` `.d.ts` files (`8cb5ba79`).
+#50 R-SRGT — `scope-resolver` `computeOneHop` empty-seed short-circuit + aggregate wall-clock cap; per-grep timeout 30s→5s (`6f71dd6a`).
+#51 R-PPSD — verified already satisfied: both `pickle-pipeline.md` and `pickle-tmux.md` document the unified `skip_quality_gates_reason` flag with legacy flags labelled. No code change needed.
 #32 R-TFP gate-blocking portion — **B-FLAKE** flake-tail serialization shipped in v1.76.0; finding retained as a watch item only (see P3).
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31,
 #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
@@ -114,7 +114,7 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 | Bundle | Status | Composes | Notes |
 |---|---|---|---|
 | **B-FLAKE** | SHIPPED | R-TFP-W | `test:fast` + `test:integration` green; flake tail serialized via `.serial-tests.json`. Shipped in v1.76.0. |
-| **B-PIPE-LAUNCH-FRICTION** | QUEUED | R-PSSS + R-SRGT + R-PPSD | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. Closes #49/#50/#51. |
+| **B-PIPE-LAUNCH-FRICTION** | PARTIAL | R-PSSS + R-SRGT + R-PPSD | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. R-SRGT (#50) + R-PPSD (#51) shipped 2026-05-22. **R-PSSS (#49) remains** — PRD file map is stale (`anatomy-park.ts`/`szechuan-sauce.ts` do not exist; the skip lives in `pipeline-runner.ts:resolveAnatomySubsystems`, and szechuan no-ops rather than skipping). Needs PRD re-scope + new activity events; route via `/pickle-tmux`. |
 | **B-MONITOR** | QUEUED | R-MMRT + R-MWCL residuals | Shared `pickle-utils.ts` + `monitor.ts`. Closes #27/#29. |
 | **B-GATE** | QUEUED | R-FGNC + R-PVTA + R-VSGE | R-PVTA/R-VSGE need PRDs drafted. Closes #18/#39/#40. |
 | **B-WEDGE** | QUEUED | R-RSU residuals + R-WMW | Only if B2's R-RSU doesn't fully close #30. Closes #30/#33. |
