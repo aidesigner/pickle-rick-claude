@@ -1,7 +1,7 @@
 ---
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Updated 2026-05-23.** Compressed 2026-05-21 — historical narrative
+**Updated 2026-05-23.** Three further P2/P3 findings closed today: #48 R-PCFG (verified), #54 R-MRFP (verified), #53 R-SRAA (fixed, `19ff0dd1`). Compressed 2026-05-21 — historical narrative
 (mega-campaign saga, per-commit blow-by-blow, pre-2026-05-15 releases) lives in
 `MASTER_PLAN-archive.md` and in git history. This file is the live ledger:
 status, open findings, queue, feature epics.
@@ -64,9 +64,7 @@ one-line + PRD pointer.
 | 33 | R-WMW | manager wedges on oversized ticket; spawns worker, no artifact progress | `p2-worker-manager-wedge-oversized-ticket-no-artifact-progress.md`. **B-WEDGE.** |
 | 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check | PRD not drafted (~4 tickets). **B-GATE.** |
 | 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4 tickets). **B-GATE.** |
-| 48 | R-PCFG | runner logs `Phase pickle completed successfully` after exit code 1 / 0 workers | Folded into B-PIPE-FIX R-PIPE-2 (`phase_no_progress` gate). |
-| 52 | R-WUWC | worker writes on-spec code but `markTicketDone` blocked then ticket wedges Failed, output lost | `BUG-REPORT-2026-05-18-pipeline-launch-friction.md` Addendum 5. Likely covered by B-PIPE-FIX. |
-| 53 | R-SRAA | anatomy-park `[FATAL] refreshScope: archive already exists` on every pipeline relaunch | `BUG-REPORT-2026-05-18-pipeline-launch-friction.md` Addendum 6. NOTE finding-number collision — commit `5501d4ed` cites "#53 R-PRH"; operator to reconcile numbering. |
+| 52 | R-WUWC | worker writes on-spec code but `markTicketDone` blocked then ticket wedges Failed, output lost | `BUG-REPORT-2026-05-18-pipeline-launch-friction.md` Addendum 5. B-PIPE-FIX hardening (R-PIPE-2/3/4 + R-WSE-2/3 observability) shipped; awaiting a fresh post-v1.78.0 reproducer to confirm prevention. |
 
 ### P3
 
@@ -78,7 +76,6 @@ one-line + PRD pointer.
 | 32 | R-TFP | `test:fast` + `test:integration` parallel-load flakes | `p2-test-fast-stability-gate-widening-2026-05-19.md`. v1.76.0 serialized the subprocess-heavy tail via `.serial-tests.json` and retiered `council-publish` / `mux-runner.output-stall` / `check-update` fast→integration — gate verified green. B-FLAKE SHIPPED; watch item only. |
 | 34 | R-WTB | `Defaults.WORKER_TIMEOUT_SECONDS: 1200` too short for R-PTG worker lifecycle | R-WTB-1..4; B2-RSU residual. **B-QSRC.** |
 | 37e | R-PIWG-5 | git-isolation residual: `lsof` launch-time concurrent-access probe | **B-LSOF** (~2-3 tickets). |
-| 54 | R-MRFP | `MULTI-REPO DETECTED` false-positive on monorepos with per-ticket `working_dir:` | Closed by `5501d4ed` (pending verification). |
 
 ### Closed since last update (2026-05-22)
 #58-#63 — **B-BABYSIT-FIX** (`bf89a1a3`) + **R-CCR** review-hardening (`e448b714`) — shipped under the **v1.76.0** tag 2026-05-22.
@@ -89,6 +86,11 @@ one-line + PRD pointer.
 #49 R-PSSS — anatomy-park / szechuan-sauce empty-scope skips are now operator-visible: structured WARN + `anatomy_park_empty_scope_skip` / `szechuan_sauce_empty_scope_skip` activity events; phase-setup returns `PhaseSetupResult` and `pipeline-status.json` records per-phase `phase_skips` dispositions (`988ed55a`, `9020c26b`). B-PIPE-LAUNCH-FRICTION fully shipped under v1.77.0.
 #51 R-PPSD — verified already satisfied: both `pickle-pipeline.md` and `pickle-tmux.md` document the unified `skip_quality_gates_reason` flag with legacy flags labelled. No code change needed.
 #18 R-FGNC — `convergence-gate` `buildFailures` no longer lets pnpm `.npmrc` `${TOKEN}` WARN noise mask real TS/lint failures: combines stdout+stderr, strips the WARN before classification, exit code is the pass/fail signal; finalize-gate escalation summarises failures by check; szechuan worker runs lint-autofix before commit (`48718c63`, `b5500da8`). R-FGNC-6 (setup token preflight, R-MAY) deferred.
+
+### Closed since last update (2026-05-23)
+#48 R-PCFG — verified shipped: R-PIPE-2 `phase_no_progress` exit_reason gate (`bd5e4466`, 14 tests passing) catches the false `Phase pickle completed successfully` log after a non-zero exit.
+#54 R-MRFP — verified shipped: `detectMultiRepo` dedupes ticket `working_dir` values by their enclosing git repo root (`5501d4ed`, 8 tests covering monorepo-workspace cases).
+#53 R-SRAA — `writeScopeArchive` now rotates a pre-existing `archive/scope.<phase>.json` to a timestamped `.bak` sibling instead of FATALing with `SCOPE_ARCHIVE_EXISTS`; pipeline relaunches no longer require manual `rm` of the archive dir (`19ff0dd1`). `SCOPE_ARCHIVE_EXISTS` retired from `ScopeErrorCode`.
 #32 R-TFP gate-blocking portion — **B-FLAKE** flake-tail serialization shipped in v1.76.0; finding retained as a watch item only (see P3).
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31,
 #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
