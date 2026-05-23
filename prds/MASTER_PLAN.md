@@ -70,7 +70,7 @@ one-line + PRD pointer.
 
 | # | Code | Summary | PRD / Status |
 |---|---|---|---|
-| 5 | — | Subsystem CLAUDE.md drift; audit 5 subsystems under `extension/src/` | No PRD; **B-AUDIT.** |
+| 5 | — | Subsystem CLAUDE.md drift; audit 5 subsystems under `extension/src/` | **PARTIAL** — `hooks/` and `lib/` now report **OK** under `scripts/audit-subsystem-claude-md.sh` (`1add4451`); `types/` cleared STALE; `bin/` (51 files) and `services/` (32 files) remain INCOMPLETE — per-export documentation, ongoing. |
 | 19 | R-MMTR | claude manager max-turns family closeout pending | R-MMTR-1/5 shipped; 2/3/4 Skipped+commit; 6 force-skipped; 7 closer pending. **B-R-MMTR / B-E2E.** |
 | 29 | R-MWCL | monitor `inferMonitorMode` falls through to `'pickle'` for szechuan/anatomy | R-MWCL-1 shipped; 3..7 residual. **B-MONITOR.** |
 | 32 | R-TFP | `test:fast` + `test:integration` parallel-load flakes | `p2-test-fast-stability-gate-widening-2026-05-19.md`. v1.76.0 serialized the subprocess-heavy tail via `.serial-tests.json` and retiered `council-publish` / `mux-runner.output-stall` / `check-update` fast→integration — gate verified green. B-FLAKE SHIPPED; watch item only. |
@@ -91,6 +91,7 @@ one-line + PRD pointer.
 #48 R-PCFG — verified shipped: R-PIPE-2 `phase_no_progress` exit_reason gate (`bd5e4466`, 14 tests passing) catches the false `Phase pickle completed successfully` log after a non-zero exit.
 #54 R-MRFP — verified shipped: `detectMultiRepo` dedupes ticket `working_dir` values by their enclosing git repo root (`5501d4ed`, 8 tests covering monorepo-workspace cases).
 #53 R-SRAA — `writeScopeArchive` now rotates a pre-existing `archive/scope.<phase>.json` to a timestamped `.bak` sibling instead of FATALing with `SCOPE_ARCHIVE_EXISTS`; pipeline relaunches no longer require manual `rm` of the archive dir (`19ff0dd1`). `SCOPE_ARCHIVE_EXISTS` retired from `ScopeErrorCode`.
+#5 B-AUDIT (partial) — `hooks/` and `lib/` subsystem CLAUDE.md flipped INCOMPLETE → **OK** under `audit-subsystem-claude-md.sh`; `types/` cleared STALE; `bin/` (51 files) and `services/` (32 files) remain INCOMPLETE (`1add4451`).
 #32 R-TFP gate-blocking portion — **B-FLAKE** flake-tail serialization shipped in v1.76.0; finding retained as a watch item only (see P3).
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31,
 #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
@@ -130,7 +131,7 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 | **B-R-MMTR** | QUEUED | R-ICDM-2..7 + R-MMTRH heal + R-MMTR-7 closer | Closes #19/#28. |
 | **B-E2E** | QUEUED | R-MMTR6S | E2E re-attempt of force-skipped R-MMTR-6. Ships after B-R-MMTR. |
 | **B-LSOF** | QUEUED | R-PIWG-5 | `lsof` concurrent-git-process probe (~2-3 tickets). |
-| **B-AUDIT** | QUEUED | subsystem CLAUDE.md drift (#5) | No PRD; ad-hoc audit. |
+| **B-AUDIT** | PARTIAL | subsystem CLAUDE.md drift (#5) | `hooks/` + `lib/` → OK; `types/` cleared STALE; `bin/`/`services/`/`types/` still INCOMPLETE under `audit-subsystem-claude-md.sh`. Per-export documentation, ongoing. |
 
 ---
 
