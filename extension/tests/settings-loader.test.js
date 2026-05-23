@@ -23,7 +23,7 @@ test('settings-loader: default worker_test_gate_timeout_ms applies when key is a
       default_worker_timeout_seconds: 1200,
     }, null, 2));
 
-    assert.equal(resolveWorkerTestGateTimeoutMs(extensionRoot), 240_000);
+    assert.equal(resolveWorkerTestGateTimeoutMs(extensionRoot), 600_000);
   });
 });
 
