@@ -10,6 +10,7 @@ import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerConfig, type CircuitBreakerState } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides } from '../services/backend-spawn.js';
 import { resolveCodexModel } from './spawn-morty.js';
+import { autoFillCompletionCommit } from './auto-fill-completion-commit.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream } from '../services/classifier-utils.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
@@ -2836,6 +2837,25 @@ export function guardCompletionCommitBeforeDone(args: {
     // genuinely-complete ticket is not FATAL'd on a flush race.
     sleepSyncMs(args.rereadBackoffMs ?? guardRereadBackoffMs());
     evidence = hasCompletionCommit(probe);
+  }
+  // R-WUWC SOFT-variant: the worker `git commit`-ed with the ticket-id in the
+  // message, flipped frontmatter status=Done, but did NOT add `completion_commit:`.
+  // `hasCompletionCommit` returns `source: 'inferred'` (matched by git log scan).
+  // Auto-promote to 'explicit' by writing the SHA into the ticket frontmatter,
+  // then re-probe. This is the runtime equivalent of the documented operator
+  // workaround `edit ticket frontmatter to include completion_commit: <sha>`.
+  if (evidence.source === 'inferred' && evidence.sha) {
+    try {
+      const filled = autoFillCompletionCommit({
+        sessionDir: args.sessionDir,
+        workingDir: args.workingDir,
+        ticketId: args.ticketId,
+        statePath: null,
+      });
+      if (filled.some(r => r.action === 'filled' && r.ticketId === args.ticketId)) {
+        evidence = hasCompletionCommit(probe);
+      }
+    } catch { /* best-effort — fall through to existing classification */ }
   }
   if (evidence.source === 'explicit' && evidence.sha) {
     return { ok: true, sha: evidence.sha };
