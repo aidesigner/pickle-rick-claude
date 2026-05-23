@@ -1,7 +1,7 @@
 ---
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Updated 2026-05-22.** Compressed 2026-05-21 — historical narrative
+**Updated 2026-05-23.** Compressed 2026-05-21 — historical narrative
 (mega-campaign saga, per-commit blow-by-blow, pre-2026-05-15 releases) lives in
 `MASTER_PLAN-archive.md` and in git history. This file is the live ledger:
 status, open findings, queue, feature epics.
@@ -19,22 +19,23 @@ status, open findings, queue, feature epics.
 **Priority directive (operator, reaffirmed 2026-05-21):** drain bug bundles
 before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**R-CCR — code COMPLETE on `main` 2026-05-22; shipped under the v1.76.0 tag.**
-Epic `prds/p2-bbabysit-review-hardening-2026-05-21.md`, 16/16 tickets Done,
-4/4 phases (pickle → citadel → anatomy-park → szechuan-sauce), 27 commits
-`5a20c921..2be05865`. 3-agent review hardening of the B-BABYSIT-FIX commits.
-Closes the review residue of findings #58-#64.
-
-**v1.76.0 SHIPPED 2026-05-22.** The `test:integration` concurrency-flake tail
-that blocked the gate (Finding #32 R-TFP) was drained: one real regression
-fixed (`codex-spark-worker-completion-commit` fixture missing test scripts);
-6 stale tests repaired (`spawn-morty-actual-session-bug`,
-`spawn-morty-backend-resolution` — both asserted source contracts retired by
-`c271a1f7` / `138427b5`); subprocess-heavy timeout/process-global-state tests
-serialized via `.serial-tests.json` and `council-publish` /
-`mux-runner.output-stall` / `check-update` retiered fast→integration. Full
-gate green, tagged `v1.76.0`, pushed, deployed. Commits `cf600408` (gate
-fixes) + `784f1d99` (version bump).
+**2026-05-22 session — 3 releases shipped, 8 findings closed.** v1.76.0
+drained the `test:integration` flake tail and shipped R-CCR review-hardening
+(epic `prds/p2-bbabysit-review-hardening-2026-05-21.md`, 16/16 tickets, 4/4
+phases, commits `5a20c921..2be05865`). v1.77.0 drained the readiness/scope
+false-positive cluster (#64 R-RHFP, #65 R-RCEX, #57 R-RPRA, #50 R-SRGT,
+#51 R-PPSD) and shipped B-PIPE-LAUNCH-FRICTION (#49 R-PSSS) — the R-PSSS PRD
+was re-scoped against the real `pipeline-runner.ts` architecture
+(`anatomy-park.ts`/`szechuan-sauce.ts` never existed) then implemented
+directly with full 7-touchpoint registration for two new activity events and
+a `PhaseSetupResult` contract change. v1.78.0 shipped B-GATE's #18 R-FGNC —
+`convergence-gate:buildFailures` combines stdout+stderr and strips pnpm
+`.npmrc` `${TOKEN}` WARN noise before classification; finalize-gate
+escalation summarises failures by check; szechuan worker runs lint-autofix
+before commit. All three releases passed the full gate (tsc / eslint / 6
+audits / test:fast / test:integration / test:expensive). Detail per release
+in `## Recently Shipped`; closed-finding one-liners in
+`## Closed since last update`.
 
 ---
 
@@ -104,7 +105,7 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 |---|---|---|---|
 | **R-CCR** | SHIPPED | B-BABYSIT-FIX review hardening | 16/16, 4/4 phases, `e448b714`; shipped under the v1.76.0 tag 2026-05-22. |
 | **B-BABYSIT-FIX** | SHIPPED | findings #58-#64 | `bf89a1a3`. R-CCR hardens the review residue. |
-| **R-MEGA-SELF-FIX** | IN-FLIGHT | B-PIPE-FIX + B-SJET-2 + B-SSDF + launch-friction + R-CSI | `p1-self-fix-mega-campaign-2026-05-19.md`. Combined self-fix pipeline. |
+| **R-MEGA-SELF-FIX** | PARTIAL | B-PIPE-FIX + B-SJET-2 + B-SSDF + launch-friction + R-CSI | `p1-self-fix-mega-campaign-2026-05-19.md`. Phase 0 (B-PIPE-FIX R-PIPE-3/4) done; **Phase 3 (B-PIPE-LAUNCH-FRICTION) shipped under v1.77.0**. Phase 1 (B-SJET-2 judge env isolation + sticky-fallback), Phase 2 (B-SSDF AGENTS.md firewall), Phase 4 (R-CSI forensics) still open. |
 | **B-QSRC** | NEXT | R-QGSK + R-RSU residuals from B2-RSU partial-ship | New bundle PRD needs scoping. Closes residue of #29/#30/#34. |
 | **B-CSI** | DEFERRED | R-CSI Phase 1+2 | Await next sibling-session incident before scoping Phase 2. |
 | **B-CCDC** | DEFERRED | R-CCDC citadel detection-coverage successor | Per operator: maybe-later. |
@@ -133,8 +134,9 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 
 ## Feature Epics — after the bug drain
 
-Do not count toward the open-bug ceiling. **Not to be refined/built until the
-`e448b714` pipeline finishes** (same repo — concurrent epics collide).
+Do not count toward the open-bug ceiling. Gated behind the operator's
+priority directive (drain bug bundles first); the prior R-CCR pipeline
+collision constraint cleared when that pipeline completed 2026-05-22.
 
 | Epic | Priority | PRD | Scope |
 |---|---|---|---|
@@ -154,19 +156,6 @@ graph-query layer are infrastructure R-PIAP-A5's classifier can consume), then R
   `council-of-ricks-catalog-mode-and-publish-fixes.md`,
   `plumbus-generative-audit-frames.md`, `pickle-agent-teams.md`,
   `smart-iteration-handoff.md`, `tool-error-retry-tracking.md`
-
----
-
-## v1.76.0 Completion (SHIPPED 2026-05-22)
-
-All six steps complete:
-
-1. **Triaged** the `test:integration` failures by isolation — 1 real regression, the rest concurrency-flakes.
-2. **Real regression fixed** — `codex-spark-worker-completion-commit` fixture lacked `test:fast`/`test:integration` scripts so the worker gate failed (the `worker-lint-gate` entries flagged earlier were already-fixed stale tests; 6 other stale tests in `spawn-morty-actual-session-bug` / `spawn-morty-backend-resolution` repaired to current source contracts).
-3. **Concurrency-flakes stabilized** via fixture isolation — 19 subprocess-heavy integration files plus `council-publish` / `mux-runner.output-stall` / `check-update` (retiered fast→integration) added to `tests/integration/.serial-tests.json`; no `t.skip()`.
-4. **`test:expensive` ran green** (`RUN_EXPENSIVE_TESTS=1`, 9 pass / 2 skip / 0 fail).
-5. **Gate green** → bumped to 1.76.0, committed `784f1d99`, pushed `origin/main`, `gh release create v1.76.0`, `bash install.sh` (parity gate green, deployed version 1.76.0).
-6. **Cleanup** — `git worktree prune` done; two `worktree-agent-*` worktrees remain **locked** and were left intact (forcible removal risks live agent work).
 
 ---
 
