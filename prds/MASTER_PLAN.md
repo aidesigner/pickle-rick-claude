@@ -10,10 +10,10 @@ status, open findings, queue, feature epics.
 
 | Item | Value |
 |---|---|
-| Source / deployed version | **v1.78.0** — 2026-05-22 |
-| **v1.78.0** | **SHIPPED 2026-05-22** — #18 R-FGNC (finalize-gate `.npmrc` WARN classifier fix). Full release gate green (tsc / eslint / 6 audits / test:fast 4993 / test:integration 201 / test:expensive 9). Detail in `## Recently Shipped`. |
+| Source / deployed version | **v1.78.1** — 2026-05-23 |
+| **v1.78.1** | **SHIPPED 2026-05-23** — #53 R-SRAA archive-rotation fix + #5 B-AUDIT partial (hooks/lib → OK). Full release gate green (tsc / eslint / 6 audits / test:fast 4994 / test:integration 201 / test:expensive 9). Detail in `## Recently Shipped`. |
 | Active pipeline | none |
-| Latest GitHub release | v1.78.0 — 2026-05-22 |
+| Latest GitHub release | v1.78.1 — 2026-05-23 |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive (operator, reaffirmed 2026-05-21):** drain bug bundles
@@ -166,6 +166,7 @@ graph-query layer are infrastructure R-PIAP-A5's classifier can consume), then R
 
 | Release | Date | Content |
 |---|---|---|
+| v1.78.1 | 2026-05-23 | **#53 R-SRAA** — `scope-resolver:writeScopeArchive` now rotates a pre-existing `archive/scope.<phase>.json` to a timestamped `.bak` sibling instead of FATAL-ing with `SCOPE_ARCHIVE_EXISTS`; pipeline relaunches no longer need manual `rm` of the archive dir. `SCOPE_ARCHIVE_EXISTS` retired from `ScopeErrorCode` (doc-parity test enforces). **#48 R-PCFG** + **#54 R-MRFP** verified shipped from prior commits. **#5 B-AUDIT (partial)** — `hooks/` + `lib/` subsystem CLAUDE.md flipped INCOMPLETE → **OK** under `audit-subsystem-claude-md.sh`; `types/` cleared STALE. Full gate green. |
 | v1.78.0 | 2026-05-22 | #18 R-FGNC — `convergence-gate` `buildFailures` combines stdout+stderr and strips pnpm `.npmrc` `${TOKEN}` WARN noise before failure classification (the prior `stderr \|\| stdout` dropped real TS/lint errors whenever stderr carried the WARN); exit code is the pass/fail signal; finalize-gate escalation summarises failures by check; szechuan worker runs lint-autofix before commit. Also serialized `dispatch.test.js` (R-TFP flake tail). Full gate green. |
 | v1.77.0 | 2026-05-22 | Readiness/scope false-positive cluster + B-PIPE-LAUNCH-FRICTION. `check-readiness`: `performance` wall-budget findings demoted to advisory, telemetry-event literals skipped (#64 R-RHFP), external SDK symbols resolve against `node_modules/*.d.ts` (#65 R-RCEX), absolute-path no-false-finding pinned (#57 R-RPRA). `scope-resolver` `computeOneHop` empty-seed short-circuit + 60s wall cap (#50 R-SRGT). `/pickle-pipeline` skip-flag docs verified (#51 R-PPSD). anatomy-park/szechuan-sauce empty-scope skips now emit operator WARNs + `*_empty_scope_skip` activity events + `pipeline-status.json:phase_skips` dispositions (#49 R-PSSS). Full gate green. |
 | v1.76.0 | 2026-05-22 | Release-gate stabilization. R-CCR review-hardening epic (16/16) shipped under this tag. 1 real regression fixed (codex-spark worker-gate fixture), 6 stale tests repaired, concurrency-flake tail serialized via `.serial-tests.json`, 3 subprocess-timeout files retiered fast→integration, 6 complexity carve-outs reviewed. Full gate green. |
