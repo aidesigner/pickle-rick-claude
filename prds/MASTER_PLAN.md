@@ -65,6 +65,10 @@ one-line + PRD pointer.
 | 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check | PRD not drafted (~4 tickets). **B-GATE.** |
 | 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4 tickets). **B-GATE.** |
 | 52 | R-WUWC | worker writes on-spec code but `markTicketDone` blocked then ticket wedges Failed, output lost | `BUG-REPORT-2026-05-18-pipeline-launch-friction.md` Addendum 5. B-PIPE-FIX hardening (R-PIPE-2/3/4 + R-WSE-2/3 observability) shipped; awaiting a fresh post-v1.78.0 reproducer to confirm prevention. |
+| 66 | R-FRA | readiness gate rejects forward-created test/script files in refined tickets — root-cause PRD (5 false-positive classes, RC-1/2/3 fix paths) | `p2-refined-tickets-trip-readiness-contract-resolver.md`. **B-FRA.** |
+| 67 | R-RTRC8 | `/pickle-refine-prd` Step 7c template doesn't remind authors to add R-RTRC-7 forward-ref annotations on backticked paths/symbols | `p2-refine-prd-skill-missing-rtrc7-annotation-reminder.md`. **B-FRA.** |
+| 68 | R-FRA-GATE | forward-ref annotation regex parity drift between `check-readiness` and `audit-ticket-bundle` (two skip flags needed pre-R-QGSK-2) | `p2-forward-ref-annotation-readiness-vs-audit-bundle-drift.md`. R-QGSK-2 unified flag partial; gate-side regex parity still open. **B-FRA.** |
+| 69 | R-FRA | 5th recurrence attestation — `B-PROJECT-AUDIT-2026-05-23` session `2026-05-23-17b2f716` hit `READINESS HALT exited 2` with 34 `file_path` findings on forward-created test files; unblocked via `skip_quality_gates_reason` | `BUG-REPORT-2026-05-23-readiness-rejects-forward-created-tickets.md`. **B-FRA.** |
 
 ### P3
 
@@ -123,6 +127,7 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 | **B-GATE** | PARTIAL | R-FGNC + R-PVTA + R-VSGE | **R-FGNC (#18) shipped 2026-05-22** (`48718c63`+`b5500da8`). R-PVTA (#39) / R-VSGE (#40) still need PRDs drafted. |
 | **B-WEDGE** | QUEUED | R-RSU residuals + R-WMW | Only if B2's R-RSU doesn't fully close #30. Closes #30/#33. |
 | **B-PNTR** | QUEUED | remove bare `/pickle` non-tmux loop | `p2-remove-non-tmux-pickle-loop.md`. Refinement recommended pre-launch. |
+| **B-FRA** | NEXT | #66 R-FRA + #67 R-RTRC8 + #68 R-FRA-GATE + #69 attestation | Forward-ref annotation false-positive cluster — 5th recurrence on 2026-05-23 (`B-PROJECT-AUDIT` 46-ticket bundle). 4 PRDs filed 2026-05-03/05-10/05-14/05-23, all Draft until now. Proposed R-FRA-1..R-FRA-5 in the 2026-05-23 bug report. |
 
 ### P3 bundles
 
