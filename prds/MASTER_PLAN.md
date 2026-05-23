@@ -1,59 +1,33 @@
 ---
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Updated 2026-05-23.** Three further P2/P3 findings closed today: #48 R-PCFG (verified), #54 R-MRFP (verified), #53 R-SRAA (fixed, `19ff0dd1`). Compressed 2026-05-21 — historical narrative
-(mega-campaign saga, per-commit blow-by-blow, pre-2026-05-15 releases) lives in
-`MASTER_PLAN-archive.md` and in git history. This file is the live ledger:
-status, open findings, queue, feature epics.
+**Updated 2026-05-23.** Live ledger: status, open findings, queue, feature epics. Historical narrative (mega-campaign saga, per-commit detail, pre-2026-05-15 releases) lives in `MASTER_PLAN-archive.md` and git history.
 
 ## Status
 
 | Item | Value |
 |---|---|
-| Source / deployed version | **v1.78.1** — 2026-05-23 |
-| **v1.78.1** | **SHIPPED 2026-05-23** — #53 R-SRAA archive-rotation fix + #5 B-AUDIT partial (hooks/lib → OK). Full release gate green (tsc / eslint / 6 audits / test:fast 4994 / test:integration 201 / test:expensive 9). Detail in `## Recently Shipped`. |
-| Active pipeline | none |
+| Version (source/deployed) | **v1.78.1** — 2026-05-23 |
 | Latest GitHub release | v1.78.1 — 2026-05-23 |
+| Active pipeline | none |
 | Codex backend | `gpt-5.4` |
 
-**Priority directive (operator, reaffirmed 2026-05-21):** drain bug bundles
-before feature epics. Feature epics do not count toward the open-bug ceiling.
+**Priority directive (operator):** drain bug bundles before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**Reprioritized 2026-05-23** by severity × recurrence × blast radius. NEXT
-dispatch order: **B-FRA** (5x recurrence, halts creation-heavy launches) →
-**B-APWS** (silent scope-boundary defeat) → **R-MEGA-SELF-FIX** Phase 1/2/4 →
-**B-WUWC-REPRODUCER** (data-loss class). Promotions/demotions explained
-inline in the Open Findings tables below.
+**Dispatch order (reprioritized 2026-05-23 by severity × recurrence × blast radius):** **B-FRA** (5x recurrence, halts creation-heavy launches) → **B-APWS** (silent scope-boundary defeat) → **R-MEGA-SELF-FIX** Phase 1/2/4 → **B-WUWC-REPRODUCER** (data-loss). Promotions/demotions explained inline in Open Findings tables.
 
-**2026-05-22 session — 3 releases shipped, 8 findings closed.** v1.76.0
-drained the `test:integration` flake tail and shipped R-CCR review-hardening
-(epic `prds/p2-bbabysit-review-hardening-2026-05-21.md`, 16/16 tickets, 4/4
-phases, commits `5a20c921..2be05865`). v1.77.0 drained the readiness/scope
-false-positive cluster (#64 R-RHFP, #65 R-RCEX, #57 R-RPRA, #50 R-SRGT,
-#51 R-PPSD) and shipped B-PIPE-LAUNCH-FRICTION (#49 R-PSSS) — the R-PSSS PRD
-was re-scoped against the real `pipeline-runner.ts` architecture
-(`anatomy-park.ts`/`szechuan-sauce.ts` never existed) then implemented
-directly with full 7-touchpoint registration for two new activity events and
-a `PhaseSetupResult` contract change. v1.78.0 shipped B-GATE's #18 R-FGNC —
-`convergence-gate:buildFailures` combines stdout+stderr and strips pnpm
-`.npmrc` `${TOKEN}` WARN noise before classification; finalize-gate
-escalation summarises failures by check; szechuan worker runs lint-autofix
-before commit. All three releases passed the full gate (tsc / eslint / 6
-audits / test:fast / test:integration / test:expensive). Detail per release
-in `## Recently Shipped`; closed-finding one-liners in
-`## Closed since last update`.
+**2026-05-22..23 — 4 releases (v1.76.0..v1.78.1), 11 findings closed; 3 P1 bundle PRDs drafted ready for dispatch:** `B-FRA` (`cfa38603`), `B-APWS` (`46db2c27`), `B-WUWC-REPRODUCER` (`92bed106`) in `prds/p1-bug-fix-bundle-b-*-2026-05-23.md`. Detail in `## Recently Shipped` + `## Closed since last update`.
 
 ---
 
 ## Open Findings
 
-**Reprioritized 2026-05-23** by severity × recurrence × blast radius:
+Prioritized by severity × recurrence × blast radius (reprioritized 2026-05-23):
 - **P1** = data-loss / silent corruption / pipeline-bricking / recurrence ≥3x
 - **P2** = pipeline-friction / one-time blocker with workaround / quality gap
 - **P3** = polish / documentation / niche edge cases
 
-Closed-finding detail in `MASTER_PLAN-archive.md`. Each open finding: code +
-one-line + PRD pointer + impact rationale.
+Each open finding: code + one-line + PRD pointer + impact rationale. Closed-finding detail in `MASTER_PLAN-archive.md`.
 
 ### P1
 
@@ -93,40 +67,39 @@ one-line + PRD pointer + impact rationale.
 | 37e | R-PIWG-5 | git-isolation residual: `lsof` launch-time concurrent-access probe | **B-LSOF** (~2-3 tickets). |
 
 ### Closed since last update (2026-05-22)
-#58-#63 — **B-BABYSIT-FIX** (`bf89a1a3`) + **R-CCR** review-hardening (`e448b714`) — shipped under the **v1.76.0** tag 2026-05-22.
-#64 R-RHFP — `check-readiness` `performance` wall-budget findings demoted to advisory + telemetry-event-name literals skipped (`a0604987`). Path-strip / correction-note facets already shipped earlier.
-#65 R-RCEX — `check-readiness` `resolveSymbolRef` now resolves external SDK symbols against declared-dependency `node_modules` `.d.ts` files (`8cb5ba79`).
-#50 R-SRGT — `scope-resolver` `computeOneHop` empty-seed short-circuit + aggregate wall-clock cap; per-grep timeout 30s→5s (`6f71dd6a`).
-#57 R-RPRA — verified already fixed: the R-RHFP PATH_RE negative lookbehind `(?<![\w./@-])` refuses to start a match after `/`, so an absolute path outside TARGET extracts nothing — no leading-`/`-stripped phantom `file_path` finding. Regression test added. The R-FRA facets (Files-to-modify forward-create, prose-hedged ellipsis paths) from the same bug report remain under R-FRA.
-#49 R-PSSS — anatomy-park / szechuan-sauce empty-scope skips are now operator-visible: structured WARN + `anatomy_park_empty_scope_skip` / `szechuan_sauce_empty_scope_skip` activity events; phase-setup returns `PhaseSetupResult` and `pipeline-status.json` records per-phase `phase_skips` dispositions (`988ed55a`, `9020c26b`). B-PIPE-LAUNCH-FRICTION fully shipped under v1.77.0.
-#51 R-PPSD — verified already satisfied: both `pickle-pipeline.md` and `pickle-tmux.md` document the unified `skip_quality_gates_reason` flag with legacy flags labelled. No code change needed.
-#18 R-FGNC — `convergence-gate` `buildFailures` no longer lets pnpm `.npmrc` `${TOKEN}` WARN noise mask real TS/lint failures: combines stdout+stderr, strips the WARN before classification, exit code is the pass/fail signal; finalize-gate escalation summarises failures by check; szechuan worker runs lint-autofix before commit (`48718c63`, `b5500da8`). R-FGNC-6 (setup token preflight, R-MAY) deferred.
+- #58-#63 — **B-BABYSIT-FIX** (`bf89a1a3`) + **R-CCR** review-hardening (`e448b714`), v1.76.0.
+- #64 R-RHFP — readiness `performance` findings demoted to advisory; telemetry-event literals skipped (`a0604987`).
+- #65 R-RCEX — `resolveSymbolRef` resolves external SDK symbols against `node_modules/*.d.ts` (`8cb5ba79`).
+- #50 R-SRGT — `computeOneHop` empty-seed short-circuit + 60s wall cap; per-grep 30s→5s (`6f71dd6a`).
+- #57 R-RPRA — verified: R-RHFP PATH_RE negative lookbehind prevents leading-`/` phantom finding. R-FRA facets remain.
+- #49 R-PSSS — empty-scope skips emit WARN + `*_empty_scope_skip` events; `PhaseSetupResult` + `phase_skips` (`988ed55a`,`9020c26b`). B-PIPE-LAUNCH-FRICTION fully shipped v1.77.0.
+- #51 R-PPSD — verified: both pipeline skill prompts document `skip_quality_gates_reason`. No code change.
+- #18 R-FGNC — `convergence-gate:buildFailures` combines stdout+stderr, strips `.npmrc` WARN; szechuan runs lint-autofix pre-commit (`48718c63`,`b5500da8`). R-FGNC-6 (R-MAY) deferred.
 
 ### Closed since last update (2026-05-23)
-#48 R-PCFG — verified shipped: R-PIPE-2 `phase_no_progress` exit_reason gate (`bd5e4466`, 14 tests passing) catches the false `Phase pickle completed successfully` log after a non-zero exit.
-#54 R-MRFP — verified shipped: `detectMultiRepo` dedupes ticket `working_dir` values by their enclosing git repo root (`5501d4ed`, 8 tests covering monorepo-workspace cases).
-#53 R-SRAA — `writeScopeArchive` now rotates a pre-existing `archive/scope.<phase>.json` to a timestamped `.bak` sibling instead of FATALing with `SCOPE_ARCHIVE_EXISTS`; pipeline relaunches no longer require manual `rm` of the archive dir (`19ff0dd1`). `SCOPE_ARCHIVE_EXISTS` retired from `ScopeErrorCode`.
-#5 B-AUDIT (partial) — `hooks/` and `lib/` subsystem CLAUDE.md flipped INCOMPLETE → **OK** under `audit-subsystem-claude-md.sh`; `types/` cleared STALE; `bin/` (51 files) and `services/` (32 files) remain INCOMPLETE (`1add4451`).
-#32 R-TFP gate-blocking portion — **B-FLAKE** flake-tail serialization shipped in v1.76.0; finding retained as a watch item only (see P3).
-Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31,
-#36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
+- #48 R-PCFG — verified: R-PIPE-2 `phase_no_progress` gate (`bd5e4466`, 14 tests) catches false "completed successfully" after non-zero exit.
+- #54 R-MRFP — verified: `detectMultiRepo` dedupes by enclosing git repo root (`5501d4ed`, 8 monorepo tests).
+- #53 R-SRAA — `writeScopeArchive` rotates pre-existing archive to `.bak`; `SCOPE_ARCHIVE_EXISTS` retired (`19ff0dd1`).
+- #5 B-AUDIT (partial) — `hooks/`+`lib/` flipped INCOMPLETE→OK; `types/` cleared STALE; `bin/`+`services/` still INCOMPLETE (`1add4451`).
+- #32 R-TFP gate-blocking — **B-FLAKE** serialized flake-tail shipped v1.76.0; retained as P3 watch item.
+- **B-FRA/B-APWS/B-WUWC-REPRODUCER bundle PRDs drafted** — `cfa38603`,`46db2c27`,`92bed106`. Ready for dispatch in priority order.
+
+Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31, #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
 
 ---
 
 ## Active Queue — bug bundles first
 
-≤14 tickets/bundle. Status: NEXT · IN-FLIGHT · QUEUED · DEFERRED · SHIPPED.
-**Reordered 2026-05-23** by severity × recurrence × blast radius. Within each
-priority tier, NEXT bundles are listed in dispatch order.
+≤14 tickets/bundle. Status: NEXT · IN-FLIGHT · QUEUED · DEFERRED · SHIPPED. NEXT bundles listed in dispatch order (reordered 2026-05-23).
 
 ### P1 bundles — dispatch order
 
 | # | Bundle | Status | Composes | Notes |
 |---|---|---|---|---|
-| 1 | **B-FRA** | NEXT | #66 R-FRA + #67 R-RTRC8 + #68 R-FRA-GATE + #69 attestation | **HIGHEST RECURRENCE (5x)** — Forward-ref annotation false-positive cluster halts every creation-heavy pipeline launch. 4 PRDs filed 2026-05-03/05-10/05-14/05-23, all Draft until 2026-05-23. R-FRA-1..R-FRA-5 fix proposal in the BUG-REPORT. **Promoted P2→P1 2026-05-23** — most-recurring open bug. |
-| 2 | **B-APWS** | NEXT (new) | #11 R-APWS | **SECURITY BOUNDARY** — anatomy-park worker edits bypass `scope.json:allowed_paths` silently at fix time. No workaround. PRD `p2-anatomy-park-worker-edits-bypass-scope-allowlist.md`. Sized: ~3-5 tickets. **Promoted P2→P1 2026-05-23** — scope isolation defeat is unacceptable; silent failure is worst-case. |
-| 3 | **R-MEGA-SELF-FIX** | PARTIAL | B-PIPE-FIX + B-SJET-2 + B-SSDF + launch-friction + R-CSI | `p1-self-fix-mega-campaign-2026-05-19.md`. Phase 0 (B-PIPE-FIX R-PIPE-3/4) done; **Phase 3 (B-PIPE-LAUNCH-FRICTION) shipped under v1.77.0**. Phase 1 (B-SJET-2 #47 judge env isolation + sticky-fallback) and Phase 2 (B-SSDF #46 AGENTS.md firewall) are PHASE BLOCKERS for szechuan. Phase 4 (R-CSI #25 forensics) still open — DEFERRED in B-CSI awaiting incident. |
-| 4 | **B-WUWC-REPRODUCER** | NEXT (new) | #52 R-WUWC | **DATA LOSS** — worker writes on-spec code but `markTicketDone` blocks → output lost. B-PIPE-FIX hardening (R-PIPE-2/3/4 + R-WSE-2/3 observability) shipped; awaiting reproducer test or formal DEFERRED marker. ~2 tickets (test + ledger update). |
+| 1 | **B-FRA** | NEXT | #66 + #67 + #68 + #69 | **HIGHEST RECURRENCE (5x)** — bundle PRD `p1-bug-fix-bundle-b-fra-forward-ref-annotations-2026-05-23.md` (cfa38603). 5 tickets R-FRA-1..5 + optional R-FRA-6 shared predicate. Closes ticket-author + pre-flight gap; R-RTRC-1..7 trap doors already shipped. |
+| 2 | **B-APWS** | NEXT | #11 R-APWS | **SECURITY BOUNDARY** — bundle PRD `p1-bug-fix-bundle-b-apws-scope-allowlist-enforcement-2026-05-23.md` (46db2c27). 5 tickets R-APWS-7..11. Regression coverage + observability test only (F1/F2/F3 infra shipped). Patch bump. |
+| 3 | **R-MEGA-SELF-FIX** | PARTIAL | B-PIPE-FIX + B-SJET-2 + B-SSDF + launch-friction + R-CSI | `p1-self-fix-mega-campaign-2026-05-19.md`. Phase 0 done; Phase 3 shipped v1.77.0. Phase 1 (#47 judge env isolation), Phase 2 (#46 AGENTS.md firewall) — szechuan PHASE BLOCKERS. Phase 4 (#25 R-CSI forensics) DEFERRED in B-CSI. |
+| 4 | **B-WUWC-REPRODUCER** | NEXT | #52 R-WUWC | **DATA LOSS** — bundle PRD `p1-bug-fix-bundle-b-wuwc-reproducer-2026-05-23.md` (92bed106). 3 tickets R-WUWC-1..3. Reproducer test; closer reports Closed-or-DEFERRED with gap list. Patch bump. Drift sweep confirmed auto-commit salvage NOT shipped → follow-up R-WUWC-2-SALVAGE. |
 | 5 | **B-QSRC** | QUEUED | R-QGSK + R-RSU residuals from B2-RSU partial-ship | New bundle PRD needs scoping. Closes residue of #29/#30/#34. |
 | 6 | **B-CSI** | DEFERRED | R-CSI Phase 1+2 | Await next sibling-session incident before scoping Phase 2. Operator-gated. |
 | 7 | **B-CCDC** | DEFERRED | R-CCDC citadel detection-coverage successor | Per operator: maybe-later. |
@@ -157,28 +130,21 @@ priority tier, NEXT bundles are listed in dispatch order.
 
 ## Feature Epics — after the bug drain
 
-Do not count toward the open-bug ceiling. Gated behind the operator's
-priority directive (drain bug bundles first); the prior R-CCR pipeline
-collision constraint cleared when that pipeline completed 2026-05-22.
+Gated behind operator's drain-bug-bundles-first directive. Do not count toward open-bug ceiling.
 
 | Epic | Priority | PRD | Scope |
 |---|---|---|---|
-| **R-PIAP** | P2 | `p2-proportional-intent-aware-pipeline-2026-05-21.md` | Proportional and intent-aware processing. Pillar A — tier-proportional lifecycle (trivial/small tickets run fewer phases, not the same phases faster; deterministic auto-sizing classifier). Pillar B — intent-aware cleanup (anatomy-park/szechuan-sauce auto-detect UI-primary branches, flag-only on branch-authored visual code). 11 reqs, machine-checkable ACs. |
-| **R-PGI** | P2 | `p2-pipeline-graph-intelligence-2026-05-21.md` | GitNexus embedding. Graph-preflight stage (CLI `analyze` before refine/build/hardening, pinned auto-install, graceful degradation). Staged consumption: direct `.gitnexus/` read (target, gated on a format spike) with MCP-for-claude fallback. 9 reqs. Feeds R-PIAP's tier classifier. |
+| **R-PIAP** | P2 | `p2-proportional-intent-aware-pipeline-2026-05-21.md` | Proportional + intent-aware processing. Pillar A: tier-proportional lifecycle + auto-sizing classifier. Pillar B: anatomy/szechuan auto-detect UI-primary branches. 11 reqs. |
+| **R-PGI** | P2 | `p2-pipeline-graph-intelligence-2026-05-21.md` | GitNexus embedding. Graph-preflight stage + staged consumption (direct `.gitnexus/` target, MCP fallback). 9 reqs. Feeds R-PIAP-A5 classifier. |
 
-**Suggested order when the bug queue allows:** refine R-PGI first (its preflight +
-graph-query layer are infrastructure R-PIAP-A5's classifier can consume), then R-PIAP.
+**Order when bug queue allows:** R-PGI first (infrastructure R-PIAP-A5 consumes), then R-PIAP.
 
 ### Deferred future epics
 
-- `hermes-integration.md` (P2, ready) · `deepseek-integration.md` (P3, draft) ·
-  `openrouter-multi-provider-workers.md` (P3)
-- `god-functions-remediation-phase-2.md` — refactor epic, 27 carve-outs
-- Methodology PRDs: `portal-gun.md`, `pickle-debate.md`, `pickle-microverse.md`
-- Design docs (no ship target): `citadel.md`, `pickle-dot-codegen-builder.md`,
-  `council-of-ricks-catalog-mode-and-publish-fixes.md`,
-  `plumbus-generative-audit-frames.md`, `pickle-agent-teams.md`,
-  `smart-iteration-handoff.md`, `tool-error-retry-tracking.md`
+- **Integrations:** `hermes-integration.md` (P2 ready), `deepseek-integration.md` (P3 draft), `openrouter-multi-provider-workers.md` (P3)
+- **Refactor:** `god-functions-remediation-phase-2.md` (27 carve-outs)
+- **Methodology PRDs:** `portal-gun.md`, `pickle-debate.md`, `pickle-microverse.md`
+- **Design docs (no ship target):** `citadel.md`, `pickle-dot-codegen-builder.md`, `council-of-ricks-catalog-mode-and-publish-fixes.md`, `plumbus-generative-audit-frames.md`, `pickle-agent-teams.md`, `smart-iteration-handoff.md`, `tool-error-retry-tracking.md`
 
 ---
 
@@ -186,20 +152,14 @@ graph-query layer are infrastructure R-PIAP-A5's classifier can consume), then R
 
 | Release | Date | Content |
 |---|---|---|
-| v1.78.1 | 2026-05-23 | **#53 R-SRAA** — `scope-resolver:writeScopeArchive` now rotates a pre-existing `archive/scope.<phase>.json` to a timestamped `.bak` sibling instead of FATAL-ing with `SCOPE_ARCHIVE_EXISTS`; pipeline relaunches no longer need manual `rm` of the archive dir. `SCOPE_ARCHIVE_EXISTS` retired from `ScopeErrorCode` (doc-parity test enforces). **#48 R-PCFG** + **#54 R-MRFP** verified shipped from prior commits. **#5 B-AUDIT (partial)** — `hooks/` + `lib/` subsystem CLAUDE.md flipped INCOMPLETE → **OK** under `audit-subsystem-claude-md.sh`; `types/` cleared STALE. Full gate green. |
-| v1.78.0 | 2026-05-22 | #18 R-FGNC — `convergence-gate` `buildFailures` combines stdout+stderr and strips pnpm `.npmrc` `${TOKEN}` WARN noise before failure classification (the prior `stderr \|\| stdout` dropped real TS/lint errors whenever stderr carried the WARN); exit code is the pass/fail signal; finalize-gate escalation summarises failures by check; szechuan worker runs lint-autofix before commit. Also serialized `dispatch.test.js` (R-TFP flake tail). Full gate green. |
-| v1.77.0 | 2026-05-22 | Readiness/scope false-positive cluster + B-PIPE-LAUNCH-FRICTION. `check-readiness`: `performance` wall-budget findings demoted to advisory, telemetry-event literals skipped (#64 R-RHFP), external SDK symbols resolve against `node_modules/*.d.ts` (#65 R-RCEX), absolute-path no-false-finding pinned (#57 R-RPRA). `scope-resolver` `computeOneHop` empty-seed short-circuit + 60s wall cap (#50 R-SRGT). `/pickle-pipeline` skip-flag docs verified (#51 R-PPSD). anatomy-park/szechuan-sauce empty-scope skips now emit operator WARNs + `*_empty_scope_skip` activity events + `pipeline-status.json:phase_skips` dispositions (#49 R-PSSS). Full gate green. |
-| v1.76.0 | 2026-05-22 | Release-gate stabilization. R-CCR review-hardening epic (16/16) shipped under this tag. 1 real regression fixed (codex-spark worker-gate fixture), 6 stale tests repaired, concurrency-flake tail serialized via `.serial-tests.json`, 3 subprocess-timeout files retiered fast→integration, 6 complexity carve-outs reviewed. Full gate green. |
-| v1.75.5 | 2026-05-17 | Surgical sweep F1-F3+F5 (readiness hybrid-annotation, handoff None/N/A, explicit `completion_commit` guard, analyst-output wiring). Closes #2 hallucinated-acceptance subclass. |
-| v1.75.4 | 2026-05-17 | B-SJET partial — R-SJET-5 telemetry + command-metric async. Finding #47 stays open. |
-| v1.75.3 | 2026-05-17 | B-CCPM-1b — codex manager no-signal framing + signal-sender attribution + codex command guidance. Closes #45. |
-| v1.75.2 | 2026-05-17 | B-CTSF — closer ownership tags + terminal closer-handoff detection + runbook. Closes #44. |
-| v1.75.1 | 2026-05-16 | B-MRWG — bounded between-ticket gate, kill worker-gate npm descendants, stall heartbeat. Closes #42. |
-| v1.75.0 | 2026-05-16 | B-WSRC — worker source/state recursion contamination; StateManager schema-ceiling + hooks + scanners. Closes #43. |
-| v1.74.0 | 2026-05-11 | Reliability mega bundle + R-MMTR family + R-ARSF auto-resume stabilization. |
-| v1.73.0 | 2026-05-09 | 11-section mega bundle (codex classifier leak, judge model routing, scope preflight). Closes #11/#12/#13/#16. |
+| v1.78.1 | 2026-05-23 | #53 R-SRAA (`scope-resolver:writeScopeArchive` rotates to `.bak`; `SCOPE_ARCHIVE_EXISTS` retired) + #48 R-PCFG + #54 R-MRFP verified + #5 B-AUDIT partial (`hooks/`+`lib/`→OK). |
+| v1.78.0 | 2026-05-22 | #18 R-FGNC — `convergence-gate:buildFailures` combines stdout+stderr, strips `.npmrc` WARN; finalize-gate summarises by check; szechuan runs lint-autofix pre-commit. Also serialized `dispatch.test.js` (R-TFP). |
+| v1.77.0 | 2026-05-22 | Readiness/scope false-positive cluster + B-PIPE-LAUNCH-FRICTION. #64 R-RHFP / #65 R-RCEX / #57 R-RPRA (check-readiness), #50 R-SRGT (scope-resolver caps), #51 R-PPSD (skill docs), #49 R-PSSS (empty-scope WARN + events). |
+| v1.76.0 | 2026-05-22 | Release-gate stabilization. R-CCR review-hardening (16/16). 1 real regression + 6 stale-test repairs; flake-tail serialized via `.serial-tests.json`; 3 subprocess-timeout files retiered fast→integration. |
+| v1.75.0..v1.75.5 | 2026-05-16..17 | B-WSRC (#43), B-MRWG (#42), B-CTSF (#44), B-CCPM-1b (#45), B-SJET partial (#47 open), surgical sweep F1-F3+F5 (#2). |
+| v1.73.0..v1.74.0 | 2026-05-09..11 | v1.73.0 11-section mega bundle (closes #11-13, #16); v1.74.0 reliability mega + R-MMTR + R-ARSF auto-resume. |
 
-Pre-v1.73.0 in `MASTER_PLAN-archive.md`.
+Pre-v1.73.0 + per-release v1.75.x detail in `MASTER_PLAN-archive.md` + git log.
 
 ---
 
