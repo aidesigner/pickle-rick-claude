@@ -39,6 +39,46 @@ What did **not** ship: a CONCRETE REPRODUCER TEST that exercises the R-WUWC fail
 
 Bug 5 recommended fix #2 (auto-commit working-tree changes with a stub message before terminating Failed) is NOT shipped in pickle-phase code paths. The only `auto-commit` callsites at HEAD live in `extension/src/bin/microverse-runner.ts` (lines 2577, 2579, 2583, 3205, 3208) which is a different code path serving microverse convergence rescue — pickle phase has no equivalent salvage. This bundle does NOT ship that salvage; it documents the absence as a STILL-OPEN follow-up.
 
+## Live incident — 2026-05-23 (second occurrence, SOFTER variant)
+
+Session `2026-05-23-17b2f716` (`B-PROJECT-AUDIT-2026-05-23`, 46 tickets, the same session that motivated `BUG-REPORT-2026-05-23-readiness-rejects-forward-created-tickets.md`) hit a SOFTER variant of R-WUWC at iteration 7 on ticket `be5a047d R-RVMW` ("Behavioral test for codex manager relaunch in microverse-runner"). Forensic timeline:
+
+1. Worker wrote `extension/tests/microverse-codex-manager-relaunch.test.js`, ran `node --test` (passed), ran `npx tsc --noEmit` (passed).
+2. Worker DID `git commit` — landed as `59810646: be5a047d add microverse codex relaunch regression test` (visible in `git log --oneline`).
+3. Worker edited the ticket frontmatter to `status: "Done"` and emitted `<promise>TASK_COMPLETED</promise>`.
+4. Worker did NOT add a `completion_commit: 59810646` field to the ticket frontmatter (`~/.local/share/pickle-rick/sessions/2026-05-23-17b2f716/be5a047d/linear_ticket_be5a047d.md` — frontmatter has `id`, `title`, `status`, `priority`, `order`, `working_dir`, `source_prd`, `source_section`, `mapped_requirements`, `created`, `updated`, `links` but NO `completion_commit`).
+5. Closer ran. `guardCompletionCommitBeforeDone` invoked `hasCompletionCommit()`. The resolver scanned `git log` for the ticket-id token `be5a047d` in commit messages, found `59810646`, classified `source: 'inferred'` (not explicit because the ticket frontmatter doesn't pin the SHA), refused the Done flip.
+6. Exact fatal text (verbatim from `tmux capture-pane -t pipeline-17b2f716:0`):
+   > `[2026-05-23T20:17:04.024Z] [fatal] 2026-05-23T20:17:04.024Z ticket be5a047d cannot flip Done: hasCompletionCommit().source === 'inferred' (expected 'explicit'); worker did not produce an attributable git commit. Set state.flags.allow_inferred_completion_commit=true to bypass, or edit ticket frontmatter to include completion_commit: <sha>.`
+7. `[2026-05-23T20:17:04.043Z] Phase pickle exited with code 0`
+8. `[2026-05-23T20:17:04.072Z] Phase pickle exited clean but 45/46 tickets remain unresolved (1 Done) — incomplete bundle`
+9. Pipeline halted at 0/4 phases; elapsed 29m 30s.
+
+### Why this is a SOFTER variant
+
+| Variant | Worker file edits | Worker `git commit` | Ticket frontmatter `completion_commit:` | Outcome | Reproducer must cover |
+|---|---|---|---|---|---|
+| **HARD (2026-05-18 historical)** | YES (357 LOC across 2 files) | NO | N/A | Work sits **untracked**; operator manual salvage required; **DATA LOSS** if salvage missed | YES — primary case |
+| **SOFT (2026-05-23 live)** | YES (1 test file, ~120 LOC) | YES (`59810646`) | NO | Work **preserved in git**; ticket wedges Failed; pipeline halts at first incomplete ticket; **WORK SURVIVES, PROGRESS LOST** | YES — secondary case |
+
+Both variants leave the pipeline in the same terminal symptom (ticket Failed, phase halt, false-green "Phase pickle exited with code 0"). The DIFFERENCE is whether the worker's output is recoverable — HARD case requires the operator to spelunk through `worker_session_<pid>.log` shards and manual `git add`; SOFT case requires a one-line frontmatter edit.
+
+### Implication for AC-WUWC-N
+
+The reproducer test (`extension/tests/wuwc-reproducer.test.js`, AC-WUWC-01) MUST exercise BOTH variants as distinct test cases:
+
+- **Case A — HARD**: synthesize a worker that writes files to the working tree but never `git add`. Assert: `worker_partial_lifecycle_exit` fires with `artifacts_missing` listing the unstaged files; `working tree contains the files`; `markTicketDone` returns the appropriate `no_completion_commit` error class.
+- **Case B — SOFT**: synthesize a worker that writes files, runs `git add` + `git commit`, but does NOT add `completion_commit:` to the ticket frontmatter. Assert: `hasCompletionCommit()` returns `{ source: 'inferred', sha: <the commit's SHA> }`; `markTicketDone` returns the `inferred_completion_commit` error class with the verbatim fatal text matching the 2026-05-23 evidence; `state.flags.allow_inferred_completion_commit=true` bypass path is available; `ticket frontmatter editable workaround` (add `completion_commit: <sha>`) flips the ticket Done on the next iteration's gate check.
+
+The bundle's other ACs (WSE-1/2/3 + PIPE-2 conformance) remain unchanged — they cover the four signal-emission contracts regardless of variant.
+
+### Forensic evidence retained
+
+- Session dir: `~/.local/share/pickle-rick/sessions/2026-05-23-17b2f716/be5a047d/` (kept) — `linear_ticket_be5a047d.md` 3.6K, `worker_session_18401.log` 689.5K, `research_2026-05-23.md`, `plan_2026-05-23.md`, `conformance_2026-05-23.md`, `code_review_2026-05-23.md`, `handoff_notes.md`, `plan_review.md`, `research_review.md`.
+- Git commit: `59810646 be5a047d add microverse codex relaunch regression test` (in `gregorydickson/pickle-rick-claude` `main`).
+- tmux session `pipeline-17b2f716` still attached at filing time; window 0 shows "Pipeline Complete | Phases: 0/4 | Elapsed: 29m 30s".
+- Operator unblock path (chosen): edit the ticket frontmatter to add `completion_commit: 59810646`, then resume via `node ~/.claude/pickle-rick/extension/bin/setup.js --tmux --resume <SESSION_ROOT>` — restart kicks the closer's `hasCompletionCommit()` re-check and the Done flip succeeds on the next iteration.
+
 ## Bundle thesis
 
 > "Prevention without a reproducer is a hope. This bundle ships the test that fails when R-WUWC regresses, so the next operator finds the bug at gate time, not at salvage time."
@@ -67,6 +107,8 @@ Machine-checkable, prefixed `AC-WUWC-N`:
 - [ ] **AC-WUWC-08** — Reproducer asserts the working-tree diff is SURFACED in observability: at minimum, the `worker_partial_lifecycle_exit.gate_payload.artifacts_missing` array is non-empty so the operator can see which lifecycle artifacts the worker skipped. If a working-tree-diff field is added to `pipeline-status.json` as part of Bug 5 recommended fix #3 (NOT scope of this bundle), AC-WUWC-08 will be tightened in a follow-up R-WUWC bundle.
 - [ ] **AC-WUWC-09** — `bash extension/scripts/audit-trap-door-enforcement.sh` exits 0 after the new trap door for `extension/tests/wuwc-reproducer.test.js` is pinned in `extension/CLAUDE.md`.
 - [ ] **AC-WUWC-10** — Closer commit body (R-WUWC-3-CLOSER) either (a) closes MASTER_PLAN Finding #52 R-WUWC if the reproducer passes and AC-WUWC-01 through AC-WUWC-09 are all green, OR (b) stamps Finding #52 R-WUWC as DEFERRED with an explicit gap list naming each missing prevention layer (e.g., "auto-commit salvage from Bug 5 fix #2 not shipped — file follow-up bundle R-WUWC-2-SALVAGE").
+- [ ] **AC-WUWC-11** — Reproducer SOFT-variant case (per `## Live incident — 2026-05-23`): synthesize a worker that writes ≥1 file to the working tree, runs `git add` + `git commit -m "<ticket-id> <summary>"`, edits the ticket frontmatter to `status: Done`, but does NOT add `completion_commit:` to the frontmatter. Assert: `hasCompletionCommit()` returns `{ source: 'inferred', sha: <commit SHA> }`; `guardCompletionCommitBeforeDone` raises a fatal whose message matches `/cannot flip Done: hasCompletionCommit\(\)\.source === 'inferred' \(expected 'explicit'\); worker did not produce an attributable git commit/`; the canonical bypass paths (`state.flags.allow_inferred_completion_commit=true` AND `completion_commit: <sha>` frontmatter edit) are both surfaced in the error message.
+- [ ] **AC-WUWC-12** — Reproducer SOFT-variant recovery: after the AC-WUWC-11 fatal, simulating the frontmatter-edit bypass (write `completion_commit: <sha>` to the ticket file) MUST let the next iteration's `guardCompletionCommitBeforeDone` re-check classify the source as `'explicit'` and flip the ticket to `Done`. Asserts the documented operator recovery path is functional and not vacuous.
 
 ## Trap-door touchpoints
 
