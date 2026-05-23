@@ -19,6 +19,12 @@ status, open findings, queue, feature epics.
 **Priority directive (operator, reaffirmed 2026-05-21):** drain bug bundles
 before feature epics. Feature epics do not count toward the open-bug ceiling.
 
+**Reprioritized 2026-05-23** by severity × recurrence × blast radius. NEXT
+dispatch order: **B-FRA** (5x recurrence, halts creation-heavy launches) →
+**B-APWS** (silent scope-boundary defeat) → **R-MEGA-SELF-FIX** Phase 1/2/4 →
+**B-WUWC-REPRODUCER** (data-loss class). Promotions/demotions explained
+inline in the Open Findings tables below.
+
 **2026-05-22 session — 3 releases shipped, 8 findings closed.** v1.76.0
 drained the `test:integration` flake tail and shipped R-CCR review-hardening
 (epic `prds/p2-bbabysit-review-hardening-2026-05-21.md`, 16/16 tickets, 4/4
@@ -41,44 +47,49 @@ in `## Recently Shipped`; closed-finding one-liners in
 
 ## Open Findings
 
+**Reprioritized 2026-05-23** by severity × recurrence × blast radius:
+- **P1** = data-loss / silent corruption / pipeline-bricking / recurrence ≥3x
+- **P2** = pipeline-friction / one-time blocker with workaround / quality gap
+- **P3** = polish / documentation / niche edge cases
+
 Closed-finding detail in `MASTER_PLAN-archive.md`. Each open finding: code +
-one-line + PRD pointer.
+one-line + PRD pointer + impact rationale.
 
 ### P1
 
 | # | Code | Summary | PRD / Status |
 |---|---|---|---|
-| 25 | R-CSI | Concurrent claude-session destructive-command interference (3 SIGINT incidents/36h) | `p1-concurrent-claude-session-interference-with-running-pipelines.md`. Phase 1 forensics deferred per operator (await next incident). |
-| 27 | R-MMRT | Monitor respawn uses temp-dir/empty sessionDir then 4-pane window collapse | `p2-mux-runner-monitor-respawn-uses-temp-dir-not-session-root.md`. **B-MONITOR.** |
-| 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
-| 46 | R-SSDF | szechuan-sauce Session Knowledge Transfer block fails on repos with worker-side firewall `AGENTS.md` | `be269e03` shipped AC-SSDF-03 (skippable transfer); remainder folded into R-MEGA-SELF-FIX. |
-| 47 | R-SJET | szechuan-sauce LLM judge baseline-measurement deterministically ETIMEDOUTs | `p1-szechuan-sauce-judge-etimedout-baseline-measurement.md`. R-SJET-1 landed (`53d79a23`); R-SJET-3/4/6 folded into R-MEGA-SELF-FIX. |
+| 25 | R-CSI | Concurrent claude-session destructive-command interference (3 SIGINT incidents/36h) — DATA LOSS class | `p1-concurrent-claude-session-interference-with-running-pipelines.md`. Phase 1 forensics deferred per operator (await next incident). |
+| 47 | R-SJET | szechuan-sauce LLM judge baseline-measurement deterministically ETIMEDOUTs — DETERMINISTIC PHASE BLOCKER | `p1-szechuan-sauce-judge-etimedout-baseline-measurement.md`. R-SJET-1 landed (`53d79a23`); R-SJET-3/4/6 folded into R-MEGA-SELF-FIX. |
+| 46 | R-SSDF | szechuan-sauce Session Knowledge Transfer block fails on repos with worker-side firewall `AGENTS.md` — PHASE BLOCKER on common repo type | `be269e03` shipped AC-SSDF-03 (skippable transfer); remainder folded into R-MEGA-SELF-FIX. |
+| 52 | R-WUWC | worker writes on-spec code but `markTicketDone` blocked then ticket wedges Failed, output lost — DATA LOSS class | `BUG-REPORT-2026-05-18-pipeline-launch-friction.md` Addendum 5. B-PIPE-FIX hardening (R-PIPE-2/3/4 + R-WSE-2/3 observability) shipped; awaiting a fresh post-v1.78.0 reproducer to confirm prevention. |
+| 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
+| 11 | R-APWS | anatomy-park worker edits bypass `scope.json:allowed_paths` at fix time — SILENT SCOPE BOUNDARY DEFEAT | `p2-anatomy-park-worker-edits-bypass-scope-allowlist.md`. **(Promoted P2→P1 2026-05-23: scope isolation is a security boundary; silent bypass is unacceptable.)** |
+| 66 | R-FRA | readiness gate rejects forward-created test/script files in refined tickets — root-cause PRD (5 false-positive classes, RC-1/2/3 fix paths) | `p2-refined-tickets-trip-readiness-contract-resolver.md`. **B-FRA.** |
+| 67 | R-RTRC8 | `/pickle-refine-prd` Step 7c template doesn't remind authors to add R-RTRC-7 forward-ref annotations on backticked paths/symbols | `p2-refine-prd-skill-missing-rtrc7-annotation-reminder.md`. **B-FRA.** |
+| 68 | R-FRA-GATE | forward-ref annotation regex parity drift between `check-readiness` and `audit-ticket-bundle` (two skip flags needed pre-R-QGSK-2) | `p2-forward-ref-annotation-readiness-vs-audit-bundle-drift.md`. R-QGSK-2 unified flag partial; gate-side regex parity still open. **B-FRA.** |
+| 69 | R-FRA | **5th recurrence (2026-05-23)** — `B-PROJECT-AUDIT-2026-05-23` session `2026-05-23-17b2f716` hit `READINESS HALT exited 2` with 34 `file_path` findings on forward-created test files; unblocked via `skip_quality_gates_reason` | `BUG-REPORT-2026-05-23-readiness-rejects-forward-created-tickets.md`. **B-FRA. (Cluster promoted P2→P1 2026-05-23: 5x recurrence is the highest of any open finding; halts every creation-heavy pipeline launch.)** |
 
 ### P2
 
 | # | Code | Summary | PRD / Status |
 |---|---|---|---|
-| 11 | R-APWS | anatomy-park worker edits bypass `scope.json:allowed_paths` at fix time | `p2-anatomy-park-worker-edits-bypass-scope-allowlist.md`. |
-| 12 | R-PSAI | `/pickle-pipeline` ignores branch/subset signals in operator kickoff | `p2-pickle-pipeline-no-scope-auto-inference.md`. |
+| 27 | R-MMRT | Monitor respawn uses temp-dir/empty sessionDir then 4-pane window collapse — observability gap (not pipeline-blocking) | `p2-mux-runner-monitor-respawn-uses-temp-dir-not-session-root.md`. **B-MONITOR. (Demoted P1→P2 2026-05-23: cosmetic + observability impact only; workaround = manual respawn.)** |
 | 30 | R-RSU | refinement collapses `composes:` bundle PRDs to N section-umbrellas | R-RSU-1..5; B2-RSU residuals. **B-QSRC / B-WEDGE.** |
 | 33 | R-WMW | manager wedges on oversized ticket; spawns worker, no artifact progress | `p2-worker-manager-wedge-oversized-ticket-no-artifact-progress.md`. **B-WEDGE.** |
+| 34 | R-WTB | `Defaults.WORKER_TIMEOUT_SECONDS: 1200` too short for R-PTG worker lifecycle | R-WTB-1..4; B2-RSU residual. **B-QSRC. (Promoted P3→P2 2026-05-23: blocks R-PTG worker lifecycle; tier_cap_override workaround needed each session.)** |
 | 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check | PRD not drafted (~4 tickets). **B-GATE.** |
 | 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4 tickets). **B-GATE.** |
-| 52 | R-WUWC | worker writes on-spec code but `markTicketDone` blocked then ticket wedges Failed, output lost | `BUG-REPORT-2026-05-18-pipeline-launch-friction.md` Addendum 5. B-PIPE-FIX hardening (R-PIPE-2/3/4 + R-WSE-2/3 observability) shipped; awaiting a fresh post-v1.78.0 reproducer to confirm prevention. |
-| 66 | R-FRA | readiness gate rejects forward-created test/script files in refined tickets — root-cause PRD (5 false-positive classes, RC-1/2/3 fix paths) | `p2-refined-tickets-trip-readiness-contract-resolver.md`. **B-FRA.** |
-| 67 | R-RTRC8 | `/pickle-refine-prd` Step 7c template doesn't remind authors to add R-RTRC-7 forward-ref annotations on backticked paths/symbols | `p2-refine-prd-skill-missing-rtrc7-annotation-reminder.md`. **B-FRA.** |
-| 68 | R-FRA-GATE | forward-ref annotation regex parity drift between `check-readiness` and `audit-ticket-bundle` (two skip flags needed pre-R-QGSK-2) | `p2-forward-ref-annotation-readiness-vs-audit-bundle-drift.md`. R-QGSK-2 unified flag partial; gate-side regex parity still open. **B-FRA.** |
-| 69 | R-FRA | 5th recurrence attestation — `B-PROJECT-AUDIT-2026-05-23` session `2026-05-23-17b2f716` hit `READINESS HALT exited 2` with 34 `file_path` findings on forward-created test files; unblocked via `skip_quality_gates_reason` | `BUG-REPORT-2026-05-23-readiness-rejects-forward-created-tickets.md`. **B-FRA.** |
 
 ### P3
 
 | # | Code | Summary | PRD / Status |
 |---|---|---|---|
 | 5 | — | Subsystem CLAUDE.md drift; audit 5 subsystems under `extension/src/` | **PARTIAL** — `hooks/` and `lib/` now report **OK** under `scripts/audit-subsystem-claude-md.sh` (`1add4451`); `types/` cleared STALE; `bin/` (51 files) and `services/` (32 files) remain INCOMPLETE — per-export documentation, ongoing. |
+| 12 | R-PSAI | `/pickle-pipeline` ignores branch/subset signals in operator kickoff | `p2-pickle-pipeline-no-scope-auto-inference.md`. **(Demoted P2→P3 2026-05-23: UX friction; operator can pass `--scope` explicitly.)** |
 | 19 | R-MMTR | claude manager max-turns family closeout pending | R-MMTR-1/5 shipped; 2/3/4 Skipped+commit; 6 force-skipped; 7 closer pending. **B-R-MMTR / B-E2E.** |
 | 29 | R-MWCL | monitor `inferMonitorMode` falls through to `'pickle'` for szechuan/anatomy | R-MWCL-1 shipped; 3..7 residual. **B-MONITOR.** |
 | 32 | R-TFP | `test:fast` + `test:integration` parallel-load flakes | `p2-test-fast-stability-gate-widening-2026-05-19.md`. v1.76.0 serialized the subprocess-heavy tail via `.serial-tests.json` and retiered `council-publish` / `mux-runner.output-stall` / `check-update` fast→integration — gate verified green. B-FLAKE SHIPPED; watch item only. |
-| 34 | R-WTB | `Defaults.WORKER_TIMEOUT_SECONDS: 1200` too short for R-PTG worker lifecycle | R-WTB-1..4; B2-RSU residual. **B-QSRC.** |
 | 37e | R-PIWG-5 | git-isolation residual: `lsof` launch-time concurrent-access probe | **B-LSOF** (~2-3 tickets). |
 
 ### Closed since last update (2026-05-22)
@@ -105,29 +116,33 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 ## Active Queue — bug bundles first
 
 ≤14 tickets/bundle. Status: NEXT · IN-FLIGHT · QUEUED · DEFERRED · SHIPPED.
+**Reordered 2026-05-23** by severity × recurrence × blast radius. Within each
+priority tier, NEXT bundles are listed in dispatch order.
 
-### P1 bundles
+### P1 bundles — dispatch order
 
-| Bundle | Status | Composes | Notes |
-|---|---|---|---|
-| **R-CCR** | SHIPPED | B-BABYSIT-FIX review hardening | 16/16, 4/4 phases, `e448b714`; shipped under the v1.76.0 tag 2026-05-22. |
-| **B-BABYSIT-FIX** | SHIPPED | findings #58-#64 | `bf89a1a3`. R-CCR hardens the review residue. |
-| **R-MEGA-SELF-FIX** | PARTIAL | B-PIPE-FIX + B-SJET-2 + B-SSDF + launch-friction + R-CSI | `p1-self-fix-mega-campaign-2026-05-19.md`. Phase 0 (B-PIPE-FIX R-PIPE-3/4) done; **Phase 3 (B-PIPE-LAUNCH-FRICTION) shipped under v1.77.0**. Phase 1 (B-SJET-2 judge env isolation + sticky-fallback), Phase 2 (B-SSDF AGENTS.md firewall), Phase 4 (R-CSI forensics) still open. |
-| **B-QSRC** | NEXT | R-QGSK + R-RSU residuals from B2-RSU partial-ship | New bundle PRD needs scoping. Closes residue of #29/#30/#34. |
-| **B-CSI** | DEFERRED | R-CSI Phase 1+2 | Await next sibling-session incident before scoping Phase 2. |
-| **B-CCDC** | DEFERRED | R-CCDC citadel detection-coverage successor | Per operator: maybe-later. |
+| # | Bundle | Status | Composes | Notes |
+|---|---|---|---|---|
+| 1 | **B-FRA** | NEXT | #66 R-FRA + #67 R-RTRC8 + #68 R-FRA-GATE + #69 attestation | **HIGHEST RECURRENCE (5x)** — Forward-ref annotation false-positive cluster halts every creation-heavy pipeline launch. 4 PRDs filed 2026-05-03/05-10/05-14/05-23, all Draft until 2026-05-23. R-FRA-1..R-FRA-5 fix proposal in the BUG-REPORT. **Promoted P2→P1 2026-05-23** — most-recurring open bug. |
+| 2 | **B-APWS** | NEXT (new) | #11 R-APWS | **SECURITY BOUNDARY** — anatomy-park worker edits bypass `scope.json:allowed_paths` silently at fix time. No workaround. PRD `p2-anatomy-park-worker-edits-bypass-scope-allowlist.md`. Sized: ~3-5 tickets. **Promoted P2→P1 2026-05-23** — scope isolation defeat is unacceptable; silent failure is worst-case. |
+| 3 | **R-MEGA-SELF-FIX** | PARTIAL | B-PIPE-FIX + B-SJET-2 + B-SSDF + launch-friction + R-CSI | `p1-self-fix-mega-campaign-2026-05-19.md`. Phase 0 (B-PIPE-FIX R-PIPE-3/4) done; **Phase 3 (B-PIPE-LAUNCH-FRICTION) shipped under v1.77.0**. Phase 1 (B-SJET-2 #47 judge env isolation + sticky-fallback) and Phase 2 (B-SSDF #46 AGENTS.md firewall) are PHASE BLOCKERS for szechuan. Phase 4 (R-CSI #25 forensics) still open — DEFERRED in B-CSI awaiting incident. |
+| 4 | **B-WUWC-REPRODUCER** | NEXT (new) | #52 R-WUWC | **DATA LOSS** — worker writes on-spec code but `markTicketDone` blocks → output lost. B-PIPE-FIX hardening (R-PIPE-2/3/4 + R-WSE-2/3 observability) shipped; awaiting reproducer test or formal DEFERRED marker. ~2 tickets (test + ledger update). |
+| 5 | **B-QSRC** | QUEUED | R-QGSK + R-RSU residuals from B2-RSU partial-ship | New bundle PRD needs scoping. Closes residue of #29/#30/#34. |
+| 6 | **B-CSI** | DEFERRED | R-CSI Phase 1+2 | Await next sibling-session incident before scoping Phase 2. Operator-gated. |
+| 7 | **B-CCDC** | DEFERRED | R-CCDC citadel detection-coverage successor | Per operator: maybe-later. |
+| — | **R-CCR** | SHIPPED | B-BABYSIT-FIX review hardening | 16/16, 4/4 phases, `e448b714`; shipped under the v1.76.0 tag 2026-05-22. |
+| — | **B-BABYSIT-FIX** | SHIPPED | findings #58-#64 | `bf89a1a3`. R-CCR hardens the review residue. |
 
 ### P2 bundles
 
 | Bundle | Status | Composes | Notes |
 |---|---|---|---|
-| **B-FLAKE** | SHIPPED | R-TFP-W | `test:fast` + `test:integration` green; flake tail serialized via `.serial-tests.json`. Shipped in v1.76.0. |
-| **B-PIPE-LAUNCH-FRICTION** | SHIPPED | R-PSSS + R-SRGT + R-PPSD | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. All three findings closed 2026-05-22 (#49/#50/#51) — shipped under the **v1.77.0** tag. R-PSSS implemented directly against `pipeline-runner.ts` after the PRD re-scope. |
-| **B-MONITOR** | QUEUED | R-MMRT + R-MWCL residuals | Shared `pickle-utils.ts` + `monitor.ts`. Closes #27/#29. |
-| **B-GATE** | PARTIAL | R-FGNC + R-PVTA + R-VSGE | **R-FGNC (#18) shipped 2026-05-22** (`48718c63`+`b5500da8`). R-PVTA (#39) / R-VSGE (#40) still need PRDs drafted. |
-| **B-WEDGE** | QUEUED | R-RSU residuals + R-WMW | Only if B2's R-RSU doesn't fully close #30. Closes #30/#33. |
+| **B-GATE** | PARTIAL | R-FGNC + R-PVTA + R-VSGE | **R-FGNC (#18) shipped 2026-05-22** (`48718c63`+`b5500da8`). R-PVTA (#39) / R-VSGE (#40) still need PRDs drafted. Verify-command host-tool gaps cause silent worker failures. |
+| **B-WEDGE** | QUEUED | R-RSU residuals + R-WMW | Closes #30/#33. Manager wedge on oversized ticket is visible (no data loss) but burns wall-time. |
+| **B-MONITOR** | QUEUED | R-MMRT + R-MWCL residuals | Closes #27/#29. Observability gap; cosmetic + diagnostic impact. |
 | **B-PNTR** | QUEUED | remove bare `/pickle` non-tmux loop | `p2-remove-non-tmux-pickle-loop.md`. Refinement recommended pre-launch. |
-| **B-FRA** | NEXT | #66 R-FRA + #67 R-RTRC8 + #68 R-FRA-GATE + #69 attestation | Forward-ref annotation false-positive cluster — 5th recurrence on 2026-05-23 (`B-PROJECT-AUDIT` 46-ticket bundle). 4 PRDs filed 2026-05-03/05-10/05-14/05-23, all Draft until now. Proposed R-FRA-1..R-FRA-5 in the 2026-05-23 bug report. |
+| **B-FLAKE** | SHIPPED | R-TFP-W | `test:fast` + `test:integration` green; flake tail serialized via `.serial-tests.json`. Shipped in v1.76.0. |
+| **B-PIPE-LAUNCH-FRICTION** | SHIPPED | R-PSSS + R-SRGT + R-PPSD | `p2-pipeline-launch-friction-bundle-2026-05-18.md`. All three findings closed 2026-05-22 (#49/#50/#51) — shipped under the **v1.77.0** tag. |
 
 ### P3 bundles
 
