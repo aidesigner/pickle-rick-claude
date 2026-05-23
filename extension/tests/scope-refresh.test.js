@@ -244,7 +244,13 @@ test('refreshScope: recovers dead-writer scope.json tmp when base scope is missi
     }
 });
 
-test('refreshScope: archive refuses to overwrite (SCOPE_ARCHIVE_EXISTS)', () => {
+test('R-SRAA #53: refreshScope rotates a pre-existing archive instead of FATAL on relaunch', () => {
+    // Reproduces BUG-REPORT-2026-05-18 Bug 6: launch #1 wrote
+    // archive/scope.<phase>.json then crashed before updating phases_entered,
+    // so launch #2 saw the leftover archive and FATALed with
+    // SCOPE_ARCHIVE_EXISTS — making every relaunch require manual `rm`. The
+    // archive now rotates to a timestamped `.<epochMs>.bak` sibling and the
+    // relaunch proceeds.
     const repo = makeRepo();
     const session = makeSession(repo);
     try {
@@ -258,16 +264,27 @@ test('refreshScope: archive refuses to overwrite (SCOPE_ARCHIVE_EXISTS)', () => 
             sessionRoot: session, repoRoot: repo,
         });
 
-        // Manually pre-create the archive file AND clear phases_entered so
-        // the idempotency gate doesn't short-circuit first.
+        // Simulate launch #1's leftover: archive exists, but phases_entered
+        // does not yet include the phase (the crash window).
         const archiveDir = path.join(session, 'archive');
         fs.mkdirSync(archiveDir, { recursive: true });
-        fs.writeFileSync(path.join(archiveDir, 'scope.anatomy-park.json'), '{}');
+        const leftover = path.join(archiveDir, 'scope.anatomy-park.json');
+        fs.writeFileSync(leftover, JSON.stringify({ leftover: true }));
 
-        assert.throws(
-            () => refreshScope(session, 'anatomy-park', { repoRoot: repo }),
-            (err) => err instanceof ScopeError && err.code === 'SCOPE_ARCHIVE_EXISTS',
-        );
+        const result = refreshScope(session, 'anatomy-park', { repoRoot: repo });
+        assert.ok(result, 'relaunch must proceed without FATAL');
+        assert.equal(result.head_sha?.length, 40, 'fresh archive carries the new HEAD');
+
+        // The leftover was rotated to a `.<epochMs>.bak` sibling.
+        const rotated = fs.readdirSync(archiveDir)
+            .filter((name) => /^scope\.anatomy-park\.json\.\d+\.bak$/.test(name));
+        assert.equal(rotated.length, 1, `expected exactly one rotated archive, got ${rotated.join(', ')}`);
+        const rotatedContent = JSON.parse(fs.readFileSync(path.join(archiveDir, rotated[0]), 'utf-8'));
+        assert.equal(rotatedContent.leftover, true, 'rotated file must preserve the prior archive content');
+
+        // The fresh archive at the canonical path is the new run, not the leftover.
+        const fresh = JSON.parse(fs.readFileSync(leftover, 'utf-8'));
+        assert.notEqual(fresh.leftover, true, 'canonical archive path now carries the relaunch result');
     } finally {
         cleanup(repo, session);
     }

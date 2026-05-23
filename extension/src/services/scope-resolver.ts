@@ -53,8 +53,9 @@ export type ScopeErrorCode =
   | 'SCOPE_BASE_MISSING'
   | 'SCOPE_BAD_FLAG'
   | 'SCOPE_ONE_HOP_TOO_LARGE'
-  | 'SCOPE_EMPTY_POST_BUILD'
-  | 'SCOPE_ARCHIVE_EXISTS';
+  | 'SCOPE_EMPTY_POST_BUILD';
+// R-SRAA #53: `SCOPE_ARCHIVE_EXISTS` was retired — `writeScopeArchive` now
+// rotates a pre-existing archive instead of throwing on relaunch.
 
 export interface ScopeArgs {
   scopeFlag: string;
@@ -267,9 +268,11 @@ export interface RefreshScopeOpts {
  * - `allowed_paths` is recomputed against the new HEAD for diff modes; for
  *   `paths` mode the list is preserved (no HEAD dependency).
  * - A `RefreshEntry` is appended to `scope.json.refresh_history`.
- * - `archive/scope.<phase>.json` is written atomically and REFUSES to
- *   overwrite — a collision throws `SCOPE_ARCHIVE_EXISTS` since that indicates
- *   a bug (the idempotency gate should have caught it).
+ * - `archive/scope.<phase>.json` is written atomically; R-SRAA (Finding #53):
+ *   if the archive already exists from a prior launch that crashed before
+ *   updating `phases_entered`, it is rotated to `<file>.<epochMs>.bak` and
+ *   the new archive is written (the prior FATAL `SCOPE_ARCHIVE_EXISTS` made
+ *   every pipeline relaunch require manual `rm` cleanup).
  * - `state.phases_entered` is extended with `phase` under state-manager lock.
  *
  * Emits `scope-refresh: phase=<p> head=<sha> allowed=<N>` via `opts.log`
@@ -699,13 +702,25 @@ function writeScopeJson(filePath: string, scope: ScopeJson): void {
 }
 
 /**
- * Atomic archive writer that refuses to overwrite. If `filePath` already
- * exists, throws `SCOPE_ARCHIVE_EXISTS` — the `phases_entered` idempotency
- * gate should have prevented this; collision signals a bug.
+ * R-SRAA (Finding #53): atomic archive writer with relaunch-safe rotation.
+ *
+ * Earlier this refused to overwrite and threw `SCOPE_ARCHIVE_EXISTS` on the
+ * assumption that the `phases_entered` idempotency gate would prevent a
+ * collision. In practice that gate misses on a crash window: launch #1 wrote
+ * `scope.<phase>.json` (line 432) and then crashed BEFORE the
+ * `phases_entered` update (line 434-436), so launch #2 saw an empty
+ * `phases_entered`, called `refreshScope`, and FATALed every time on the
+ * leftover archive (BUG-REPORT-2026-05-18 Bug 6).
+ *
+ * Now: if the archive already exists, rotate it to a timestamped sibling
+ * (`scope.<phase>.json.<epochMs>.bak`) so the relaunch proceeds without
+ * FATAL or operator-side `rm` cleanup, and the prior archive is preserved
+ * for forensics.
  */
 function writeScopeArchive(filePath: string, scope: ScopeJson): void {
   if (fs.existsSync(filePath)) {
-    throw new ScopeError('SCOPE_ARCHIVE_EXISTS', `refreshScope: archive already exists (refusing overwrite): ${filePath}`);
+    const rotatedPath = `${filePath}.${Date.now()}.bak`;
+    fs.renameSync(filePath, rotatedPath);
   }
   writeScopeJson(filePath, scope);
 }
