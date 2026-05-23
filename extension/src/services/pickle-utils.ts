@@ -155,7 +155,14 @@ export function wrapText(text: string, width: number): string[] {
   return lines.length > 0 ? lines : [''];
 }
 
-export const DEFAULT_WORKER_TEST_GATE_TIMEOUT_MS = 240_000;
+// R-WTFT: per-gate-phase cap for `npm run test:fast` (and `test:integration`) inside
+// the worker lint gate. Distinct from the per-ticket umbrella `WORKER_TIMEOUT_SECONDS`
+// (R-WTB). 600_000 ms = 10 min gives ~3x headroom for the current ~4994-test fast
+// suite on slow hardware while keeping real hangs bounded.
+// Floor for operator override: 60_000 ms.
+export const DEFAULT_WORKER_TEST_GATE_TIMEOUT_MS = 600_000;
+export const WORKER_TEST_GATE_TIMEOUT_FLOOR_MS = 60_000;
+export const WORKER_TEST_GATE_TIMEOUT_ENV_VAR = 'PICKLE_WORKER_TEST_FAST_TIMEOUT_MS';
 
 export function printMinimalPanel(
   title: string,
@@ -562,7 +569,17 @@ export function loadPickleSettingsBag(extensionRoot = getExtensionRoot()): Pickl
 export function resolveWorkerTestGateTimeoutMs(
   extensionRoot = getExtensionRoot(),
   settings?: PickleSettings | null,
+  env: NodeJS.ProcessEnv = process.env,
 ): number {
+  // Env override wins. Parse strict int, clamp to >= WORKER_TEST_GATE_TIMEOUT_FLOOR_MS,
+  // fall back to settings/default on parse failure or sub-floor value.
+  const rawEnv = env[WORKER_TEST_GATE_TIMEOUT_ENV_VAR];
+  if (typeof rawEnv === 'string' && rawEnv.trim().length > 0) {
+    const parsed = Number(rawEnv);
+    if (Number.isFinite(parsed) && Number.isInteger(parsed) && parsed > 0) {
+      return Math.max(parsed, WORKER_TEST_GATE_TIMEOUT_FLOOR_MS);
+    }
+  }
   const settingsBag = settings === undefined ? loadPickleSettingsBag(extensionRoot) : settings;
   const timeoutMs = Number(settingsBag?.worker_test_gate_timeout_ms);
   if (Number.isFinite(timeoutMs) && Number.isInteger(timeoutMs) && timeoutMs > 0) {

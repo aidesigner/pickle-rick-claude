@@ -89,6 +89,7 @@ Before creating a release, run the full lint and test gate from `extension/`: `n
 | `PICKLE_INSTALL_ROOT` | path (default `$HOME/.claude/pickle-rick`) | Override deploy prefix for `install.sh` and deploy-lifecycle soak test |
 | `RUN_EXPENSIVE_TESTS` | `"1"` | Gates the `test:expensive` tier (deploy-lifecycle soak, release-gate full run). Must be set explicitly; not included in default `npm test` |
 | `SOAK_SECONDS` | integer ≥ 1800 (default `1800`) | Duration for deploy-lifecycle soak test in `tests/integration/deploy-lifecycle-soak.test.js` |
+| `PICKLE_WORKER_TEST_FAST_TIMEOUT_MS` | integer ms ≥ 60000 (default `600000` = 10 min) | Per-gate-phase cap for `npm run test:fast` / `test:integration` inside the worker lint gate (R-WTFT). Strict positive integer parse; values below the 60_000 ms floor clamp up; invalid values fall back to the default. Use to tune per-machine without redeploy when the fast suite legitimately exceeds 10 min on slow hardware. |
 
 <!-- gitnexus:start -->
 # GitNexus MCP
