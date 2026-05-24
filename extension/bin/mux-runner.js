@@ -1472,9 +1472,44 @@ export function validateAutoTicketCompletion(sessionDir, ticketId, workingDir, s
 export function applyAutoTicketCompletionValidation(input) {
     const verdict = validateAutoTicketCompletion(input.sessionDir, input.ticketId, input.workingDir, input.startCommit);
     if (verdict.action === 'done') {
-        if (markTicketDone(input.sessionDir, input.ticketId)) {
-            input.log?.(`Marked ticket ${input.ticketId} as Done (validated: evidence found)`);
+        // R-CCRC-2: route Done-flip through guard so the R-WUWC SOFT-variant
+        // auto-fill runs and completion_commit is persisted to the frontmatter.
+        // Manager drift path: ticket starts 'In Progress', so the guard's internal
+        // autoFillCompletionCommit (which requires status=Done) cannot run yet.
+        // Allow inferred evidence here; autoFillCompletionCommit runs post-markTicketDone.
+        const guard = guardCompletionCommitBeforeDone({
+            sessionDir: input.sessionDir,
+            ticketId: input.ticketId,
+            workingDir: input.workingDir,
+            flags: { ...(input.flags ?? {}), allow_inferred_completion_commit: true },
+        });
+        if (!guard.ok) {
+            const msg = `[fatal] ${new Date().toISOString()} ${guard.reason}`;
+            input.log?.(msg);
+            process.stderr.write(`${msg}\n`);
+            recordExitReason(input.statePath, 'done_without_commit_evidence');
+            safeDeactivate(input.statePath);
+            return { action: 'leave', reason: 'guard_failed_no_commit_evidence' };
         }
+        // R-PEDC: clear any stale done_without_commit_evidence before marking Done.
+        clearStaleDoneWithoutCommitEvidence(input.statePath);
+        if (markTicketDone(input.sessionDir, input.ticketId)) {
+            input.log?.(`Marked ticket ${input.ticketId} as Done (validated: evidence found, completion_commit: ${guard.sha})`);
+        }
+        // R-WUWC SOFT-variant (manager path): ticket was 'In Progress' at guard
+        // time so the auto-fill inside guardCompletionCommitBeforeDone couldn't
+        // write completion_commit (autoFillCompletionCommit requires status=Done).
+        // Now that markTicketDone has flipped the status, run auto-fill to persist
+        // the SHA. Best-effort: failure must not block the Done flip.
+        try {
+            autoFillCompletionCommit({
+                sessionDir: input.sessionDir,
+                workingDir: input.workingDir,
+                ticketId: input.ticketId,
+                statePath: input.statePath,
+            });
+        }
+        catch { /* best-effort */ }
         return verdict;
     }
     if (verdict.action === 'skip') {
@@ -4440,6 +4475,8 @@ async function runMuxRunnerMain() {
                         startCommit: previousTicketStartCommit,
                         iteration,
                         log,
+                        statePath,
+                        flags: state.flags ?? null,
                     });
                 }
                 completedBoundary = {
