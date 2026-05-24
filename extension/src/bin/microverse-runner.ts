@@ -73,8 +73,8 @@ type FatalErrorMarkResult = 'overwritten' | 'preserved';
 type IterationRunOutcome = Awaited<ReturnType<typeof runIteration>>;
 type ClassifiedIterationExit = ReturnType<typeof classifyIterationExit>;
 export type MetricSnapshot = { raw: string; score: number };
-type JudgeFailureExitReason = Extract<ExitReason, 'judge_timeout' | 'judge_cli_missing'>;
-type JudgeMeasurementFailureExitReason = Extract<ExitReason, 'judge_timeout' | 'judge_cli_missing' | 'baseline_unmeasurable_unrecoverable'>;
+type JudgeFailureExitReason = Extract<ExitReason, 'judge_timeout' | 'judge_cli_missing' | 'all_judge_backends_exhausted'>;
+type JudgeMeasurementFailureExitReason = Extract<ExitReason, 'judge_timeout' | 'judge_cli_missing' | 'baseline_unmeasurable_unrecoverable' | 'all_judge_backends_exhausted'>;
 type CommandMeasurementFailureKind = 'timeout' | 'cli_missing' | 'spawn_failure' | 'failed';
 type ProbeJudgeBackend = Extract<Backend, 'claude' | 'codex'>;
 export type IterationClassification =
@@ -2200,7 +2200,7 @@ export async function measureLlmMetricWithBackoff(
 
   return {
     metric: null,
-    exitReason: 'judge_timeout',
+    exitReason: workerFallbackActivated ? 'all_judge_backends_exhausted' : 'judge_timeout',
     attempts: backoffsMs.length + 1,
     lastError,
     exhaustedFailureKind,
@@ -2533,6 +2533,8 @@ function mapJudgeMeasurementFailure(
   switch (measured.exitReason) {
     case 'judge_cli_missing':
       return 'judge_cli_missing';
+    case 'all_judge_backends_exhausted':
+      return 'all_judge_backends_exhausted';
     case 'judge_timeout':
       return measured.exhaustedFailureKind === 'timeout'
         ? 'judge_timeout'
@@ -2651,7 +2653,9 @@ async function measureLlmBaseline(
   const exitReason: ExitReason = mapJudgeMeasurementFailure(measured);
   const activityEvent: ActivityEventType = exitReason === 'baseline_unmeasurable_unrecoverable'
     ? 'baseline_unmeasurable'
-    : exitReason;
+    : exitReason === 'all_judge_backends_exhausted'
+      ? 'judge_timeout'
+      : exitReason;
   const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
   ctx.log(`ERROR: Could not measure LLM baseline (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
   logActivity({
@@ -2685,7 +2689,9 @@ async function measureCommandBaseline(
   const exitReason: ExitReason = mapCommandMeasurementFailure(measured);
   const activityEvent: ActivityEventType = exitReason === 'baseline_unmeasurable_unrecoverable'
     ? 'baseline_unmeasurable'
-    : exitReason;
+    : exitReason === 'all_judge_backends_exhausted'
+      ? 'judge_timeout'
+      : exitReason;
   const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
   ctx.log(`ERROR: Could not measure baseline metric (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
   logActivity({
@@ -2917,7 +2923,13 @@ async function measureLlmIteration(
   const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
   ctx.log(`ERROR: Metric measurement failed (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
   logActivity({
-    event: exitReason === 'baseline_unmeasurable_unrecoverable' ? 'baseline_unmeasurable' : exitReason,
+    // all_judge_backends_exhausted is a routing-only reason (not a registered activity event);
+    // emit judge_timeout as the telemetry surface per R-SJET-4 "no new event" constraint.
+    event: exitReason === 'baseline_unmeasurable_unrecoverable'
+      ? 'baseline_unmeasurable'
+      : exitReason === 'all_judge_backends_exhausted'
+        ? 'judge_timeout'
+        : exitReason,
     source: 'pickle',
     session: path.basename(ctx.sessionDir),
     iteration: ctx.iteration,
@@ -2947,7 +2959,11 @@ async function measureCommandIteration(
   const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
   ctx.log(`ERROR: Metric measurement failed (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
   logActivity({
-    event: exitReason === 'baseline_unmeasurable_unrecoverable' ? 'baseline_unmeasurable' : exitReason,
+    event: exitReason === 'baseline_unmeasurable_unrecoverable'
+      ? 'baseline_unmeasurable'
+      : exitReason === 'all_judge_backends_exhausted'
+        ? 'judge_timeout'
+        : exitReason,
     source: 'pickle',
     session: path.basename(ctx.sessionDir),
     iteration: ctx.iteration,

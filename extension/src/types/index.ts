@@ -831,7 +831,8 @@ export type MicroverseExitReason =
   | 'converged' | 'limit_reached' | 'stopped' | 'error'
   | 'rate_limit_exhausted' | 'approach_exhaustion' | 'no_progress'
   | 'judge_unreachable' | 'judge_timeout' | 'baseline_unmeasurable' | 'judge_cli_missing'
-  | 'baseline_unmeasurable_transient' | 'baseline_unmeasurable_unrecoverable';
+  | 'baseline_unmeasurable_transient' | 'baseline_unmeasurable_unrecoverable'
+  | 'all_judge_backends_exhausted';
 
 export const MICROVERSE_FATAL_REASONS = [
   'judge_cli_missing',

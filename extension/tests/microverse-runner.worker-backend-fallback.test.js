@@ -140,3 +140,56 @@ test('measureLlmMetricWithBackoff persists worker fallback after first typed fai
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('measureLlmMetricWithBackoff emits all_judge_backends_exhausted when all attempts fail after fallback activates', async () => {
+  process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-exhausted-'));
+  const statePath = path.join(root, 'state.json');
+  const runnerState = makeRunnerState(root, root);
+  fs.writeFileSync(statePath, JSON.stringify(runnerState, null, 2));
+
+  const orig = {
+    execFileSync: _deps.execFileSync,
+    logActivity: _deps.logActivity,
+    sleep: _deps.sleep,
+  };
+  _deps.execFileSync = (cmd, args) => {
+    if (Array.isArray(args) && args[0] === '--version') return 'claude/2.1.0';
+    throw makeEtimedoutError();
+  };
+  _deps.logActivity = () => {};
+  _deps.sleep = async () => {};
+
+  try {
+    const result = await withTempExtensionSettings(
+      { microverse: { judge_backend: 'auto', judge_backend_fallback: 'codex' } },
+      () => measureLlmMetricWithBackoff(
+        'fix bugs',
+        30,
+        root,
+        undefined,
+        [],
+        undefined,
+        undefined,
+        'claude',
+        [],
+        {
+          session: 'session-1',
+          iteration: 1,
+          spawnContext: 'iteration',
+          statePath,
+          runnerState,
+        },
+      ),
+    );
+
+    assert.equal(result.metric, null);
+    assert.equal(result.exitReason, 'all_judge_backends_exhausted');
+  } finally {
+    delete process.env['PICKLE_JUDGE_LEGACY_SPAWN'];
+    _deps.execFileSync = orig.execFileSync;
+    _deps.logActivity = orig.logActivity;
+    _deps.sleep = orig.sleep;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

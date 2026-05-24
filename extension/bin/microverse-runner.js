@@ -1622,7 +1622,7 @@ export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, jud
     }
     return {
         metric: null,
-        exitReason: 'judge_timeout',
+        exitReason: workerFallbackActivated ? 'all_judge_backends_exhausted' : 'judge_timeout',
         attempts: backoffsMs.length + 1,
         lastError,
         exhaustedFailureKind,
@@ -1883,6 +1883,8 @@ function mapJudgeMeasurementFailure(measured) {
     switch (measured.exitReason) {
         case 'judge_cli_missing':
             return 'judge_cli_missing';
+        case 'all_judge_backends_exhausted':
+            return 'all_judge_backends_exhausted';
         case 'judge_timeout':
             return measured.exhaustedFailureKind === 'timeout'
                 ? 'judge_timeout'
@@ -1985,7 +1987,9 @@ async function measureLlmBaseline(state, ctx, backend) {
     const exitReason = mapJudgeMeasurementFailure(measured);
     const activityEvent = exitReason === 'baseline_unmeasurable_unrecoverable'
         ? 'baseline_unmeasurable'
-        : exitReason;
+        : exitReason === 'all_judge_backends_exhausted'
+            ? 'judge_timeout'
+            : exitReason;
     const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
     ctx.log(`ERROR: Could not measure LLM baseline (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
     logActivity({
@@ -2013,7 +2017,9 @@ async function measureCommandBaseline(state, ctx) {
     const exitReason = mapCommandMeasurementFailure(measured);
     const activityEvent = exitReason === 'baseline_unmeasurable_unrecoverable'
         ? 'baseline_unmeasurable'
-        : exitReason;
+        : exitReason === 'all_judge_backends_exhausted'
+            ? 'judge_timeout'
+            : exitReason;
     const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
     ctx.log(`ERROR: Could not measure baseline metric (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
     logActivity({
@@ -2194,7 +2200,13 @@ async function measureLlmIteration(state, ctx, backend) {
     const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
     ctx.log(`ERROR: Metric measurement failed (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
     logActivity({
-        event: exitReason === 'baseline_unmeasurable_unrecoverable' ? 'baseline_unmeasurable' : exitReason,
+        // all_judge_backends_exhausted is a routing-only reason (not a registered activity event);
+        // emit judge_timeout as the telemetry surface per R-SJET-4 "no new event" constraint.
+        event: exitReason === 'baseline_unmeasurable_unrecoverable'
+            ? 'baseline_unmeasurable'
+            : exitReason === 'all_judge_backends_exhausted'
+                ? 'judge_timeout'
+                : exitReason,
         source: 'pickle',
         session: path.basename(ctx.sessionDir),
         iteration: ctx.iteration,
@@ -2217,7 +2229,11 @@ async function measureCommandIteration(state, ctx) {
     const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
     ctx.log(`ERROR: Metric measurement failed (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
     logActivity({
-        event: exitReason === 'baseline_unmeasurable_unrecoverable' ? 'baseline_unmeasurable' : exitReason,
+        event: exitReason === 'baseline_unmeasurable_unrecoverable'
+            ? 'baseline_unmeasurable'
+            : exitReason === 'all_judge_backends_exhausted'
+                ? 'judge_timeout'
+                : exitReason,
         source: 'pickle',
         session: path.basename(ctx.sessionDir),
         iteration: ctx.iteration,
