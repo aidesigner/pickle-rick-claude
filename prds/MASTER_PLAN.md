@@ -7,16 +7,16 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.79.1** — 2026-05-24 |
-| Latest GitHub release | v1.79.0 — 2026-05-24 (v1.79.1 staged, awaiting `gh release create`) |
+| Version (source/deployed) | **v1.79.2** — 2026-05-24 |
+| Latest GitHub release | v1.79.2 — 2026-05-24 |
 | Active pipeline | none |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive (operator):** drain bug bundles before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**Dispatch order (reprioritized 2026-05-24 by severity × recurrence × blast radius):** **B-WSRC-GR** (R-WSRC-GR 5x recurrence/24h — every bundle pays recovery tax; B-APWS hit it on every implementation ticket) → **B-CCRC** (R-CCRC commit-msg/ticket-id mismatch, 3x recurrence on B-APWS) → **R-MEGA-SELF-FIX** Phase 1/2/4. Promotions explained inline in Open Findings tables.
+**Dispatch order (reprioritized 2026-05-24 by severity × recurrence × blast radius):** **B-CCRC** (R-CCRC commit-msg/ticket-id mismatch, 3x recurrence on B-APWS) → **R-MEGA-SELF-FIX** Phase 1/2/4. Promotions explained inline in Open Findings tables.
 
-**2026-05-22..24 — 6 releases (v1.76.0..v1.79.1), 16 findings closed; B-FRA shipped v1.79.0; B-APWS shipped v1.79.1; B-WSRC-GR next.** Detail in `## Recently Shipped` + `## Closed since last update`.
+**2026-05-22..24 — 7 releases (v1.76.0..v1.79.2), 17 findings closed; B-FRA shipped v1.79.0; B-APWS shipped v1.79.1; B-WSRC-GR shipped v1.79.2.** Detail in `## Recently Shipped` + `## Closed since last update`.
 
 ---
 
@@ -37,7 +37,6 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 | 47 | R-SJET | szechuan-sauce LLM judge baseline-measurement deterministically ETIMEDOUTs — DETERMINISTIC PHASE BLOCKER | `p1-szechuan-sauce-judge-etimedout-baseline-measurement.md`. R-SJET-1 landed (`53d79a23`); R-SJET-3/4/6 folded into R-MEGA-SELF-FIX. |
 | 46 | R-SSDF | szechuan-sauce Session Knowledge Transfer block fails on repos with worker-side firewall `AGENTS.md` — PHASE BLOCKER on common repo type | `be269e03` shipped AC-SSDF-03 (skippable transfer); remainder folded into R-MEGA-SELF-FIX. |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
-| 72 | R-WSRC-GR | `bash-scanner` + `config-protection.ts` hooks miss `git reset` from worker subprocesses (Git Boundary Rules violation) — **fired 5x in 24h** (B-FRA `76605b8f` → `36ae2f76`; B-FRA `2d3b7924` → `63b9c346`; B-APWS `b39913f4` → `45223a06`; B-APWS `98b7cf2d` → `e80eaed5`; B-APWS `ff97f1ab`+`5c40cc30` ledger → `2aa079c2`). All self-recovered via `git restore --source`. **P1 (promoted from P3 2026-05-24: 5x recurrence in one day = highest of any open finding; every bundle pays the recovery tax — B-APWS hit it on every implementation ticket).** **B-WSRC-GR** ~2 tickets to extend hook coverage. |
 | 73 | R-CCRC | `hasCompletionCommit` lookup keyed on ticket-id (`1511a4bc`) finds nothing when commit message uses R-code (`test(R-APWS-7):`); gate classifies as `absent`; worker still flips Done via some other path → ticket frontmatter has no `completion_commit:` field. Surfaced 3x on B-APWS (1511a4bc, 27aedb81, 0fee5b66); operator manually patched each time. No PRD yet; ~3 tickets (gate scan also greps for `r_code:` value from frontmatter; commit-msg convention doc in pickle.md; regression test). |
 
 ### P2
@@ -50,7 +49,6 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 | 34 | R-WTB | `Defaults.WORKER_TIMEOUT_SECONDS: 1200` too short for R-PTG worker lifecycle | R-WTB-1..4; B2-RSU residual. **B-QSRC. (Promoted P3→P2 2026-05-23: blocks R-PTG worker lifecycle; tier_cap_override workaround needed each session.)** |
 | 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check | PRD not drafted (~4 tickets). **B-GATE.** |
 | 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4 tickets). **B-GATE.** |
-_(R-WSRC-GR moved to P1 — see Finding #72 above.)_
 
 ### P3
 
@@ -90,6 +88,7 @@ _(R-WSRC-GR moved to P1 — see Finding #72 above.)_
 - #68 R-FRA-GATE — forward-ref annotation regex parity drift between `check-readiness` and `audit-ticket-bundle`: **B-FRA CLOSED** (R-FRA-6 unified FORWARD_REF_ANNOTATION_RE module imported by both consumers). v1.79.0.
 - #69 R-FRA 5th recurrence — `B-PROJECT-AUDIT-2026-05-23` hit READINESS HALT on 34 forward-created findings: **B-FRA CLOSED**. PRD: `prds/p1-bug-fix-bundle-b-fra-forward-ref-annotations-2026-05-23.md`. v1.79.0.
 - #11 R-APWS — scope-allowlist enforcement regression coverage + observability test landed; preflight, event, and status-drift rendering now end-to-end-tested. Worker-simulation tests for anatomy-park (`69aaa442`) + szechuan-sauce (`45223a06`), renderScopeDrift output-contract test (`e80eaed5`), worker-prompt ordering trap-door (`2aa079c2`). **B-APWS CLOSED.** Bundle ships under v1.79.1.
+- #72 R-WSRC-GR — `config-protection.ts` blocks 9 prohibited git verbs from worker subprocesses; trap-door pinned in `extension/CLAUDE.md`; Git Boundary Rules prompts augmented with runtime-enforcement note. **B-WSRC-GR CLOSED.** closer: TBD (v1.79.2).
 
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31, #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
 

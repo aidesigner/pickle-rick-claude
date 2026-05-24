@@ -10,6 +10,8 @@ PROHIBITED commands (worker MUST NOT run):
 - history rewriting: `git rebase`, `git commit --amend`
 - direct `.git/` modification (any tool)
 
+Enforced at runtime by `config-protection.ts` (R-WSRC-GR trap door); attempting a prohibited verb returns `{decision: 'block'}`.
+
 ALLOWED mutating commands:
 - `git add <paths>` (only paths inside your ticket's scope)
 - `git commit` (with your scope's edits)
