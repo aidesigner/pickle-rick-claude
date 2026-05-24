@@ -10,6 +10,7 @@ import { isRecord } from '../lib/is-record.js';
 import { formatLocalDateKey, safeErrorMessage, writeStateFile } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/recoverable-json.js';
+import { FORWARD_REF_ANNOTATION_RE } from '../services/forward-ref-annotation.js';
 const SNAPSHOT_FILE = 'readiness_snapshot.json';
 const READINESS_MAX_RECYCLE_CYCLES = 3;
 const DEFAULT_HISTORY_LIMIT = 10;
@@ -41,7 +42,6 @@ function stripCorrectionNotes(content) {
 // flexibility while remaining strict.
 const FORWARD_REF_ANNOTATION_HASH_RE = /^[A-Za-z0-9]{6,12}$/;
 const FORWARD_REF_REQUIREMENT_RE = /^R-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+$/;
-const FORWARD_REF_ANNOTATION_RE = /`([^`]+)`(\s*)\((forward-created(?:\s+by\s+ticket\s+[A-Za-z0-9]{6,12})?|((created|introduced) by ticket ([^)]+))|(created by (R-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)))\)/g;
 const ALLOWLIST_FILE_REL = 'extension/.readiness-allowlist.json';
 // R-CCR-13: head segments that identify inline code snippets (test-runner
 // context or workflow inputs) rather than in-repo contract references.

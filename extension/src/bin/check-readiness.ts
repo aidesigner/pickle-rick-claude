@@ -11,6 +11,7 @@ import { formatLocalDateKey, safeErrorMessage, writeStateFile } from '../service
 import { StateManager } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 import type { ReadinessCycleHistoryEntry } from '../types/index.js';
+import { FORWARD_REF_ANNOTATION_RE } from '../services/forward-ref-annotation.js';
 
 export interface ReadinessArgs {
   sessionDir: string;
@@ -110,7 +111,6 @@ function stripCorrectionNotes(content: string): string {
 // flexibility while remaining strict.
 const FORWARD_REF_ANNOTATION_HASH_RE = /^[A-Za-z0-9]{6,12}$/;
 const FORWARD_REF_REQUIREMENT_RE = /^R-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+$/;
-const FORWARD_REF_ANNOTATION_RE = /`([^`]+)`(\s*)\((forward-created(?:\s+by\s+ticket\s+[A-Za-z0-9]{6,12})?|((created|introduced) by ticket ([^)]+))|(created by (R-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)))\)/g;
 const ALLOWLIST_FILE_REL = 'extension/.readiness-allowlist.json';
 // R-CCR-13: head segments that identify inline code snippets (test-runner
 // context or workflow inputs) rather than in-repo contract references.

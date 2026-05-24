@@ -2,12 +2,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { extractForwardRefAnnotations } from '../services/forward-ref-annotation.js';
 const MANIFEST_SCHEMA_VERSION = 1;
 const TICKET_HASH_RE = /^[0-9a-f]{8}$/;
 const SHA_TOKEN_RE = /\b[0-9a-f]{7,40}\b/g;
 const VERSION_TOKEN_RE = /\bv?(\d+\.\d+\.\d+)\b/g;
 const PATH_BACKTICK_RE = /`([^`\n]+)`/g;
-const FORWARD_REF_TICKET_RE = '[A-Za-z0-9]{6,12}';
 const PATH_LIKELY_RE = /^(?:extension|src|tests|prds|scripts|services|hooks|bin|types|\.claude)\//;
 const PATH_HAS_EXT_RE = /\/[^\s/]+\.[a-zA-Z][a-zA-Z0-9]+$/;
 const DISPOSITION_FILE_REL = path.join('src', 'data', 'bundle-disposition-2026-05-04.json');
@@ -271,13 +271,8 @@ function lineContext(text, token) {
     const end = text.indexOf('\n', idx);
     return text.slice(start, end === -1 ? text.length : end);
 }
-function escapeRegExp(value) {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 function hasForwardRefPathAnnotation(context, token) {
-    const escapedToken = escapeRegExp(token);
-    const re = new RegExp(`\\\`${escapedToken}\\\` \\((?:forward-created|(?:created|introduced) by ticket ${FORWARD_REF_TICKET_RE})\\)`);
-    return re.test(context);
+    return extractForwardRefAnnotations(context).includes(token);
 }
 // Paths under "## Files to create" headings are forward-create-OK — they don't exist at HEAD by design.
 export function extractForwardCreatePaths(body) {
