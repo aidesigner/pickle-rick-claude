@@ -55,6 +55,7 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 | 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4 tickets). **B-GATE.** |
 | 70 | R-CCQF | `hasCompletionCommit` rejects quoted-full-SHA `completion_commit:` frontmatter form (closer worker style); auto-promote helper writes unquoted short SHA which IS accepted — gate fires fatal even though work shipped | `p2-completion-commit-quoted-form-and-exit-reason-2026-05-24.md`. Surfaced from B-WUWC closer session `2026-05-23-48e6309a/26301c6a`. |
 | 71 | R-PEDC | pipeline `exit_reason` `done_without_commit_evidence` persists across iterations; final pipeline-status `failed` even when all tickets shipped Done — misleading operator signal | `p2-completion-commit-quoted-form-and-exit-reason-2026-05-24.md`. Sibling of R-CCQF; same B-WUWC closer session. |
+| 72 | R-WSRC-GR | `bash-scanner` + `config-protection.ts` hooks miss `git reset` from worker subprocesses (Git Boundary Rules violation) — worker session 32954 on B-FRA `76605b8f` dropped `f9c553f6` from main; runner self-recovered via `git restore --source` in commit `36ae2f76` (no PRD yet; ~2 tickets to extend hook coverage). |
 
 ### P3
 
