@@ -53,6 +53,8 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 | 34 | R-WTB | `Defaults.WORKER_TIMEOUT_SECONDS: 1200` too short for R-PTG worker lifecycle | R-WTB-1..4; B2-RSU residual. **B-QSRC. (Promoted P3→P2 2026-05-23: blocks R-PTG worker lifecycle; tier_cap_override workaround needed each session.)** |
 | 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check | PRD not drafted (~4 tickets). **B-GATE.** |
 | 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4 tickets). **B-GATE.** |
+| 70 | R-CCQF | `hasCompletionCommit` rejects quoted-full-SHA `completion_commit:` frontmatter form (closer worker style); auto-promote helper writes unquoted short SHA which IS accepted — gate fires fatal even though work shipped | `p2-completion-commit-quoted-form-and-exit-reason-2026-05-24.md`. Surfaced from B-WUWC closer session `2026-05-23-48e6309a/26301c6a`. |
+| 71 | R-PEDC | pipeline `exit_reason` `done_without_commit_evidence` persists across iterations; final pipeline-status `failed` even when all tickets shipped Done — misleading operator signal | `p2-completion-commit-quoted-form-and-exit-reason-2026-05-24.md`. Sibling of R-CCQF; same B-WUWC closer session. |
 
 ### P3
 
