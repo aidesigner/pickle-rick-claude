@@ -7,16 +7,16 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.79.0** — 2026-05-24 |
-| Latest GitHub release | v1.79.0 — 2026-05-24 |
+| Version (source/deployed) | **v1.79.1** — 2026-05-24 |
+| Latest GitHub release | v1.79.0 — 2026-05-24 (v1.79.1 staged, awaiting `gh release create`) |
 | Active pipeline | none |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive (operator):** drain bug bundles before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**Dispatch order (reprioritized 2026-05-24 by severity × recurrence × blast radius):** **B-APWS** (silent scope-boundary defeat, in-flight) → **B-WSRC-GR** (R-WSRC-GR 4x recurrence/24h — every bundle pays recovery tax) → **B-CCRC** (R-CCRC commit-msg/ticket-id mismatch, 3x recurrence on B-APWS) → **R-MEGA-SELF-FIX** Phase 1/2/4. Promotions explained inline in Open Findings tables.
+**Dispatch order (reprioritized 2026-05-24 by severity × recurrence × blast radius):** **B-WSRC-GR** (R-WSRC-GR 5x recurrence/24h — every bundle pays recovery tax; B-APWS hit it on every implementation ticket) → **B-CCRC** (R-CCRC commit-msg/ticket-id mismatch, 3x recurrence on B-APWS) → **R-MEGA-SELF-FIX** Phase 1/2/4. Promotions explained inline in Open Findings tables.
 
-**2026-05-22..24 — 5 releases (v1.76.0..v1.79.0), 15 findings closed; B-FRA shipped v1.79.0; B-APWS next.** Detail in `## Recently Shipped` + `## Closed since last update`.
+**2026-05-22..24 — 6 releases (v1.76.0..v1.79.1), 16 findings closed; B-FRA shipped v1.79.0; B-APWS shipped v1.79.1; B-WSRC-GR next.** Detail in `## Recently Shipped` + `## Closed since last update`.
 
 ---
 
