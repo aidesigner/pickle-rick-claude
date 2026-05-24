@@ -375,6 +375,95 @@ function isBashInvokingInstallSh(command) {
     return base === 'install.sh';
 }
 /**
+ * Extracts the EXECUTABLE token from a shell command, handling common shell
+ * prefixes: `bash`/`sh` wrappers, and KEY=value env-var assignments.
+ * Returns the basename of the first actual executable, or null if empty.
+ */
+function parseFirstShellWord(command) {
+    if (!command)
+        return null;
+    const trimmed = command.trim();
+    if (!trimmed)
+        return null;
+    const tokens = trimmed.split(/\s+/);
+    let idx = 0;
+    if (tokens[idx] === 'bash' || tokens[idx] === 'sh')
+        idx++;
+    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]))
+        idx++;
+    const exec = tokens[idx];
+    if (!exec)
+        return null;
+    const clean = exec.replace(/;+$/, '');
+    return clean.includes('/') ? clean.substring(clean.lastIndexOf('/') + 1) : clean;
+}
+const PROHIBITED_GIT_VERBS_SIMPLE = new Set(['reset', 'switch', 'stash', 'rebase', 'pull', 'push']);
+/**
+ * Returns true when `git checkout <args>` is targeting a ref (blocked).
+ * Allowed: `git checkout -- <path>`, `git checkout .`, `git checkout` with no positional.
+ */
+function isCheckoutRefOperation(afterVerb) {
+    for (const t of afterVerb) {
+        if (t === '--')
+            return false; // path-mode
+        if (t.startsWith('-'))
+            continue; // flag
+        if (t === '.')
+            return false; // whole-tree restore
+        return true; // first non-flag, non-'.', non-'--' token → ref
+    }
+    return false; // no positional args
+}
+/**
+ * R-WSRC-GR: Detects prohibited git verbs per the Git Boundary Rules.
+ * Returns {verb} when the command is a prohibited git operation, null otherwise.
+ *
+ * Allowed exceptions (return null):
+ *   git checkout -- <path>       (path-mode via --)
+ *   git checkout .               (whole-tree restore)
+ *   git commit (without --amend) (plain commit is allowed)
+ *   git fetch (without --prune)  (plain fetch is allowed)
+ */
+function findGitVerb(command) {
+    const tokens = command.trim().split(/\s+/);
+    let idx = 0;
+    if (tokens[idx] === 'bash' || tokens[idx] === 'sh')
+        idx++;
+    while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx]))
+        idx++;
+    idx++; // skip 'git' itself
+    const rest = tokens.slice(idx).filter(t => t.length > 0);
+    let verbIdx = -1;
+    for (let i = 0; i < rest.length; i++) {
+        if (!rest[i].startsWith('-')) {
+            verbIdx = i;
+            break;
+        }
+    }
+    if (verbIdx === -1)
+        return null;
+    return { verb: rest[verbIdx].toLowerCase(), afterVerb: rest.slice(verbIdx + 1) };
+}
+export function detectProhibitedGitVerb(command) {
+    if (!command)
+        return null;
+    if (parseFirstShellWord(command) !== 'git')
+        return null;
+    const parsed = findGitVerb(command);
+    if (!parsed)
+        return null;
+    const { verb, afterVerb } = parsed;
+    if (PROHIBITED_GIT_VERBS_SIMPLE.has(verb))
+        return { verb };
+    if (verb === 'checkout' && isCheckoutRefOperation(afterVerb))
+        return { verb: 'checkout' };
+    if (verb === 'commit' && afterVerb.some(t => t === '--amend'))
+        return { verb: 'commit --amend' };
+    if (verb === 'fetch' && afterVerb.some(t => t === '--prune'))
+        return { verb: 'fetch --prune' };
+    return null;
+}
+/**
  * R-PIPE-3 extracted helper — keeps main() complexity <= 15.
  * Returns true if we handled (blocked or approved via override); caller should return.
  */
@@ -400,6 +489,63 @@ function isBashInstallBlockedByRWSRC(input, state) {
 const ALLOW_STATE_WRITE_REASON_FIELD = 'allow_state_writes_reason';
 const ALLOW_SETTINGS_WRITE_REASON_FIELD = 'allow_settings_writes_reason';
 const ALLOW_INSTALL_SH_REASON_FIELD = 'allow_install_sh_reason'; // rare manager override only (R-WSRC)
+/** R-WSRC-GR: Per-verb operator override flags. Narrowly scoped — one flag per verb. */
+const ALLOW_GIT_VERB_REASON_FIELDS = {
+    'reset': 'allow_git_reset_reason',
+    'checkout': 'allow_git_checkout_reason',
+    'switch': 'allow_git_switch_reason',
+    'stash': 'allow_git_stash_reason',
+    'rebase': 'allow_git_rebase_reason',
+    'commit --amend': 'allow_git_commit_amend_reason',
+    'pull': 'allow_git_pull_reason',
+    'push': 'allow_git_push_reason',
+    'fetch --prune': 'allow_git_fetch_prune_reason',
+};
+function gitVerbEventName(verb, suffix) {
+    const base = verb.replace(/\s/g, '_').replace(/-+/g, '_');
+    return `worker_git_${base}_${suffix}`;
+}
+/**
+ * R-WSRC-GR: Blocks the 9 prohibited git verbs from worker subprocess contexts.
+ * Manager / operator invocations (PICKLE_ROLE !== 'worker') pass through.
+ * Returns true if we handled (blocked or approved via override); caller should return.
+ */
+function isGitVerbBlockedByRWSRCGR(input, state) {
+    if (input.tool_name !== 'Bash' || !input.tool_input?.command)
+        return false;
+    if (process.env.PICKLE_ROLE !== 'worker')
+        return false;
+    const detected = detectProhibitedGitVerb(input.tool_input.command);
+    if (!detected)
+        return false;
+    const { verb } = detected;
+    const flagField = ALLOW_GIT_VERB_REASON_FIELDS[verb];
+    const flags = state.flags || {};
+    const override = flagField ? trimmedFlag(flags, flagField) : null;
+    const ticketId = state.current_ticket;
+    if (override) {
+        try {
+            logActivity({
+                event: gitVerbEventName(verb, 'bypass'),
+                source: 'hook',
+                gate_payload: { command: input.tool_input.command, reason: override, ticket_id: ticketId ?? null },
+            });
+        }
+        catch { /* activity logging is best-effort */ }
+        approve();
+        return true;
+    }
+    try {
+        logActivity({
+            event: gitVerbEventName(verb, 'blocked'),
+            source: 'hook',
+            gate_payload: { command: input.tool_input.command, ticket_id: ticketId ?? null },
+        });
+    }
+    catch { /* best-effort */ }
+    block(`R-WSRC-GR: \`git ${verb}\` is FORBIDDEN inside worker subprocesses (path-scope your edits with \`git restore <paths>\` instead). Operator override: set state.flags.${flagField ?? `allow_git_${verb.replace(/\s/g, '_')}_reason`}="<reason>" to bypass.`);
+    return true;
+}
 function evaluateStateWriteGate(input, state) {
     const hit = detectTargetedStateFile(input);
     if (!hit)
@@ -464,6 +610,11 @@ function main() {
     // R-PIPE-3 + R-WSRC: Hard block on `bash install.sh` (any variant) from worker context.
     // Extracted to keep main() cyclomatic complexity <= 15.
     if (isBashInstallBlockedByRWSRC(input, state)) {
+        return; // block() or approve() already called inside
+    }
+    // R-WSRC-GR: Block prohibited git verbs (reset, checkout w/ ref, switch, stash, rebase,
+    // commit --amend, pull, push, fetch --prune) from worker subprocess contexts.
+    if (isGitVerbBlockedByRWSRCGR(input, state)) {
         return; // block() or approve() already called inside
     }
     const targetedConfigFile = detectTargetedConfigFile(input);
