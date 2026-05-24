@@ -14,7 +14,7 @@
 
 **Priority directive (operator):** drain bug bundles before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**Dispatch order (reprioritized 2026-05-24 by severity × recurrence × blast radius):** **B-APWS** (silent scope-boundary defeat) → **R-MEGA-SELF-FIX** Phase 1/2/4. Promotions/demotions explained inline in Open Findings tables.
+**Dispatch order (reprioritized 2026-05-24 by severity × recurrence × blast radius):** **B-APWS** (silent scope-boundary defeat, in-flight) → **B-WSRC-GR** (R-WSRC-GR 4x recurrence/24h — every bundle pays recovery tax) → **B-CCRC** (R-CCRC commit-msg/ticket-id mismatch, 3x recurrence on B-APWS) → **R-MEGA-SELF-FIX** Phase 1/2/4. Promotions explained inline in Open Findings tables.
 
 **2026-05-22..24 — 5 releases (v1.76.0..v1.79.0), 15 findings closed; B-FRA shipped v1.79.0; B-APWS next.** Detail in `## Recently Shipped` + `## Closed since last update`.
 
@@ -38,6 +38,8 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 | 46 | R-SSDF | szechuan-sauce Session Knowledge Transfer block fails on repos with worker-side firewall `AGENTS.md` — PHASE BLOCKER on common repo type | `be269e03` shipped AC-SSDF-03 (skippable transfer); remainder folded into R-MEGA-SELF-FIX. |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
 | 11 | R-APWS | anatomy-park worker edits bypass `scope.json:allowed_paths` at fix time — SILENT SCOPE BOUNDARY DEFEAT | `p2-anatomy-park-worker-edits-bypass-scope-allowlist.md`. **(Promoted P2→P1 2026-05-23: scope isolation is a security boundary; silent bypass is unacceptable.)** |
+| 72 | R-WSRC-GR | `bash-scanner` + `config-protection.ts` hooks miss `git reset` from worker subprocesses (Git Boundary Rules violation) — **fired 4x in 24h** (B-FRA `76605b8f` → `36ae2f76`; B-FRA `2d3b7924` → `63b9c346`; B-APWS `b39913f4` → `45223a06`; B-APWS `98b7cf2d` → `e80eaed5`). All self-recovered via `git restore --source`. **Promoted P3→P1 2026-05-24: 4x recurrence in one day = highest of any open finding; every bundle pays the recovery tax.** **B-WSRC-GR** ~2 tickets to extend hook coverage. |
+| 73 | R-CCRC | `hasCompletionCommit` lookup keyed on ticket-id (`1511a4bc`) finds nothing when commit message uses R-code (`test(R-APWS-7):`); gate classifies as `absent`; worker still flips Done via some other path → ticket frontmatter has no `completion_commit:` field. Surfaced 3x on B-APWS (1511a4bc, 27aedb81, 0fee5b66); operator manually patched each time. No PRD yet; ~3 tickets (gate scan also greps for `r_code:` value from frontmatter; commit-msg convention doc in pickle.md; regression test). |
 
 ### P2
 
@@ -49,7 +51,7 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 | 34 | R-WTB | `Defaults.WORKER_TIMEOUT_SECONDS: 1200` too short for R-PTG worker lifecycle | R-WTB-1..4; B2-RSU residual. **B-QSRC. (Promoted P3→P2 2026-05-23: blocks R-PTG worker lifecycle; tier_cap_override workaround needed each session.)** |
 | 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check | PRD not drafted (~4 tickets). **B-GATE.** |
 | 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4 tickets). **B-GATE.** |
-| 72 | R-WSRC-GR | `bash-scanner` + `config-protection.ts` hooks miss `git reset` from worker subprocesses (Git Boundary Rules violation) — fired 2x on B-FRA (`76605b8f` dropped `f9c553f6`; `2d3b7924` dropped R-FRA-4); runner self-recovered both via `git restore --source` (`36ae2f76`, `63b9c346`). PRD pending; ~2 tickets to extend hook coverage. **B-WSRC-GR** slot between R-CCQF and B-APWS per dispatch order. |
+_(R-WSRC-GR moved to P1 — see Finding #72 above.)_
 
 ### P3
 
