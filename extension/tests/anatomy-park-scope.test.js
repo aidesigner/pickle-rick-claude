@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { setupAnatomyPark, writePipelineStatus } from '../bin/pipeline-runner.js';
 import { finalizeGateMain } from '../bin/finalize-gate.js';
 import { filterBySubsystem } from '../services/scope-resolver.js';
@@ -12,6 +13,7 @@ import { filterBySubsystem } from '../services/scope-resolver.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_ROOT = path.join(os.homedir(), '.claude/pickle-rick');
 const ANATOMY_PARK_MD = path.resolve(__dirname, '../../.claude/commands/anatomy-park.md');
+const CHECK_SCOPE_DIFF = path.resolve(__dirname, '..', 'bin', 'check-scope-diff.js');
 
 function makeTarget() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ap-scope-target-'));
@@ -426,5 +428,85 @@ test('bundle bootstrap scope.json: mode is branch and allowed_paths is array of 
     assert.equal(unique.length, 5, 'all 5 allowed_paths must be unique');
   } finally {
     fs.rmSync(session, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AC-BUNDLE-APWS-01: worker-simulation — check-scope-diff rejects out-of-scope staged paths
+// ---------------------------------------------------------------------------
+
+test('AC-BUNDLE-APWS-01: check-scope-diff rejects out-of-scope staged paths in worker simulation', () => {
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'apws-scope-sim-')));
+  const dataRoot = path.join(tmp, 'data');
+  const ticketId = 'test-ticket-apws7';
+
+  try {
+    // Init temp git repo
+    spawnSync('git', ['init', '-q'], { cwd: tmp, timeout: 5_000 });
+    spawnSync('git', ['config', 'user.email', 'test@test.com'], { cwd: tmp, timeout: 5_000 });
+    spawnSync('git', ['config', 'user.name', 'Test'], { cwd: tmp, timeout: 5_000 });
+
+    // Write scope.json with three allowed prefixes
+    const scopePath = path.join(tmp, 'scope.json');
+    fs.writeFileSync(scopePath, JSON.stringify({ allowed_paths: ['alpha/', 'beta/', 'gamma/'] }));
+
+    // Stage in-scope file
+    fs.mkdirSync(path.join(tmp, 'alpha'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'alpha', 'x.ts'), 'export const x = 1;\n');
+    spawnSync('git', ['add', 'alpha/x.ts'], { cwd: tmp, timeout: 5_000 });
+
+    // Stage out-of-scope file
+    fs.mkdirSync(path.join(tmp, 'outside'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'outside', 'leaked.ts'), 'export const leaked = true;\n');
+    spawnSync('git', ['add', 'outside/leaked.ts'], { cwd: tmp, timeout: 5_000 });
+
+    // Spawn check-scope-diff.js against the temp repo with isolated PICKLE_DATA_ROOT
+    const result = spawnSync(
+      process.execPath,
+      [CHECK_SCOPE_DIFF, '--scope-json', scopePath, '--ticket-id', ticketId],
+      {
+        encoding: 'utf-8',
+        timeout: 10_000,
+        cwd: tmp,
+        env: { ...process.env, PICKLE_DATA_ROOT: dataRoot },
+      },
+    );
+
+    // Assert 1: exit status 1 (outside_scope)
+    assert.equal(result.status, 1, `expected exit 1; stderr: ${result.stderr}`);
+
+    // Assert 2: stdout parses to outside_scope shape with outside/leaked.ts
+    const parsed = JSON.parse(result.stdout.trim());
+    assert.equal(parsed.status, 'outside_scope');
+    assert.ok(
+      Array.isArray(parsed.staged_paths_outside_scope) &&
+        parsed.staged_paths_outside_scope.includes('outside/leaked.ts'),
+      `staged_paths_outside_scope must include 'outside/leaked.ts'; got ${JSON.stringify(parsed.staged_paths_outside_scope)}`,
+    );
+
+    // Assert 3+4+5: worker_edit_outside_scope activity event in isolated data root
+    const activityDir = path.join(dataRoot, 'activity');
+    const jsonlFiles = fs.existsSync(activityDir)
+      ? fs.readdirSync(activityDir).filter((f) => f.endsWith('.jsonl'))
+      : [];
+    const events = [];
+    for (const f of jsonlFiles) {
+      const content = fs.readFileSync(path.join(activityDir, f), 'utf-8');
+      for (const line of content.split('\n').filter(Boolean)) {
+        try { events.push(JSON.parse(line)); } catch { /* skip malformed */ }
+      }
+    }
+    const scopeEvents = events.filter((e) => e.event === 'worker_edit_outside_scope');
+    assert.equal(scopeEvents.length, 1, `expected 1 worker_edit_outside_scope event; got ${scopeEvents.length}`);
+
+    const ev = scopeEvents[0];
+    assert.equal(ev.ticket_id, ticketId, 'ticket_id must round-trip into the event');
+    assert.ok(
+      Array.isArray(ev.gate_payload?.staged_paths_outside_scope) &&
+        ev.gate_payload.staged_paths_outside_scope.includes('outside/leaked.ts'),
+      `gate_payload.staged_paths_outside_scope must include 'outside/leaked.ts'`,
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
