@@ -886,6 +886,35 @@ export function hasCommitReferencingTicketSince(args: {
   return match ? { sha: match.sha, matched: true } : { sha: null, matched: false };
 }
 
+/**
+ * R-CCQF: Normalize a frontmatter `completion_commit*` field value into a bare
+ * SHA hex string suitable for `git cat-file` validation, or `null` if the
+ * value cannot be coerced into 7–40 hex chars. Accepts ALL three documented
+ * serializations the gate must tolerate:
+ *   1. Unquoted short SHA   (e.g. `completion_commit: 4b38893c`)
+ *   2. Unquoted full SHA    (e.g. `completion_commit: 724f69d4db8aae9b5f8e4ab7f3abfa0a72c5f6c8`)
+ *   3. Quoted (single OR double), short OR full
+ *      (e.g. `completion_commit: "724f69d4db8aae9b5f8e4ab7f3abfa0a72c5f6c8"`)
+ *
+ * The auto-promote helper writes shape #1; codex/human edits naturally write
+ * shape #3. Tightening the writer was rejected (see PRD
+ * `p2-completion-commit-quoted-form-and-exit-reason-2026-05-24.md`) — the gate
+ * is the right place to accept all three. Anything else returns `null` and the
+ * caller MUST classify as `absent` rather than `inferred` (parsing failure is
+ * not the same as a git-log scan miss).
+ */
+export function normalizeCompletionCommitField(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  // `readFrontmatterField` already strips one symmetric quote pair via the
+  // `g` flag, but defend-in-depth here: re-strip leading/trailing single OR
+  // double quotes (paired or unpaired) and trim residual whitespace before
+  // validating SHA hex. Belt + suspenders prevents future drift where a
+  // caller invokes this with a raw frontmatter line.
+  const stripped = raw.trim().replace(/^["']+|["']+$/g, '').trim();
+  if (!stripped) return null;
+  return /^[0-9a-f]{7,40}$/i.test(stripped) ? stripped : null;
+}
+
 export function hasCompletionCommit(args: {
   sessionDir?: string;
   ticketId?: string;
@@ -902,13 +931,13 @@ export function hasCompletionCommit(args: {
     return { sha: null, source: 'absent' };
   }
 
-  const explicit = readFrontmatterField(content, 'completion_commit');
-  if (explicit && /^[0-9a-f]{7,40}$/i.test(explicit) && gitCommitExists(args.workingDir, explicit)) {
+  const explicit = normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit'));
+  if (explicit && gitCommitExists(args.workingDir, explicit)) {
     return { sha: explicit, source: 'explicit' };
   }
 
-  const inferredField = readFrontmatterField(content, 'completion_commit_inferred');
-  if (inferredField && /^[0-9a-f]{7,40}$/i.test(inferredField) && gitCommitExists(args.workingDir, inferredField)) {
+  const inferredField = normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit_inferred'));
+  if (inferredField && gitCommitExists(args.workingDir, inferredField)) {
     return { sha: inferredField, source: 'inferred' };
   }
 

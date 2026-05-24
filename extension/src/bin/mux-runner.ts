@@ -2807,6 +2807,27 @@ function guardRereadBackoffMs(): number {
   return 500;
 }
 
+/**
+ * R-PEDC: clear a stale `done_without_commit_evidence` exit_reason when a
+ * later guard pass eventually classifies `ok: true`. The prior iteration's
+ * fatal stamp survives a successful auto-promote in the same loop, and
+ * `finalizePipeline` would otherwise read the stale value and label a fully
+ * Done bundle as `failed`. Mirrors pipeline-runner's R-CCR-3 stale-handoff
+ * clearance pattern: only clear when the prior failure reason is precisely
+ * the one we just recovered from; leave unrelated exit_reasons untouched.
+ *
+ * Best-effort: a transient state read/write failure must not block the
+ * happy-path Done flip. The next finalize/exit will retry as needed.
+ */
+export function clearStaleDoneWithoutCommitEvidence(statePath: string): void {
+  try {
+    const snapshot = readRecoverableJsonObject(statePath) as { exit_reason?: unknown } | null;
+    if (snapshot?.exit_reason === 'done_without_commit_evidence') {
+      clearExitReason(statePath);
+    }
+  } catch { /* best-effort — finalize path will resolve terminal state */ }
+}
+
 export function guardCompletionCommitBeforeDone(args: {
   sessionDir: string;
   ticketId: string;
@@ -3869,6 +3890,10 @@ function processTaskCompleted(state: State, ctx: LoopContext): LoopAction {
       safeDeactivate(ctx.statePath);
       return { kind: 'break', reason: 'done_without_commit_evidence' };
     }
+    // R-PEDC: guard recovered — clear any stale `done_without_commit_evidence`
+    // exit_reason stamped by a prior iteration so finalize doesn't mislabel a
+    // fully-shipped bundle as failed.
+    clearStaleDoneWithoutCommitEvidence(ctx.statePath);
     markTicketDone(ctx.sessionDir, curState.current_ticket);
     try {
       runBetweenTicketFastGate({
@@ -4954,6 +4979,8 @@ async function runMuxRunnerMain() {
             safeDeactivate(statePath);
             return;
           }
+          // R-PEDC: clear stale prior-iteration stamp on recovery.
+          clearStaleDoneWithoutCommitEvidence(statePath);
           log(`Ticket ${previousTicket} already marked Done by model — skipping validation (completion_commit: ${guard.sha})`);
         } else {
           // Drift scenario: model changed current_ticket without following protocol
@@ -5314,6 +5341,8 @@ async function runMuxRunnerMain() {
             safeDeactivate(statePath);
             return;
           }
+          // R-PEDC: clear stale prior-iteration stamp on recovery.
+          clearStaleDoneWithoutCommitEvidence(statePath);
           if (markTicketDone(sessionDir, curState.current_ticket)) {
             log(`Marked ticket ${curState.current_ticket} as Done (recover_advance)`);
           }
@@ -5387,6 +5416,9 @@ async function runMuxRunnerMain() {
           safeDeactivate(statePath);
           return;
         }
+        // R-PEDC: clear stale prior-iteration stamp on recovery so a
+        // fully-shipped bundle finalizes as 'completed', not 'failed'.
+        clearStaleDoneWithoutCommitEvidence(statePath);
         if (markTicketDone(sessionDir, curState.current_ticket)) {
           log(`Marked final ticket ${curState.current_ticket} as Done`);
         }
