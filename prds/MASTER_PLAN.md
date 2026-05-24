@@ -14,9 +14,9 @@
 
 **Priority directive (operator):** drain bug bundles before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**Dispatch order (reprioritized 2026-05-24 by severity × recurrence × blast radius):** **B-CCRC** (R-CCRC commit-msg/ticket-id mismatch, 3x recurrence on B-APWS) → **R-MEGA-SELF-FIX** Phase 1/2/4. Promotions explained inline in Open Findings tables.
+**Dispatch order (reprioritized 2026-05-24 by severity × recurrence × blast radius):** **R-MEGA-SELF-FIX** Phase 1/2/4 (B-FRA / B-APWS / B-WSRC-GR / B-CCRC all shipped). Promotions explained inline in Open Findings tables.
 
-**2026-05-22..24 — 7 releases (v1.76.0..v1.79.2), 17 findings closed; B-FRA shipped v1.79.0; B-APWS shipped v1.79.1; B-WSRC-GR shipped v1.79.2.** Detail in `## Recently Shipped` + `## Closed since last update`.
+**2026-05-22..24 — 8 releases (v1.76.0..v1.79.3), 18 findings closed; B-FRA v1.79.0; B-APWS v1.79.1; B-WSRC-GR v1.79.2; B-CCRC v1.79.3.** Detail in `## Recently Shipped` + `## Closed since last update`.
 
 ---
 
@@ -37,7 +37,7 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 | 47 | R-SJET | szechuan-sauce LLM judge baseline-measurement deterministically ETIMEDOUTs — DETERMINISTIC PHASE BLOCKER | `p1-szechuan-sauce-judge-etimedout-baseline-measurement.md`. R-SJET-1 landed (`53d79a23`); R-SJET-3/4/6 folded into R-MEGA-SELF-FIX. |
 | 46 | R-SSDF | szechuan-sauce Session Knowledge Transfer block fails on repos with worker-side firewall `AGENTS.md` — PHASE BLOCKER on common repo type | `be269e03` shipped AC-SSDF-03 (skippable transfer); remainder folded into R-MEGA-SELF-FIX. |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
-| 73 | R-CCRC | `hasCompletionCommit` lookup keyed on ticket-id (`1511a4bc`) finds nothing when commit message uses R-code (`test(R-APWS-7):`); gate classifies as `absent`; worker still flips Done via some other path → ticket frontmatter has no `completion_commit:` field. Surfaced 3x on B-APWS (1511a4bc, 27aedb81, 0fee5b66); operator manually patched each time. No PRD yet; ~3 tickets (gate scan also greps for `r_code:` value from frontmatter; commit-msg convention doc in pickle.md; regression test). |
+_(R-CCRC #73 closed via B-CCRC v1.79.3 — `06d6a905` R-CCRC-1 ref-code fallback + `0e04b5ca` R-CCRC-2 done-flip guard routing. See `## Closed since last update (2026-05-24)`.)_
 
 ### P2
 
