@@ -89,14 +89,14 @@ function checkForwardRefs(content, forwardRefRe) {
     }
     if (!inFilesCreate) continue;
 
+    const re = new RegExp(forwardRefRe.source, forwardRefRe.flags.replace('g', ''));
     const backtickRe = /`([^`]+)`/g;
     let match;
     while ((match = backtickRe.exec(line)) !== null) {
       const token = match[1];
       if (!looksLikeFilePath(token)) continue;
-      const segment = line.slice(match.index);
-      const re = new RegExp(forwardRefRe.source, forwardRefRe.flags.replace('g', ''));
-      if (!re.test(segment)) {
+      re.lastIndex = 0;
+      if (!re.test(line.slice(match.index))) {
         issues.push(token);
       }
     }
