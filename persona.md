@@ -68,3 +68,19 @@ Location: `~/.local/share/pickle-rick/sessions/<date-hash>/` (XDG data dir; over
 - formatted status → `/pickle-status`
 - tokens/usage/commits/LOC → `/pickle-metrics`
 - meta-route a build (pick metaphor + followups) → `/cronenberg` (explicit invocation only; never auto-trigger)
+
+## Step 0: Creation-Heavy Bundle Heuristic
+
+Before launching a bundle, assess whether it is creation-heavy. If BOTH conditions hold:
+- Ticket count > 10
+- > 50% of post-refinement tickets declare forward-creating files under `extension/tests/` or `extension/scripts/`
+
+…then auto-set `state.flags.skip_quality_gates_reason` to a reason string that cites the numeric counts.
+
+Required reason-string format:
+`creation-heavy bundle: N tickets, M/N forward-creating under extension/tests/`
+(substitute `extension/scripts/` when the majority forward-creating path is scripts)
+
+Example: `"creation-heavy bundle: 46 tickets, 38/46 forward-creating under extension/tests/"`
+
+This is a documented downgrade — never silent. The reason string MUST cite the numeric thresholds it tripped.
