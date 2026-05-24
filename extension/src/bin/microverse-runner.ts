@@ -15,7 +15,7 @@ import {
   buildWorkerInvocation,
   backendEnvOverrides,
 } from '../services/backend-spawn.js';
-import { getJudgeEnvForAttempt } from '../services/judge-spawn-env.js'; // R-SJET-3
+import { getJudgeEnvForAttempt, isNestedClaude, buildJudgeEnv } from '../services/judge-spawn-env.js'; // R-SJET-3
 import {
   readMicroverseState,
   readRecoverableJsonObject,
@@ -2081,6 +2081,10 @@ export async function measureLlmMetricWithBackoff(
     : null;
   let attemptBackend = backend;
   let workerFallbackActivated = false;
+  // R-SJET-3: compute nested-claude detection and redacted env key names once per
+  // call (stable for the lifetime of this backoff loop). Values are never emitted.
+  const isNested = isNestedClaude();
+  const preSpawnEnvKeyNames = Object.keys(buildJudgeEnv('claude', isNested));
   const probe = await probeJudgeBackendAvailability('claude', cwd);
   if (probe.kind === 'missing') {
     return {
@@ -2138,6 +2142,8 @@ export async function measureLlmMetricWithBackoff(
             outcome,
             timeout_class: timeoutClass,
             probe_kind: probe.kind,
+            nested_claude_detected: isNested,
+            pre_spawn_env_key_names: preSpawnEnvKeyNames,
           },
         });
       } catch {

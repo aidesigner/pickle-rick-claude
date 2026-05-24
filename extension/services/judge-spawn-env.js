@@ -17,6 +17,49 @@
  * Used by: microverse-runner.ts (measureLlmMetricAttempt + probeJudgeCliAvailability)
  * and any future convergence judge paths.
  */
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { backendEnvOverrides } from './backend-spawn.js';
+/**
+ * Returns true when the current process is running inside a Claude Code session.
+ * Detects both CLAUDE_CODE (set by Claude Code CLI) and CLAUDECODE (legacy marker).
+ */
+export function isNestedClaude(env = process.env) {
+    return !!(env['CLAUDE_CODE'] || env['CLAUDECODE']);
+}
+/**
+ * Build a sanitized env for the judge spawn.
+ *
+ * - `isNested && backend === 'claude'`: strip the outer-session markers
+ *   (CLAUDE_CODE, CLAUDECODE, CLAUDE_API_KEY when ANTHROPIC_API_KEY is present)
+ *   and replace XDG_RUNTIME_DIR with an isolated tmpdir.
+ * - Otherwise: return baseEnv merged with backendEnvOverrides(backend).
+ *   Env values are never logged — callers may log Object.keys(result) only.
+ */
+export function buildJudgeEnv(backend, isNested, baseEnv = process.env) {
+    if (isNested && backend === 'claude') {
+        const out = {};
+        for (const [k, v] of Object.entries(baseEnv)) {
+            if (v === undefined)
+                continue;
+            // Strip outer session markers unconditionally.
+            if (k === 'CLAUDE_CODE' || k === 'CLAUDECODE')
+                continue;
+            // Strip CLAUDE_API_KEY only when ANTHROPIC_API_KEY is present — the child can
+            // authenticate via ANTHROPIC_API_KEY directly, so CLAUDE_API_KEY is redundant
+            // and might point at the outer session's key material.
+            if (k === 'CLAUDE_API_KEY' && baseEnv['ANTHROPIC_API_KEY'])
+                continue;
+            out[k] = v;
+        }
+        // Replace XDG_RUNTIME_DIR to prevent the nested claude from sharing the outer
+        // session's runtime socket/state directory.
+        out['XDG_RUNTIME_DIR'] = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-judge-'));
+        return out;
+    }
+    return { ...baseEnv, ...backendEnvOverrides(backend) };
+}
 // Narrowly-targeted session markers only. Do NOT add a blanket `CLAUDE_`
 // prefix here — that strips routing controls like CLAUDE_CODE_USE_VERTEX /
 // CLAUDE_CODE_USE_BEDROCK that the child CLI needs.
@@ -71,13 +114,13 @@ export function buildJudgeSpawnEnv(backend, baseEnv = process.env) {
     return out;
 }
 /**
- * Convenience wrapper used at the two spawn sites.
- * Returns the exact shape expected by child_process / execFile.
+ * Convenience wrapper used at the two judge spawn sites in microverse-runner.ts.
+ * Delegates to buildJudgeEnv with isNestedClaude() detection.
+ * cwd is accepted for API stability; not used (no repo .env loading at judge spawn time).
  */
 export function getJudgeEnvForAttempt(backend, cwd) {
-    // cwd is accepted for future "per-repo .env" loading if we ever need it.
-    // Currently we do not want to inherit repo .env that might contain conflicting keys.
     void cwd;
-    return buildJudgeSpawnEnv(backend);
+    const narrowed = (backend === 'claude' || backend === 'codex') ? backend : 'claude';
+    return buildJudgeEnv(narrowed, isNestedClaude());
 }
-export default { buildJudgeSpawnEnv, getJudgeEnvForAttempt };
+export default { buildJudgeSpawnEnv, getJudgeEnvForAttempt, buildJudgeEnv, isNestedClaude };

@@ -262,6 +262,10 @@ export interface ActivityLogEntry {
 export interface ActivityGatePayload {
   signal_sender_pid?: number | null;
   signal_sender_cmd?: string | null;
+  /** R-SJET-3: env key names (never values) in the built judge spawn env. */
+  pre_spawn_env_key_names?: string[];
+  /** R-SJET-3: true when the judge was spawned inside a nested Claude Code session. */
+  nested_claude_detected?: boolean;
   [key: string]: unknown;
 }
 
