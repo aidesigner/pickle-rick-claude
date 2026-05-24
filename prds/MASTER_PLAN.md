@@ -1,22 +1,22 @@
 ---
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Updated 2026-05-23.** Live ledger: status, open findings, queue, feature epics. Historical narrative (mega-campaign saga, per-commit detail, pre-2026-05-15 releases) lives in `MASTER_PLAN-archive.md` and git history.
+**Updated 2026-05-24.** Live ledger: status, open findings, queue, feature epics. Historical narrative (mega-campaign saga, per-commit detail, pre-2026-05-15 releases) lives in `MASTER_PLAN-archive.md` and git history.
 
 ## Status
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.78.2** — 2026-05-23 |
-| Latest GitHub release | v1.78.1 — 2026-05-23 |
+| Version (source/deployed) | **v1.79.0** — 2026-05-24 |
+| Latest GitHub release | v1.79.0 — 2026-05-24 |
 | Active pipeline | none |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive (operator):** drain bug bundles before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**Dispatch order (reprioritized 2026-05-23 by severity × recurrence × blast radius):** **B-FRA** (5x recurrence, halts creation-heavy launches) → **B-APWS** (silent scope-boundary defeat) → **R-MEGA-SELF-FIX** Phase 1/2/4. Promotions/demotions explained inline in Open Findings tables.
+**Dispatch order (reprioritized 2026-05-24 by severity × recurrence × blast radius):** **B-APWS** (silent scope-boundary defeat) → **R-MEGA-SELF-FIX** Phase 1/2/4. Promotions/demotions explained inline in Open Findings tables.
 
-**2026-05-22..23 — 4 releases (v1.76.0..v1.78.1), 11 findings closed; 3 P1 bundle PRDs drafted ready for dispatch:** `B-FRA` (`cfa38603`), `B-APWS` (`46db2c27`), `B-WUWC-REPRODUCER` (`92bed106`) in `prds/p1-bug-fix-bundle-b-*-2026-05-23.md`. Detail in `## Recently Shipped` + `## Closed since last update`.
+**2026-05-22..24 — 5 releases (v1.76.0..v1.79.0), 15 findings closed; B-FRA shipped v1.79.0; B-APWS next.** Detail in `## Recently Shipped` + `## Closed since last update`.
 
 ---
 
@@ -38,10 +38,6 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 | 46 | R-SSDF | szechuan-sauce Session Knowledge Transfer block fails on repos with worker-side firewall `AGENTS.md` — PHASE BLOCKER on common repo type | `be269e03` shipped AC-SSDF-03 (skippable transfer); remainder folded into R-MEGA-SELF-FIX. |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
 | 11 | R-APWS | anatomy-park worker edits bypass `scope.json:allowed_paths` at fix time — SILENT SCOPE BOUNDARY DEFEAT | `p2-anatomy-park-worker-edits-bypass-scope-allowlist.md`. **(Promoted P2→P1 2026-05-23: scope isolation is a security boundary; silent bypass is unacceptable.)** |
-| 66 | R-FRA | readiness gate rejects forward-created test/script files in refined tickets — root-cause PRD (5 false-positive classes, RC-1/2/3 fix paths) | `p2-refined-tickets-trip-readiness-contract-resolver.md`. **B-FRA.** |
-| 67 | R-RTRC8 | `/pickle-refine-prd` Step 7c template doesn't remind authors to add R-RTRC-7 forward-ref annotations on backticked paths/symbols | `p2-refine-prd-skill-missing-rtrc7-annotation-reminder.md`. **B-FRA.** |
-| 68 | R-FRA-GATE | forward-ref annotation regex parity drift between `check-readiness` and `audit-ticket-bundle` (two skip flags needed pre-R-QGSK-2) | `p2-forward-ref-annotation-readiness-vs-audit-bundle-drift.md`. R-QGSK-2 unified flag partial; gate-side regex parity still open. **B-FRA.** |
-| 69 | R-FRA | **5th recurrence (2026-05-23)** — `B-PROJECT-AUDIT-2026-05-23` session `2026-05-23-17b2f716` hit `READINESS HALT exited 2` with 34 `file_path` findings on forward-created test files; unblocked via `skip_quality_gates_reason` | `BUG-REPORT-2026-05-23-readiness-rejects-forward-created-tickets.md`. **B-FRA. (Cluster promoted P2→P1 2026-05-23: 5x recurrence is the highest of any open finding; halts every creation-heavy pipeline launch.)** |
 
 ### P2
 
@@ -87,19 +83,25 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 - **B-FRA/B-APWS bundle PRDs drafted** — `cfa38603`,`46db2c27`. Ready for dispatch in priority order.
 - #52 R-WUWC — **B-WUWC-REPRODUCER CLOSED**: wuwc-reproducer.test.js confirms all 4 prevention layers green (R-WSE-1/2/3 + R-PIPE-2). Reproducer: `d9bdb589`; trap-door: `4b38893c`; closer: 26301c6a (v1.78.2). Test: `extension/tests/wuwc-reproducer.test.js`.
 
+### Closed since last update (2026-05-24)
+- #66 R-FRA — readiness gate false-positives on forward-created test/script files: **B-FRA CLOSED** (R-FRA-6 shared predicate, R-FRA-2 pre-flight script, R-FRA-3 persona Step 0, R-FRA-4 prds/CLAUDE.md). v1.79.0.
+- #67 R-RTRC8 — `/pickle-refine-prd` Step 7c missing forward-ref annotation reminder: **B-FRA CLOSED** (R-FRA-1). v1.79.0.
+- #68 R-FRA-GATE — forward-ref annotation regex parity drift between `check-readiness` and `audit-ticket-bundle`: **B-FRA CLOSED** (R-FRA-6 unified FORWARD_REF_ANNOTATION_RE module imported by both consumers). v1.79.0.
+- #69 R-FRA 5th recurrence — `B-PROJECT-AUDIT-2026-05-23` hit READINESS HALT on 34 forward-created findings: **B-FRA CLOSED**. PRD: `prds/p1-bug-fix-bundle-b-fra-forward-ref-annotations-2026-05-23.md`. v1.79.0.
+
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31, #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
 
 ---
 
 ## Active Queue — bug bundles first
 
-≤14 tickets/bundle. Status: NEXT · IN-FLIGHT · QUEUED · DEFERRED · SHIPPED. NEXT bundles listed in dispatch order (reordered 2026-05-23).
+≤14 tickets/bundle. Status: NEXT · IN-FLIGHT · QUEUED · DEFERRED · SHIPPED. NEXT bundles listed in dispatch order (reordered 2026-05-24).
 
 ### P1 bundles — dispatch order
 
 | # | Bundle | Status | Composes | Notes |
 |---|---|---|---|---|
-| 1 | **B-FRA** | NEXT | #66 + #67 + #68 + #69 | **HIGHEST RECURRENCE (5x)** — bundle PRD `p1-bug-fix-bundle-b-fra-forward-ref-annotations-2026-05-23.md` (cfa38603). 5 tickets R-FRA-1..5 + optional R-FRA-6 shared predicate. Closes ticket-author + pre-flight gap; R-RTRC-1..7 trap doors already shipped. |
+| 1 | **B-FRA** | SHIPPED | #66 + #67 + #68 + #69 | **CLOSED** — bundle PRD `p1-bug-fix-bundle-b-fra-forward-ref-annotations-2026-05-23.md` (cfa38603). R-FRA-1..R-FRA-6 tickets all Done. Closes #66+#67+#68+#69. Trap doors: R-RTRC-1..7 (prior) + R-FRA-1, R-FRA-2, R-FRA-6 (new). v1.79.0. |
 | 2 | **B-APWS** | NEXT | #11 R-APWS | **SECURITY BOUNDARY** — bundle PRD `p1-bug-fix-bundle-b-apws-scope-allowlist-enforcement-2026-05-23.md` (46db2c27). 5 tickets R-APWS-7..11. Regression coverage + observability test only (F1/F2/F3 infra shipped). Patch bump. |
 | 3 | **R-MEGA-SELF-FIX** | PARTIAL | B-PIPE-FIX + B-SJET-2 + B-SSDF + launch-friction + R-CSI | `p1-self-fix-mega-campaign-2026-05-19.md`. Phase 0 done; Phase 3 shipped v1.77.0. Phase 1 (#47 judge env isolation), Phase 2 (#46 AGENTS.md firewall) — szechuan PHASE BLOCKERS. Phase 4 (#25 R-CSI forensics) DEFERRED in B-CSI. |
 | 4 | **B-WUWC-REPRODUCER** | SHIPPED | #52 R-WUWC | **CLOSED** — bundle PRD `p1-bug-fix-bundle-b-wuwc-reproducer-2026-05-23.md` (92bed106). All 4 prevention layers confirmed green by wuwc-reproducer.test.js (`d9bdb589`). Closer: 26301c6a (v1.78.2). Auto-commit salvage (Bug 5 fix #2) still not shipped → follow-up R-WUWC-2-SALVAGE if filed. |
@@ -155,6 +157,7 @@ Gated behind operator's drain-bug-bundles-first directive. Do not count toward o
 
 | Release | Date | Content |
 |---|---|---|
+| v1.79.0 | 2026-05-24 | **#66+#67+#68+#69 B-FRA CLOSED** — forward-ref annotation bundle: R-FRA-6 (shared FORWARD_REF_ANNOTATION_RE), R-FRA-2 (pre-flight audit-ticket-forward-refs.sh), R-FRA-1 (Step 7c reminder), R-FRA-3 (persona Step 0 heuristic), R-FRA-4 (prds/CLAUDE.md authoring guide). 3 new trap doors: R-FRA-1, R-FRA-2, R-FRA-6. PRD: `prds/p1-bug-fix-bundle-b-fra-forward-ref-annotations-2026-05-23.md`. |
 | v1.78.2 | 2026-05-23 | #52 R-WUWC **CLOSED** — B-WUWC-REPRODUCER: wuwc-reproducer.test.js confirms all 4 prevention layers (R-WSE-1/2/3 + R-PIPE-2). Reproducer (`d9bdb589`) + trap-door (`4b38893c`) + closer 26301c6a. |
 | v1.78.1 | 2026-05-23 | #53 R-SRAA (`scope-resolver:writeScopeArchive` rotates to `.bak`; `SCOPE_ARCHIVE_EXISTS` retired) + #48 R-PCFG + #54 R-MRFP verified + #5 B-AUDIT partial (`hooks/`+`lib/`→OK). |
 | v1.78.0 | 2026-05-22 | #18 R-FGNC — `convergence-gate:buildFailures` combines stdout+stderr, strips `.npmrc` WARN; finalize-gate summarises by check; szechuan runs lint-autofix pre-commit. Also serialized `dispatch.test.js` (R-TFP). |
