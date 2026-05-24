@@ -49,9 +49,7 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 | 34 | R-WTB | `Defaults.WORKER_TIMEOUT_SECONDS: 1200` too short for R-PTG worker lifecycle | R-WTB-1..4; B2-RSU residual. **B-QSRC. (Promoted P3→P2 2026-05-23: blocks R-PTG worker lifecycle; tier_cap_override workaround needed each session.)** |
 | 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check | PRD not drafted (~4 tickets). **B-GATE.** |
 | 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4 tickets). **B-GATE.** |
-| 70 | R-CCQF | `hasCompletionCommit` rejects quoted-full-SHA `completion_commit:` frontmatter form (closer worker style); auto-promote helper writes unquoted short SHA which IS accepted — gate fires fatal even though work shipped | `p2-completion-commit-quoted-form-and-exit-reason-2026-05-24.md`. Surfaced from B-WUWC closer session `2026-05-23-48e6309a/26301c6a`. |
-| 71 | R-PEDC | pipeline `exit_reason` `done_without_commit_evidence` persists across iterations; final pipeline-status `failed` even when all tickets shipped Done — misleading operator signal | `p2-completion-commit-quoted-form-and-exit-reason-2026-05-24.md`. Sibling of R-CCQF; same B-WUWC closer session. |
-| 72 | R-WSRC-GR | `bash-scanner` + `config-protection.ts` hooks miss `git reset` from worker subprocesses (Git Boundary Rules violation) — worker session 32954 on B-FRA `76605b8f` dropped `f9c553f6` from main; runner self-recovered via `git restore --source` in commit `36ae2f76` (no PRD yet; ~2 tickets to extend hook coverage). |
+| 72 | R-WSRC-GR | `bash-scanner` + `config-protection.ts` hooks miss `git reset` from worker subprocesses (Git Boundary Rules violation) — fired 2x on B-FRA (`76605b8f` dropped `f9c553f6`; `2d3b7924` dropped R-FRA-4); runner self-recovered both via `git restore --source` (`36ae2f76`, `63b9c346`). PRD pending; ~2 tickets to extend hook coverage. **B-WSRC-GR** slot between R-CCQF and B-APWS per dispatch order. |
 
 ### P3
 
@@ -86,6 +84,8 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 ### Closed since last update (2026-05-24)
 - #66 R-FRA — readiness gate false-positives on forward-created test/script files: **B-FRA CLOSED** (R-FRA-6 shared predicate, R-FRA-2 pre-flight script, R-FRA-3 persona Step 0, R-FRA-4 prds/CLAUDE.md). v1.79.0.
 - #67 R-RTRC8 — `/pickle-refine-prd` Step 7c missing forward-ref annotation reminder: **B-FRA CLOSED** (R-FRA-1). v1.79.0.
+- #70 R-CCQF — `hasCompletionCommit` now accepts unquoted-short / unquoted-full / quoted-short / quoted-full SHA via new `normalizeCompletionCommitField` helper (`e3f510fd`). 12 regression assertions in `extension/tests/has-completion-commit-quoted-form.test.js`. Trap-door pinned in `extension/CLAUDE.md`.
+- #71 R-PEDC — `mux-runner.clearStaleDoneWithoutCommitEvidence` clears stale `done_without_commit_evidence` exit_reason on 4 `guard.ok===true` recovery paths (`e3f510fd`); mirrors R-CCR-3 stale-handoff pattern. 5 regression assertions in `extension/tests/exit-reason-clears-on-recovery.test.js`.
 - #68 R-FRA-GATE — forward-ref annotation regex parity drift between `check-readiness` and `audit-ticket-bundle`: **B-FRA CLOSED** (R-FRA-6 unified FORWARD_REF_ANNOTATION_RE module imported by both consumers). v1.79.0.
 - #69 R-FRA 5th recurrence — `B-PROJECT-AUDIT-2026-05-23` hit READINESS HALT on 34 forward-created findings: **B-FRA CLOSED**. PRD: `prds/p1-bug-fix-bundle-b-fra-forward-ref-annotations-2026-05-23.md`. v1.79.0.
 
