@@ -832,17 +832,29 @@ function findMatchingCommit(args: {
   title: string | null;
   startTimeEpoch?: number | null;
   ticketPath?: string | null;
+  rCode?: string | null;
 }): MatchingCommit | null {
   const matchers = [
     ...(args.ticketId ? [args.ticketId.toLowerCase()] : []),
     ...extractRequirementCodes(args.title),
   ];
-  if (matchers.length === 0) return null;
+  // Word-boundary regex for the explicit r_code frontmatter field.
+  // \b anchors prevent R-APWS-1 from matching a commit that only contains R-APWS-10.
+  const rCodeBoundaryRe: RegExp | null = (() => {
+    if (!args.rCode) return null;
+    const code = args.rCode.trim().toLowerCase();
+    if (!code) return null;
+    const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`\\b${escaped}\\b`);
+  })();
+  if (matchers.length === 0 && !rCodeBoundaryRe) return null;
   const startTimeEpoch = Number(args.startTimeEpoch);
   const checkEntry = (entry: { sha: string; epoch: number; message: string }): MatchingCommit | null => {
     if (Number.isFinite(startTimeEpoch) && startTimeEpoch > 0 && entry.epoch < startTimeEpoch) return null;
     const lower = entry.message.toLowerCase();
-    return matchers.some(token => lower.includes(token)) ? { sha: entry.sha, epoch: entry.epoch } : null;
+    if (matchers.some(token => lower.includes(token))) return { sha: entry.sha, epoch: entry.epoch };
+    if (rCodeBoundaryRe && rCodeBoundaryRe.test(lower)) return { sha: entry.sha, epoch: entry.epoch };
+    return null;
   };
 
   const commands: string[][] = [];
@@ -947,6 +959,7 @@ export function hasCompletionCommit(args: {
     title: readFrontmatterField(content, 'title') ?? readFirstMarkdownHeading(content),
     startTimeEpoch: args.startTimeEpoch,
     ticketPath,
+    rCode: readFrontmatterField(content, 'r_code'),
   });
   if (inferred) return { sha: inferred.sha, source: 'inferred' };
   return { sha: null, source: 'absent' };
