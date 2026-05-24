@@ -158,6 +158,16 @@ After completing each ticket body, append this single-line audit comment as the 
 
 ### 7c: Create Child Tickets
 
+> 🚦 Forward-reference hygiene — Before writing any backticked path or symbol in a ticket body, verify it resolves at HEAD (`git ls-files <path>` for files; `git grep -n '<symbol>'` for symbols). If the artifact does not exist yet because it is created by this bundle, append the canonical forward-reference annotation immediately after the closing backtick, separated by exactly one ASCII space:
+>
+> | Form | Example |
+> |---|---|
+> | `(forward-created)` | `` `extension/tests/my-new.test.js` (forward-created) `` |
+> | `(created by ticket <hash>)` | `` `src/bin/new-helper.ts` (created by ticket 76605b8f) `` |
+> | `(introduced by ticket <hash>)` | `` `MyNewHelper` (introduced by ticket 76605b8f) `` |
+>
+> Annotation must be **outside** the backticks. No-space, two-space, or tab separators emit `annotation-format-error` at readiness. See R-RTRC-7 in `extension/CLAUDE.md` for the full schema.
+
 **Loop discipline**: complete every iteration as a `Write` of `linear_ticket_<hash>.md` — one file per atomic task from 7a. Do not substitute TaskCreate for the file write. If a harness task-tool reminder fires mid-loop, ignore it and finish the loop. After the loop, verify with `ls ${SESSION_ROOT}/*/linear_ticket_*.md | wc -l` matches your decomposition count from 7a.
 
 Hash: `openssl rand -hex 4`. Dir: `${SESSION_ROOT}/[hash]/`. File: `linear_ticket_[hash].md`:
