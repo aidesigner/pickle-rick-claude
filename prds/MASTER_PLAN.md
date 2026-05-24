@@ -7,14 +7,14 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.78.1** — 2026-05-23 |
+| Version (source/deployed) | **v1.78.2** — 2026-05-23 |
 | Latest GitHub release | v1.78.1 — 2026-05-23 |
 | Active pipeline | none |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive (operator):** drain bug bundles before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**Dispatch order (reprioritized 2026-05-23 by severity × recurrence × blast radius):** **B-FRA** (5x recurrence, halts creation-heavy launches) → **B-APWS** (silent scope-boundary defeat) → **R-MEGA-SELF-FIX** Phase 1/2/4 → **B-WUWC-REPRODUCER** (data-loss). Promotions/demotions explained inline in Open Findings tables.
+**Dispatch order (reprioritized 2026-05-23 by severity × recurrence × blast radius):** **B-FRA** (5x recurrence, halts creation-heavy launches) → **B-APWS** (silent scope-boundary defeat) → **R-MEGA-SELF-FIX** Phase 1/2/4. Promotions/demotions explained inline in Open Findings tables.
 
 **2026-05-22..23 — 4 releases (v1.76.0..v1.78.1), 11 findings closed; 3 P1 bundle PRDs drafted ready for dispatch:** `B-FRA` (`cfa38603`), `B-APWS` (`46db2c27`), `B-WUWC-REPRODUCER` (`92bed106`) in `prds/p1-bug-fix-bundle-b-*-2026-05-23.md`. Detail in `## Recently Shipped` + `## Closed since last update`.
 
@@ -36,7 +36,6 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 | 25 | R-CSI | Concurrent claude-session destructive-command interference (3 SIGINT incidents/36h) — DATA LOSS class | `p1-concurrent-claude-session-interference-with-running-pipelines.md`. Phase 1 forensics deferred per operator (await next incident). |
 | 47 | R-SJET | szechuan-sauce LLM judge baseline-measurement deterministically ETIMEDOUTs — DETERMINISTIC PHASE BLOCKER | `p1-szechuan-sauce-judge-etimedout-baseline-measurement.md`. R-SJET-1 landed (`53d79a23`); R-SJET-3/4/6 folded into R-MEGA-SELF-FIX. |
 | 46 | R-SSDF | szechuan-sauce Session Knowledge Transfer block fails on repos with worker-side firewall `AGENTS.md` — PHASE BLOCKER on common repo type | `be269e03` shipped AC-SSDF-03 (skippable transfer); remainder folded into R-MEGA-SELF-FIX. |
-| 52 | R-WUWC | worker writes on-spec code but `markTicketDone` blocked then ticket wedges Failed, output lost — DATA LOSS class | `BUG-REPORT-2026-05-18-pipeline-launch-friction.md` Addendum 5. B-PIPE-FIX hardening (R-PIPE-2/3/4 + R-WSE-2/3 observability) shipped; awaiting a fresh post-v1.78.0 reproducer to confirm prevention. |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
 | 11 | R-APWS | anatomy-park worker edits bypass `scope.json:allowed_paths` at fix time — SILENT SCOPE BOUNDARY DEFEAT | `p2-anatomy-park-worker-edits-bypass-scope-allowlist.md`. **(Promoted P2→P1 2026-05-23: scope isolation is a security boundary; silent bypass is unacceptable.)** |
 | 66 | R-FRA | readiness gate rejects forward-created test/script files in refined tickets — root-cause PRD (5 false-positive classes, RC-1/2/3 fix paths) | `p2-refined-tickets-trip-readiness-contract-resolver.md`. **B-FRA.** |
@@ -82,7 +81,8 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 - #53 R-SRAA — `writeScopeArchive` rotates pre-existing archive to `.bak`; `SCOPE_ARCHIVE_EXISTS` retired (`19ff0dd1`).
 - #5 B-AUDIT (partial) — `hooks/`+`lib/` flipped INCOMPLETE→OK; `types/` cleared STALE; `bin/`+`services/` still INCOMPLETE (`1add4451`).
 - #32 R-TFP gate-blocking — **B-FLAKE** serialized flake-tail shipped v1.76.0; retained as P3 watch item.
-- **B-FRA/B-APWS/B-WUWC-REPRODUCER bundle PRDs drafted** — `cfa38603`,`46db2c27`,`92bed106`. Ready for dispatch in priority order.
+- **B-FRA/B-APWS bundle PRDs drafted** — `cfa38603`,`46db2c27`. Ready for dispatch in priority order.
+- #52 R-WUWC — **B-WUWC-REPRODUCER CLOSED**: wuwc-reproducer.test.js confirms all 4 prevention layers green (R-WSE-1/2/3 + R-PIPE-2). Reproducer: `d9bdb589`; trap-door: `4b38893c`; closer: 26301c6a (v1.78.2). Test: `extension/tests/wuwc-reproducer.test.js`.
 
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31, #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
 
@@ -99,7 +99,7 @@ Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #3
 | 1 | **B-FRA** | NEXT | #66 + #67 + #68 + #69 | **HIGHEST RECURRENCE (5x)** — bundle PRD `p1-bug-fix-bundle-b-fra-forward-ref-annotations-2026-05-23.md` (cfa38603). 5 tickets R-FRA-1..5 + optional R-FRA-6 shared predicate. Closes ticket-author + pre-flight gap; R-RTRC-1..7 trap doors already shipped. |
 | 2 | **B-APWS** | NEXT | #11 R-APWS | **SECURITY BOUNDARY** — bundle PRD `p1-bug-fix-bundle-b-apws-scope-allowlist-enforcement-2026-05-23.md` (46db2c27). 5 tickets R-APWS-7..11. Regression coverage + observability test only (F1/F2/F3 infra shipped). Patch bump. |
 | 3 | **R-MEGA-SELF-FIX** | PARTIAL | B-PIPE-FIX + B-SJET-2 + B-SSDF + launch-friction + R-CSI | `p1-self-fix-mega-campaign-2026-05-19.md`. Phase 0 done; Phase 3 shipped v1.77.0. Phase 1 (#47 judge env isolation), Phase 2 (#46 AGENTS.md firewall) — szechuan PHASE BLOCKERS. Phase 4 (#25 R-CSI forensics) DEFERRED in B-CSI. |
-| 4 | **B-WUWC-REPRODUCER** | NEXT | #52 R-WUWC | **DATA LOSS** — bundle PRD `p1-bug-fix-bundle-b-wuwc-reproducer-2026-05-23.md` (92bed106). 3 tickets R-WUWC-1..3. Reproducer test; closer reports Closed-or-DEFERRED with gap list. Patch bump. Drift sweep confirmed auto-commit salvage NOT shipped → follow-up R-WUWC-2-SALVAGE. |
+| 4 | **B-WUWC-REPRODUCER** | SHIPPED | #52 R-WUWC | **CLOSED** — bundle PRD `p1-bug-fix-bundle-b-wuwc-reproducer-2026-05-23.md` (92bed106). All 4 prevention layers confirmed green by wuwc-reproducer.test.js (`d9bdb589`). Closer: 26301c6a (v1.78.2). Auto-commit salvage (Bug 5 fix #2) still not shipped → follow-up R-WUWC-2-SALVAGE if filed. |
 | 5 | **B-QSRC** | QUEUED | R-QGSK + R-RSU residuals from B2-RSU partial-ship | New bundle PRD needs scoping. Closes residue of #29/#30/#34. |
 | 6 | **B-CSI** | DEFERRED | R-CSI Phase 1+2 | Await next sibling-session incident before scoping Phase 2. Operator-gated. |
 | 7 | **B-CCDC** | DEFERRED | R-CCDC citadel detection-coverage successor | Per operator: maybe-later. |
@@ -152,6 +152,7 @@ Gated behind operator's drain-bug-bundles-first directive. Do not count toward o
 
 | Release | Date | Content |
 |---|---|---|
+| v1.78.2 | 2026-05-23 | #52 R-WUWC **CLOSED** — B-WUWC-REPRODUCER: wuwc-reproducer.test.js confirms all 4 prevention layers (R-WSE-1/2/3 + R-PIPE-2). Reproducer (`d9bdb589`) + trap-door (`4b38893c`) + closer 26301c6a. |
 | v1.78.1 | 2026-05-23 | #53 R-SRAA (`scope-resolver:writeScopeArchive` rotates to `.bak`; `SCOPE_ARCHIVE_EXISTS` retired) + #48 R-PCFG + #54 R-MRFP verified + #5 B-AUDIT partial (`hooks/`+`lib/`→OK). |
 | v1.78.0 | 2026-05-22 | #18 R-FGNC — `convergence-gate:buildFailures` combines stdout+stderr, strips `.npmrc` WARN; finalize-gate summarises by check; szechuan runs lint-autofix pre-commit. Also serialized `dispatch.test.js` (R-TFP). |
 | v1.77.0 | 2026-05-22 | Readiness/scope false-positive cluster + B-PIPE-LAUNCH-FRICTION. #64 R-RHFP / #65 R-RCEX / #57 R-RPRA (check-readiness), #50 R-SRGT (scope-resolver caps), #51 R-PPSD (skill docs), #49 R-PSSS (empty-scope WARN + events). |
