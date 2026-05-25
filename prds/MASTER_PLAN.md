@@ -14,9 +14,9 @@
 
 **Priority directive (operator):** drain bug bundles before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**Dispatch order (reprioritized 2026-05-24 by severity × recurrence × blast radius):** **R-MEGA-SELF-FIX** Phase 1/2/4 (B-FRA / B-APWS / B-WSRC-GR / B-CCRC all shipped). Promotions explained inline in Open Findings tables.
+**Dispatch order (reprioritized 2026-05-25):** **R-CSI Phase 1** forensics (operator-gated, B-CSI awaiting next sibling-session incident). Feature epics R-PGI → R-PIAP now eligible after R-MEGA-SELF-FIX v1.80.0 closes Phase 1+2. Promotions explained inline in Open Findings tables.
 
-**2026-05-22..24 — 8 releases (v1.76.0..v1.79.3), 18 findings closed; B-FRA v1.79.0; B-APWS v1.79.1; B-WSRC-GR v1.79.2; B-CCRC v1.79.3.** Detail in `## Recently Shipped` + `## Closed since last update`.
+**2026-05-22..25 — 9 releases (v1.76.0..v1.80.0), 20 findings closed; B-FRA v1.79.0; B-APWS v1.79.1; B-WSRC-GR v1.79.2; B-CCRC v1.79.3; R-MEGA-SELF-FIX Phase 1+2 v1.80.0.** Detail in `## Recently Shipped` + `## Closed since last update`.
 
 ---
 
@@ -34,8 +34,8 @@ Each open finding: code + one-line + PRD pointer + impact rationale. Closed-find
 | # | Code | Summary | PRD / Status |
 |---|---|---|---|
 | 25 | R-CSI | Concurrent claude-session destructive-command interference (3 SIGINT incidents/36h) — DATA LOSS class | `p1-concurrent-claude-session-interference-with-running-pipelines.md`. Phase 1 forensics deferred per operator (await next incident). |
-| 47 | R-SJET | szechuan-sauce LLM judge baseline-measurement deterministically ETIMEDOUTs — DETERMINISTIC PHASE BLOCKER | `p1-szechuan-sauce-judge-etimedout-baseline-measurement.md`. R-SJET-1 landed (`53d79a23`); R-SJET-3/4/6 folded into R-MEGA-SELF-FIX. |
-| 46 | R-SSDF | szechuan-sauce Session Knowledge Transfer block fails on repos with worker-side firewall `AGENTS.md` — PHASE BLOCKER on common repo type | `be269e03` shipped AC-SSDF-03 (skippable transfer); remainder folded into R-MEGA-SELF-FIX. |
+_(R-SJET #47 closed via R-MEGA-SELF-FIX v1.80.0 — R-SJET-3 nested-claude env isolation `c15b8332`, R-SJET-4 all_judge_backends_exhausted `710e5cfd`, R-SJET-6 integration tests `0286c356`, T-HARDEN-PROBE `65d57aab`, T-HARDEN-AUTORESUME `5a25ef7b`, T-HARDEN-DOCS `e696ce16`, env-stripping regression fix `b2936a41`. See `## Closed since last update (2026-05-25)`.)_
+_(R-SSDF #46 closed via R-MEGA-SELF-FIX v1.80.0 — R-SSDF-FW AGENTS.md firewall detection + TASK_NOTES integration `82a5d453` + ignore `12373766`. See `## Closed since last update (2026-05-25)`.)_
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
 _(R-CCRC #73 closed via B-CCRC v1.79.3 — `06d6a905` R-CCRC-1 ref-code fallback + `0e04b5ca` R-CCRC-2 done-flip guard routing. See `## Closed since last update (2026-05-24)`.)_
 
