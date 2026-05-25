@@ -310,7 +310,7 @@ function updateSessionMap(sessionsMap: string, cwd: string, sessionPath: string)
             cwd,
           });
         } catch { /* best-effort */ }
-        process.stderr.write(`setup.ts: session-map collision blocked — cwd=${cwd} held by pid=${existingPid}\n`);
+        process.stderr.write(`[pickle] session-map collision blocked — cwd=${cwd} held by pid=${existingPid}\n`);
         process.exit(1);
       }
     }
