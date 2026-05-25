@@ -1,0 +1,320 @@
+// @tier: fast
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import {
+    validateSessionDirOrSkip,
+    _resetSessionDirInvalidEmittedForTests,
+    restartDeadWatcherPanes,
+} from '../services/pickle-utils.js';
+import { respawnMonitorWindowForMode } from '../lib/monitor-respawn.js';
+
+// R-TSPF-4: serialize PATH shim mutations across tests that call restartDeadWatcherPanes.
+let withPathQueue = Promise.resolve();
+function withSerializedPath(shimDir, fn) {
+    const run = async () => {
+        const savedPath = process.env.PATH;
+        try {
+            process.env.PATH = `${shimDir}${path.delimiter}${savedPath || ''}`;
+            return await fn();
+        } finally {
+            if (savedPath === undefined) delete process.env.PATH;
+            else process.env.PATH = savedPath;
+        }
+    };
+    const queued = withPathQueue.then(run, run);
+    withPathQueue = queued.catch(() => undefined);
+    return queued;
+}
+
+function makeValidSessionDir(tmpRoot, stateExtra = {}) {
+    const sessionDir = path.join(tmpRoot, 'session');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(sessionDir, 'state.json'),
+        JSON.stringify({ active: true, command_template: null, ...stateExtra }),
+    );
+    return sessionDir;
+}
+
+function makeExtRoot(tmpRoot) {
+    const extRoot = path.join(tmpRoot, 'ext');
+    fs.mkdirSync(path.join(extRoot, 'extension', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(extRoot, 'extension', 'bin', 'log-watcher.js'), '// sentinel\n');
+    return extRoot;
+}
+
+function makeTmpRoot(prefix = 'pickle-sdv-') {
+    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
+function noOpSpawnSync() {
+    return { status: 0, stdout: '', stderr: '' };
+}
+
+function makeSpawnCapture(sessionName = 'test-session') {
+    const calls = [];
+    const spawnSyncFn = (command, args = []) => {
+        calls.push({ command, args: [...args] });
+        if (command === 'tmux' && args[0] === 'display-message') {
+            return { status: 0, stdout: `${sessionName}\n`, stderr: '' };
+        }
+        if (command === 'tmux' && args[0] === 'display-message' && args[1] === '-p' && args[2] === '-t') {
+            return { status: 0, stdout: 'node\n', stderr: '' };
+        }
+        return { status: 0, stdout: '', stderr: '' };
+    };
+    return { calls, spawnSyncFn };
+}
+
+// ─── validateSessionDirOrSkip: basic predicate ────────────────────────────────
+
+test('validateSessionDirOrSkip: empty string → false', () => {
+    _resetSessionDirInvalidEmittedForTests();
+    assert.equal(validateSessionDirOrSkip('', 'restartDeadWatcherPanes'), false);
+});
+
+test('validateSessionDirOrSkip: undefined coerced to empty → false', () => {
+    _resetSessionDirInvalidEmittedForTests();
+    // @ts-ignore — testing runtime guard
+    assert.equal(validateSessionDirOrSkip(undefined, 'restartDeadWatcherPanes'), false);
+});
+
+test('validateSessionDirOrSkip: non-existent path → false', () => {
+    _resetSessionDirInvalidEmittedForTests();
+    assert.equal(validateSessionDirOrSkip('/tmp/does-not-exist-pickle-sdv-xyz', 'restartDeadWatcherPanes'), false);
+});
+
+test('validateSessionDirOrSkip: existing dir but no state.json → false', () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'nosession');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        assert.equal(validateSessionDirOrSkip(sessionDir, 'restartDeadWatcherPanes'), false);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('validateSessionDirOrSkip: valid sessionDir with state.json → true', () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = makeValidSessionDir(tmpRoot);
+        assert.equal(validateSessionDirOrSkip(sessionDir, 'restartDeadWatcherPanes'), true);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('validateSessionDirOrSkip: state.json session_dir mismatch → false', () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = makeValidSessionDir(tmpRoot, { session_dir: '/completely/different/path' });
+        assert.equal(validateSessionDirOrSkip(sessionDir, 'restartDeadWatcherPanes'), false);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('validateSessionDirOrSkip: state.json session_dir matches (after path.resolve) → true', () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = makeValidSessionDir(tmpRoot);
+        // session_dir in state matches the real path
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ active: true, command_template: null, session_dir: sessionDir }),
+        );
+        assert.equal(validateSessionDirOrSkip(sessionDir, 'restartDeadWatcherPanes'), true);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+// ─── validateSessionDirOrSkip: activity event emission ────────────────────────
+
+test('validateSessionDirOrSkip: emits activity event on invalid sessionDir', () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const tmpRoot = makeTmpRoot();
+    const savedDataRoot = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = tmpRoot;
+        validateSessionDirOrSkip('', 'restartDeadWatcherPanes');
+
+        const activityDir = path.join(tmpRoot, 'activity');
+        const files = fs.existsSync(activityDir) ? fs.readdirSync(activityDir) : [];
+        assert.ok(files.length > 0, 'activity JSONL file should be written');
+        const content = fs.readFileSync(path.join(activityDir, files[0]), 'utf-8');
+        const entry = JSON.parse(content.trim());
+        assert.equal(entry.event, 'monitor_respawn_session_dir_invalid');
+        assert.equal(entry.gate_payload.caller, 'restartDeadWatcherPanes');
+        assert.equal(entry.gate_payload.reason, 'empty');
+        assert.equal(entry.source, 'pickle');
+    } finally {
+        if (savedDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = savedDataRoot;
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+// ─── validateSessionDirOrSkip: dedup ──────────────────────────────────────────
+
+test('validateSessionDirOrSkip: dedup — second call with same tuple emits no second event', () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const tmpRoot = makeTmpRoot();
+    const savedDataRoot = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = tmpRoot;
+        const fakeDir = '/tmp/pickle-sdv-nonexistent-dedup';
+
+        validateSessionDirOrSkip(fakeDir, 'restartDeadWatcherPanes');
+        validateSessionDirOrSkip(fakeDir, 'restartDeadWatcherPanes');
+
+        const activityDir = path.join(tmpRoot, 'activity');
+        const files = fs.existsSync(activityDir) ? fs.readdirSync(activityDir) : [];
+        assert.ok(files.length > 0, 'activity dir should exist');
+        const content = fs.readFileSync(path.join(activityDir, files[0]), 'utf-8');
+        const lines = content.trim().split('\n').filter(Boolean);
+        assert.equal(lines.length, 1, 'dedup: only one event per unique tuple');
+    } finally {
+        if (savedDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = savedDataRoot;
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('validateSessionDirOrSkip: different callers emit separate events for same sessionDir', () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const tmpRoot = makeTmpRoot();
+    const savedDataRoot = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = tmpRoot;
+        const fakeDir = '/tmp/pickle-sdv-nonexistent-callers';
+
+        validateSessionDirOrSkip(fakeDir, 'restartDeadWatcherPanes');
+        validateSessionDirOrSkip(fakeDir, 'respawnMonitorWindowForMode');
+
+        const activityDir = path.join(tmpRoot, 'activity');
+        const files = fs.existsSync(activityDir) ? fs.readdirSync(activityDir) : [];
+        const content = fs.readFileSync(path.join(activityDir, files[0]), 'utf-8');
+        const lines = content.trim().split('\n').filter(Boolean);
+        assert.equal(lines.length, 2, 'different callers emit separate events');
+    } finally {
+        if (savedDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = savedDataRoot;
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+// ─── restartDeadWatcherPanes: validation gate ─────────────────────────────────
+
+test('restartDeadWatcherPanes: empty sessionDir → no tmux spawn calls', () =>
+    withSerializedPath(os.tmpdir(), async () => {
+        _resetSessionDirInvalidEmittedForTests();
+        const { calls, spawnSyncFn } = makeSpawnCapture();
+        restartDeadWatcherPanes('', os.tmpdir(), 'pickle', spawnSyncFn);
+        const tmuxCalls = calls.filter(c => c.command === 'tmux');
+        assert.equal(tmuxCalls.length, 0, 'no tmux calls when sessionDir is empty');
+    }));
+
+test('restartDeadWatcherPanes: non-existent sessionDir → no tmux spawn calls', () =>
+    withSerializedPath(os.tmpdir(), async () => {
+        _resetSessionDirInvalidEmittedForTests();
+        const { calls, spawnSyncFn } = makeSpawnCapture();
+        restartDeadWatcherPanes('/tmp/pickle-sdv-nonexistent-restart', os.tmpdir(), 'pickle', spawnSyncFn);
+        const tmuxCalls = calls.filter(c => c.command === 'tmux');
+        assert.equal(tmuxCalls.length, 0, 'no tmux calls when sessionDir does not exist');
+    }));
+
+test('restartDeadWatcherPanes: no state.json → no tmux spawn calls', () =>
+    withSerializedPath(os.tmpdir(), async () => {
+        _resetSessionDirInvalidEmittedForTests();
+        const tmpRoot = makeTmpRoot();
+        try {
+            const sessionDir = path.join(tmpRoot, 'nosession');
+            fs.mkdirSync(sessionDir, { recursive: true });
+            const extRoot = makeExtRoot(tmpRoot);
+            const { calls, spawnSyncFn } = makeSpawnCapture();
+            restartDeadWatcherPanes(sessionDir, extRoot, 'pickle', spawnSyncFn);
+            const tmuxCalls = calls.filter(c => c.command === 'tmux');
+            assert.equal(tmuxCalls.length, 0, 'no tmux calls when state.json is absent');
+        } finally {
+            fs.rmSync(tmpRoot, { recursive: true, force: true });
+        }
+    }));
+
+test('restartDeadWatcherPanes: valid inactive sessionDir → skips after validation passes but isSessionInactive', () =>
+    withSerializedPath(os.tmpdir(), async () => {
+        _resetSessionDirInvalidEmittedForTests();
+        const tmpRoot = makeTmpRoot();
+        try {
+            // active: false → isSessionInactive returns true → function returns after validation
+            const sessionDir = makeValidSessionDir(tmpRoot, { active: false });
+            const extRoot = makeExtRoot(tmpRoot);
+            const { calls, spawnSyncFn } = makeSpawnCapture();
+            restartDeadWatcherPanes(sessionDir, extRoot, 'pickle', spawnSyncFn);
+            // validation passes (valid dir), then isSessionInactive short-circuits before tmux
+            const tmuxCalls = calls.filter(c => c.command === 'tmux');
+            assert.equal(tmuxCalls.length, 0, 'inactive session: no tmux calls, but validation passed');
+        } finally {
+            fs.rmSync(tmpRoot, { recursive: true, force: true });
+        }
+    }));
+
+// ─── respawnMonitorWindowForMode: validation gate ─────────────────────────────
+
+test('respawnMonitorWindowForMode: empty sessionDir → no tmux spawn calls', async () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const calls = [];
+    const spawnSyncFn = (command, args = []) => {
+        calls.push({ command, args: [...args] });
+        return { status: 0, stdout: '', stderr: '' };
+    };
+    await respawnMonitorWindowForMode('', 'pickle', spawnSyncFn);
+    const tmuxCalls = calls.filter(c => c.command === 'tmux');
+    assert.equal(tmuxCalls.length, 0, 'no tmux calls when sessionDir is empty');
+});
+
+test('respawnMonitorWindowForMode: non-existent sessionDir → no tmux spawn calls', async () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const calls = [];
+    const spawnSyncFn = (command, args = []) => {
+        calls.push({ command, args: [...args] });
+        return { status: 0, stdout: '', stderr: '' };
+    };
+    await respawnMonitorWindowForMode('/tmp/pickle-sdv-nonexistent-respawn', 'pickle', spawnSyncFn);
+    const tmuxCalls = calls.filter(c => c.command === 'tmux');
+    assert.equal(tmuxCalls.length, 0, 'no tmux calls when sessionDir does not exist');
+});
+
+test('respawnMonitorWindowForMode: valid sessionDir → tmux respawn-pane called', async () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const tmpRoot = makeTmpRoot();
+    const savedDataRoot = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = tmpRoot;
+        const sessionDir = makeValidSessionDir(tmpRoot);
+        const calls = [];
+        const spawnSyncFn = (command, args = []) => {
+            calls.push({ command, args: [...args] });
+            if (command === 'tmux' && args[0] === 'display-message') {
+                return { status: 0, stdout: 'test-session\n', stderr: '' };
+            }
+            return { status: 0, stdout: '', stderr: '' };
+        };
+        await respawnMonitorWindowForMode(sessionDir, 'pickle', spawnSyncFn);
+        const respawnCalls = calls.filter(c => c.command === 'tmux' && c.args[0] === 'respawn-pane');
+        assert.ok(respawnCalls.length > 0, 'tmux respawn-pane called for valid sessionDir');
+    } finally {
+        if (savedDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = savedDataRoot;
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});

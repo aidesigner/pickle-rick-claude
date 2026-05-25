@@ -278,6 +278,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'install_sh_override_used',
     'anatomy_park_empty_scope_skip',
     'szechuan_sauce_empty_scope_skip',
+    'monitor_respawn_session_dir_invalid',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

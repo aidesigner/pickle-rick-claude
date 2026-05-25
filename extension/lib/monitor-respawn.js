@@ -1,7 +1,7 @@
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { logActivity } from '../services/activity-logger.js';
-import { getExtensionRoot } from '../services/pickle-utils.js';
+import { getExtensionRoot, validateSessionDirOrSkip } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 function phaseToMode(phase) {
     if (phase === 'anatomy-park' || phase === 'szechuan-sauce')
@@ -43,6 +43,8 @@ function incrementRespawnErrorCount(sessionDir) {
  *   exit                          → 'idle'
  */
 export async function respawnMonitorWindowForMode(sessionDir, phase, _spawnSyncFn = spawnSync) {
+    if (!validateSessionDirOrSkip(sessionDir, 'respawnMonitorWindowForMode'))
+        return;
     const mode = phaseToMode(phase);
     const extensionRoot = getExtensionRoot();
     const monitorBin = path.join(extensionRoot, 'extension', 'bin', 'monitor.js');

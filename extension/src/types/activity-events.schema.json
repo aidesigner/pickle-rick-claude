@@ -884,6 +884,23 @@
         }
       }
     },
+    "monitor_respawn_session_dir_invalid": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "monitor_respawn_session_dir_invalid" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["caller", "sessionDir", "reason"],
+          "properties": {
+            "caller": { "type": "string" },
+            "sessionDir": { "type": "string" },
+            "reason": { "type": "string", "enum": ["empty", "enoent", "no_state_json", "session_dir_mismatch"] }
+          }
+        }
+      }
+    },
     "monitor_mode_swapped": {
       "type": "object",
       "required": ["event", "ts", "mode"],
@@ -1230,6 +1247,7 @@
     { "$ref": "#/definitions/state_write_schema_version_violation" },
     { "$ref": "#/definitions/install_sh_override_used" },
     { "$ref": "#/definitions/anatomy_park_empty_scope_skip" },
-    { "$ref": "#/definitions/szechuan_sauce_empty_scope_skip" }
+    { "$ref": "#/definitions/szechuan_sauce_empty_scope_skip" },
+    { "$ref": "#/definitions/monitor_respawn_session_dir_invalid" }
   ]
 }

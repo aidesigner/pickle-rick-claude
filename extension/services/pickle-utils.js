@@ -1582,6 +1582,9 @@ export function restartDeadWatcherPanes(sessionDir, extensionRoot, mode, spawnSy
  * AC-MWR-05 grep can distinguish the two callers in `mux-runner.log`.
  */
 logTag = 'restartDeadWatcherPanes') {
+    const callerName = logTag === 'monitor-watchdog' ? 'startRespawnWatchdog' : 'restartDeadWatcherPanes';
+    if (!validateSessionDirOrSkip(sessionDir, callerName))
+        return;
     if (isSessionInactive(sessionDir))
         return;
     const sessionName = readCurrentTmuxSessionName(spawnSyncFn);
@@ -1759,6 +1762,65 @@ function appendWatcherRestartLog(sessionDir, line) {
     catch {
         // Best-effort diagnostic logging must not break pane recovery.
     }
+}
+/** Dedup guard: emit only one activity event per (caller, sessionDir, reason) tuple per process. */
+const _sessionDirInvalidEmitted = new Map();
+/**
+ * Validates sessionDir before tmux-watcher invocation. Returns true when valid; returns false
+ * and emits a monitor_respawn_session_dir_invalid activity event (once per tuple) when invalid.
+ *
+ * Checks (in order): non-empty string → path exists → state.json present → resolved path matches state
+ */
+export function validateSessionDirOrSkip(sessionDir, caller) {
+    let reason = null;
+    if (!sessionDir || typeof sessionDir !== 'string') {
+        reason = 'empty';
+    }
+    else if (!fs.existsSync(sessionDir)) {
+        reason = 'enoent';
+    }
+    else if (!fs.existsSync(path.join(sessionDir, 'state.json'))) {
+        reason = 'no_state_json';
+    }
+    else {
+        try {
+            const sm = new StateManager();
+            const state = sm.read(path.join(sessionDir, 'state.json'));
+            if (state.session_dir && path.resolve(state.session_dir) !== path.resolve(sessionDir)) {
+                reason = 'session_dir_mismatch';
+            }
+        }
+        catch {
+            reason = 'session_dir_mismatch';
+        }
+    }
+    if (reason === null)
+        return true;
+    const dedupeKey = `${caller}:${sessionDir}:${reason}`;
+    if (_sessionDirInvalidEmitted.has(dedupeKey))
+        return false;
+    _sessionDirInvalidEmitted.set(dedupeKey, true);
+    appendWatcherRestartLog(sessionDir, `validateSessionDirOrSkip WARN: ${caller} skipped — sessionDir ${reason} (${sessionDir})`);
+    try {
+        const ts = new Date();
+        const activityDir = path.join(getCanonicalActivityDataRoot(), 'activity');
+        fs.mkdirSync(activityDir, { recursive: true });
+        const event = {
+            ts: ts.toISOString(),
+            event: 'monitor_respawn_session_dir_invalid',
+            source: 'pickle',
+            gate_payload: { caller, sessionDir, reason },
+        };
+        fs.appendFileSync(path.join(activityDir, `${formatLocalDateKey(ts)}.jsonl`), `${JSON.stringify(event)}\n`, { mode: 0o600 });
+    }
+    catch (err) {
+        process.stderr.write(`[pickle-rick] Failed to log monitor_respawn_session_dir_invalid: ${safeErrorMessage(err)}\n`);
+    }
+    return false;
+}
+/** Test helper: resets the session-dir-invalid dedup map. */
+export function _resetSessionDirInvalidEmittedForTests() {
+    _sessionDirInvalidEmitted.clear();
 }
 /**
  * Idempotently creates the 4-pane monitor window in the current tmux session.
