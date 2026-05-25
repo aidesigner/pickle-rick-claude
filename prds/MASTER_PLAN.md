@@ -45,7 +45,6 @@ _(R-CCRC #73 closed via B-CCRC v1.79.3 — `06d6a905` R-CCRC-1 ref-code fallback
 
 | # | Code | Summary | PRD / Status |
 |---|---|---|---|
-| 27 | R-MMRT | Monitor respawn uses temp-dir/empty sessionDir then 4-pane window collapse — observability gap (not pipeline-blocking) | `p2-mux-runner-monitor-respawn-uses-temp-dir-not-session-root.md`. **B-MONITOR. (Demoted P1→P2 2026-05-23: cosmetic + observability impact only; workaround = manual respawn.)** |
 | 30 | R-RSU | refinement collapses `composes:` bundle PRDs to N section-umbrellas | R-RSU-1..5; B2-RSU residuals. **B-QSRC / B-WEDGE.** |
 | 33 | R-WMW | manager wedges on oversized ticket; spawns worker, no artifact progress | `p2-worker-manager-wedge-oversized-ticket-no-artifact-progress.md`. **B-WEDGE.** |
 | 34 | R-WTB | `Defaults.WORKER_TIMEOUT_SECONDS: 1200` too short for R-PTG worker lifecycle | R-WTB-1..4; B2-RSU residual. **B-QSRC. (Promoted P3→P2 2026-05-23: blocks R-PTG worker lifecycle; tier_cap_override workaround needed each session.)** |
@@ -91,6 +90,9 @@ _(R-CCRC #73 closed via B-CCRC v1.79.3 — `06d6a905` R-CCRC-1 ref-code fallback
 - #69 R-FRA 5th recurrence — `B-PROJECT-AUDIT-2026-05-23` hit READINESS HALT on 34 forward-created findings: **B-FRA CLOSED**. PRD: `prds/p1-bug-fix-bundle-b-fra-forward-ref-annotations-2026-05-23.md`. v1.79.0.
 - #11 R-APWS — scope-allowlist enforcement regression coverage + observability test landed; preflight, event, and status-drift rendering now end-to-end-tested. Worker-simulation tests for anatomy-park (`69aaa442`) + szechuan-sauce (`45223a06`), renderScopeDrift output-contract test (`e80eaed5`), worker-prompt ordering trap-door (`2aa079c2`). **B-APWS CLOSED.** Bundle ships under v1.79.1.
 - #72 R-WSRC-GR — `config-protection.ts` blocks 9 prohibited git verbs from worker subprocesses; trap-door pinned in `extension/CLAUDE.md`; Git Boundary Rules prompts augmented with runtime-enforcement note. **B-WSRC-GR CLOSED.** closer: `b60d4cfb` (v1.79.2).
+
+### Closed since last update (2026-05-25)
+- #27 R-MMRT — monitor respawn now validates `sessionDir` at every entry (`restartDeadWatcherPanes`, `respawnMonitorWindowForMode`, `startRespawnWatchdog`) before any tmux send-keys / respawn-pane; invalid sessionDir produces zero spawns + one deduped `monitor_respawn_session_dir_invalid` event per (caller, sessionDir, reason) tuple. **B-MONITOR CLOSED.** R-MMRT-1+R-MMRT-3 `65bf6bd3`, R-MMRT-2 `d1e5f886`, R-MMRT-5 integration cascade test `d0ff0a85`, R-MMRT-4 trap-door pin `6e187f67`. v1.80.1.
 
 Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31, #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
 

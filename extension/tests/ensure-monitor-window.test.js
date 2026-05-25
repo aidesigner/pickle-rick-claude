@@ -845,14 +845,13 @@ test('restartDeadWatcherPanes: missing pane recreates collapsed layout via split
 
 test('restartDeadWatcherPanes: trap-door entry documents T3 regressions and size cap', () => {
     const claudeMd = fs.readFileSync(path.resolve(__dirname, '../CLAUDE.md'), 'utf-8');
-    // Filter to the CANONICAL pane-recovery invariant. R-MWR-3 added a
-    // sibling entry for the same file that also mentions restartDeadWatcherPanes
-    // (the logTag invariant); we exclude it via the parenthetical scope tag.
+    // Filter to the CANONICAL pane-recovery invariant by its exact scope tag.
+    // Sibling entries reuse the same file/function (R-MWR-* logTag, R-MMRT-*
+    // sessionDir validation, etc.) but each uses a distinct parenthetical tag,
+    // so anchoring on `(restartDeadWatcherPanes)` keeps this match precise.
     const entries = claudeMd
         .split('\n')
-        .filter(line => line.includes('src/services/pickle-utils.ts')
-            && line.includes('restartDeadWatcherPanes')
-            && !line.includes('(R-MWR-'));
+        .filter(line => line.includes('`src/services/pickle-utils.ts` (restartDeadWatcherPanes)'));
 
     assert.equal(entries.length, 1, `expected 1 canonical pane-recovery entry, got: ${JSON.stringify(entries)}`);
     const [entry] = entries;
