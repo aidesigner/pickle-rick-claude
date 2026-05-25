@@ -227,6 +227,11 @@ export function isMachineCheckable(ac: string): boolean {
   return MACHINE_HINT_RE.test(ac) || /\|.+\|/.test(ac) || /`[^`]+`/.test(ac);
 }
 
+// R-RTPS-1: runtime deploy paths (tilde-prefix) have no source-tree counterpart.
+function isRuntimeTildePath(value: string): boolean {
+  return value.startsWith('~/') || value.startsWith('$HOME/') || value.startsWith('${HOME}/');
+}
+
 function isDocExtensionBasename(ref: string): boolean {
   if (ref.includes('/')) return false;
   const lastDot = ref.lastIndexOf('.');
@@ -333,6 +338,7 @@ export function extractContractReferences(rawContent: string): string[] {
   for (const match of content.matchAll(PATH_RE)) refs.add(match[0]);
   for (const match of content.matchAll(/`([^`]+)`/g)) {
     const value = match[1].trim();
+    if (isRuntimeTildePath(value)) continue;
     if (PATH_RE.test(value)) refs.add(value);
     PATH_RE.lastIndex = 0;
     if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+(?:\(\))?$/.test(value)) {
