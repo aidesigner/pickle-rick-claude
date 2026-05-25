@@ -520,12 +520,19 @@ function gitVerbEventName(verb: string, suffix: string): ActivityEventType {
 
 /**
  * R-WSRC-GR: Blocks the 9 prohibited git verbs from worker subprocess contexts.
- * Manager / operator invocations (PICKLE_ROLE !== 'worker') pass through.
- * Returns true if we handled (blocked or approved via override); caller should return.
+ * Manager / operator invocations (PICKLE_ROLE not set OR matches an allowed role) pass through.
+ * R-WSRC-GR-LEAK fix (#76): widen to ALL worker-variant roles, not just 'worker' — the
+ * refinement-team workers set PICKLE_ROLE='refinement-worker' and were leaking git resets
+ * (B-PNTR 2026-05-25: 2x dropped commits on R-PNTR-1 ticket 373c9deb despite the hook
+ * being live).
  */
 function isGitVerbBlockedByRWSRCGR(input: PreToolUseInput, state: State): boolean {
   if (input.tool_name !== 'Bash' || !input.tool_input?.command) return false;
-  if (process.env.PICKLE_ROLE !== 'worker') return false;
+  const role = process.env.PICKLE_ROLE;
+  if (!role) return false;
+  // Worker-class roles that MUST honor Git Boundary Rules.
+  const WORKER_ROLES = new Set(['worker', 'refinement-worker']);
+  if (!WORKER_ROLES.has(role)) return false;
   const detected = detectProhibitedGitVerb(input.tool_input.command);
   if (!detected) return false;
 

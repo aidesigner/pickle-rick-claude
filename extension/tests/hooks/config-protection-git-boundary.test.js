@@ -553,3 +553,43 @@ test('R-WSRC-GR: Write tool with git-like path is not affected', () => {
   });
   assert.equal(result.decision, 'approve');
 });
+
+// ---------------------------------------------------------------------------
+// R-WSRC-GR-LEAK (#76) regression — refinement-worker MUST also be blocked
+// ---------------------------------------------------------------------------
+
+test('R-WSRC-GR-LEAK: refinement-worker blocks git reset --hard HEAD~1', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git reset --hard HEAD~1' },
+    extraEnv: { PICKLE_ROLE: 'refinement-worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /R-WSRC-GR/);
+  assert.match(result.reason, /reset/);
+});
+
+test('R-WSRC-GR-LEAK: refinement-worker blocks git push', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git push origin main' },
+    extraEnv: { PICKLE_ROLE: 'refinement-worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /R-WSRC-GR/);
+});
+
+test('R-WSRC-GR-LEAK: unknown role passes through (no over-blocking)', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git reset --hard HEAD~1' },
+    extraEnv: { PICKLE_ROLE: 'auditor-readonly' },
+  });
+  assert.equal(result.decision, 'approve');
+});
