@@ -288,7 +288,17 @@ describe('measureLlmMetricWithBackoff — probe classification behavior', () => 
       assert.deepEqual(seenOptions[0]?.stdio, ['ignore', 'pipe', 'pipe']);
       assert.deepEqual(seenOptions[1]?.stdio, ['ignore', 'pipe', 'pipe']);
       assert.equal(events.length, 1);
-      assert.deepEqual(events[0], {
+      // R-SJET-3: nested_claude_detected and pre_spawn_env_key_names are
+      // environment-dependent (depend on CLAUDE_CODE/CLAUDECODE and inherited
+      // PATH-class keys). Extract them from the deepEqual and assert shape only.
+      assert.equal(typeof events[0].gate_payload.nested_claude_detected, 'boolean');
+      assert.ok(Array.isArray(events[0].gate_payload.pre_spawn_env_key_names));
+      const {
+        nested_claude_detected: _ncd,
+        pre_spawn_env_key_names: _psekn,
+        ...gateRest
+      } = events[0].gate_payload;
+      assert.deepEqual({ ...events[0], gate_payload: gateRest }, {
         ts: events[0].ts,
         event: 'judge_measurement_attempted',
         source: 'pickle',

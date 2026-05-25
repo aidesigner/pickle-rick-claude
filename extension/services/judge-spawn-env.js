@@ -51,6 +51,13 @@ export function buildJudgeEnv(backend, isNested, baseEnv = process.env) {
             // and might point at the outer session's key material.
             if (k === 'CLAUDE_API_KEY' && baseEnv['ANTHROPIC_API_KEY'])
                 continue;
+            // R-SJET-3 superset: also strip the DANGEROUS_PREFIXES/EXACT that
+            // buildJudgeSpawnEnv strips, so the probe path inherits outer-session
+            // env hygiene (PICKLE_*, SESSION_ROOT, TICKET_DIR, etc.).
+            if (DANGEROUS_EXACT.has(k))
+                continue;
+            if (DANGEROUS_PREFIXES.some(p => k.startsWith(p)))
+                continue;
             out[k] = v;
         }
         // Replace XDG_RUNTIME_DIR to prevent the nested claude from sharing the outer
