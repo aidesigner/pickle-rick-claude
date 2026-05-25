@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage, restartDeadWatcherPanes, inferMonitorMode, getExtensionRoot } from '../services/pickle-utils.js';
+import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage, restartDeadWatcherPanes, inferMonitorMode, getExtensionRoot, validateSessionDirOrSkip } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { readMicroverseState, readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -796,6 +796,11 @@ export function startRespawnWatchdog(opts) {
     // watchdog truly disables it — no timer, no logs, no tmux calls.
     if (isRespawnWatchdogDisabled(opts.env ?? process.env))
         return null;
+    // R-MMRT-2: defense in depth — validate sessionDir before arming the interval.
+    if (!validateSessionDirOrSkip(opts.sessionDir, 'startRespawnWatchdog')) {
+        process.stderr.write(`${JSON.stringify({ event: 'monitor_respawn_session_dir_invalid', caller: 'startRespawnWatchdog' })}\n`);
+        return null;
+    }
     const intervalMs = opts.intervalMs ?? RESPAWN_WATCHDOG_INTERVAL_MS;
     const log = opts.logger || (() => { });
     const tick = () => {

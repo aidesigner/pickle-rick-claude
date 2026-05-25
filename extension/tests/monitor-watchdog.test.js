@@ -11,6 +11,7 @@ import {
     RESPAWN_WATCHDOG_INTERVAL_MS,
     MONITOR_STDOUT_WATCHDOG_MS,
 } from '../bin/monitor.js';
+import { _resetSessionDirInvalidEmittedForTests } from '../services/pickle-utils.js';
 
 /**
  * Inject a fake `spawnSync` so the watchdog tick can exercise
@@ -362,5 +363,96 @@ test('startRespawnWatchdog: respawns a dead pane exactly once per tick (R-MWR-7)
         );
     } finally {
         f.cleanup();
+    }
+});
+
+// --- R-MMRT-2: sessionDir validation at watchdog entry ---
+
+test('startRespawnWatchdog: empty sessionDir returns null, no timer armed, emits stderr event', async () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const f = makeWatchdogFakes();
+    const stderrLines = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...args) => { stderrLines.push(String(chunk)); return origWrite(chunk, ...args); };
+    let handle;
+    try {
+        handle = startRespawnWatchdog({
+            sessionDir: '',
+            extensionRoot: f.extRoot,
+            intervalMs: 30,
+            spawnSyncFn: f.spawnSyncFn,
+            env: {},
+        });
+        assert.equal(handle, null, 'empty sessionDir must return null');
+        await new Promise(resolve => setTimeout(resolve, 80));
+        assert.equal(f.spawnCalls.length, 0, 'no spawnSync calls when watchdog refused to arm');
+        assert.ok(
+            stderrLines.some(l => l.includes('monitor_respawn_session_dir_invalid') && l.includes('startRespawnWatchdog')),
+            `expected stderr event line; got: ${JSON.stringify(stderrLines)}`,
+        );
+    } finally {
+        process.stderr.write = origWrite;
+        if (handle) clearInterval(handle);
+        f.cleanup();
+    }
+});
+
+test('startRespawnWatchdog: nonexistent sessionDir returns null, no timer armed, emits stderr event', async () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const f = makeWatchdogFakes();
+    const stderrLines = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...args) => { stderrLines.push(String(chunk)); return origWrite(chunk, ...args); };
+    let handle;
+    try {
+        handle = startRespawnWatchdog({
+            sessionDir: '/nonexistent-pickle-mmrt2-test-dir',
+            extensionRoot: f.extRoot,
+            intervalMs: 30,
+            spawnSyncFn: f.spawnSyncFn,
+            env: {},
+        });
+        assert.equal(handle, null, 'nonexistent sessionDir must return null');
+        await new Promise(resolve => setTimeout(resolve, 80));
+        assert.equal(f.spawnCalls.length, 0, 'no spawnSync calls when watchdog refused to arm');
+        assert.ok(
+            stderrLines.some(l => l.includes('monitor_respawn_session_dir_invalid') && l.includes('startRespawnWatchdog')),
+            `expected stderr event line; got: ${JSON.stringify(stderrLines)}`,
+        );
+    } finally {
+        process.stderr.write = origWrite;
+        if (handle) clearInterval(handle);
+        f.cleanup();
+    }
+});
+
+test('startRespawnWatchdog: temp dir without state.json returns null, no timer armed, emits stderr event', async () => {
+    _resetSessionDirInvalidEmittedForTests();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mmrt2-'));
+    const f = makeWatchdogFakes();
+    const stderrLines = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...args) => { stderrLines.push(String(chunk)); return origWrite(chunk, ...args); };
+    let handle;
+    try {
+        handle = startRespawnWatchdog({
+            sessionDir: tmpDir,
+            extensionRoot: f.extRoot,
+            intervalMs: 30,
+            spawnSyncFn: f.spawnSyncFn,
+            env: {},
+        });
+        assert.equal(handle, null, 'dir without state.json must return null');
+        await new Promise(resolve => setTimeout(resolve, 80));
+        assert.equal(f.spawnCalls.length, 0, 'no spawnSync calls when watchdog refused to arm');
+        assert.ok(
+            stderrLines.some(l => l.includes('monitor_respawn_session_dir_invalid') && l.includes('startRespawnWatchdog')),
+            `expected stderr event line; got: ${JSON.stringify(stderrLines)}`,
+        );
+    } finally {
+        process.stderr.write = origWrite;
+        if (handle) clearInterval(handle);
+        f.cleanup();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
