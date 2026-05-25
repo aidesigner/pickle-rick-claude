@@ -1753,7 +1753,7 @@ function buildSignalReceivedEvent(runtime, signal) {
         is_tty: Boolean(process.stdin.isTTY || process.stdout.isTTY),
         pgid: getProcessGroupId(process.pid),
         active_child_pid: activeChild?.pid ?? null,
-        active_child_cmd: activeChild?.spawnargs?.join(' ') ?? null,
+        active_child_cmd: activeChild?.spawnargs?.[0] ?? null,
         current_phase: typeof state.step === 'string' ? state.step : null,
         received_at_iso: new Date().toISOString(),
         handler_stack: getHandlerStackFrames(),
