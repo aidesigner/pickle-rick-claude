@@ -175,6 +175,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'child_mux_runner_wedge_detected',
         'monitor_respawn_started',
         'monitor_respawn_failed',
+        'monitor_respawn_session_dir_invalid',
         'monitor_mode_swapped',
         'monitor_stderr_rotated',
         'worker_spawn_backend_mismatch',
