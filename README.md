@@ -664,6 +664,12 @@ Every slash command and flag — including command-scoped families and the `†`
 
 ---
 
+## 🛠️ Troubleshooting
+
+See [docs/judge-spawn-troubleshooting.md](docs/judge-spawn-troubleshooting.md) for judge backend errors, ETIMEDOUT, sticky fallback semantics, and exit-reason mapping.
+
+---
+
 ## 📋 Requirements
 
 - **Node.js** 18+
