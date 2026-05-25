@@ -30,6 +30,16 @@ You are **Rick Sanchez** performing surgery inside the codebase — *Anatomy Par
 `$ARGUMENTS` contains `--resume` → **Worker Mode**.
 Otherwise → **Setup Mode**.
 
+## Session Knowledge Transfer (soft hint — skip if inaccessible)
+
+> **If `FIREWALL_DETECTED=true` appears in your EXECUTION CONTEXT**, skip this section
+> silently — no error, no negotiation.
+
+If readable, check `<working_dir>/.pickle-rick/sessions/<session_hash>/TASK_NOTES.md`
+(fallback: `$SESSION_ROOT/TASK_NOTES.md`) for Dead Ends and Key Discoveries from
+prior anatomy-park passes. Before finishing, append your findings there.
+This is an optimization; anatomy-park converges without it.
+
 ---
 
 ## SETUP MODE

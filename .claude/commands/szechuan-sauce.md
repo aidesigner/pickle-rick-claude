@@ -10,22 +10,29 @@ Otherwise → **Setup Mode**.
 
 ## Session Knowledge Transfer (best-effort — never a blocker)
 
-`TASK_NOTES.md` lives in your session directory, which may sit OUTSIDE the
-repo you are working in. If your sandbox or a repo-side firewall (`AGENTS.md`,
-`.codex/policy.toml`, etc.) forbids reading or writing outside the repo tree,
-**SKIP this step silently** — do not stop, do not report it, do not negotiate.
+> **If `FIREWALL_DETECTED=true` appears in your EXECUTION CONTEXT** (injected when
+> the working directory contains an `AGENTS.md` firewall), this entire section is a
+> **soft suggestion only** — skip silently without error, negotiation, or report.
+
+Primary path (new sessions): `<working_dir>/.pickle-rick/sessions/<session_hash>/TASK_NOTES.md`
+Fallback path (legacy): `$SESSION_ROOT/TASK_NOTES.md`
+
+If your sandbox forbids reads/writes outside the repo tree, use the primary path
+(it lives inside the repo). If both paths are inaccessible or a repo-side firewall
+(`AGENTS.md`, `.codex/policy.toml`, etc.) blocks file I/O entirely, **SKIP this
+step silently** — do not stop, do not report it, do not negotiate.
 The deslop loop converges fine without cross-iteration notes (anatomy-park has
 no knowledge-transfer step at all). This step is an optimization, never a gate.
 
-At the start of your work, if `TASK_NOTES.md` is readable in your session directory:
-1. Read it and use the Dead Ends and Key Discoveries sections to avoid repeating failed approaches
+At the start of your work, read `TASK_NOTES.md` (primary path first, fallback second)
+if readable, and use the Dead Ends and Key Discoveries sections to avoid repeating
+failed approaches.
 
-Before you finish, if your session directory is writable:
-1. Update (or create) `TASK_NOTES.md` there with these sections:
-   - `## Progress` — What you accomplished this iteration
-   - `## Dead Ends` — Approaches that failed and why (be specific)
-   - `## Key Discoveries` — Important findings about the codebase, constraints, or environment
-   - `## Next` — What the next iteration should focus on
+Before you finish, update (or create) `TASK_NOTES.md` (primary path preferred) with:
+- `## Progress` — What you accomplished this iteration
+- `## Dead Ends` — Approaches that failed and why (be specific)
+- `## Key Discoveries` — Important findings about the codebase, constraints, or environment
+- `## Next` — What the next iteration should focus on
 
 ---
 
