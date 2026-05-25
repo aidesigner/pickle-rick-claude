@@ -3046,29 +3046,63 @@ export function markMicroverseFatalError(sessionDir) {
     sm.forceWrite(mvPath, mv);
     return 'overwritten';
 }
-if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js') {
-    const sessionDir = process.argv[2];
-    const statePath = sessionDir ? path.join(sessionDir, 'state.json') : '';
-    // Preflight: only reject when sessionDir is missing OR no state.json exists on disk
-    // (including no recoverable .tmp.* snapshot). A corrupt state.json with no recoverable
-    // tmp must still enter main() so the fatal-cleanup path can mark microverse.json
-    // stopped/error before exiting.
-    const hasAnyStateOnDisk = sessionDir
-        ? (fs.existsSync(statePath) || readRecoverableJsonObject(statePath) !== null)
-        : false;
-    if (!sessionDir || !hasAnyStateOnDisk) {
-        console.error('Usage: node microverse-runner.js <session-dir>');
-        process.exit(1);
+// PICKLE_JUDGE_PROBE_ALLOWED=1 TRAP DOOR: --judge-probe is a development-only flag.
+// It MUST NOT run without the env guard — prevents accidental production invocation
+// in workers that inherit the process env. The env check fires immediately on flag
+// detection so no probe logic can execute before the guard is verified.
+// ENFORCE: bash extension/scripts/audit-trap-door-enforcement.sh (T-HARDEN-PROBE check)
+async function runJudgeProbeMode(cwd, backend) {
+    const startMs = Date.now();
+    let probeResult;
+    try {
+        probeResult = await probeJudgeBackendAvailability(backend, cwd);
     }
-    main(sessionDir).catch((err) => {
-        const msg = safeErrorMessage(err);
-        console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
-        recordExitReason(statePath, 'fatal');
-        deactivateRunnerState(statePath);
-        try {
-            markMicroverseFatalError(sessionDir);
+    catch (err) {
+        probeResult = { kind: 'failed', message: safeErrorMessage(err) };
+    }
+    const elapsedMs = Date.now() - startMs;
+    const { kind } = probeResult;
+    const exitReason = kind === 'ok' ? 'healthy' : probeResult.message;
+    process.stdout.write(`PROBE_KIND=${kind}\nPROBE_ELAPSED_MS=${elapsedMs}\nPROBE_EXIT_REASON=${exitReason}\nPROBE_BACKEND=${backend}\n`);
+    process.exit(kind === 'ok' ? 0 : kind === 'missing' ? 2 : 1);
+}
+if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js') {
+    if (process.argv[2] === '--judge-probe') {
+        if (process.env['PICKLE_JUDGE_PROBE_ALLOWED'] !== '1') {
+            process.stderr.write('[microverse] --judge-probe requires PICKLE_JUDGE_PROBE_ALLOWED=1 (development-only flag)\n');
+            process.exit(1);
         }
-        catch { /* best effort */ }
-        process.exit(1);
-    });
+        const probeCwd = process.argv[3] || process.cwd();
+        const probeBackend = process.argv[4] === 'codex' ? 'codex' : 'claude';
+        runJudgeProbeMode(probeCwd, probeBackend).catch((err) => {
+            process.stderr.write(`[microverse] --judge-probe fatal: ${safeErrorMessage(err)}\n`);
+            process.exit(1);
+        });
+    }
+    else {
+        const sessionDir = process.argv[2];
+        const statePath = sessionDir ? path.join(sessionDir, 'state.json') : '';
+        // Preflight: only reject when sessionDir is missing OR no state.json exists on disk
+        // (including no recoverable .tmp.* snapshot). A corrupt state.json with no recoverable
+        // tmp must still enter main() so the fatal-cleanup path can mark microverse.json
+        // stopped/error before exiting.
+        const hasAnyStateOnDisk = sessionDir
+            ? (fs.existsSync(statePath) || readRecoverableJsonObject(statePath) !== null)
+            : false;
+        if (!sessionDir || !hasAnyStateOnDisk) {
+            console.error('Usage: node microverse-runner.js <session-dir>');
+            process.exit(1);
+        }
+        main(sessionDir).catch((err) => {
+            const msg = safeErrorMessage(err);
+            console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
+            recordExitReason(statePath, 'fatal');
+            deactivateRunnerState(statePath);
+            try {
+                markMicroverseFatalError(sessionDir);
+            }
+            catch { /* best effort */ }
+            process.exit(1);
+        });
+    }
 }

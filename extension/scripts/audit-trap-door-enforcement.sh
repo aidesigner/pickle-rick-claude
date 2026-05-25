@@ -236,4 +236,35 @@ if rg -n -e "npm (ci|install)" \
   fail 'worker boot paths must reuse extension/node_modules; found npm ci/install in spawn-morty.ts or mux-runner.ts'
 fi
 
+# T-HARDEN-PROBE: verify --judge-probe requires PICKLE_JUDGE_PROBE_ALLOWED=1 guard
+if ! node - "$EXTENSION_ROOT/src/bin/microverse-runner.ts" <<'NODE'
+const fs = require('fs');
+const [,, sourcePath] = process.argv;
+
+const text = fs.readFileSync(sourcePath, 'utf8');
+
+// Verify --judge-probe flag check exists in the CLI entry block
+const probeIdx = text.indexOf("'--judge-probe'");
+if (probeIdx < 0) {
+  process.stderr.write('T-HARDEN-PROBE: --judge-probe flag not found in microverse-runner.ts\n');
+  process.exit(1);
+}
+
+// Verify PICKLE_JUDGE_PROBE_ALLOWED guard appears AFTER the --judge-probe check
+// (inside the same if-block) within 300 chars
+const afterProbe = text.slice(probeIdx);
+const guardIdx = afterProbe.indexOf('PICKLE_JUDGE_PROBE_ALLOWED');
+if (guardIdx < 0 || guardIdx > 300) {
+  process.stderr.write(
+    'T-HARDEN-PROBE: PICKLE_JUDGE_PROBE_ALLOWED guard must appear within 300 chars after --judge-probe check\n'
+  );
+  process.exit(1);
+}
+
+console.log('T-HARDEN-PROBE: --judge-probe env guard verified in microverse-runner.ts');
+NODE
+then
+  audit_exit_code=1
+fi
+
 exit "$audit_exit_code"
