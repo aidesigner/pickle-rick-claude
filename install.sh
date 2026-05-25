@@ -515,7 +515,9 @@ rsync -a "$SCRIPT_DIR/.claude/commands/" "$COMMANDS_DIR/"
 # Clean up legacy commands AFTER rsync (so they're removed even if source still had them)
 rm -f "$COMMANDS_DIR/microverse.md"
 rm -f "$COMMANDS_DIR/pickle-microverse-tmux.md"
-rm -f "$COMMANDS_DIR/pickle.md"
+# R-PNTR-1 reverted 2026-05-25: pickle.md is load-bearing for mux-runner
+# prompt composition. Removing it causes [FATAL] pickle.md not found on
+# launch. See finding #77 R-PNTR-DEPS in MASTER_PLAN.
 
 # --- STOP HOOK (idempotent jq merge, literal vars expanded by hook-invocation shell) ---
 if jq -e '.hooks.Stop // [] | map(.hooks // [] | map(.command)) | flatten | (any(. == "node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook") or any(. == "node ${PICKLE_INSTALL_ROOT:-$HOME/.claude/pickle-rick}/extension/hooks/dispatch.js stop-hook"))' \
