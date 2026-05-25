@@ -105,6 +105,7 @@ function splitByScope(
 export interface FinalizeGateOpts {
   argv: string[];
   env?: NodeJS.ProcessEnv;
+  triggerExitReason?: string;
   runGateFn?: (opts: RunGateOpts) => Promise<GateResult>;
   spawnGateRemediatorMainFn?: typeof spawnGateRemediatorMain;
   spawnRemediatorFn?: (cmd: string, args: string[], opts: { cwd: string; timeout: number; env: NodeJS.ProcessEnv }) => void;
@@ -365,6 +366,10 @@ export async function finalizeGateMain(opts: FinalizeGateOpts): Promise<number> 
     rt.doLogActivity({ event: 'gate_skipped', source: 'pickle', gate_payload: { reason: 'kill_switch' } });
     rt.out('[finalize-gate] PICKLE_GATE_DISABLED=1 — skipping post-runner gate');
     return 0;
+  }
+
+  if (opts.triggerExitReason) {
+    rt.out(`[finalize-gate] triggered by exit_reason=${opts.triggerExitReason}`);
   }
 
   const ctx = loadFinalizeContext(opts, rt, args.sessionRoot, args.skill);

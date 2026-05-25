@@ -2016,7 +2016,11 @@ export function logPhaseHaltReason(runtime, rawPhase, exitCode, log) {
         const runnerState = sm.read(runtime.statePath);
         const decision = classifyMicroverseHaltDecision(runnerState.exit_reason);
         if (decision.action === 'run-finalize-gate') {
-            log(`Phase ${rawPhase}: microverse exited with judge_timeout — running finalize-gate anyway (transient measurement timeout, recoverable per R-PRJT-2)`);
+            log(`Phase ${rawPhase}: microverse exited with ${decision.recognizedExitReason} — running finalize-gate anyway (transient measurement timeout, recoverable per R-PRJT-2)`);
+            return decision.action;
+        }
+        if (decision.action === 'run-finalize-gate-incomplete') {
+            log(`Phase ${rawPhase}: microverse exited with ${decision.recognizedExitReason} — running finalize-gate (phase will be marked incomplete on pass)`);
             return decision.action;
         }
         if (decision.recognizedExitReason !== null) {
@@ -2061,6 +2065,44 @@ async function runJudgeTimeoutFinalizeGate(runtime, counters, rawPhase, log) {
         return { action: 'continue' };
     }
     log(`Phase ${rawPhase} finalize-gate failed after judge_timeout recovery (exit ${gateResult.exitCode})`);
+    return { action: 'break' };
+}
+/**
+ * all_judge_backends_exhausted recovery: spawn finalize-gate; on pass mark the
+ * phase incomplete so auto-resume can retry; on fail break the pipeline.
+ */
+async function runAllBackendsExhaustedFinalizeGate(runtime, counters, rawPhase, log) {
+    try {
+        logActivity({
+            event: 'pipeline_all_backends_exhausted_recovery_attempted',
+            source: 'pickle',
+            phase: rawPhase,
+            fall_through_to_finalize_gate: true,
+        });
+    }
+    catch { /* telemetry best-effort */ }
+    const skill = rawPhase === 'anatomy-park' ? 'anatomy-park' : 'szechuan';
+    const gateResult = await runSpawnRunner('node', [
+        path.join(runtime.extensionRoot, 'extension', 'bin', 'finalize-gate.js'),
+        runtime.sessionDir,
+        skill,
+    ], runtime.phaseEnv);
+    if (gateResult.exitCode === 0) {
+        reportPhaseIncomplete(runtime, rawPhase);
+        log(`Phase ${rawPhase} finalize-gate passed after all_judge_backends_exhausted — marking phase incomplete for auto-resume`);
+        return { action: 'break', phaseIncomplete: true };
+    }
+    log(`Phase ${rawPhase} finalize-gate failed after all_judge_backends_exhausted (exit ${gateResult.exitCode})`);
+    return { action: 'break' };
+}
+async function dispatchHaltAction(runtime, counters, rawPhase, exitCode, log) {
+    const haltAction = logPhaseHaltReason(runtime, rawPhase, exitCode, log);
+    if (haltAction === 'run-finalize-gate') {
+        return runJudgeTimeoutFinalizeGate(runtime, counters, rawPhase, log);
+    }
+    if (haltAction === 'run-finalize-gate-incomplete') {
+        return runAllBackendsExhaustedFinalizeGate(runtime, counters, rawPhase, log);
+    }
     return { action: 'break' };
 }
 async function runPhaseIteration(runtime, counters, cancelMarker, rawPhase, index, log) {
@@ -2120,11 +2162,7 @@ async function runPhaseIteration(runtime, counters, cancelMarker, rawPhase, inde
         logPhaseContinueReason(runtime, rawPhase, exitCode);
     }
     if (shouldHalt) {
-        const haltAction = logPhaseHaltReason(runtime, rawPhase, exitCode, log);
-        if (haltAction === 'run-finalize-gate') {
-            return runJudgeTimeoutFinalizeGate(runtime, counters, rawPhase, log);
-        }
-        return { action: 'break' };
+        return dispatchHaltAction(runtime, counters, rawPhase, exitCode, log);
     }
     const acGate = runAcPhaseGate({
         sessionDir: runtime.sessionDir,
@@ -2142,8 +2180,11 @@ async function runPhaseIteration(runtime, counters, cancelMarker, rawPhase, inde
     return finalizePhaseSuccess(runtime, counters, cancelMarker, rawPhase, exitCode, log);
 }
 export function classifyMicroverseHaltDecision(exitReason) {
-    if (exitReason === 'judge_timeout' || exitReason === 'all_judge_backends_exhausted') {
+    if (exitReason === 'judge_timeout') {
         return { action: 'run-finalize-gate', recognizedExitReason: exitReason };
+    }
+    if (exitReason === 'all_judge_backends_exhausted') {
+        return { action: 'run-finalize-gate-incomplete', recognizedExitReason: exitReason };
     }
     if (typeof exitReason === 'string'
         && (isMicroverseFatalReason(exitReason)

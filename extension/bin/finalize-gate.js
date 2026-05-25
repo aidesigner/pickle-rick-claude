@@ -291,6 +291,9 @@ export async function finalizeGateMain(opts) {
         rt.out('[finalize-gate] PICKLE_GATE_DISABLED=1 — skipping post-runner gate');
         return 0;
     }
+    if (opts.triggerExitReason) {
+        rt.out(`[finalize-gate] triggered by exit_reason=${opts.triggerExitReason}`);
+    }
     const ctx = loadFinalizeContext(opts, rt, args.sessionRoot, args.skill);
     if (!ctx)
         return 1;

@@ -590,6 +590,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'worker_edit_outside_scope',
   'pkgjson_revert_forensic_captured',
   'pipeline_judge_timeout_recovery_attempted',
+  'pipeline_all_backends_exhausted_recovery_attempted',
   'bundle_preflight_failed',
   'judge_violation_ledger_advanced',
   'judge_legacy_shape_inferred',
