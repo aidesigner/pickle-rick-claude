@@ -235,7 +235,7 @@ function updateSessionMap(sessionsMap, cwd, sessionPath) {
                     });
                 }
                 catch { /* best-effort */ }
-                process.stderr.write(`setup.ts: session-map collision blocked — cwd=${cwd} held by pid=${existingPid}\n`);
+                process.stderr.write(`[pickle] session-map collision blocked — cwd=${cwd} held by pid=${existingPid}\n`);
                 process.exit(1);
             }
         }

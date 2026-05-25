@@ -134,6 +134,7 @@ const _sleepBuf = new Int32Array(new SharedArrayBuffer(4));
 function sleepSync(ms) {
     Atomics.wait(_sleepBuf, 0, 0, ms);
 }
+/** Returns true if process with given pid is currently alive. */
 export function isProcessAlive(pid) {
     try {
         process.kill(pid, 0);
@@ -212,6 +213,7 @@ const V3_STATE_SHAPE_MARKERS = [
 function presentV3StateShapeMarkers(state) {
     return V3_STATE_SHAPE_MARKERS.filter(field => Object.prototype.hasOwnProperty.call(state, field));
 }
+/** Parses a session-map entry and returns its pid, or null on invalid input. */
 export function readMappedPid(entry) {
     if (!isRecord(entry) || typeof entry.pid !== 'number')
         return null;
@@ -359,6 +361,37 @@ function migrateLegacyBaselineExitReason(state) {
     }
     return false;
 }
+function trimmedFlagString(flags, key) {
+    const v = flags?.[key];
+    return typeof v === 'string' ? v.trim() : '';
+}
+// One-way migration: promotes the first non-empty legacy per-gate skip flag
+// into skip_quality_gates_reason (readiness wins) and removes both legacy fields.
+function migrateLegacySkipQualityGatesFlags(state) {
+    const unified = trimmedFlagString(state.flags, 'skip_quality_gates_reason');
+    const flags = state.flags;
+    const hasReadiness = flags != null && 'skip_readiness_reason' in flags;
+    const hasTicketAudit = flags != null && 'skip_ticket_audit_reason' in flags;
+    if (unified.length > 0) {
+        if (!hasReadiness && !hasTicketAudit)
+            return false;
+        delete flags['skip_readiness_reason'];
+        delete flags['skip_ticket_audit_reason'];
+        return true;
+    }
+    const readinessTrimmed = trimmedFlagString(state.flags, 'skip_readiness_reason');
+    const ticketAuditTrimmed = trimmedFlagString(state.flags, 'skip_ticket_audit_reason');
+    if (readinessTrimmed.length === 0 && ticketAuditTrimmed.length === 0)
+        return false;
+    const promoted = readinessTrimmed.length > 0 ? readinessTrimmed : ticketAuditTrimmed;
+    if (!state.flags)
+        state.flags = {};
+    const mutableFlags = state.flags;
+    mutableFlags['skip_quality_gates_reason'] = promoted;
+    delete mutableFlags['skip_readiness_reason'];
+    delete mutableFlags['skip_ticket_audit_reason'];
+    return true;
+}
 function isStateSnapshotNewer(currentState, currentMtimeMs, candidateState, candidateMtimeMs) {
     const currentIteration = readFiniteIteration(currentState);
     const candidateIteration = readFiniteIteration(candidateState);
@@ -488,6 +521,7 @@ export class StateManager {
             migrateLegacyManagerRelaunchCount(state);
             migrateLegacySignalExitReason(state);
             migrateLegacyBaselineExitReason(state);
+            migrateLegacySkipQualityGatesFlags(state);
             try {
                 writeMigrationStateFile(statePath, state);
             }
@@ -502,6 +536,7 @@ export class StateManager {
             migrateLegacyManagerRelaunchCount(state);
             migrateLegacySignalExitReason(state);
             migrateLegacyBaselineExitReason(state);
+            migrateLegacySkipQualityGatesFlags(state);
             process.stderr.write(`[state-manager] migrating ${statePath} to schema_version ${this.opts.schemaVersion}\n`);
             try {
                 writeMigrationStateFile(statePath, state);
@@ -513,7 +548,8 @@ export class StateManager {
             normalizeUpToVersion(state, state.schema_version);
             const didMigrateRelaunch = migrateLegacyManagerRelaunchCount(state);
             const didMigrateSignal = migrateLegacySignalExitReason(state);
-            if (missingPipelineContinueOnPhaseFail || didMigrateRelaunch || didMigrateSignal) {
+            const didMigrateSkipFlags = migrateLegacySkipQualityGatesFlags(state);
+            if (missingPipelineContinueOnPhaseFail || didMigrateRelaunch || didMigrateSignal || didMigrateSkipFlags) {
                 try {
                     writeMigrationStateFile(statePath, state);
                 }

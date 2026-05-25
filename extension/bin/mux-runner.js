@@ -12,7 +12,7 @@ import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWith
 import { resolveCodexModel } from './spawn-morty.js';
 import { autoFillCompletionCommit } from './auto-fill-completion-commit.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
-import { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream } from '../services/classifier-utils.js';
+import { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream, CODEX_DELIMITER_RE } from '../services/classifier-utils.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
 import { emitCrossTicketRegressionLinearComment } from '../lib/linear-comment.js';
 import { evaluateManagerRelaunch, recordManagerRelaunch, } from '../services/manager-relaunch.js';
@@ -45,6 +45,7 @@ function siblingQualifiesAsOrphan(sibling, parentWorkingDir) {
         return { qualifies: false, parentHash };
     return { qualifies: true, parentHash };
 }
+/** Scans session directories for orphaned pickle-rick processes. */
 export function detectOrphanSessions(state, dataRoot, sessionDir) {
     const sessionsRoot = path.join(dataRoot, 'sessions');
     const parentWorkingDir = state.working_dir;
@@ -1285,13 +1286,7 @@ export function classifyCompletion(output) {
     }
     return 'continue';
 }
-// Block delimiter regex for codex-block format (mirrors CODEX_DELIMITER_RE in classifier-utils.ts).
-const CODEX_BLOCK_DELIMITER_RE = /^(user|codex|exec|tokens used|reasoning|tool_call)\s*$/;
-/**
- * R-CCPM-2: Scans a full iteration log for codex Bash tool-calls invoking setup.js.
- * Returns detected events; caller emits logActivity for each.
- * Returns empty array for non-codex backend (no-op for claude sessions).
- */
+/** Scans a full iteration log for codex Bash tool-calls invoking setup.js. */
 export function checkIterationLogForCodexSelfBootstrap(output, backend, currentTicket, iterationNum) {
     if (backend !== 'codex')
         return [];
@@ -1303,7 +1298,7 @@ export function checkIterationLogForCodexSelfBootstrap(output, backend, currentT
     let inToolCallBlock = false;
     for (const line of lines) {
         if (fmt === 'codex-block') {
-            if (CODEX_BLOCK_DELIMITER_RE.test(line)) {
+            if (CODEX_DELIMITER_RE.test(line)) {
                 inToolCallBlock = /^tool_call\s*$/.test(line);
                 continue;
             }

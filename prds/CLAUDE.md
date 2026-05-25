@@ -71,3 +71,30 @@ The enforcement points that validate these annotations at runtime are documented
 - **R-FRA-2** — `extension/scripts/audit-ticket-forward-refs.sh`: pre-flight script delegates to the same module.
 - **R-FRA-1** — `.claude/commands/pickle-refine-prd.md` Step 7c: refinement skill shows the same reminder.
 - **R-RTRC-7 / R-TAQ-2** — `audit-ticket-bundle.ts` `checkPathDrift`: bundle audit accepts the same forms.
+
+---
+
+## Skip-Flag Conventions
+
+When a PRD or ticket needs to bypass the readiness gate and/or the ticket-audit gate, use the **unified** flag only:
+
+```
+state.flags.skip_quality_gates_reason: "<non-empty reason string>"
+```
+
+A non-empty trimmed string in `skip_quality_gates_reason` bypasses **both** the readiness gate (R-QGSK-1) and the ticket-audit gate (R-TAQ-3) with a single flag. The reason is recorded as an audit-trail activity event.
+
+### Legacy flags (deprecated — do not use in new tickets)
+
+| Legacy field | Replaces |
+|---|---|
+| `state.flags.skip_readiness_reason` | readiness gate only |
+| `state.flags.skip_ticket_audit_reason` | ticket-audit gate only |
+
+Both legacy flags still work at runtime: `mux-runner.ts` reads them as a fallback (R-QGSK-2) with a deprecation warning, and `state-manager.ts` auto-migrates them into `skip_quality_gates_reason` on the first state read (R-QGSK-3). New PRDs and tickets **MUST** cite `skip_quality_gates_reason`; legacy fields will be removed in a future schema version.
+
+### Source of truth
+
+- Runtime call site: `mux-runner.ts:resolveQualityGateSkipReason` — reads unified flag first, falls back to per-callsite legacy field with `skip_flag_legacy_used` activity event.
+- Migration: `state-manager.ts:migrateLegacySkipQualityGatesFlags` — one-way promotion on every `StateManager.read()`.
+- Tests: `extension/tests/state-manager-skip-flags-migration.test.js` (AC-4 a..e).

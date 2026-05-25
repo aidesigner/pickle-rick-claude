@@ -1,7 +1,7 @@
 // Codex plain-text block delimiters. A line matching this regex marks the
 // start of a new named block; content between a 'codex' delimiter and the
 // next delimiter (or EOF) is assistant output. All other blocks are dropped.
-const CODEX_DELIMITER_RE = /^(user|codex|exec|tokens used|reasoning|tool_call)\s*$/;
+export const CODEX_DELIMITER_RE = /^(user|codex|exec|tokens used|reasoning|tool_call)\s*$/;
 function isAssistantJsonLine(line) {
     if (!line.trim())
         return false;
@@ -161,17 +161,7 @@ function observeCodexBlockLine(trimmed) {
     catch { /* not JSON — fall through to plain text */ }
     return isSetupJsInvocation(trimmed) ? classifyBashCommand(trimmed) : null;
 }
-/**
- * Observes a single stream line for a Bash tool-call invoking setup.js.
- *
- * stream-json mode: parses JSON line for assistant messages containing tool_use
- * codex-block mode: parses content line within a tool_call block (JSON or plain text)
- *
- * Returns null if the line is not a Bash tool-call at all.
- * Returns { isSetupInvocation: false, argv } for Bash calls that are not setup.js.
- * Returns { isSetupInvocation: true, argv } for Bash calls invoking setup.js.
- * Never throws.
- */
+/** Observes a single stream line for a Bash tool-call invoking setup.js; returns null if not a Bash tool-call. */
 export function observeCodexToolCallStream(streamLine, mode) {
     try {
         const trimmed = streamLine.trim();
@@ -187,14 +177,7 @@ export function observeCodexToolCallStream(streamLine, mode) {
         return null;
     }
 }
-/**
- * Detects the output format of a log without extracting content.
- *
- * Precedence mirrors extractAssistantContent:
- * 1. 'stream-json'  — ≥1 line is a {type:'assistant',...} JSON object
- * 2. 'codex-block'  — ≥1 line matches CODEX_DELIMITER_RE
- * 3. 'plain-text'   — neither; caller with codex context should treat as drift
- */
+/** Infers output format from raw codex output text (stream-json › codex-block › plain-text). */
 export function detectOutputFormat(output) {
     const lines = output.split('\n');
     if (lines.some(isAssistantJsonLine))
@@ -203,24 +186,7 @@ export function detectOutputFormat(output) {
         return 'codex-block';
     return 'plain-text';
 }
-/**
- * Extracts text content from assistant messages.
- *
- * Detection precedence:
- * 1. Stream-json: >=1 line is a {type:'assistant',...} JSON object. Non-assistant
- *    typed objects ({type:'system'}, {type:'user'}) and bare JSON values do NOT
- *    trigger this mode. Extracts only assistant text blocks and result blocks;
- *    all other JSON types are skipped.
- * 2. Codex plain-text: >=1 line matches CODEX_DELIMITER_RE. Extracts content
- *    between 'codex' delimiters only; user/exec/tokens/reasoning/tool_call
- *    blocks are dropped. Multi-turn: union of all surviving codex blocks.
- * 3. Plain-text fallback: genuine prose returns as-is. JSON-structured output
- *    that merely lacks an assistant line (e.g. only user/tool_result lines)
- *    yields empty assistant content rather than leaking the whole payload.
- *
- * Promise tokens embedded in reviewed source (tool_result, user prompts,
- * codex user blocks) are excluded in all modes.
- */
+/** Extracts assistant-role text from codex output, handling stream-json, codex-block, and plain-text modes. */
 export function extractAssistantContent(output) {
     switch (detectOutputFormat(output)) {
         case 'stream-json':
