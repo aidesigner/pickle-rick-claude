@@ -68,7 +68,6 @@ function makeSpawnCapture(sessionName = 'cascade-test', paneCommands = {}) {
     return { status: 0, stdout: '', stderr: '' };
   };
   return {
-    calls,
     spawnSyncFn,
     sendKeysCalls: () => calls.filter(c => c.command === 'tmux' && c.args[0] === 'send-keys'),
   };
