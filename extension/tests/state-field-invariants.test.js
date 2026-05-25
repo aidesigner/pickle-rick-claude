@@ -179,3 +179,104 @@ test('R-MDS-6: monitor_panes INVARIANT documented in extension/CLAUDE.md', () =>
     'extension/CLAUDE.md must document the monitor_panes field invariant',
   );
 });
+
+// ---------------------------------------------------------------------------
+// R-CCPM-WH-3: schema v4 field invariants
+// orphans_detected, parent_session_hash, invocation_source
+// ---------------------------------------------------------------------------
+
+function makeV3RawState(dir) {
+  return {
+    active: false,
+    working_dir: dir,
+    step: 'prd',
+    iteration: 1,
+    max_iterations: 10,
+    max_time_minutes: 0,
+    worker_timeout_seconds: 2400,
+    start_time_epoch: Date.now(),
+    completion_promise: null,
+    original_prompt: 'test',
+    current_ticket: null,
+    history: [],
+    started_at: new Date().toISOString(),
+    session_dir: dir,
+    schema_version: 3,
+  };
+}
+
+test('R-CCPM-WH-3: orphans_detected defaults to [] on v3→v4 migration', async () => {
+  const { StateManager } = await import('../services/state-manager.js');
+  const os = await import('node:os');
+  const tmpD = fs.mkdtempSync(path.join(os.tmpdir(), 'sfi-ccpm-a-'));
+  try {
+    const sm = new StateManager();
+    const sp = path.join(tmpD, 'state.json');
+    fs.writeFileSync(sp, JSON.stringify(makeV3RawState(tmpD), null, 2));
+    const state = sm.read(sp);
+    assert.ok(Array.isArray(state.orphans_detected), 'orphans_detected must be an array after migration');
+    assert.deepEqual(state.orphans_detected, [], 'orphans_detected default must be []');
+  } finally {
+    fs.rmSync(tmpD, { recursive: true, force: true });
+  }
+});
+
+test('R-CCPM-WH-3: parent_session_hash defaults to null on v3→v4 migration', async () => {
+  const { StateManager } = await import('../services/state-manager.js');
+  const os = await import('node:os');
+  const tmpD = fs.mkdtempSync(path.join(os.tmpdir(), 'sfi-ccpm-b-'));
+  try {
+    const sm = new StateManager();
+    const sp = path.join(tmpD, 'state.json');
+    fs.writeFileSync(sp, JSON.stringify(makeV3RawState(tmpD), null, 2));
+    const state = sm.read(sp);
+    assert.equal(state.parent_session_hash, null, 'parent_session_hash must be null for operator-launched sessions');
+  } finally {
+    fs.rmSync(tmpD, { recursive: true, force: true });
+  }
+});
+
+test("R-CCPM-WH-3: invocation_source defaults to 'operator' and accepts 'manager_subprocess'", async () => {
+  const { StateManager } = await import('../services/state-manager.js');
+  const os = await import('node:os');
+  const tmpD = fs.mkdtempSync(path.join(os.tmpdir(), 'sfi-ccpm-c-'));
+  try {
+    const sm = new StateManager();
+    const sp = path.join(tmpD, 'state.json');
+    fs.writeFileSync(sp, JSON.stringify(makeV3RawState(tmpD), null, 2));
+    const defaultState = sm.read(sp);
+    assert.equal(defaultState.invocation_source, 'operator', "invocation_source must default to 'operator'");
+
+    sm.update(sp, (s) => { s.invocation_source = 'manager_subprocess'; });
+    const updatedState = sm.read(sp);
+    assert.equal(updatedState.invocation_source, 'manager_subprocess', "invocation_source must accept 'manager_subprocess'");
+  } finally {
+    fs.rmSync(tmpD, { recursive: true, force: true });
+  }
+});
+
+test('R-CCPM-WH-3: all three v4 fields survive a write→read round-trip via StateManager.update()', async () => {
+  const { StateManager } = await import('../services/state-manager.js');
+  const os = await import('node:os');
+  const tmpD = fs.mkdtempSync(path.join(os.tmpdir(), 'sfi-ccpm-d-'));
+  try {
+    const sm = new StateManager();
+    const sp = path.join(tmpD, 'state.json');
+    fs.writeFileSync(sp, JSON.stringify(makeV3RawState(tmpD), null, 2));
+    // migrate first
+    sm.read(sp);
+
+    sm.update(sp, (s) => {
+      s.orphans_detected = ['sess-abc'];
+      s.parent_session_hash = 'deadbeef';
+      s.invocation_source = 'manager_subprocess';
+    });
+
+    const state = sm.read(sp);
+    assert.deepEqual(state.orphans_detected, ['sess-abc'], 'orphans_detected must survive round-trip');
+    assert.equal(state.parent_session_hash, 'deadbeef', 'parent_session_hash must survive round-trip');
+    assert.equal(state.invocation_source, 'manager_subprocess', 'invocation_source must survive round-trip');
+  } finally {
+    fs.rmSync(tmpD, { recursive: true, force: true });
+  }
+});
