@@ -96,7 +96,7 @@ _(R-WSRC-GR-LEAK #76 closed via `98ea4ec0` — hook widened to match `PICKLE_ROL
 ### Closed since last update (2026-05-25)
 - #27 R-MMRT — monitor respawn now validates `sessionDir` at every entry (`restartDeadWatcherPanes`, `respawnMonitorWindowForMode`, `startRespawnWatchdog`) before any tmux send-keys / respawn-pane; invalid sessionDir produces zero spawns + one deduped `monitor_respawn_session_dir_invalid` event per (caller, sessionDir, reason) tuple. **B-MONITOR CLOSED.** R-MMRT-1+R-MMRT-3 `65bf6bd3`, R-MMRT-2 `d1e5f886`, R-MMRT-5 integration cascade test `d0ff0a85`, R-MMRT-4 trap-door pin `6e187f67`. v1.80.1.
 
-Earlier closed (detail in archive): #1-#4, #6, #8-#10, #13-#17, #20-#24, #26, #31, #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
+Earlier closed (detail in archive): #1-#4 (incl. R-CCPL reopened-P1 closed 2026-05-15 by R-CCPM-1..5 — `f915b821`/`690e5c5c`/`e955ce4d`/`39a660e4`/`73657d27`), #6, #8-#10, #13-#17, #20-#24, #26, #31, #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
 
 ---
 
