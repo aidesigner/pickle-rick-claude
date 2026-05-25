@@ -1139,6 +1139,63 @@ export function scanPausedOrphans(sessionsRoot, config, smInstance) {
         }
     }
 }
+export function precleanPausedOrphansBeforeCreate(sessionsRoot, smInstance) {
+    const cwd = process.cwd();
+    const now = Date.now();
+    const staleCutoffMs = 300_000;
+    let entries;
+    try {
+        entries = fs.readdirSync(sessionsRoot);
+    }
+    catch {
+        return;
+    }
+    for (const entry of entries) {
+        const sessionDir = path.join(sessionsRoot, entry);
+        const statePath = path.join(sessionDir, 'state.json');
+        let mtime;
+        try {
+            mtime = fs.statSync(statePath).mtimeMs;
+        }
+        catch {
+            continue;
+        }
+        if (now - mtime <= staleCutoffMs)
+            continue;
+        let raw;
+        try {
+            raw = readRecoverableJsonObject(statePath);
+        }
+        catch {
+            continue;
+        }
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+            continue;
+        const s = raw;
+        if (s.active !== true)
+            continue;
+        if (s.pid != null)
+            continue;
+        if (s.working_dir !== cwd)
+            continue;
+        const mtimeAgeSeconds = Math.floor((now - mtime) / 1000);
+        s.active = false;
+        s.exit_reason = 'orphan-paused-no-claim-precleanup';
+        if (!Array.isArray(s.activity))
+            s.activity = [];
+        s.activity.push({
+            event: 'paused_session_orphan_precleaned',
+            ts: new Date().toISOString(),
+            session_dir: sessionDir,
+            mtime_age_seconds: mtimeAgeSeconds,
+            step: 'preclean_before_create',
+        });
+        try {
+            smInstance.forceWrite(statePath, s);
+        }
+        catch { /* best-effort */ }
+    }
+}
 async function main() {
     try {
         assertSchemaVersionDeployParity();
@@ -1154,6 +1211,9 @@ async function main() {
     ensureCoreDirectories(paths);
     pruneOldSessions(paths.sessionsRoot);
     const args = parseArguments(process.argv.slice(2));
+    if (args.pausedMode && !args.resumeMode) {
+        precleanPausedOrphansBeforeCreate(paths.sessionsRoot, sm);
+    }
     scanPausedOrphans(paths.sessionsRoot, args, sm);
     const session = args.resumeMode
         ? handleResumeSession(args)

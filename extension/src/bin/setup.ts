@@ -1207,6 +1207,40 @@ export function scanPausedOrphans(sessionsRoot: string, config: SetupArgs, smIns
   }
 }
 
+export function precleanPausedOrphansBeforeCreate(sessionsRoot: string, smInstance: StateManager): void {
+  const cwd = process.cwd();
+  const now = Date.now();
+  let entries: string[];
+  try { entries = fs.readdirSync(sessionsRoot); } catch { return; }
+  for (const entry of entries) {
+    const sessionDir = path.join(sessionsRoot, entry);
+    const statePath = path.join(sessionDir, 'state.json');
+    let mtime: number;
+    try { mtime = fs.statSync(statePath).mtimeMs; } catch { continue; }
+    if (now - mtime <= 300_000) continue;
+    let raw: unknown;
+    try { raw = readRecoverableJsonObject(statePath); } catch { continue; }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const s = raw as Record<string, unknown>;
+    if (s.active !== true) continue;
+    if (s.pid != null) continue;
+    if (s.working_dir !== cwd) continue;
+    const mtimeAgeSeconds = Math.floor((now - mtime) / 1000);
+    s.active = false;
+    s.exit_reason = 'orphan-paused-no-claim-precleanup';
+    if (!Array.isArray(s.activity)) s.activity = [];
+    (s.activity as unknown[]).push({
+      event: 'paused_session_orphan_precleaned',
+      ts: new Date().toISOString(),
+      session_dir: sessionDir,
+      mtime_age_seconds: mtimeAgeSeconds,
+      step: 'preclean_before_create',
+    });
+    // eslint-disable-next-line pickle/no-raw-state-write -- orphan: active=true pid=null mtime>300s; no live process holds this session
+    try { smInstance.forceWrite(statePath, s as unknown as State); } catch { /* best-effort */ }
+  }
+}
+
 async function main() {
   try {
     assertSchemaVersionDeployParity();
@@ -1222,6 +1256,9 @@ async function main() {
   pruneOldSessions(paths.sessionsRoot);
 
   const args = parseArguments(process.argv.slice(2));
+  if (args.pausedMode && !args.resumeMode) {
+    precleanPausedOrphansBeforeCreate(paths.sessionsRoot, sm);
+  }
   scanPausedOrphans(paths.sessionsRoot, args, sm);
   const session = args.resumeMode
     ? handleResumeSession(args)
