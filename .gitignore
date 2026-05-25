@@ -25,6 +25,9 @@ current_sessions.json
 # Pipeline session lifecycle dirs — belong in PICKLE_DATA_ROOT (~/.local/share/pickle-rick/),
 # but a worker with a mis-resolved cwd occasionally writes them into the source repo.
 /sessions/
+# R-SSDF-FW (cb5e4247): in-tree TASK_NOTES mirror at <working_dir>/.pickle-rick/sessions/<hash>/
+# Runtime data only — never committed.
+.pickle-rick/
 # .claude/commands/ and .claude/skills/ are tracked — they're the product
 /scripts/
 activity/
