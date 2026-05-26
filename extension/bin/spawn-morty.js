@@ -1400,7 +1400,7 @@ async function main() {
     _smCrumb('main() entered');
     const parsed = parseAndValidateArgs(process.argv.slice(2));
     _smCrumb(`parseAndValidateArgs done — sessionRoot=${parsed.sessionRoot} ticketPath=${parsed.ticketPath}`);
-    // R-SMTEST early-exit invariant — ticket 910ae36c
+    // R-SMTEST early-exit invariant — see prds/p1-bug-fix-bundle-b-release-drift-2026-05-26.md
     const _dataRoot = getDataRoot();
     if (!path.resolve(parsed.ticketPath).startsWith(_dataRoot + path.sep)) {
         process.stderr.write(JSON.stringify({
