@@ -1800,26 +1800,30 @@ export interface EnsureMonitorWindowOptions {
   log?: (msg: string) => void;
 }
 
-/** Infers monitor mode from state.json's command_template. Defaults to 'pickle'. */
-export function inferMonitorMode(sessionDir: string): MonitorMode {
+/**
+ * Infers monitor mode from state.json's command_template. Defaults to 'pickle'.
+ * Glob mapping: pickle*→pickle, meeseeks*→meeseeks, council*→council.
+ * Exact mapping: anatomy-park.md→anatomy-park, szechuan-sauce.md→szechuan-sauce, refinement.md→refinement.
+ * Missing or unrecognized template defaults to 'pickle' and emits a WARN via optional log.
+ */
+export function inferMonitorMode(sessionDir: string, log?: (msg: string) => void): MonitorMode {
   try {
     const state = new StateManager().read(path.join(sessionDir, 'state.json')) as { command_template?: string };
     const tpl = (state.command_template || '').toLowerCase();
-    switch (tpl) {
-      case 'meeseeks.md':
-        return 'meeseeks';
-      case 'council-of-ricks.md':
-        return 'council';
-      case 'refinement.md':
-        return 'refinement';
-      case 'szechuan-sauce.md':
-        return 'szechuan-sauce';
-      case 'anatomy-park.md':
-        return 'anatomy-park';
-      default:
-        return 'pickle';
+    if (!tpl) {
+      log?.('[ensureMonitorWindow] command_template missing; defaulting to pickle');
+      return 'pickle';
     }
+    if (tpl.startsWith('pickle')) return 'pickle';
+    if (tpl === 'anatomy-park.md') return 'anatomy-park';
+    if (tpl === 'szechuan-sauce.md') return 'szechuan-sauce';
+    if (tpl.startsWith('meeseeks')) return 'meeseeks';
+    if (tpl.startsWith('council')) return 'council';
+    if (tpl === 'refinement.md') return 'refinement';
+    log?.(`[ensureMonitorWindow] unrecognized command_template '${state.command_template}'; defaulting to pickle`);
+    return 'pickle';
   } catch {
+    log?.('[ensureMonitorWindow] command_template missing; defaulting to pickle');
     return 'pickle';
   }
 }
@@ -2159,7 +2163,7 @@ export function ensureMonitorWindow(opts: EnsureMonitorWindowOptions): EnsureMon
     tmuxBin: opts.tmuxBin || 'tmux',
     bashBin: opts.bashBin || 'bash',
     spawnSyncFn: opts.spawnSyncFn || spawnSync,
-    mode: opts.mode || inferMonitorMode(opts.sessionDir),
+    mode: opts.mode || inferMonitorMode(opts.sessionDir, log),
   };
   try {
     const sessionName = getSessionName();
