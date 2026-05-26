@@ -63,6 +63,45 @@ then
   audit_exit_code=1
 fi
 
+if ! node - "$CLAUDE_PATH" <<'NODE'
+const fs = require('fs');
+
+const [, , claudePath] = process.argv;
+const text = fs.readFileSync(claudePath, 'utf8');
+const lines = text.split('\n');
+const entry = lines.find((line) => line.includes('(dirty-tree guard)'));
+
+if (!entry) {
+  process.stderr.write('R-PDT-4 dirty-tree guard trap-door entry not found\n');
+  process.exit(1);
+}
+
+const labels = ['INVARIANT', 'PATTERN_SHAPE', 'BREAKS', 'ENFORCE'];
+let failures = 0;
+
+for (const label of labels) {
+  const nextLabelPattern = labels
+    .filter((candidate) => candidate !== label)
+    .map((candidate) => `${candidate}:`)
+    .join('|');
+  const match = entry.match(
+    new RegExp(`${label}:([\\s\\S]*?)(?=\\s(?:${nextLabelPattern})|$)`)
+  );
+
+  if (!match || match[1].trim().length === 0) {
+    process.stderr.write(`R-PDT-4 dirty-tree guard trap-door entry is missing populated ${label} content\n`);
+    failures++;
+  }
+}
+
+if (failures > 0) {
+  process.exit(1);
+}
+NODE
+then
+  audit_exit_code=1
+fi
+
 # Parse ENFORCE: references and check reachability via node so we get the
 # same regex as trap-door-conformance.test.js (avoids BSD/GNU grep -P gap).
 if ! node - "$CLAUDE_PATH" "$EXTENSION_ROOT" "$REPO_ROOT" <<'NODE'
