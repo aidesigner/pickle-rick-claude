@@ -33,7 +33,7 @@ function baseState(sessionDir, overrides = {}) {
   };
 }
 
-test('recoverStaleActiveFlag: mapped dead PID demotes fresh pid=null orphan on read', () => {
+test('recoverStaleActiveFlag: mapped dead PID does NOT demote fresh pid=null orphan (R-POD-1 fix)', () => {
   const dataRoot = tmpDir();
   try {
     const sessionDir = path.join(dataRoot, 'sessions', 'session-1');
@@ -54,11 +54,13 @@ test('recoverStaleActiveFlag: mapped dead PID demotes fresh pid=null orphan on r
 
     const state = sm.read(stateFile);
 
-    assert.equal(state.active, false);
-    assert.equal(state.exit_reason, 'orphan-paused-no-claim');
-    const demotion = (state.activity ?? []).find((entry) => entry.kind === 'paused_session_orphan_demoted');
-    assert.ok(demotion, 'expected paused_session_orphan_demoted activity');
-    assert.equal(demotion?.mapped_pid, 99999999);
+    // R-POD-1: demotion requires age-stale AND dead-pid; fresh state must be kept
+    assert.equal(state.active, true, 'fresh state must not demote even with dead mapped PID');
+    assert.ok(
+      !Array.isArray(state.activity) ||
+        state.activity.every((entry) => entry.kind !== 'paused_session_orphan_demoted'),
+      'no demotion event for fresh state',
+    );
   } finally {
     fs.rmSync(dataRoot, { recursive: true, force: true });
   }
