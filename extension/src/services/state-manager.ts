@@ -375,6 +375,9 @@ function normalizeV3StateDefaults(state: State): void {
       { producer_done: false },
     ];
   }
+  const smExt = state as unknown as Record<string, unknown>;
+  if (smExt.monitor_pid === undefined) smExt.monitor_pid = null;
+  if (smExt.monitor_mode === undefined) smExt.monitor_mode = null;
 }
 
 function normalizeV4StateDefaults(state: State): void {

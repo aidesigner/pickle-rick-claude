@@ -319,6 +319,11 @@ function normalizeV3StateDefaults(state) {
             { producer_done: false },
         ];
     }
+    const smExt = state;
+    if (smExt.monitor_pid === undefined)
+        smExt.monitor_pid = null;
+    if (smExt.monitor_mode === undefined)
+        smExt.monitor_mode = null;
 }
 function normalizeV4StateDefaults(state) {
     if (!Array.isArray(state.orphans_detected))

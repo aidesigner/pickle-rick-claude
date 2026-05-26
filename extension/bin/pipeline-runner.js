@@ -20,7 +20,7 @@ import { execFileSync, spawn } from 'child_process';
 import { BACKENDS, MICROVERSE_FATAL_REASONS, PipelineRunnerExitCode, isMicroverseFailureExit } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
-import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, writeStateFile, collectTickets, } from '../services/pickle-utils.js';
+import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, writeStateFile, collectTickets, respawnMonitorWindowForMode, } from '../services/pickle-utils.js';
 import { isGitIgnoredPath, listWorkingTreeDirtyPaths } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 import { emitBundleLinearComments } from '../services/linear-integration.js';
@@ -28,7 +28,6 @@ import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { runAcPhaseGate } from '../services/ac-phase-gate.js';
 import { resolveScope, refreshScope, filterBySubsystem, ScopeError, } from '../services/scope-resolver.js';
 import { runCitadelAudit } from '../services/citadel/audit-runner.js';
-import { respawnMonitorWindowForMode } from '../lib/monitor-respawn.js';
 const sm = new StateManager();
 const DEFAULT_IGNORE_DIRTY_PATHS = ['prds', 'docs'];
 const CODEX_REQUIRED_BACKEND = 'codex-required';
@@ -1606,6 +1605,17 @@ function ensurePipelineMonitor(sessionDir, extensionRoot, log) {
     try {
         const result = ensureMonitorWindow({ sessionDir, extensionRoot, log });
         log(`ensureMonitorWindow: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
+        if (result.status === 'created' || result.status === 'recreated' || result.status === 'exists') {
+            try {
+                sm.update(path.join(sessionDir, 'state.json'), s => {
+                    const ext = s;
+                    if (ext.monitor_mode === undefined || ext.monitor_mode === null) {
+                        ext.monitor_mode = 'pickle';
+                    }
+                });
+            }
+            catch { /* best-effort — non-fatal */ }
+        }
     }
     catch (err) {
         log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
@@ -2231,15 +2241,8 @@ async function handlePhaseBoundaryRespawn(runtime, rawPhase, nextRawPhase) {
         return;
     // R-MDS-6: signal pane 2 producer is done BEFORE respawn
     setProducerDone(runtime, true);
-    if (nextRawPhase === 'anatomy-park') {
-        await respawnMonitorWindowForMode(runtime.sessionDir, 'anatomy-park');
-    }
-    else if (nextRawPhase === 'szechuan-sauce') {
-        await respawnMonitorWindowForMode(runtime.sessionDir, 'szechuan-sauce');
-    }
-    else {
-        await respawnMonitorWindowForMode(runtime.sessionDir, 'exit');
-    }
+    const phase = nextRawPhase ?? 'exit';
+    await respawnMonitorWindowForMode(runtime.sessionDir, phase, { log: runtime.log });
     // R-MDS-6: reset flag so replacement watcher shows normal no-data message
     setProducerDone(runtime, false);
 }

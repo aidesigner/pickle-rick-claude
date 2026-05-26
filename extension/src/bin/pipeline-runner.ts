@@ -33,6 +33,7 @@ import {
   displayMacNotification,
   writeStateFile,
   collectTickets,
+  respawnMonitorWindowForMode,
 } from '../services/pickle-utils.js';
 import { isGitIgnoredPath, listWorkingTreeDirtyPaths } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -48,7 +49,6 @@ import {
 } from '../services/scope-resolver.js';
 import { runCitadelAudit } from '../services/citadel/audit-runner.js';
 import type { CitadelFinding, CitadelJsonReport, CitadelSeverity } from '../services/citadel/reporter.js';
-import { respawnMonitorWindowForMode } from '../lib/monitor-respawn.js';
 
 const sm = new StateManager();
 
@@ -1978,6 +1978,16 @@ function ensurePipelineMonitor(sessionDir: string, extensionRoot: string, log: (
   try {
     const result = ensureMonitorWindow({ sessionDir, extensionRoot, log });
     log(`ensureMonitorWindow: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
+    if (result.status === 'created' || result.status === 'recreated' || result.status === 'exists') {
+      try {
+        sm.update(path.join(sessionDir, 'state.json'), s => {
+          const ext = s as unknown as Record<string, unknown>;
+          if (ext.monitor_mode === undefined || ext.monitor_mode === null) {
+            ext.monitor_mode = 'pickle';
+          }
+        });
+      } catch { /* best-effort — non-fatal */ }
+    }
   } catch (err) {
     log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
   }
@@ -2702,13 +2712,8 @@ async function handlePhaseBoundaryRespawn(
   if (nextRawPhase !== 'anatomy-park' && nextRawPhase !== 'szechuan-sauce' && nextRawPhase !== undefined) return;
   // R-MDS-6: signal pane 2 producer is done BEFORE respawn
   setProducerDone(runtime, true);
-  if (nextRawPhase === 'anatomy-park') {
-    await respawnMonitorWindowForMode(runtime.sessionDir, 'anatomy-park');
-  } else if (nextRawPhase === 'szechuan-sauce') {
-    await respawnMonitorWindowForMode(runtime.sessionDir, 'szechuan-sauce');
-  } else {
-    await respawnMonitorWindowForMode(runtime.sessionDir, 'exit');
-  }
+  const phase = nextRawPhase ?? 'exit';
+  await respawnMonitorWindowForMode(runtime.sessionDir, phase, { log: runtime.log });
   // R-MDS-6: reset flag so replacement watcher shows normal no-data message
   setProducerDone(runtime, false);
 }

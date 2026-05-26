@@ -2368,6 +2368,130 @@ export function monitorModesCompatible(existing: string | null, want: MonitorMod
   }
 }
 
+export interface RespawnMonitorWindowForModeOpts {
+  /** Test seam: inject process spawns for tmux calls. */
+  spawnSyncFn?: typeof spawnSync;
+  /** Test seam: force tmux-available/unavailable. Defaults to !!process.env.TMUX. */
+  inTmux?: boolean;
+  /** Optional logger written to pipeline-runner.log via the caller's log function. */
+  log?: (msg: string) => void;
+}
+
+async function _killPidGracefully(pid: number): Promise<void> {
+  try {
+    process.kill(pid, 0);
+    process.kill(pid, 'SIGTERM');
+    await new Promise<void>(resolve => setTimeout(resolve, 1000));
+    try { process.kill(pid, 0); process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+  } catch { /* pid already dead — nothing to do */ }
+}
+
+async function _killOldMonitorPid(smLocal: StateManager, statePath: string): Promise<void> {
+  try {
+    const s = smLocal.read(statePath) as unknown as Record<string, unknown>;
+    const oldPid = s.monitor_pid;
+    if (typeof oldPid === 'number' && oldPid > 0) await _killPidGracefully(oldPid);
+  } catch { /* best-effort */ }
+}
+
+function _resolveTmuxSessionName(
+  spawnSyncFn: typeof spawnSync,
+  log: (msg: string) => void,
+  mode: string,
+): string | null {
+  const r = spawnSyncFn('tmux', ['display-message', '-p', '#S'], { encoding: 'utf-8', timeout: 5_000 });
+  if (r.status !== 0) { log(`monitor: tmux display-message failed for mode ${mode}`); return null; }
+  const name = ((r.stdout as string) || '').trim();
+  if (!name) { log(`monitor: empty tmux session name for mode ${mode}`); return null; }
+  return name;
+}
+
+function _tmuxRespawnPane(
+  spawnSyncFn: typeof spawnSync,
+  target: string,
+  command: string,
+  log: (msg: string) => void,
+  mode: string,
+): boolean {
+  const r = spawnSyncFn('tmux', ['respawn-pane', '-k', '-t', target, command], { encoding: 'utf-8', timeout: 5_000 });
+  if (r.status !== 0) {
+    const err = ((r.stderr as string) || '').trim() || 'non-zero exit';
+    log(`monitor: respawn-pane failed for mode ${mode}: ${err}`);
+    return false;
+  }
+  return true;
+}
+
+function _tmuxGetPanePid(spawnSyncFn: typeof spawnSync, target: string): number | null {
+  try {
+    const r = spawnSyncFn('tmux', ['display-message', '-p', '-t', target, '#{pane_pid}'], { encoding: 'utf-8', timeout: 5_000 });
+    if (r.status === 0) {
+      const parsed = parseInt(((r.stdout as string) || '').trim(), 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+  } catch { /* best-effort */ }
+  return null;
+}
+
+function _updateMonitorState(smLocal: StateManager, statePath: string, newPid: number | null, mode: string): void {
+  try {
+    smLocal.update(statePath, s => {
+      const ext = s as unknown as Record<string, unknown>;
+      ext.monitor_pid = newPid;
+      ext.monitor_mode = mode;
+    });
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Respawns the monitor dashboard pane (pane 0) with --mode set to `mode`.
+ *
+ * Returns 'no-op' when:
+ *   - sessionDir is invalid (validateSessionDirOrSkip)
+ *   - state.monitor_mode already equals `mode`
+ *   - not inside tmux
+ *   - tmux respawn-pane fails
+ * Returns 'respawned' on success; updates state.monitor_pid and state.monitor_mode.
+ * Logs `monitor: respawned for mode <mode>` via opts.log so the line appears in
+ * pipeline-runner.log (AC-MDS-01).
+ */
+export async function respawnMonitorWindowForMode(
+  sessionDir: string,
+  mode: string,
+  opts?: RespawnMonitorWindowForModeOpts,
+): Promise<'respawned' | 'no-op'> {
+  if (!validateSessionDirOrSkip(sessionDir, 'respawnMonitorWindowForMode')) return 'no-op';
+
+  const statePath = path.join(sessionDir, 'state.json');
+  const smLocal = new StateManager();
+  const log = opts?.log ?? (() => undefined);
+
+  try {
+    const s = smLocal.read(statePath) as unknown as Record<string, unknown>;
+    if (s.monitor_mode === mode) return 'no-op';
+  } catch { /* tolerate read failure — proceed */ }
+
+  await _killOldMonitorPid(smLocal, statePath);
+
+  const inTmux = opts?.inTmux !== undefined ? opts.inTmux : !!process.env.TMUX;
+  if (!inTmux) { log(`monitor: tmux unavailable, skipping respawn for mode ${mode}`); return 'no-op'; }
+
+  const spawnSyncFn = opts?.spawnSyncFn ?? spawnSync;
+  const sessionName = _resolveTmuxSessionName(spawnSyncFn, log, mode);
+  if (!sessionName) return 'no-op';
+
+  const extensionRoot = getExtensionRoot();
+  const monitorBin = path.join(extensionRoot, 'extension', 'bin', 'monitor.js');
+  const target = `${sessionName}:monitor.0`;
+  const ok = _tmuxRespawnPane(spawnSyncFn, target, `node ${monitorBin} --mode ${mode} ${sessionDir}`, log, mode);
+  if (!ok) return 'no-op';
+
+  const newPid = _tmuxGetPanePid(spawnSyncFn, target);
+  _updateMonitorState(smLocal, statePath, newPid, mode);
+  log(`monitor: respawned for mode ${mode}`);
+  return 'respawned';
+}
+
 /** Default timeout for macOS notification shell-outs (`osascript`). Kept short
  *  because notifications run on the exit path — a wedged Notification Center /
  *  AppleEvent daemon must NOT block `process.exit` on the runner. Four prior
