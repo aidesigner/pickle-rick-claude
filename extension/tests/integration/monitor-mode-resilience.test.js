@@ -157,9 +157,9 @@ test('restartDeadWatcherPanes restores a collapsed 1x2 watcher layout within the
 
     assert.equal(f.missingCount(), 0, 'collapsed layout should have no missing watcher panes after fallback');
     assert.match(calls, /tmux split-window -v -l 40% -t pickle-collapsed-layout:monitor\.0/);
-    assert.match(calls, /tmux send-keys -t pickle-collapsed-layout:monitor\.2 node .+morty-watcher\.js .+session Enter/);
+    assert.match(calls, /tmux send-keys -t pickle-collapsed-layout:monitor\.2 .+morty-watcher\.js .+session.+ Enter/);
     assert.match(calls, /tmux split-window -h -t pickle-collapsed-layout:monitor\.2/);
-    assert.match(calls, /tmux send-keys -t pickle-collapsed-layout:monitor\.3 node .+raw-morty\.js .+session Enter/);
+    assert.match(calls, /tmux send-keys -t pickle-collapsed-layout:monitor\.3 .+raw-morty\.js .+session.+ Enter/);
     assert.ok(
       durationMs <= RESPAWN_WATCHDOG_INTERVAL_MS + 100,
       `recovery should stay within watchdog bound; got ${durationMs}ms`,

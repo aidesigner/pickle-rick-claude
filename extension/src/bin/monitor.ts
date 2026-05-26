@@ -934,6 +934,12 @@ export function startRespawnWatchdog(opts: {
    * callers omit this and the helper consults `process.env` directly.
    */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Test seam: override setInterval so unit tests can control when
+   * interval ticks fire without relying on real timers. Production
+   * callers omit this.
+   */
+  setIntervalFn?: (fn: () => void, ms: number) => NodeJS.Timeout;
 }): NodeJS.Timeout | null {
   // R-MWR-2: env kill-switch. Bail before scheduling so disabling the
   // watchdog truly disables it — no timer, no logs, no tmux calls.
@@ -947,6 +953,9 @@ export function startRespawnWatchdog(opts: {
   }
   const intervalMs = opts.intervalMs ?? RESPAWN_WATCHDOG_INTERVAL_MS;
   const log = opts.logger || (() => { /* no-op */ });
+  // R-MWCL-5: one-shot flag so the first tick logs errors to stderr in
+  // addition to the logger; subsequent interval ticks use logger only.
+  let isFirstTick = true;
   const tick = () => {
     try {
       const extensionRoot = opts.extensionRoot ?? getExtensionRoot();
@@ -958,15 +967,30 @@ export function startRespawnWatchdog(opts: {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`monitor-watchdog tick error: ${msg}`);
+      if (isFirstTick) {
+        process.stderr.write(`[respawn-watchdog] first-tick error: ${msg}\n`);
+      }
+    } finally {
+      isFirstTick = false;
     }
   };
-  const handle = setInterval(tick, intervalMs);
-  // R-MWCL-5: fire once at registration so collapsed panes recover
-  // immediately instead of waiting a full watchdog interval.
-  tick();
+  const _setInterval = opts.setIntervalFn ?? setInterval;
+  const handle = _setInterval(tick, intervalMs) as NodeJS.Timeout;
   if (typeof (handle as { unref?: () => void }).unref === 'function') {
     (handle as { unref: () => void }).unref();
   }
+  // R-MWCL-5: write startup marker before the first tick so the log line
+  // precedes any setInterval-scheduled tick in mux-runner.log.
+  const startupTs = new Date().toISOString();
+  try {
+    fs.appendFileSync(
+      path.join(opts.sessionDir, 'mux-runner.log'),
+      `${startupTs} monitor-watchdog startup: first tick at ${startupTs}\n`,
+    );
+  } catch { /* best-effort */ }
+  // R-MWCL-5: fire once synchronously so collapsed panes recover
+  // immediately instead of waiting a full watchdog interval.
+  tick();
   return handle;
 }
 
