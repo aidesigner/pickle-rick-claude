@@ -1767,7 +1767,7 @@ export type MonitorMode = 'pickle' | 'meeseeks' | 'council' | 'refinement' | 'sz
 
 type MonitorPane = 0 | 1 | 2 | 3;
 
-interface WatcherPaneCommand {
+export interface WatcherPaneCommand {
   pane: MonitorPane;
   name: string;
   command: string;
@@ -2016,7 +2016,13 @@ function missingWatcherPaneSplitSpec(sessionName: string, pane: MonitorPane): Mi
   }
 }
 
-function watcherPaneCommands(sessionDir: string, extensionRoot: string, mode: MonitorMode): WatcherPaneCommand[] {
+/** Wrap a pane command so its stderr is appended to the per-pane log file. */
+function wrapWithStderrRedirect(cmd: string, sessionDir: string, pane: MonitorPane): string {
+  const logPath = path.join(sessionDir, `monitor-${pane}.log`);
+  return `bash -c '${cmd} 2>>"${logPath}"'`;
+}
+
+export function watcherPaneCommands(sessionDir: string, extensionRoot: string, mode: MonitorMode): WatcherPaneCommand[] {
   const binRoot = path.join(extensionRoot, 'extension', 'bin');
   let paneTwo: WatcherPaneCommand;
   switch (mode) {
@@ -2034,18 +2040,18 @@ function watcherPaneCommands(sessionDir: string, extensionRoot: string, mode: Mo
     {
       pane: 0,
       name: 'monitor.js',
-      command: `node ${path.join(binRoot, 'monitor.js')} ${sessionDir}`,
+      command: wrapWithStderrRedirect(`node ${path.join(binRoot, 'monitor.js')} ${sessionDir}`, sessionDir, 0),
     },
     {
       pane: 1,
       name: 'log-watcher.js',
-      command: `node ${path.join(binRoot, 'log-watcher.js')} ${sessionDir}`,
+      command: wrapWithStderrRedirect(`node ${path.join(binRoot, 'log-watcher.js')} ${sessionDir}`, sessionDir, 1),
     },
     paneTwo,
     {
       pane: 3,
       name: 'raw-morty.js',
-      command: `node ${path.join(binRoot, 'raw-morty.js')} ${sessionDir}`,
+      command: wrapWithStderrRedirect(`node ${path.join(binRoot, 'raw-morty.js')} ${sessionDir}`, sessionDir, 3),
     },
   ];
 }
@@ -2056,14 +2062,14 @@ function watcherPaneTwoCommand(sessionDir: string, binRoot: string, mode: Monito
       return {
         pane: 2,
         name: 'refinement-watcher.js',
-        command: `node ${path.join(binRoot, 'refinement-watcher.js')} ${sessionDir}`,
+        command: wrapWithStderrRedirect(`node ${path.join(binRoot, 'refinement-watcher.js')} ${sessionDir}`, sessionDir, 2),
       };
     case 'meeseeks':
     case 'council':
       return {
         pane: 2,
         name: 'mux-runner.log tail',
-        command: `tail -F ${path.join(sessionDir, 'mux-runner.log')}`,
+        command: wrapWithStderrRedirect(`tail -F ${path.join(sessionDir, 'mux-runner.log')}`, sessionDir, 2),
       };
     case 'pickle':
     case 'szechuan-sauce':
@@ -2071,7 +2077,7 @@ function watcherPaneTwoCommand(sessionDir: string, binRoot: string, mode: Monito
       return {
         pane: 2,
         name: 'morty-watcher.js',
-        command: `node ${path.join(binRoot, 'morty-watcher.js')} ${sessionDir}`,
+        command: wrapWithStderrRedirect(`node ${path.join(binRoot, 'morty-watcher.js')} ${sessionDir}`, sessionDir, 2),
       };
   }
 }

@@ -1000,6 +1000,8 @@ async function main() {
 
   const stderrCapture = createMonitorStderrCapture({ sessionDir });
   process.stderr.write = stderrCapture.write as typeof process.stderr.write;
+  // R-MWCL-4: startup marker for per-pane log (captured via shell 2>> redirect)
+  process.stderr.write(`[monitor-0] starting at ${new Date().toISOString()} (pid=${process.pid})\n`);
 
   // R-MWR-1: arm the dead-pane respawn watchdog before entering the
   // render loop so panes that die mid-iteration get revived without

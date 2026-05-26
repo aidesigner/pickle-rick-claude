@@ -568,8 +568,8 @@ test('ensureMonitorWindow: existing monitor window runs exactly one pane-recover
         assert.match(calls, /tmux display-message -p -t pickle-abc12345:monitor\.1 #\{pane_current_command\}/);
         assert.match(calls, /tmux display-message -p -t pickle-abc12345:monitor\.2 #\{pane_current_command\}/);
         assert.match(calls, /tmux display-message -p -t pickle-abc12345:monitor\.3 #\{pane_current_command\}/);
-        assert.match(calls, /tmux send-keys -t pickle-abc12345:monitor\.1 node .+log-watcher\.js .+session Enter/);
-        assert.match(calls, /tmux send-keys -t pickle-abc12345:monitor\.3 node .+raw-morty\.js .+session Enter/);
+        assert.match(calls, /tmux send-keys -t pickle-abc12345:monitor\.1 .+log-watcher\.js .+session.+ Enter/);
+        assert.match(calls, /tmux send-keys -t pickle-abc12345:monitor\.3 .+raw-morty\.js .+session.+ Enter/);
         assert.equal((calls.match(/tmux send-keys/g) || []).length, 2, 'should respawn each dead pane once');
         assert.doesNotMatch(calls, /tmux kill-window/, 'should not kill a compatible window');
         assert.doesNotMatch(calls, /bash .+tmux-monitor\.sh/, 'should not spawn script when monitor exists');
@@ -582,9 +582,9 @@ test('ensureMonitorWindow: existing monitor window runs exactly one pane-recover
 
 test('ensureMonitorWindow: phase re-entry performs a fresh recovery sweep with mode-specific pane 2', async () => {
     const cases = [
-        ['pickle', 'pickle.md', /tmux send-keys -t pickle-phase:monitor\.2 node .+morty-watcher\.js .+session Enter/],
-        ['refinement', null, /tmux send-keys -t refinement-phase:monitor\.2 node .+refinement-watcher\.js .+session Enter/],
-        ['council', 'council-of-ricks.md', /tmux send-keys -t council-phase:monitor\.2 tail -F .+session\/mux-runner\.log Enter/],
+        ['pickle', 'pickle.md', /tmux send-keys -t pickle-phase:monitor\.2 .+morty-watcher\.js .+session.+ Enter/],
+        ['refinement', null, /tmux send-keys -t refinement-phase:monitor\.2 .+refinement-watcher\.js .+session.+ Enter/],
+        ['council', 'council-of-ricks.md', /tmux send-keys -t council-phase:monitor\.2 .+tail -F .+session\/mux-runner\.log.* Enter/],
     ];
 
     const outer = makeFakes({ sessionName: 'outer-phase' });
@@ -685,7 +685,7 @@ test('ensureMonitorWindow: same-mode refinement monitor respawns only refinement
         assert.equal((calls.match(/tmux send-keys/g) || []).length, 1);
         assert.match(
             calls,
-            /tmux send-keys -t refinement-same-mode:monitor\.2 node .+refinement-watcher\.js .+session Enter/,
+            /tmux send-keys -t refinement-same-mode:monitor\.2 .+refinement-watcher\.js .+session.+ Enter/,
         );
         assert.doesNotMatch(calls, /morty-watcher\.js/);
         assert.doesNotMatch(calls, /tail -F .+mux-runner\.log/);
@@ -743,11 +743,11 @@ test('restartDeadWatcherPanes: respawns dead pickle monitor and watcher panes 0,
         const calls = f.readCalls();
         assert.match(calls, /tmux display-message -p #S/);
         assert.match(calls, /tmux display-message -p -t pickle-dead:monitor\.0 #\{pane_current_command\}/);
-        assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.0 node .+monitor\.js .+session Enter/);
+        assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.0 .+monitor\.js .+session.+ Enter/);
         assert.match(calls, /tmux display-message -p -t pickle-dead:monitor\.1 #\{pane_current_command\}/);
-        assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.1 node .+log-watcher\.js .+session Enter/);
-        assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.2 node .+morty-watcher\.js .+session Enter/);
-        assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.3 node .+raw-morty\.js .+session Enter/);
+        assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.1 .+log-watcher\.js .+session.+ Enter/);
+        assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.2 .+morty-watcher\.js .+session.+ Enter/);
+        assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.3 .+raw-morty\.js .+session.+ Enter/);
         assert.match(f.readRunnerLog(), /restartDeadWatcherPanes: respawned monitor\.js in pane 0/);
         assert.match(f.readRunnerLog(), /restartDeadWatcherPanes: respawned log-watcher\.js in pane 1/);
         assert.match(f.readRunnerLog(), /restartDeadWatcherPanes: respawned morty-watcher\.js in pane 2/);
@@ -790,7 +790,7 @@ test('restartDeadWatcherPanes: non-node long-running command is treated as dead 
         await f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle', loadRobustSpawnSync));
 
         const calls = f.readCalls();
-        assert.match(calls, /tmux send-keys -t pickle-watch:monitor\.2 node .+morty-watcher\.js .+session Enter/);
+        assert.match(calls, /tmux send-keys -t pickle-watch:monitor\.2 .+morty-watcher\.js .+session.+ Enter/);
         assert.doesNotMatch(calls, /tmux send-keys -t pickle-watch:monitor\.1/);
         assert.doesNotMatch(calls, /tmux send-keys -t pickle-watch:monitor\.3/);
         assert.match(f.readRunnerLog(), /restartDeadWatcherPanes WARN: pane 2 command 'vim' is not node/);
@@ -801,9 +801,9 @@ test('restartDeadWatcherPanes: non-node long-running command is treated as dead 
 
 test('restartDeadWatcherPanes: mode-specific pane 2 command uses refinement and mux log tail modes', async () => {
     const cases = [
-        ['refinement', /tmux send-keys -t refinement-watch:monitor\.2 node .+refinement-watcher\.js .+session Enter/],
-        ['meeseeks', /tmux send-keys -t meeseeks-watch:monitor\.2 tail -F .+session\/mux-runner\.log Enter/],
-        ['council', /tmux send-keys -t council-watch:monitor\.2 tail -F .+session\/mux-runner\.log Enter/],
+        ['refinement', /tmux send-keys -t refinement-watch:monitor\.2 .+refinement-watcher\.js .+session.+ Enter/],
+        ['meeseeks', /tmux send-keys -t meeseeks-watch:monitor\.2 .+tail -F .+session\/mux-runner\.log.* Enter/],
+        ['council', /tmux send-keys -t council-watch:monitor\.2 .+tail -F .+session\/mux-runner\.log.* Enter/],
     ];
 
     for (const [mode, paneTwoPattern] of cases) {
@@ -833,9 +833,9 @@ test('restartDeadWatcherPanes: missing pane recreates collapsed layout via split
 
         const calls = f.readCalls();
         assert.match(calls, /tmux split-window -v -l 40% -t pickle-collapsed:monitor\.0/);
-        assert.match(calls, /tmux send-keys -t pickle-collapsed:monitor\.2 node .+morty-watcher\.js .+session Enter/);
+        assert.match(calls, /tmux send-keys -t pickle-collapsed:monitor\.2 .+morty-watcher\.js .+session.+ Enter/);
         assert.match(calls, /tmux split-window -h -t pickle-collapsed:monitor\.2/);
-        assert.match(calls, /tmux send-keys -t pickle-collapsed:monitor\.3 node .+raw-morty\.js .+session Enter/);
+        assert.match(calls, /tmux send-keys -t pickle-collapsed:monitor\.3 .+raw-morty\.js .+session.+ Enter/);
         assert.match(f.readRunnerLog(), /restartDeadWatcherPanes WARN: pane 2 missing; recreated via pickle-collapsed:monitor\.0/);
         assert.match(f.readRunnerLog(), /restartDeadWatcherPanes WARN: pane 3 missing; recreated via pickle-collapsed:monitor\.2/);
     } finally {
