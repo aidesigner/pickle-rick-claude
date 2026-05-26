@@ -424,14 +424,17 @@ test('spawn-morty: --timeout rejects suffixed and missing values before worker s
 test('spawn-morty: --review flag accepted without validation error', () => {
     const tmpDir = makeTmpDir();
     try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'rev-001');
+        fs.mkdirSync(ticketDir, { recursive: true });
         const result = run(
             [
                 'review correctness and architecture',
                 '--ticket-id', 'rev-001',
-                '--ticket-path', tmpDir,
+                '--ticket-path', ticketDir,
                 '--review',
             ],
-            { PATH: '/nonexistent' }
+            { PATH: '/nonexistent', PICKLE_DATA_ROOT: tmpDir }
         );
         assert.equal(result.status, 1, 'should exit with code 1 (no claude)');
         // Should get past validation — no Usage or required errors
@@ -445,14 +448,17 @@ test('spawn-morty: --review flag accepted without validation error', () => {
 test('spawn-morty: --review flag shows Review Worker panel title', () => {
     const tmpDir = makeTmpDir();
     try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'rev-002');
+        fs.mkdirSync(ticketDir, { recursive: true });
         const result = run(
             [
                 'review correctness',
                 '--ticket-id', 'rev-002',
-                '--ticket-path', tmpDir,
+                '--ticket-path', ticketDir,
                 '--review',
             ],
-            { PATH: '/nonexistent' }
+            { PATH: '/nonexistent', PICKLE_DATA_ROOT: tmpDir }
         );
         const combined = result.stdout + result.stderr;
         // Must match the actual panel title, not just the word "review" which appears in the command
@@ -488,14 +494,17 @@ test('spawn-morty: spawn error (no claude binary) reports spawn-error status', (
     const tmpDir = makeTmpDir();
     try {
         // Point PATH to a directory with no `claude` binary to trigger ENOENT spawn error
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-err');
+        fs.mkdirSync(ticketDir, { recursive: true });
         const result = run(
             [
                 'implement the thing',
                 '--ticket-id', 'ticket-err',
-                '--ticket-path', tmpDir,
+                '--ticket-path', ticketDir,
                 '--timeout', '5',
             ],
-            { PATH: '/nonexistent' }
+            { PATH: '/nonexistent', PICKLE_DATA_ROOT: tmpDir }
         );
         assert.equal(result.status, 1, 'should exit with code 1');
         const combined = result.stdout + result.stderr;
@@ -538,7 +547,7 @@ test('spawn-morty F15: 5s remaining is clamped to 30s minimum', () => {
             '--ticket-path', ticketDir,
             '--timeout', '600',
         ], {
-            env: { ...process.env, PATH: '/nonexistent' },
+            env: { ...process.env, PATH: '/nonexistent', PICKLE_DATA_ROOT: tmpDir },
             encoding: 'utf-8',
             // 15s → 45s: budget for system load when run alongside concurrent
             // codex/tmux work. Validates panel content, not wall-clock.
@@ -594,7 +603,7 @@ test('spawn-morty F15: negative remaining with short --timeout yields >=30s', ()
             '--ticket-path', ticketDir,
             '--timeout', '5',
         ], {
-            env: { ...process.env, PATH: '/nonexistent' },
+            env: { ...process.env, PATH: '/nonexistent', PICKLE_DATA_ROOT: tmpDir },
             encoding: 'utf-8',
             // 15s → 45s: budget for system load when run alongside concurrent
             // codex/tmux work. Validates panel content, not wall-clock.

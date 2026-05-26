@@ -1607,7 +1607,7 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
   });
 }
 
-// eslint-disable-next-line max-lines-per-function -- R-SMTEST-1 (ticket 1b57ef57): diagnostic breadcrumb instrumentation pushed main() to 123 lines; instrumentation is env-gated by PICKLE_DEBUG_SPAWN_MORTY and will be removed by R-SMTEST-2 once the wedge fix lands.
+// eslint-disable-next-line max-lines-per-function, complexity -- R-SMTEST-1 (ticket 1b57ef57): diagnostic breadcrumb instrumentation; env-gated by PICKLE_DEBUG_SPAWN_MORTY, preserved for future wedge diagnosis. R-SMTEST-2 (ticket 910ae36c) added early-exit invariant guard below.
 async function main() {
   // R-SMTEST early-exit invariant — see ticket 1b57ef57
   const _smDebug = process.env.PICKLE_DEBUG_SPAWN_MORTY === '1';
@@ -1615,6 +1615,18 @@ async function main() {
   _smCrumb('main() entered');
   const parsed = parseAndValidateArgs(process.argv.slice(2));
   _smCrumb(`parseAndValidateArgs done — sessionRoot=${parsed.sessionRoot} ticketPath=${parsed.ticketPath}`);
+  // R-SMTEST early-exit invariant — ticket 910ae36c
+  const _dataRoot = getDataRoot();
+  if (!path.resolve(parsed.ticketPath).startsWith(_dataRoot + path.sep)) {
+    process.stderr.write(JSON.stringify({
+      event: 'spawn_morty_invalid_ticket_path',
+      ts: new Date().toISOString(),
+      ticket_path: parsed.ticketPath,
+      data_root: _dataRoot,
+    }) + '\n');
+    console.error(`[spawn-morty] --ticket-path "${parsed.ticketPath}" is outside data root "${_dataRoot}". Aborting.`);
+    process.exit(1);
+  }
   const runtime = readSessionRuntime(parsed);
   _smCrumb(`readSessionRuntime done — state=${runtime.state ? 'loaded' : 'null'}`);
   const ticketInfo = readTicketInfo(parsed.ticketFilePath);

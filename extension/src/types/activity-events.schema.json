@@ -901,6 +901,14 @@
         }
       }
     },
+    "spawn_morty_invalid_ticket_path": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "spawn_morty_invalid_ticket_path" },
+        "ts": { "type": "string" }
+      }
+    },
     "monitor_mode_swapped": {
       "type": "object",
       "required": ["event", "ts", "mode"],
@@ -1248,6 +1256,7 @@
     { "$ref": "#/definitions/install_sh_override_used" },
     { "$ref": "#/definitions/anatomy_park_empty_scope_skip" },
     { "$ref": "#/definitions/szechuan_sauce_empty_scope_skip" },
-    { "$ref": "#/definitions/monitor_respawn_session_dir_invalid" }
+    { "$ref": "#/definitions/monitor_respawn_session_dir_invalid" },
+    { "$ref": "#/definitions/spawn_morty_invalid_ticket_path" }
   ]
 }

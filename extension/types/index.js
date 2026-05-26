@@ -280,6 +280,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'anatomy_park_empty_scope_skip',
     'szechuan_sauce_empty_scope_skip',
     'monitor_respawn_session_dir_invalid',
+    'spawn_morty_invalid_ticket_path',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {
