@@ -1841,6 +1841,8 @@ export function restartDeadWatcherPanes(
    * AC-MWR-05 grep can distinguish the two callers in `mux-runner.log`.
    */
   logTag: string = 'restartDeadWatcherPanes',
+  // R-MWCL-3: injectable for testing window-missing escalation.
+  ensureMonitorWindowFn: (opts: EnsureMonitorWindowOptions) => EnsureMonitorWindowResult = ensureMonitorWindow,
 ): void {
   const callerName = logTag === 'monitor-watchdog' ? 'startRespawnWatchdog' : 'restartDeadWatcherPanes';
   if (!validateSessionDirOrSkip(sessionDir, callerName as 'restartDeadWatcherPanes' | 'startRespawnWatchdog')) return;
@@ -1856,6 +1858,19 @@ export function restartDeadWatcherPanes(
     const target = `${sessionName}:monitor.${watcher.pane}`;
     const currentCommand = readPaneCurrentCommand(target, spawnSyncFn);
     if (currentCommand === null) {
+      // R-MWCL-3: probe whether the monitor window itself is gone.
+      const listResult = spawnSyncFn('tmux', ['list-panes', '-t', `${sessionName}:monitor`], {
+        encoding: 'utf-8',
+        timeout: 5_000,
+      });
+      if (listResult.status !== 0) {
+        appendWatcherRestartLog(
+          sessionDir,
+          `${logTag} collapsed-layout-repair: monitor window missing — escalating to ensureMonitorWindow`,
+        );
+        ensureMonitorWindowFn({ sessionDir, extensionRoot, mode, spawnSyncFn, inTmux: true });
+        return;
+      }
       recreateMissingWatcherPane(sessionDir, sessionName, watcher, spawnSyncFn, logTag);
       continue;
     }
@@ -1942,7 +1957,7 @@ function recreateMissingWatcherPane(
 
   appendWatcherRestartLog(
     sessionDir,
-    `${logTag} WARN: pane ${watcher.pane} missing; recreated via ${splitSpec.target}`,
+    `${logTag} WARN: pane ${watcher.pane} missing; recreated via ${splitSpec.target} [collapsed-layout-repair]`,
   );
 
   const send = withSerializedPath(() => spawnSyncFn('tmux', ['send-keys', '-t', `${sessionName}:monitor.${watcher.pane}`, watcher.command, 'Enter'], {
@@ -1953,6 +1968,16 @@ function recreateMissingWatcherPane(
     appendWatcherRestartLog(
       sessionDir,
       `${logTag}: respawned ${watcher.name} in pane ${watcher.pane}`,
+    );
+    // R-MWCL-3: re-tile after inserting a new pane so the layout lands in a
+    // reasonable position rather than inheriting tmux's default stacking.
+    withSerializedPath(() => spawnSyncFn('tmux', ['select-layout', '-t', `${sessionName}:monitor`, 'tiled'], {
+      encoding: 'utf-8',
+      timeout: 5_000,
+    }));
+    appendWatcherRestartLog(
+      sessionDir,
+      `${logTag} collapsed-layout-repair: select-layout tiled applied to ${sessionName}:monitor`,
     );
     return true;
   }
