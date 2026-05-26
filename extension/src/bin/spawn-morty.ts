@@ -1558,7 +1558,9 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
       clearTimeout(hangGuard);
       if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
     };
+    const _spawnCrumb = (label: string) => { if (process.env.PICKLE_DEBUG_SPAWN_MORTY === '1') process.stderr.write(`[SMTEST-1:SPAWN] ${label}\n`); };
     proc.on('error', async err => {
+      _spawnCrumb(`proc.error fired — code=${(err as NodeJS.ErrnoException).code}`);
       spawnErrorHandled = true;
       clearLifecycleTimers();
       const errorCode = (err as NodeJS.ErrnoException).code;
@@ -1573,11 +1575,16 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
         }) + '\n');
       }
       console.error(`${Style.RED}[pickle-rick] Failed to spawn '${invocation.cmd}' (backend=${args.backend}): ${safeErrorMessage(err)}${Style.RESET}`);
+      _spawnCrumb('before updateTicketStatus');
       try { updateTicketStatus(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
+      _spawnCrumb('after updateTicketStatus — before printMinimalPanel');
       printMinimalPanel('Worker Report', { status: 'spawn-error', validation: 'failed' }, 'RED', '🥒');
+      _spawnCrumb('before flushAndExit');
       await flushAndExit(sessionLog, exitCode);
+      _spawnCrumb('after flushAndExit — should never reach here');
     });
     proc.on('close', code => {
+      _spawnCrumb(`proc.close fired — code=${code} spawnErrorHandled=${spawnErrorHandled}`);
       // When spawn fails with ENOENT, node emits both 'error' and 'close' events.
       // The 'error' handler owns the exit semantics (e.g. 127 for hermes missing);
       // skip the normal close flow so it cannot race ahead with `process.exit(1)`.
@@ -1600,10 +1607,18 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
   });
 }
 
+// eslint-disable-next-line max-lines-per-function -- R-SMTEST-1 (ticket 1b57ef57): diagnostic breadcrumb instrumentation pushed main() to 123 lines; instrumentation is env-gated by PICKLE_DEBUG_SPAWN_MORTY and will be removed by R-SMTEST-2 once the wedge fix lands.
 async function main() {
+  // R-SMTEST early-exit invariant — see ticket 1b57ef57
+  const _smDebug = process.env.PICKLE_DEBUG_SPAWN_MORTY === '1';
+  function _smCrumb(label: string): void { if (_smDebug) process.stderr.write(`[SMTEST-1:CRUMB] ${label}\n`); }
+  _smCrumb('main() entered');
   const parsed = parseAndValidateArgs(process.argv.slice(2));
+  _smCrumb(`parseAndValidateArgs done — sessionRoot=${parsed.sessionRoot} ticketPath=${parsed.ticketPath}`);
   const runtime = readSessionRuntime(parsed);
+  _smCrumb(`readSessionRuntime done — state=${runtime.state ? 'loaded' : 'null'}`);
   const ticketInfo = readTicketInfo(parsed.ticketFilePath);
+  _smCrumb('readTicketInfo done');
   const requestedTimeout = ticketInfo
     ? getTicketTierBudgetWithOverrides(runtime.state, ticketInfo.complexity_tier).worker_timeout_seconds
     : parsed.timeout;
@@ -1621,12 +1636,15 @@ async function main() {
   // on macOS test fixtures landing in `/var/folders/.../T` (~70k entries)
   // a single readdir is ~6.7s and the pre-spawn flow used to do three of them.
   const workerBackendResolution = resolveWorkerBackendFromState(runtime.state);
+  _smCrumb('resolveWorkerBackendFromState done');
   const { backend, source } = routeBackend(parsed.sessionRoot, ticketInfo, parsed.backendOverride, runtime.state);
+  _smCrumb(`routeBackend done — backend=${backend} source=${source}`);
   const preSpawn = assertBackendPreSpawn({
     statePath,
     resolvedBackend: backend,
     source,
   });
+  _smCrumb(`assertBackendPreSpawn done — mode=${preSpawn.mode}`);
   if (preSpawn.mode === 'mismatch') {
     try {
       writeActivityEntry(path.join(parsed.sessionRoot, 'state.json'), {
@@ -1654,7 +1672,9 @@ async function main() {
     console.error(`[spawn-morty] backend mismatch: resolved=${preSpawn.resolvedBackend}, state=${preSpawn.stateBackend}; aborting worker spawn`);
     process.exit(1);
   }
+  _smCrumb(`entering writeActivityEntry block — statePath=${statePath}`);
   try {
+    _smCrumb('before writeActivityEntry worker_backend_resolved');
     writeActivityEntry(statePath, {
       event: 'worker_backend_resolved',
       ts: new Date().toISOString(),
@@ -1663,6 +1683,7 @@ async function main() {
       worker_backend: workerBackendResolution.workerBackend,
       source: workerBackendResolution.source,
     });
+    _smCrumb('after writeActivityEntry worker_backend_resolved');
     writeActivityEntry(statePath, {
       event: 'worker_spawn_backend_resolved',
       ts: new Date().toISOString(),
@@ -1672,6 +1693,7 @@ async function main() {
       ticket: parsed.ticketId,
       session: path.basename(parsed.sessionRoot),
     });
+    _smCrumb('after writeActivityEntry worker_spawn_backend_resolved');
     if (source === 'cli-flag-override' && parsed.backendOverride) {
       writeActivityEntry(statePath, {
         event: 'worker_spawn_backend_override',
@@ -1686,20 +1708,26 @@ async function main() {
   } catch {
     /* best-effort telemetry */
   }
+  _smCrumb('writeActivityEntry block done');
   const args = { ...parsed, backend };
   const extensionRoot = getExtensionRoot();
+  _smCrumb(`getExtensionRoot done — extensionRoot=${extensionRoot}`);
   const model = resolveWorkerModel(backend, extensionRoot, parsed.sessionRoot, ticketInfo, runtime.state);
+  _smCrumb(`resolveWorkerModel done — model=${model}`);
+  _smCrumb('before printMinimalPanel');
   printMinimalPanel(
     args.isReviewTicket ? 'Spawning Review Worker' : 'Spawning Morty Worker',
     { Request: args.ticket, Ticket: args.ticketId, Type: args.isReviewTicket ? 'review' : 'implementation', Format: args.outputFormat, Backend: backend, Timeout: `${effectiveTimeout}s (Req: ${requestedTimeout}s)`, PID: process.pid },
     args.isReviewTicket ? 'MAGENTA' : 'CYAN',
     '🥒'
   );
+  _smCrumb('after printMinimalPanel — before buildWorkerPrompt');
   const prompt = buildWorkerPrompt({
     ticket: { task: args.ticket, ticketContent: args.ticketContent, ticketId: args.ticketId, ticketPath: args.ticketPath, sessionRoot: args.sessionRoot, backend, isReviewTicket: args.isReviewTicket },
     model: model ?? 'sonnet',
     repoRoot: runtime.sessionWorkingDir,
   });
+  _smCrumb('buildWorkerPrompt done — before runWorkerProcess');
   const sessionLog = fs.createWriteStream(args.sessionLogPath, { flags: 'w' });
   await runWorkerProcess({
     args, prompt, ticketPath: args.ticketPath, ticketId: args.ticketId, sessionRoot: args.sessionRoot, sessionLog,
