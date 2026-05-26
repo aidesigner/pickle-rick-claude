@@ -58,7 +58,7 @@ _(R-WSRC-GR-LEAK #76 closed via `98ea4ec0` — hook widened to match `PICKLE_ROL
 
 | # | Code | Summary | PRD / Status |
 |---|---|---|---|
-| 5 | — | Subsystem CLAUDE.md drift; audit 5 subsystems under `extension/src/` | **PARTIAL** — `hooks/` and `lib/` now report **OK** under `scripts/audit-subsystem-claude-md.sh` (`1add4451`); `types/` cleared STALE; `bin/` (51 files) and `services/` (32 files) remain INCOMPLETE — per-export documentation, ongoing. |
+_(#5 B-AUDIT CLOSED 2026-05-26 — all 5 subsystems (`bin/`/`hooks/`/`lib/`/`services/`/`types/`) now report **OK** under `scripts/audit-subsystem-claude-md.sh`. Final tickets: `bb7d040e` hooks (6c8c29b2), `1a64117e` types (3255afb2). See `## Closed since last update (2026-05-26)`.)_
 | 12 | R-PSAI | `/pickle-pipeline` ignores branch/subset signals in operator kickoff | `p2-pickle-pipeline-no-scope-auto-inference.md`. **(Demoted P2→P3 2026-05-23: UX friction; operator can pass `--scope` explicitly.)** |
 | 19 | R-MMTR | claude manager max-turns family closeout pending | R-MMTR-1/5 shipped; 2/3/4 Skipped+commit; 6 force-skipped; 7 closer pending. **B-R-MMTR / B-E2E.** |
 | 29 | R-MWCL | monitor `inferMonitorMode` falls through to `'pickle'` for szechuan/anatomy | R-MWCL-1 shipped; 3..7 residual. **B-MONITOR.** |
@@ -96,6 +96,9 @@ _(R-WSRC-GR-LEAK #76 closed via `98ea4ec0` — hook widened to match `PICKLE_ROL
 
 ### Closed since last update (2026-05-25)
 - #27 R-MMRT — monitor respawn now validates `sessionDir` at every entry (`restartDeadWatcherPanes`, `respawnMonitorWindowForMode`, `startRespawnWatchdog`) before any tmux send-keys / respawn-pane; invalid sessionDir produces zero spawns + one deduped `monitor_respawn_session_dir_invalid` event per (caller, sessionDir, reason) tuple. **B-MONITOR CLOSED.** R-MMRT-1+R-MMRT-3 `65bf6bd3`, R-MMRT-2 `d1e5f886`, R-MMRT-5 integration cascade test `d0ff0a85`, R-MMRT-4 trap-door pin `6e187f67`. v1.80.1.
+
+### Closed since last update (2026-05-26)
+- #5 B-AUDIT — subsystem CLAUDE.md drift fully closed. All 5 subsystems (`bin/`/`hooks/`/`lib/`/`services/`/`types/`) report **OK** under `scripts/audit-subsystem-claude-md.sh`. `hooks/` Public Exports + Handler Invariants ticket `6c8c29b2` → `bb7d040e` (R-WSRC-GR salvage via path-scoped restore). `types/` Public Exports + Handler Invariants ticket `3255afb2` → `1a64117e`. Audit script: 5/5 OK.
 
 Earlier closed (detail in archive): #1-#4 (incl. R-CCPL reopened-P1 closed 2026-05-15 by R-CCPM-1..5 — `f915b821`/`690e5c5c`/`e955ce4d`/`39a660e4`/`73657d27`), #6, #8-#10, #13-#17, #20-#24, #26, #31, #36-#38, #41-#45 R-WSRC/R-MRWG/R-CTSF/R-CCPM-1b.
 
@@ -137,7 +140,7 @@ Earlier closed (detail in archive): #1-#4 (incl. R-CCPL reopened-P1 closed 2026-
 | **B-R-MMTR** | QUEUED | R-ICDM-2..7 + R-MMTRH heal + R-MMTR-7 closer | Closes #19/#28. |
 | **B-E2E** | QUEUED | R-MMTR6S | E2E re-attempt of force-skipped R-MMTR-6. Ships after B-R-MMTR. |
 | **B-LSOF** | QUEUED | R-PIWG-5 | `lsof` concurrent-git-process probe (~2-3 tickets). |
-| **B-AUDIT** | PARTIAL | subsystem CLAUDE.md drift (#5) | `hooks/` + `lib/` → OK; `types/` cleared STALE; `bin/`/`services/`/`types/` still INCOMPLETE under `audit-subsystem-claude-md.sh`. Per-export documentation, ongoing. |
+| **B-AUDIT** | SHIPPED | subsystem CLAUDE.md drift (#5) | All 5 subsystems OK (closer `1a64117e` 2026-05-26). `hooks/` + `lib/` → OK; `types/` cleared STALE; `bin/`/`services/`/`types/` still INCOMPLETE under `audit-subsystem-claude-md.sh`. Per-export documentation, ongoing. |
 
 ---
 
