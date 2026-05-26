@@ -33,8 +33,8 @@ const MONITOR_MODE_CASES = [
   ['meeseeks', 'meeseeks.md', 'research', 'pickle', /tail -F .+mux-runner\.log/],
   ['council', 'council-of-ricks.md', 'plan', 'pickle', /tail -F .+mux-runner\.log/],
   ['refinement', 'refinement.md', 'verify', 'pickle', /refinement-watcher\.js/],
-  ['szechuan-sauce', 'szechuan-sauce.md', 'szechuan-sauce', 'microverse', /morty-watcher\.js/],
-  ['anatomy-park', 'anatomy-park.md', 'anatomy-park', 'microverse', /morty-watcher\.js/],
+  ['szechuan-sauce', 'szechuan-sauce.md', 'szechuan-sauce', 'microverse', /pane-1-2-pointer\.js/],
+  ['anatomy-park', 'anatomy-park.md', 'anatomy-park', 'microverse', /pane-1-2-pointer\.js/],
 ];
 
 function makeSessionRoot(prefix) {
@@ -56,7 +56,7 @@ function makeExtensionRoot(tmpRoot) {
   const extRoot = path.join(tmpRoot, 'ext');
   const binRoot = path.join(extRoot, 'extension', 'bin');
   fs.mkdirSync(binRoot, { recursive: true });
-  for (const file of ['log-watcher.js', 'monitor.js', 'morty-watcher.js', 'raw-morty.js', 'refinement-watcher.js']) {
+  for (const file of ['log-watcher.js', 'monitor.js', 'morty-watcher.js', 'pane-1-2-pointer.js', 'raw-morty.js', 'refinement-watcher.js']) {
     fs.writeFileSync(path.join(binRoot, file), '// stub\n');
   }
   return extRoot;

@@ -1605,36 +1605,8 @@ ensureMonitorWindowFn = ensureMonitorWindow) {
         return;
     }
     for (const watcher of watcherPaneCommands(sessionDir, extensionRoot, mode)) {
-        const target = `${sessionName}:monitor.${watcher.pane}`;
-        const currentCommand = readPaneCurrentCommand(target, spawnSyncFn);
-        if (currentCommand === null) {
-            // R-MWCL-3: probe whether the monitor window itself is gone.
-            const listResult = spawnSyncFn('tmux', ['list-panes', '-t', `${sessionName}:monitor`], {
-                encoding: 'utf-8',
-                timeout: 5_000,
-            });
-            if (listResult.status !== 0) {
-                appendWatcherRestartLog(sessionDir, `${logTag} collapsed-layout-repair: monitor window missing — escalating to ensureMonitorWindow`);
-                ensureMonitorWindowFn({ sessionDir, extensionRoot, mode, spawnSyncFn, inTmux: true });
-                return;
-            }
-            recreateMissingWatcherPane(sessionDir, sessionName, watcher, spawnSyncFn, logTag);
-            continue;
-        }
-        if (currentCommand === 'node')
-            continue;
-        appendWatcherRestartLog(sessionDir, `${logTag} WARN: pane ${watcher.pane} command '${currentCommand || '(empty)'}' is not node`);
-        const result = spawnSyncFn('tmux', ['send-keys', '-t', target, watcher.command, 'Enter'], {
-            encoding: 'utf-8',
-            timeout: 5_000,
-        });
-        if (result.status === 0) {
-            appendWatcherRestartLog(sessionDir, `${logTag}: respawned ${watcher.name} in pane ${watcher.pane}`);
-        }
-        else {
-            const err = (result.stderr || result.stdout || '').toString().trim();
-            appendWatcherRestartLog(sessionDir, `${logTag} WARN: failed to respawn ${watcher.name} in pane ${watcher.pane}: ${err || 'non-zero exit'}`);
-        }
+        if (processWatcherPane(sessionDir, extensionRoot, mode, sessionName, watcher, spawnSyncFn, logTag, ensureMonitorWindowFn))
+            return;
     }
 }
 function isSessionInactive(sessionDir) {
@@ -1670,6 +1642,46 @@ function withSerializedPath(fn) {
     // helper. Runtime tmux calls stay synchronous; the helper marks the call
     // sites that must stay on the shared serialized path in test fixtures.
     return fn();
+}
+// Processes one watcher pane entry in the restartDeadWatcherPanes loop.
+// Returns true when the outer function should exit immediately (monitor window gone, escalated).
+function processWatcherPane(sessionDir, extensionRoot, mode, sessionName, watcher, spawnSyncFn, logTag, ensureMonitorWindowFn) {
+    const target = `${sessionName}:monitor.${watcher.pane}`;
+    const currentCommand = readPaneCurrentCommand(target, spawnSyncFn);
+    if (currentCommand === null) {
+        return handleNullPaneCommand(sessionDir, extensionRoot, mode, sessionName, watcher, spawnSyncFn, logTag, ensureMonitorWindowFn) === 'return';
+    }
+    if (currentCommand === 'node')
+        return false;
+    appendWatcherRestartLog(sessionDir, `${logTag} WARN: pane ${watcher.pane} command '${currentCommand || '(empty)'}' is not node`);
+    const result = spawnSyncFn('tmux', ['send-keys', '-t', target, watcher.command, 'Enter'], {
+        encoding: 'utf-8',
+        timeout: 5_000,
+    });
+    if (result.status === 0) {
+        appendWatcherRestartLog(sessionDir, `${logTag}: respawned ${watcher.name} in pane ${watcher.pane}`);
+    }
+    else {
+        const err = (result.stderr || result.stdout || '').toString().trim();
+        appendWatcherRestartLog(sessionDir, `${logTag} WARN: failed to respawn ${watcher.name} in pane ${watcher.pane}: ${err || 'non-zero exit'}`);
+    }
+    return false;
+}
+// R-MWCL-3: extracted from restartDeadWatcherPanes to reduce complexity.
+// Probes the monitor window and either escalates to ensureMonitorWindow (returns 'return')
+// or delegates to recreateMissingWatcherPane (returns 'continue').
+function handleNullPaneCommand(sessionDir, extensionRoot, mode, sessionName, watcher, spawnSyncFn, logTag, ensureMonitorWindowFn) {
+    const listResult = spawnSyncFn('tmux', ['list-panes', '-t', `${sessionName}:monitor`], {
+        encoding: 'utf-8',
+        timeout: 5_000,
+    });
+    if (listResult.status !== 0) {
+        appendWatcherRestartLog(sessionDir, `${logTag} collapsed-layout-repair: monitor window missing — escalating to ensureMonitorWindow`);
+        ensureMonitorWindowFn({ sessionDir, extensionRoot, mode, spawnSyncFn, inTmux: true });
+        return 'return';
+    }
+    recreateMissingWatcherPane(sessionDir, sessionName, watcher, spawnSyncFn, logTag);
+    return 'continue';
 }
 function recreateMissingWatcherPane(sessionDir, sessionName, watcher, spawnSyncFn, logTag) {
     const splitSpec = missingWatcherPaneSplitSpec(sessionName, watcher.pane);
@@ -1780,12 +1792,17 @@ function watcherPaneTwoCommand(sessionDir, binRoot, mode) {
                 command: wrapWithStderrRedirect(`tail -F ${path.join(sessionDir, 'mux-runner.log')}`, sessionDir, 2),
             };
         case 'pickle':
-        case 'szechuan-sauce':
-        case 'anatomy-park':
             return {
                 pane: 2,
                 name: 'morty-watcher.js',
                 command: wrapWithStderrRedirect(`node ${path.join(binRoot, 'morty-watcher.js')} ${sessionDir}`, sessionDir, 2),
+            };
+        case 'szechuan-sauce':
+        case 'anatomy-park':
+            return {
+                pane: 2,
+                name: 'pane-1-2-pointer.js',
+                command: wrapWithStderrRedirect(`node ${path.join(binRoot, 'pane-1-2-pointer.js')} ${sessionDir}`, sessionDir, 2),
             };
     }
 }
