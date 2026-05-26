@@ -114,3 +114,33 @@ test('dirty-tree guard fatal stderr lists each blocking file on its own line', (
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
 });
+
+test('dirty-tree guard exits 0 for dirty files listed in extension/.pipeline-runner-dirty-allowed.json', () => {
+  const { repo, sessionDir } = makeSession();
+  try {
+    fs.writeFileSync(path.join(repo, 'allowed.txt'), 'original\n');
+    git(['add', 'allowed.txt'], repo);
+    git(['commit', '-q', '-m', 'track allowed file'], repo);
+
+    fs.mkdirSync(path.join(repo, 'extension'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repo, 'extension', '.pipeline-runner-dirty-allowed.json'),
+      JSON.stringify({ paths: ['allowed.txt'] }),
+    );
+    git(['add', path.join('extension', '.pipeline-runner-dirty-allowed.json')], repo);
+    git(['commit', '-q', '-m', 'add allowlist'], repo);
+
+    fs.writeFileSync(path.join(repo, 'allowed.txt'), 'changed\n');
+
+    const result = spawnSync(process.execPath, [CLI, sessionDir], {
+      cwd: repo,
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /\[FATAL\]/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
