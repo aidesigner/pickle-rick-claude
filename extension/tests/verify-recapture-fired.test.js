@@ -427,6 +427,30 @@ test('verify-recapture.session-runtime-artifacts do not overwrite evidence from 
   }
 });
 
+test('verify-recapture.tracked-bundle-artifact-unchanged-on-pass-and-fail-runs', () => {
+  const baseline = readFileSync(STABLE_ARTIFACT, 'utf8');
+  const passSession = makeSession(baseState([
+    {
+      ts: '2026-05-02T11:15:00.000Z',
+      event: 'baseline_recapture_attempted',
+      iteration: 3,
+    },
+  ]));
+  const failSession = makeSession(baseState([]));
+  try {
+    const passResult = runVerifier(passSession);
+    assert.equal(passResult.status, 0, passResult.stderr);
+    assert.equal(readFileSync(STABLE_ARTIFACT, 'utf8'), baseline, 'tracked bundle must not change after pass run');
+
+    const failResult = runVerifier(failSession);
+    assert.equal(failResult.status, 1, failResult.stderr);
+    assert.equal(readFileSync(STABLE_ARTIFACT, 'utf8'), baseline, 'tracked bundle must not change after fail run');
+  } finally {
+    rmSync(passSession, { recursive: true, force: true });
+    rmSync(failSession, { recursive: true, force: true });
+  }
+});
+
 test('verify-recapture.no-session writes runtime artifact outside the tracked repo bundle tree', () => {
   const fakeHome = mkdtempSync(path.join(tmpdir(), 'verify-recapture-home-'));
   const baseline = readFileSync(STABLE_ARTIFACT, 'utf8');
