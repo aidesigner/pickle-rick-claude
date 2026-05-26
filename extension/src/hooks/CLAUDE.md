@@ -1,3 +1,41 @@
+## Public Exports
+
+Exports enumerated from `grep -E '^export ' extension/src/hooks/*.ts` (top-level files only; `handlers/` sub-directory is covered under Handler Invariants below).
+
+### `resolve-state.ts`
+- `sameWorkingDir(a, b)` — compare canonical realpaths for hook cwd matching
+- `selectScannedStateFile(stateFiles, cwd)` — choose the best matching state file from a scanned list
+- `resolveStateFile(dataDir)` — resolve a single authoritative state file path
+- `loadActiveState(stateFile)` — load and validate a `State` object from disk
+- `approve()` — emit the hook approve response to stdout
+
+### `dispatch.ts`
+CLI entry point — no named exports. Spawns the appropriate handler subprocess based on hook event type.
+
+---
+
+## Handler Invariants
+
+Summary of security-critical invariants for each handler. Full detail is in the `## Trap Doors` entries below; cross-references are noted per handler.
+
+### `handlers/config-protection.ts`
+- **Bash config-guard**: glob, brace (`{}`), bracket (`[]`), and `?` patterns in shell commands must be matched against protected config basenames to prevent bypass. See trap-door entry for `handlers/config-protection.ts` (glob/brace invariant).
+- **`PROTECTED_WRITE_GLOBS` state-file write blocking**: `Write`/`Edit` tools and bash output-redirects (`>`, `>>`, `tee`, `cp`, `mv`, `rsync`) targeting state files are blocked unless `state.flags.allow_state_writes_reason` is set. See trap-door entry for `handlers/config-protection.ts` (R-WSRC-3).
+- **R-WSRC-GR git-verb blocker** (`detectProhibitedGitVerb`): `git reset`, `switch`, `stash`, `rebase`, `pull`, `push`, `checkout-with-ref`, `commit --amend`, and `fetch --prune` are blocked in worker Bash. See trap-door entry for `handlers/config-protection.ts` (R-WSRC-GR).
+
+### `handlers/stop-hook.ts`
+- **tmux passthrough APPROVE**: when `state.tmux_mode === true`, the hook approves unconditionally so launcher conversations do not block tmux-owned loops. See trap-door entry for `src/hooks/handlers/stop-hook.ts` (tmux passthrough).
+- **Idle-backoff progression**: after 3 consecutive degenerate wait-pattern manager turns, nudges are suppressed until state mtime / worker artifact mtime / liveness changes or the bounded fallback timer fires. See trap-door entry for `stop-hook.ts (idle backoff)`.
+- **Update-cadence conversion**: `update_check_interval_hours` is multiplied by `3600` before rate-limit comparison — not divided. See trap-door entry for `stop-hook.ts (update cadence)`.
+- **`Decision` type**: always `'approve' | 'block'` — the string `'allow'` is never a valid decision value. See trap-door entries and `Decision` type at `handlers/stop-hook.ts:66`.
+
+### `handlers/tsc-gate.ts`
+- Gate fires **only on git-commit-class Bash commands** (`isGitCommitCommand`). Non-commit commands are passed through without a tsc check.
+- `allow_tsc_failed_reason` override is **consumed on the next clean commit** — the flag auto-clears via `tsc_gate_override_consumed`.
+- See trap-door entry for `handlers/tsc-gate.ts`.
+
+---
+
 ## Trap Doors
 
 - `../bin/log-commit.ts` — INVARIANT: every successful `PostToolUse` in an active session clears `last-tool-error.json` before commit parsing. BREAKS: old tool failures poison later worker spawns with stale retry-circuit guidance. ENFORCE: `extension/tests/log-commit.test.js`. PATTERN_SHAPE: PostToolUse hook resolves same-cwd active session and leaves `last-tool-error.json` untouched.
