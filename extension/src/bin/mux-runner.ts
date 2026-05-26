@@ -35,7 +35,7 @@ export {
 const sm = new StateManager();
 
 let currentChildProc: import('child_process').ChildProcess | null = null;
-let qualityGateLegacyWarningLogged = false;
+let qualityGateLegacyWarningLogged = false; // R-MUXQG test-reset contract — see prds/p1-bug-fix-bundle-b-release-drift-2026-05-26.md
 
 export interface OrphanDetectionResult {
   orphan_session_path: string;

@@ -306,4 +306,21 @@ then
   audit_exit_code=1
 fi
 
+# R-MUXQG test-reset contract: no prod source outside extension/tests/ may call _resetQualityGateSkipDeprecation
+_MUXQG_VIOLATIONS=$(
+  grep -rn "_resetQualityGateSkipDeprecation" \
+    "$EXTENSION_ROOT/src/" \
+    "$EXTENSION_ROOT/bin/" \
+    "$EXTENSION_ROOT/services/" \
+    "$EXTENSION_ROOT/hooks/" \
+    "$EXTENSION_ROOT/types/" \
+    2>/dev/null \
+  | grep -v "export function _resetQualityGateSkipDeprecation" \
+  || true
+)
+if [ -n "$_MUXQG_VIOLATIONS" ]; then
+  fail "R-MUXQG test-reset contract: _resetQualityGateSkipDeprecation referenced in prod source:
+$_MUXQG_VIOLATIONS"
+fi
+
 exit "$audit_exit_code"
