@@ -742,7 +742,17 @@ export function renderDashboard(state, mode, sessionDir, width) {
     }
     return buildPickleOutput(state, sessionDir, width);
 }
-async function render(sessionDir, mode, sink = process.stdout) {
+/**
+ * R-MWCL-2: TypeError from renderDashboard indicates a transient mode-field mismatch
+ * (e.g. pickle mode rendering against a szechuan-sauce session whose pickle-specific
+ * fields haven't landed yet). Recoverable — return false and let the !active retry
+ * path call checkAndSwapMode. Non-TypeErrors are genuine I/O or corrupt-state faults
+ * and must propagate to main() so process.exit(2) fires loudly.
+ */
+export function isModeMatchError(err) {
+    return err instanceof TypeError;
+}
+export async function render(sessionDir, mode, sink = process.stdout, _renderDashboardFn) {
     // If the session directory itself is gone, signal exit (not just "waiting")
     if (!(await pathExists(sessionDir)))
         return false;
@@ -756,7 +766,18 @@ async function render(sessionDir, mode, sink = process.stdout) {
         return true;
     }
     const width = getWidth();
-    const segments = renderDashboard(state, mode, sessionDir, width);
+    const renderFn = _renderDashboardFn ?? renderDashboard;
+    let segments;
+    try {
+        segments = renderFn(state, mode, sessionDir, width);
+    }
+    catch (err) {
+        if (isModeMatchError(err)) {
+            process.stderr.write(`[render-mode-mismatch] ${err instanceof Error ? err.message : String(err)}\n`);
+            return false;
+        }
+        throw err;
+    }
     await writeWithWatchdog(sink, segments.join(''));
     return state.active === true;
 }
