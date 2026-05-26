@@ -17,6 +17,18 @@ function makeTmpRoot() {
     return { dir, sessionsRoot };
 }
 
+// R-POD demotion needs a session map at dataRoot/current_sessions.json pointing
+// the cwd at a dead PID. Tests that exercise the demote path (--paused mode)
+// must write this; the warn-only path (no --paused) still fires on age-staleness
+// alone via scanPausedOrphans' separate warning predicate.
+function writeDeadSessionMap(dataRoot, sessionDir) {
+    const mapPath = path.join(dataRoot, 'current_sessions.json');
+    fs.writeFileSync(
+        mapPath,
+        JSON.stringify({ [process.cwd()]: { sessionPath: sessionDir, pid: 999999 } }),
+    );
+}
+
 function makeSession(sessionsRoot, sessionId, stateOverrides) {
     const sessionDir = path.join(sessionsRoot, sessionId);
     fs.mkdirSync(sessionDir, { recursive: true });
@@ -120,6 +132,7 @@ test('(b) --paused flag auto-demotes: state.active becomes false', () => {
             working_dir: process.cwd(),
         });
         backdate(statePath);
+        writeDeadSessionMap(dir, path.dirname(statePath));
 
         // Silence stderr during scan
         const origWrite = process.stderr.write.bind(process.stderr);
@@ -152,6 +165,7 @@ test('(b2) --paused uses newer recoverable tmp snapshot before orphan demotion',
             pid: null,
             working_dir: process.cwd(),
         }, 350_000);
+        writeDeadSessionMap(dir, path.dirname(statePath));
 
         const origWrite = process.stderr.write.bind(process.stderr);
         process.stderr.write = () => true;

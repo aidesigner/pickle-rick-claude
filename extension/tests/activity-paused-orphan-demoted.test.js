@@ -41,14 +41,24 @@ function baseState(overrides = {}) {
 test('activity.paused-orphan-demoted: demotion emits event with mtime_age_seconds, pid_orig, ts', () => {
   const tmp = tmpDir();
   try {
-    const stateFile = path.join(tmp, 'state.json');
-    const sessionDir = '/tmp/test-session-pso-03';
+    // R-POD requires dataRoot/sessions/<hash>/state.json layout so
+    // readSessionsMapForState finds current_sessions.json at dataRoot.
+    const dataRoot = path.join(tmp, 'data');
+    const sessionDir = path.join(dataRoot, 'sessions', 'pso-03');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const stateFile = path.join(sessionDir, 'state.json');
     fs.writeFileSync(stateFile, JSON.stringify(baseState({
       active: true,
       pid: null,
       step: 'prd',
       session_dir: sessionDir,
+      working_dir: sessionDir,
     })));
+    // R-POD `&&` predicate needs dead mapped PID.
+    fs.writeFileSync(
+      path.join(dataRoot, 'current_sessions.json'),
+      JSON.stringify({ [sessionDir]: { sessionPath: sessionDir, pid: 999999 } }),
+    );
     const staleTime = new Date(Date.now() - 400_000);
     fs.utimesSync(stateFile, staleTime, staleTime);
 

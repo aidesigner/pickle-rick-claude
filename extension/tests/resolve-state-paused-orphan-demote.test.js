@@ -39,8 +39,23 @@ function baseState(overrides = {}) {
 test('resolve-state.paused-orphan-demote: stale mtime+null pid demotes active session', () => {
   const tmp = tmpDir();
   try {
-    const stateFile = path.join(tmp, 'state.json');
-    fs.writeFileSync(stateFile, JSON.stringify(baseState({ active: true, pid: null })));
+    // R-POD requires the canonical data-root layout (dataRoot/sessions/<hash>/state.json)
+    // so readSessionsMapForState can locate current_sessions.json one level above sessions/.
+    const dataRoot = path.join(tmp, 'data');
+    const sessionDir = path.join(dataRoot, 'sessions', 'paused');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const stateFile = path.join(sessionDir, 'state.json');
+    fs.writeFileSync(stateFile, JSON.stringify(baseState({
+      active: true,
+      pid: null,
+      working_dir: sessionDir,
+      session_dir: sessionDir,
+    })));
+    // R-POD `&&` predicate needs both age-stale state AND dead mapped PID.
+    fs.writeFileSync(
+      path.join(dataRoot, 'current_sessions.json'),
+      JSON.stringify({ [sessionDir]: { sessionPath: sessionDir, pid: 999999 } }),
+    );
     const staleTime = new Date(Date.now() - 400_000);
     fs.utimesSync(stateFile, staleTime, staleTime);
 

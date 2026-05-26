@@ -66,18 +66,38 @@ const sm = new StateManager();
 function runCell({ pidLabel, active, mtime, iteration }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shs-'));
   try {
-    const stateFile = path.join(tmpDir, 'state.json');
+    // R-POD requires the canonical data-root layout (dataRoot/sessions/<hash>/state.json)
+    // so readSessionsMapForState can locate current_sessions.json one level above sessions/.
+    const sessionsDir = path.join(tmpDir, 'sessions');
+    const sessionDir = path.join(sessionsDir, 'cell');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const stateFile = path.join(sessionDir, 'state.json');
     const pid =
       pidLabel === 'null' ? null : pidLabel === 'alive' ? ALIVE_PID : DEAD_PID;
 
-    fs.writeFileSync(stateFile, JSON.stringify(buildState({ pid, active, iteration })));
+    const state = buildState({ pid, active, iteration });
+    state.session_dir = sessionDir;
+    state.working_dir = sessionDir;
+    fs.writeFileSync(stateFile, JSON.stringify(state));
+
+    // R-POD `&&` predicate: orphan-paused demotion fires only when state is age-stale
+    // AND the cwd's current_sessions.json maps to a dead PID. The null+stale cells
+    // model the abandoned-paused-interview class — write a session map pointing at a
+    // dead launch-shell PID so demotion fires per the documented contract.
+    if (mtime === 'stale' && pidLabel === 'null' && active) {
+      const mapPath = path.join(tmpDir, 'current_sessions.json');
+      fs.writeFileSync(
+        mapPath,
+        JSON.stringify({ [sessionDir]: { sessionPath: sessionDir, pid: DEAD_PID } }),
+      );
+    }
 
     if (mtime === 'stale') {
       const staleTimeSec = Date.now() / 1000 - STALE_OFFSET_SECONDS;
       fs.utimesSync(stateFile, staleTimeSec, staleTimeSec);
     }
 
-    // StateManager.read() runs full recovery: orphan-paused demotion (pid=null + stale)
+    // StateManager.read() runs full recovery: orphan-paused demotion (pid=null + stale + dead mapped pid)
     // and dead-pid demotion. Mirrors what the stop-hook binary does before classifyDecision.
     const recovered = sm.read(stateFile);
 
