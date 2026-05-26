@@ -298,6 +298,13 @@ function hasPausedOrphanDemotion(activity: State['activity']): boolean {
     activity.some(a => typeof a === 'object' && a !== null && (a as Record<string, unknown>).kind === 'paused_session_orphan_demoted');
 }
 
+/**
+ * Evaluates whether a paused session qualifies for orphan demotion.
+ * Demotion requires BOTH conditions: the state is age-stale (≥5 min untouched)
+ * AND the mapped session-map PID is dead. Either condition alone is insufficient
+ * signal — a healthy session whose launch-shell PID has merely rolled over is
+ * not an orphan.
+ */
 function getPausedOrphanDemotion(statePath: string, state: State, preMigrationMtimeMs: number): {
   ageMs: number;
   mappedPid: number | null;
@@ -309,7 +316,7 @@ function getPausedOrphanDemotion(statePath: string, state: State, preMigrationMt
   return {
     ageMs,
     mappedPid,
-    shouldDemote: ageMs >= 300_000 || deadMappedPid,
+    shouldDemote: ageMs >= 300_000 && deadMappedPid,
   };
 }
 

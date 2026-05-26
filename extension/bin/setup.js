@@ -1142,7 +1142,6 @@ export function scanPausedOrphans(sessionsRoot, config, smInstance) {
 export function precleanPausedOrphansBeforeCreate(sessionsRoot, smInstance) {
     const cwd = process.cwd();
     const now = Date.now();
-    const staleCutoffMs = 300_000;
     let entries;
     try {
         entries = fs.readdirSync(sessionsRoot);
@@ -1160,7 +1159,7 @@ export function precleanPausedOrphansBeforeCreate(sessionsRoot, smInstance) {
         catch {
             continue;
         }
-        if (now - mtime <= staleCutoffMs)
+        if (now - mtime <= 300_000)
             continue;
         let raw;
         try {
@@ -1190,6 +1189,7 @@ export function precleanPausedOrphansBeforeCreate(sessionsRoot, smInstance) {
             mtime_age_seconds: mtimeAgeSeconds,
             step: 'preclean_before_create',
         });
+        // eslint-disable-next-line pickle/no-raw-state-write -- orphan: active=true pid=null mtime>300s; no live process holds this session
         try {
             smInstance.forceWrite(statePath, s);
         }

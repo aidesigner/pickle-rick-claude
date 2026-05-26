@@ -247,6 +247,13 @@ function hasPausedOrphanDemotion(activity) {
     return Array.isArray(activity) &&
         activity.some(a => typeof a === 'object' && a !== null && a.kind === 'paused_session_orphan_demoted');
 }
+/**
+ * Evaluates whether a paused session qualifies for orphan demotion.
+ * Demotion requires BOTH conditions: the state is age-stale (≥5 min untouched)
+ * AND the mapped session-map PID is dead. Either condition alone is insufficient
+ * signal — a healthy session whose launch-shell PID has merely rolled over is
+ * not an orphan.
+ */
 function getPausedOrphanDemotion(statePath, state, preMigrationMtimeMs) {
     const ageMs = preMigrationMtimeMs > 0 ? Date.now() - preMigrationMtimeMs : Infinity;
     const mappedPid = readMappedPid(readSessionsMapForState(statePath, state.working_dir));
@@ -254,7 +261,7 @@ function getPausedOrphanDemotion(statePath, state, preMigrationMtimeMs) {
     return {
         ageMs,
         mappedPid,
-        shouldDemote: ageMs >= 300_000 || deadMappedPid,
+        shouldDemote: ageMs >= 300_000 && deadMappedPid,
     };
 }
 export class InvalidActivityEventError extends Error {
