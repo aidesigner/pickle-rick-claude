@@ -314,6 +314,35 @@ test('spawn-morty: valid args but no claude binary → exit 1 (spawn failure, no
     }
 });
 
+// R-SMTEST-5 regression: guard must fire and emit event before reaching claude spawn.
+test('spawn-morty: invalid --ticket-path exits non-zero within 5s and emits spawn_morty_invalid_ticket_path event', () => {
+    const dataRootDir = makeTmpDir('pickle-smtest5-root-');
+    const nonExistentPath = path.join(os.tmpdir(), `smtest5-nonexistent-${process.pid}`);
+    try {
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the thing',
+            '--ticket-id', 'ticket-smtest5-regression',
+            '--ticket-path', nonExistentPath,
+            '--timeout', '5',
+        ], {
+            env: { ...process.env, PICKLE_DATA_ROOT: dataRootDir },
+            encoding: 'utf-8',
+            timeout: 5000,
+        });
+        assert.ok(
+            result.status !== null && result.status !== 0,
+            `should exit non-zero within 5s (status=${result.status}, signal=${result.signal})`
+        );
+        assert.ok(
+            result.stderr.includes('spawn_morty_invalid_ticket_path'),
+            `stderr should contain spawn_morty_invalid_ticket_path event, got: ${result.stderr}`
+        );
+    } finally {
+        fs.rmSync(dataRootDir, { recursive: true, force: true });
+        fs.rmSync(nonExistentPath, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // --output-format and --ticket-file edge cases (deep review pass 5)
 // ---------------------------------------------------------------------------
