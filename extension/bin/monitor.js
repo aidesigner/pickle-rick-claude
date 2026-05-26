@@ -736,8 +736,12 @@ export function renderDashboard(state, mode, sessionDir, width) {
     if (mode === 'idle') {
         return ['\x1b[2J\x1b[H', `${MX.BRIGHT}Pipeline complete${MX.R}\n`];
     }
-    if (mode === 'microverse') {
-        const mv = readRecoverableJsonObject(path.join(sessionDir, 'microverse.json'));
+    if (mode === 'microverse' || mode === 'anatomy-park' || mode === 'szechuan-sauce') {
+        const mvPath = path.join(sessionDir, 'microverse.json');
+        if (!fs.existsSync(mvPath)) {
+            return ['\x1b[2J\x1b[H', `${MX.BRIGHT}◤ MICROVERSE MONITOR ◢${MX.R}\n`, `  ${MX.DIM}microverse: initializing…${MX.R}\n`];
+        }
+        const mv = readRecoverableJsonObject(mvPath);
         return [renderMicroverseDashboard(state, mv)];
     }
     return buildPickleOutput(state, sessionDir, width);
