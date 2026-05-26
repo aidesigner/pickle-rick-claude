@@ -274,6 +274,9 @@ test('spawn-morty: --ticket-id value starts with -- → exit 1', () => {
     }
 });
 
+// R-SMTEST early-exit invariant (ticket 910ae36c): --ticket-path is a /tmp dir outside
+// the data root, so spawn-morty exits 1 via spawn_morty_invalid_ticket_path before
+// reaching the claude spawn. Assertions hold: exit 1, no Usage/required/invalid-chars in stdout.
 test('spawn-morty: valid args but no claude binary → exit 1 (spawn failure, not validation)', () => {
     const tmpDir = makeTmpDir();
     try {
@@ -315,6 +318,8 @@ test('spawn-morty: valid args but no claude binary → exit 1 (spawn failure, no
 // --output-format and --ticket-file edge cases (deep review pass 5)
 // ---------------------------------------------------------------------------
 
+// R-SMTEST early-exit invariant (ticket 910ae36c): --ticket-path is a /tmp dir outside
+// the data root; spawn-morty exits 1 via spawn_morty_invalid_ticket_path before spawn.
 test('spawn-morty: --output-format as last arg (no value) defaults to text', () => {
     const tmpDir = makeTmpDir();
     try {
@@ -343,6 +348,8 @@ test('spawn-morty: --output-format as last arg (no value) defaults to text', () 
     }
 });
 
+// R-SMTEST early-exit invariant (ticket 910ae36c): --ticket-path is a /tmp dir outside
+// the data root; spawn-morty exits 1 via spawn_morty_invalid_ticket_path before spawn.
 test('spawn-morty: --ticket-file with value starting with -- does not crash', () => {
     const tmpDir = makeTmpDir();
     try {
@@ -366,6 +373,8 @@ test('spawn-morty: --ticket-file with value starting with -- does not crash', ()
     }
 });
 
+// R-SMTEST early-exit invariant (ticket 910ae36c): --ticket-path is a /tmp dir outside
+// the data root; spawn-morty exits 1 via spawn_morty_invalid_ticket_path before spawn.
 test('spawn-morty: --timeout with custom value is accepted (no validation error)', () => {
     const tmpDir = makeTmpDir();
     try {
@@ -421,6 +430,9 @@ test('spawn-morty: --timeout rejects suffixed and missing values before worker s
 // --review flag (meso-review enforcement)
 // ---------------------------------------------------------------------------
 
+// R-SMTEST early-exit invariant (ticket 910ae36c): PICKLE_DATA_ROOT is set to tmpDir so
+// ticketDir is inside the data root — the guard does NOT fire. Exit 1 comes from the
+// absent claude binary (spawn failure), not the early-exit guard.
 test('spawn-morty: --review flag accepted without validation error', () => {
     const tmpDir = makeTmpDir();
     try {
