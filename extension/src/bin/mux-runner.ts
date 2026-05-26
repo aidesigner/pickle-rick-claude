@@ -2676,7 +2676,7 @@ interface QualityGateSkipResolution {
   legacyField?: 'skip_readiness_reason' | 'skip_ticket_audit_reason';
 }
 
-function resolveQualityGateSkipReason(
+export function resolveQualityGateSkipReason(
   state: State,
   log: (msg: string) => void,
   sessionName: string,
@@ -2723,6 +2723,11 @@ function resolveQualityGateSkipReason(
   }
 
   return { reason: legacyValue, legacyField };
+}
+
+/** Test-only: resets the once-per-process deprecation flag. Non-prod. */
+export function _resetQualityGateSkipDeprecation(): void {
+  qualityGateLegacyWarningLogged = false;
 }
 
 /**

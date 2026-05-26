@@ -2347,7 +2347,7 @@ export function runMuxReadinessGate(input) {
         process.stderr.write(result.stderr);
     return result.status ?? 1;
 }
-function resolveQualityGateSkipReason(state, log, sessionName, callsite) {
+export function resolveQualityGateSkipReason(state, log, sessionName, callsite) {
     const flags = state.flags;
     const unifiedRaw = flags?.skip_quality_gates_reason;
     const unifiedReason = typeof unifiedRaw === 'string' ? unifiedRaw.trim() : '';
@@ -2382,6 +2382,10 @@ function resolveQualityGateSkipReason(state, log, sessionName, callsite) {
         });
     }
     return { reason: legacyValue, legacyField };
+}
+/** Test-only: resets the once-per-process deprecation flag. Non-prod. */
+export function _resetQualityGateSkipDeprecation() {
+    qualityGateLegacyWarningLogged = false;
 }
 /**
  * Invokes audit-ticket-bundle.js on the session's ticket files immediately

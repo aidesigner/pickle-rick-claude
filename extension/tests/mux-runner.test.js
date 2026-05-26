@@ -1148,34 +1148,39 @@ test('mux-runner quality-gate skip: legacy fallback warns once per process and e
     // R-QGSK-2 followup (R-WSRC-4 finding): each legacy flag bypasses ONLY its
     // own gate. Setting both legacy flags exercises the per-access emission +
     // once-per-process warning logic across distinct callsites.
-    const sessionDir = makeTmpRoot();
-    const dataRoot = makeTmpRoot();
-    const stubBinDir = makeTmpRoot();
+    // Uses resolveQualityGateSkipReason directly to bypass StateManager migration
+    // which always promotes legacy flags to skip_quality_gates_reason (R-MUXQG-1).
+    _resetQualityGateSkipDeprecation();
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-legacy-skip-data-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
+    const warnings = [];
     try {
-        writeClaudeCompletionStub(stubBinDir);
-        writeGateSkipSession(sessionDir, {
-            skip_readiness_reason: 'legacy readiness waiver',
-            skip_ticket_audit_reason: 'legacy audit waiver',
-        });
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        const state = {
+            flags: {
+                skip_readiness_reason: 'legacy readiness waiver',
+                skip_ticket_audit_reason: 'legacy audit waiver',
+            },
+        };
+        const log = (msg) => warnings.push(msg);
+        resolveQualityGateSkipReason(state, log, 'test-session', 'readiness_gate');
+        resolveQualityGateSkipReason(state, log, 'test-session', 'ticket_audit_gate');
 
-        const result = runMuxRunnerWithDataRoot(sessionDir, dataRoot, stubBinDir);
-        const runnerLog = fs.readFileSync(path.join(sessionDir, 'mux-runner.log'), 'utf-8');
         const events = readActivityLines(dataRoot).filter((entry) => entry.event === 'skip_flag_legacy_used');
         const eventsByCallsite = new Map(events.map((e) => [e.gate_payload?.callsite, e]));
         const callsites = [...eventsByCallsite.keys()].sort();
-        const warningCount = (runnerLog.match(/DEPRECATION: state\.flags\.(skip_readiness_reason|skip_ticket_audit_reason) is legacy/g) || []).length;
+        const warningCount = warnings.filter((w) => /DEPRECATION: state\.flags\.(skip_readiness_reason|skip_ticket_audit_reason) is legacy/.test(w)).length;
 
-        assert.ok([0, 3].includes(result.status ?? -1), result.stderr + runnerLog);
-        assert.equal(warningCount, 1, `expected one deprecation warning (once-per-process), got log: ${runnerLog}`);
+        assert.equal(warningCount, 1, `expected one deprecation warning (once-per-process), got warnings: ${warnings.join(', ')}`);
         assert.deepEqual(callsites, ['readiness_gate', 'ticket_audit_gate']);
         assert.equal(eventsByCallsite.get('readiness_gate')?.gate_payload?.legacy_field, 'skip_readiness_reason');
         assert.equal(eventsByCallsite.get('readiness_gate')?.gate_payload?.value, 'legacy readiness waiver');
         assert.equal(eventsByCallsite.get('ticket_audit_gate')?.gate_payload?.legacy_field, 'skip_ticket_audit_reason');
         assert.equal(eventsByCallsite.get('ticket_audit_gate')?.gate_payload?.value, 'legacy audit waiver');
     } finally {
-        fs.rmSync(sessionDir, { recursive: true, force: true });
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
         fs.rmSync(dataRoot, { recursive: true, force: true });
-        fs.rmSync(stubBinDir, { recursive: true, force: true });
     }
 });
 
@@ -1184,26 +1189,31 @@ test('mux-runner quality-gate skip: skip_readiness_reason does NOT bypass ticket
     // silently bypass ticket_audit_gate too, because the legacy-flag fallback
     // took the first set flag for BOTH callsites. With the fix, only readiness
     // is bypassed; audit_gate has no legacy flag to fall back on so it runs.
-    const sessionDir = makeTmpRoot();
-    const dataRoot = makeTmpRoot();
-    const stubBinDir = makeTmpRoot();
+    // Uses resolveQualityGateSkipReason directly to bypass StateManager migration
+    // which always promotes legacy flags to skip_quality_gates_reason (R-MUXQG-1).
+    _resetQualityGateSkipDeprecation();
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-legacy-skip-data-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
     try {
-        writeClaudeCompletionStub(stubBinDir);
-        writeGateSkipSession(sessionDir, {
-            skip_readiness_reason: 'legacy readiness waiver',
-            // skip_ticket_audit_reason intentionally unset
-        });
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        const state = {
+            flags: {
+                skip_readiness_reason: 'legacy readiness waiver',
+                // skip_ticket_audit_reason intentionally unset
+            },
+        };
+        const log = () => {};
+        resolveQualityGateSkipReason(state, log, 'test-session', 'readiness_gate');
+        resolveQualityGateSkipReason(state, log, 'test-session', 'ticket_audit_gate');
 
-        const result = runMuxRunnerWithDataRoot(sessionDir, dataRoot, stubBinDir);
         const events = readActivityLines(dataRoot).filter((entry) => entry.event === 'skip_flag_legacy_used');
         const callsites = events.map((entry) => entry.gate_payload?.callsite).sort();
 
-        assert.ok([0, 3].includes(result.status ?? -1));
         assert.deepEqual(callsites, ['readiness_gate'], 'ticket_audit_gate must NOT consume skip_readiness_reason');
     } finally {
-        fs.rmSync(sessionDir, { recursive: true, force: true });
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
         fs.rmSync(dataRoot, { recursive: true, force: true });
-        fs.rmSync(stubBinDir, { recursive: true, force: true });
     }
 });
 
@@ -1354,7 +1364,7 @@ test('mux-runner: creates mux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, applyAutoTicketCompletionValidation, correctPhantomDoneTickets, hasCompletionCommit, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo, validateAutoTicketCompletion, writeHandoffAtomic, classifyGitProbeError } from '../bin/mux-runner.js';
+import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, applyAutoTicketCompletionValidation, correctPhantomDoneTickets, hasCompletionCommit, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo, validateAutoTicketCompletion, writeHandoffAtomic, classifyGitProbeError, resolveQualityGateSkipReason, _resetQualityGateSkipDeprecation } from '../bin/mux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
