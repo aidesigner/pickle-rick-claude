@@ -1210,6 +1210,16 @@
           }
         }
       }
+    },
+    "manager_turn_progress": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "manager_turn_progress" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "ticket_id": { "type": ["string", "null"] }
+      }
     }
   },
   "oneOf": [
@@ -1288,6 +1298,7 @@
     { "$ref": "#/definitions/szechuan_sauce_empty_scope_skip" },
     { "$ref": "#/definitions/monitor_respawn_session_dir_invalid" },
     { "$ref": "#/definitions/spawn_morty_invalid_ticket_path" },
-    { "$ref": "#/definitions/ticket_preskipped_already_terminal" }
+    { "$ref": "#/definitions/ticket_preskipped_already_terminal" },
+    { "$ref": "#/definitions/manager_turn_progress" }
   ]
 }

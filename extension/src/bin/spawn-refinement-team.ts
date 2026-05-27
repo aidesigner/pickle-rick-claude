@@ -166,6 +166,7 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`tsc_gate_override_used\` | \`gate_payload.override_reason\`, \`gate_payload.failure_kind\`, \`gate_payload.command\` | tsc-gate PreToolUse hook override path |
 | \`tsc_gate_override_consumed\` | \`gate_payload.override_reason\`, \`gate_payload.command\` | tsc-gate PreToolUse hook clean-pass auto-clear path |
 | \`tsc_gate_crashed\` | \`gate_payload.failure_kind\`, \`gate_payload.error\`, \`gate_payload.command\` | tsc-gate PreToolUse hook fail-open crash path |
+| \`manager_turn_progress\` | \`session\`, \`ticket_id\` | mux-runner manager-turn freshness heartbeat (R-SJLAG) |
 | \`manager_max_turns_relaunch\` | \`backend\`, \`relaunch_count\`, \`cap\`, \`pending_count\`, \`last_ticket_seen\` | manager-relaunch Claude max-turn relaunch path |
 | \`anatomy_park_empty_scope_skip\` | \`session\`, \`gate_payload.in_scope_paths\`, \`gate_payload.discovered_subsystems\` | pipeline-runner resolveAnatomySubsystems empty-scope skip |
 | \`szechuan_sauce_empty_scope_skip\` | \`session\`, \`gate_payload.in_scope_paths\` | pipeline-runner setupSzechuanSauce code-free-scope skip |

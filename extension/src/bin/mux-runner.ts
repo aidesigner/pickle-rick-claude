@@ -217,6 +217,47 @@ const TASK_NOTE_PRIORITY: Record<string, number> = {
 
 const TASK_NOTE_TRUNC_MARKER = '[truncated]';
 
+const MANAGER_TURN_HEARTBEAT_POLL_MS = 20_000;
+const HEARTBEAT_ARTIFACT_PREFIXES = ['research_', 'plan_', 'conformance_'] as const;
+
+export function maybeEmitManagerTurnProgress(opts: {
+  sessionDir: string;
+  statePath: string;
+  ticketId: string | null | undefined;
+  lastSeenMtimeMs: number;
+}): number {
+  const { sessionDir, statePath, ticketId, lastSeenMtimeMs } = opts;
+  if (!ticketId) return lastSeenMtimeMs;
+  const ticketDir = path.join(sessionDir, ticketId);
+  let files: string[];
+  try {
+    files = fs.readdirSync(ticketDir);
+  } catch {
+    return lastSeenMtimeMs;
+  }
+  let maxMtimeMs = lastSeenMtimeMs;
+  for (const f of files) {
+    if (!HEARTBEAT_ARTIFACT_PREFIXES.some(p => f.startsWith(p)) || !f.endsWith('.md')) continue;
+    try {
+      const { mtimeMs } = fs.statSync(path.join(ticketDir, f));
+      if (mtimeMs > maxMtimeMs) maxMtimeMs = mtimeMs;
+    } catch { /* skip unreadable */ }
+  }
+  if (maxMtimeMs > lastSeenMtimeMs) {
+    const now = new Date();
+    fs.utimesSync(statePath, now, now);
+    logActivity({
+      event: 'manager_turn_progress',
+      source: 'pickle',
+      session: path.basename(sessionDir),
+      ticket_id: ticketId,
+      ts: now.toISOString(),
+    });
+    return maxMtimeMs;
+  }
+  return lastSeenMtimeMs;
+}
+
 interface TaskNoteSection { name: string; body: string; }
 
 function parseTaskNoteSections(content: string): { preamble: string; sections: TaskNoteSection[] } {
@@ -2391,12 +2432,17 @@ export async function runIteration(
     const hangGuardMs = (runtimeOverrides.maxIterationSeconds ?? Defaults.MAX_ITERATION_SECONDS) * 1000;
     const outputStallGuardMs = (runtimeOverrides.outputStallSeconds ?? Defaults.OUTPUT_STALL_SECONDS) * 1000;
     let outputStallGuard: NodeJS.Timeout | null = null;
+    let heartbeat: NodeJS.Timeout | null = null;
 
     function clearIterationGuards() {
       clearTimeout(hangGuard);
       if (outputStallGuard) {
         clearTimeout(outputStallGuard);
         outputStallGuard = null;
+      }
+      if (heartbeat) {
+        clearInterval(heartbeat);
+        heartbeat = null;
       }
     }
 
@@ -2506,6 +2552,21 @@ export async function runIteration(
     hangGuard.unref();
     armOutputStallGuard();
 
+    {
+      let heartbeatLastSeenMtimeMs = 0;
+      heartbeat = setInterval(() => {
+        try {
+          heartbeatLastSeenMtimeMs = maybeEmitManagerTurnProgress({
+            sessionDir,
+            statePath,
+            ticketId: state.current_ticket,
+            lastSeenMtimeMs: heartbeatLastSeenMtimeMs,
+          });
+        } catch { /* best effort — never crash the manager turn */ }
+      }, MANAGER_TURN_HEARTBEAT_POLL_MS);
+      heartbeat.unref();
+    }
+
     // Direct data handlers: write each chunk to both the log file (sync,
     // no buffering) and the terminal (for the tmux-runner pane).
     proc.stdout?.on('data', (chunk: Buffer) => {
@@ -2535,6 +2596,7 @@ export async function runIteration(
       settled = true;
       currentChildProc = null;
       try { clearActivePidFile(sessionDir); } catch { /* best effort */ }
+      if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
       clearIterationGuards();
       try { fs.fsyncSync(logFd); } catch { /* already closed or error */ }
       try { fs.closeSync(logFd); } catch { /* already closed */ }
