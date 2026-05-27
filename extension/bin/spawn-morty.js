@@ -1391,7 +1391,7 @@ export async function runWorkerProcess(ctx) {
         });
     });
 }
-// eslint-disable-next-line max-lines-per-function, complexity -- R-SMTEST-1 (ticket 1b57ef57): diagnostic breadcrumb instrumentation; env-gated by PICKLE_DEBUG_SPAWN_MORTY, preserved for future wedge diagnosis. R-SMTEST-2 (ticket 910ae36c) added early-exit invariant guard below.
+// eslint-disable-next-line max-lines-per-function, complexity -- HT-1 reviewed: R-SMTEST-1 (ticket 1b57ef57) diagnostic breadcrumb instrumentation env-gated by PICKLE_DEBUG_SPAWN_MORTY; R-SMTEST-2 (ticket 910ae36c) early-exit invariant guard appended.
 async function main() {
     // R-SMTEST early-exit invariant — see ticket 1b57ef57
     const _smDebug = process.env.PICKLE_DEBUG_SPAWN_MORTY === '1';

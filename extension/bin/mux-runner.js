@@ -23,7 +23,7 @@ export { evaluateManagerRelaunch, recordManagerRelaunch, } from '../services/man
 export { evaluateManagerRelaunch as evaluateCodexManagerRelaunch, recordManagerRelaunch as recordCodexManagerRelaunch, } from '../services/manager-relaunch.js';
 const sm = new StateManager();
 let currentChildProc = null;
-let qualityGateLegacyWarningLogged = false;
+let qualityGateLegacyWarningLogged = false; // R-MUXQG test-reset contract — see prds/p1-bug-fix-bundle-b-release-drift-2026-05-26.md
 function readSiblingState(siblingStatePath) {
     try {
         const recovered = readRecoverableJsonObject(siblingStatePath);

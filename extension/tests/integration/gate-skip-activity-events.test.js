@@ -129,7 +129,6 @@ test('mux-runner skip flags emit ticket_audit_bypassed on the audit bypass path'
   try {
     writeClaudeStub(stubBinDir);
     writeAlignedSession(sessionDir, REPO_ROOT, {
-      skip_readiness_reason: 'preflight manually reviewed',
       skip_ticket_audit_reason: 'historical drift acknowledged',
     });
 
@@ -141,7 +140,7 @@ test('mux-runner skip flags emit ticket_audit_bypassed on the audit bypass path'
     const auditEvent = events.find((entry) => entry.event === 'ticket_audit_bypassed');
     assert.ok(readinessEvent, `expected readiness_skipped event, got ${JSON.stringify(events)}`);
     assert.ok(auditEvent, `expected ticket_audit_bypassed event, got ${JSON.stringify(events)}`);
-    assert.equal(readinessEvent.gate_payload?.reason, 'preflight manually reviewed');
+    assert.equal(readinessEvent.gate_payload?.reason, 'historical drift acknowledged');
     assert.equal(auditEvent.reason, 'historical drift acknowledged');
     assert.equal(auditEvent.gate_payload, undefined);
     assertIsoTimestamp(auditEvent.ts, 'ticket_audit_bypassed.ts');
