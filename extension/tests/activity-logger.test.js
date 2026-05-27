@@ -206,6 +206,10 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'paused_session_orphan_precleaned',
         'spawn_morty_invalid_ticket_path',
         'ticket_preskipped_already_terminal',
+        // B-PIPE-BABYSIT-HARDEN: orphan-manager reaping (R-OMS #80) and
+        // manager-turn freshness heartbeat (R-SJLAG #82).
+        'orphan_manager_reaped',
+        'manager_turn_progress',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
