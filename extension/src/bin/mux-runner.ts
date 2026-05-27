@@ -2597,7 +2597,7 @@ export async function runIteration(
       scheduleTimeoutResolutionFinish();
     });
 
-    // eslint-disable-next-line complexity -- R-OMS-1 clearActivePidFile adds one branch; pre-existing callback retained behavior-preserving for global bin acceptance
+    // eslint-disable-next-line complexity -- HT-1 reviewed: R-OMS-1 clearActivePidFile adds one branch to the timeout-resolution close handler (R-APMW-6 ordering preserved); behavior-preserving, surrounding-flow refactor deferred to a focused PR.
     proc.on('close', (code) => {
       if (settled) return;
       settled = true;
