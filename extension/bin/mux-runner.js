@@ -714,6 +714,31 @@ function isPendingMuxTicket(sessionDir, ticket) {
 function findNextPendingTicketId(sessionDir) {
     return collectTickets(sessionDir).find(ticket => isPendingMuxTicket(sessionDir, ticket))?.id ?? null;
 }
+/**
+ * R-AISLOW: Find the topologically-first pending (non-terminal) ticket.
+ * Reuses collectTickets (already topo-sorted via topoSortTickets) +
+ * getTicketStatus + isTerminalTicketStatus. Returns null when all tickets
+ * are terminal or the session has no tickets.
+ *
+ * Used at iteration_start to detect when state.current_ticket is already
+ * Done/Skipped, enabling the preskip path that avoids a wasted manager spawn.
+ */
+export function findFirstPendingTicket(sessionDir) {
+    const tickets = collectTickets(sessionDir); // already topo-sorted by dependency/order
+    for (const ticket of tickets) {
+        if (!ticket.id)
+            continue;
+        try {
+            if (!isTerminalTicketStatus(getTicketStatus(sessionDir, ticket.id))) {
+                return ticket;
+            }
+        }
+        catch {
+            continue; // unreadable ticket — treat as not-pending
+        }
+    }
+    return null;
+}
 function withFreshTicketStatuses(sessionDir, tickets) {
     return tickets.map(ticket => {
         if (!ticket.id)
@@ -4423,6 +4448,39 @@ async function runMuxRunnerMain() {
                 safeDeactivate(statePath);
                 exitReason = 'codex_unhealthy_consecutive_failures';
                 break;
+            }
+        }
+        // R-AISLOW: pre-spawn already-terminal check. If state.current_ticket is
+        // already Done/Skipped (can happen when a prior iteration or manager turn
+        // completed the ticket but state.current_ticket wasn't cleared yet), skip
+        // the manager spawn and advance current_ticket to the next pending ticket.
+        // This avoids wasted 1h+ manager turns that just log "already Done, skipping".
+        if (templateName !== 'meeseeks.md') {
+            const preskipTicket = state.current_ticket;
+            if (preskipTicket) {
+                let preskipStatus = null;
+                try {
+                    preskipStatus = normalizeTicketStatus(getTicketStatus(sessionDir, preskipTicket));
+                }
+                catch { /* unreadable frontmatter — fall through to normal spawn path */ }
+                if (preskipStatus === 'done' || preskipStatus === 'skipped') {
+                    const nextPending = findNextPendingTicketId(sessionDir);
+                    log(`[preskip] ${preskipTicket} already ${preskipStatus} — advancing to ${nextPending ?? 'none'} without manager spawn`);
+                    logActivity({
+                        event: 'ticket_preskipped_already_terminal',
+                        source: 'pickle',
+                        session: path.basename(sessionDir),
+                        iteration,
+                        ticket_id: preskipTicket,
+                        gate_payload: {
+                            frontmatter_status: preskipStatus,
+                            next_ticket_id: nextPending ?? null,
+                        },
+                    });
+                    // Advance via sanctioned state-write path; state re-read at top of next loop iteration
+                    updateMuxLifecycleState(statePath, { currentTicket: nextPending ?? null });
+                    continue; // skip runIteration — no manager spawn
+                }
             }
         }
         const iterWorkingDir = state.working_dir || process.cwd();

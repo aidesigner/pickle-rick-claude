@@ -1181,6 +1181,25 @@
           }
         }
       }
+    },
+    "ticket_preskipped_already_terminal": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "ticket_preskipped_already_terminal" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "iteration": { "type": "integer" },
+        "ticket_id": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["frontmatter_status", "next_ticket_id"],
+          "properties": {
+            "frontmatter_status": { "type": "string" },
+            "next_ticket_id": { "type": ["string", "null"] }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -1257,6 +1276,7 @@
     { "$ref": "#/definitions/anatomy_park_empty_scope_skip" },
     { "$ref": "#/definitions/szechuan_sauce_empty_scope_skip" },
     { "$ref": "#/definitions/monitor_respawn_session_dir_invalid" },
-    { "$ref": "#/definitions/spawn_morty_invalid_ticket_path" }
+    { "$ref": "#/definitions/spawn_morty_invalid_ticket_path" },
+    { "$ref": "#/definitions/ticket_preskipped_already_terminal" }
   ]
 }

@@ -205,6 +205,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'pipeline_all_backends_exhausted_recovery_attempted',
         'paused_session_orphan_precleaned',
         'spawn_morty_invalid_ticket_path',
+        'ticket_preskipped_already_terminal',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {

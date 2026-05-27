@@ -619,6 +619,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'szechuan_sauce_empty_scope_skip',
   'monitor_respawn_session_dir_invalid',
   'spawn_morty_invalid_ticket_path',
+  'ticket_preskipped_already_terminal',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

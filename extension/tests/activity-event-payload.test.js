@@ -673,6 +673,18 @@ const EVENT_CASES = [
     },
     drop: 'session',
   },
+  {
+    type: 'ticket_preskipped_already_terminal',
+    valid: {
+      event: 'ticket_preskipped_already_terminal',
+      ts: TS,
+      session: 'session-1',
+      iteration: 3,
+      ticket_id: 'abc123',
+      gate_payload: { frontmatter_status: 'done', next_ticket_id: 'def456' },
+    },
+    drop: 'ticket_id',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -929,6 +941,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'pipeline_all_backends_exhausted_recovery_attempted',
     'monitor_respawn_session_dir_invalid',
     'spawn_morty_invalid_ticket_path',
+    'ticket_preskipped_already_terminal',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.
