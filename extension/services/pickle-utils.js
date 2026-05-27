@@ -784,7 +784,7 @@ export function hasCompletionCommit(args) {
         return { sha: null, source: 'absent' };
     }
     const explicit = normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit'));
-    if (explicit && gitCommitExists(args.workingDir, explicit)) {
+    if (explicit) {
         return { sha: explicit, source: 'explicit' };
     }
     const inferredField = normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit_inferred'));
