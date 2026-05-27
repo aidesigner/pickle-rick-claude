@@ -245,7 +245,14 @@ export function maybeEmitManagerTurnProgress(opts: {
   }
   if (maxMtimeMs > lastSeenMtimeMs) {
     const now = new Date();
-    fs.utimesSync(statePath, now, now);
+    // fs.utimesSync truncates the Date to integer-ms precision, but the OS may have
+    // recorded the prior state.json write with sub-ms precision. Bumping "to now" can
+    // therefore REGRESS the mtime when <1ms has elapsed since that write. The babysitter
+    // freshness signal must be monotonic, so floor the current mtime and add 1ms to
+    // guarantee a strict advance regardless of how fast the heartbeat fires.
+    const currentMtimeMs = fs.statSync(statePath).mtimeMs;
+    const bumpMtime = new Date(Math.max(now.getTime(), Math.floor(currentMtimeMs) + 1));
+    fs.utimesSync(statePath, bumpMtime, bumpMtime);
     logActivity({
       event: 'manager_turn_progress',
       source: 'pickle',
