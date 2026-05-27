@@ -1000,8 +1000,15 @@ export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput)
     // scan in hasCommitReferencingTicketSince misses 100% of them. The watcher
     // (inspectPhantomDoneTicketFile) already short-circuits on the field; this
     // closes the second revert path.
+    // R-RIC-EXPLICIT-4: `source === 'explicit'` is NOT reachability-verified —
+    // R-RIC-EXPLICIT-2 decoupled gitCommitExists from the explicit branch so the
+    // GUARD path (guardCompletionCommitBeforeDone) stops false-fataling. The
+    // phantom-revert watcher has the opposite risk profile: a stamped-but-
+    // unreachable SHA (typo, foreign repo, dropped commit) must still revert. So
+    // only `inferred` (already gitCommitExists/grep-verified) short-circuits here;
+    // `explicit` and `absent` both fall through to the reachability probe below.
     const evidence = hasCompletionCommit({ sessionDir: input.sessionDir, ticketId: ticket.id, workingDir });
-    if (evidence.source !== 'absent') continue;
+    if (evidence.source === 'inferred') continue;
     // R-PDWR: keep the ticket Done when the operator bypass is set, or when a
     // stamped completion_commit resolves to a real HEAD-reachable commit that
     // the strict hasCompletionCommit check missed.

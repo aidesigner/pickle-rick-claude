@@ -54,8 +54,15 @@ assertIncludesBefore(
   "if (!writeTicketStatus(input.sessionDir, ticket.id, 'Todo')) continue;",
   'correctPhantomDoneTickets',
 );
-if (!phantomBody.includes("if (evidence.source !== 'absent') continue;")) {
-  throw new Error("correctPhantomDoneTickets: missing absent-source guard");
+// R-RIC-EXPLICIT-4: only `inferred` evidence (gitCommitExists/grep-verified)
+// short-circuits; `explicit` (no longer reachability-verified after
+// R-RIC-EXPLICIT-2) and `absent` MUST fall through to the reachability gate so
+// a stamped-but-unreachable completion_commit still reverts a phantom Done.
+if (!phantomBody.includes("if (evidence.source === 'inferred') continue;")) {
+  throw new Error("correctPhantomDoneTickets: missing inferred-source short-circuit (R-RIC-EXPLICIT-4)");
+}
+if (!phantomBody.includes('phantomDoneShouldKeepDone(')) {
+  throw new Error("correctPhantomDoneTickets: missing reachability gate for explicit/absent sources (R-RIC-EXPLICIT-4)");
 }
 
 const validateBody = extractFunctionBody('validateAutoTicketCompletion');
