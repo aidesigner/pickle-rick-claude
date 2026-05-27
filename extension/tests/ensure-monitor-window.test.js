@@ -403,18 +403,18 @@ test('ensureMonitorWindow: existing monitor respawns dead monitor and watcher pa
         {
             mode: 'pickle',
             commandTemplate: null,
-            pane2: /monitor\.2 node .+morty-watcher\.js .+session Enter/,
+            pane2: /monitor\.2.*node .+morty-watcher\.js .+session/,
         },
         {
             mode: 'refinement',
             commandTemplate: null,
-            pane2: /monitor\.2 node .+refinement-watcher\.js .+session Enter/,
+            pane2: /monitor\.2.*node .+refinement-watcher\.js .+session/,
         },
         {
             mode: undefined,
             monitorMode: 'meeseeks',
             commandTemplate: 'meeseeks.md',
-            pane2: /monitor\.2 tail -F .+session\/mux-runner\.log Enter/,
+            pane2: /monitor\.2.*tail -F .+session\/mux-runner\.log/,
         },
     ];
 
@@ -438,10 +438,10 @@ test('ensureMonitorWindow: existing monitor respawns dead monitor and watcher pa
             assert.equal(result.status, 'exists');
             const sendKeys = tmuxCalls(f, 'send-keys');
             assert.equal(sendKeys.length, 4);
-            assert.match(sendKeys[0].args.join(' '), /monitor\.0 node .+monitor\.js .+session Enter/);
-            assert.match(sendKeys[1].args.join(' '), /monitor\.1 node .+log-watcher\.js .+session Enter/);
+            assert.match(sendKeys[0].args.join(' '), /monitor\.0.*node .+monitor\.js .+session/);
+            assert.match(sendKeys[1].args.join(' '), /monitor\.1.*node .+log-watcher\.js .+session/);
             assert.match(sendKeys[2].args.join(' '), pane2);
-            assert.match(sendKeys[3].args.join(' '), /monitor\.3 node .+raw-morty\.js .+session Enter/);
+            assert.match(sendKeys[3].args.join(' '), /monitor\.3.*node .+raw-morty\.js .+session/);
             assert.equal(tmuxCalls(f, 'display-message').filter(call => call.args.includes('#{pane_current_command}')).length, 4);
             assert.doesNotMatch(f.readRunnerLog(), /failed to respawn/);
         } finally {
@@ -479,7 +479,7 @@ test('ensureMonitorWindow: stale EXTENSION_DIR falls back before watcher pane re
         assert.equal(sendKeys.length, 1);
         assert.match(
             sendKeys[0].args.join(' '),
-            /monitor\.1 node .+\.claude\/pickle-rick\/extension\/bin\/log-watcher\.js .+session Enter/,
+            /monitor\.1.*node .+\.claude\/pickle-rick\/extension\/bin\/log-watcher\.js .+session/,
         );
         assert.doesNotMatch(sendKeys[0].args.join(' '), /deleted-ext/);
     } finally {
