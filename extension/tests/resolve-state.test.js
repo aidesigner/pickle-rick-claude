@@ -382,12 +382,12 @@ test('resolveStateFile: mapped pid=null orphan with dead mapped PID falls back t
     fs.mkdirSync(liveSessionDir, { recursive: true });
     fs.writeFileSync(
       path.join(staleSessionDir, 'state.json'),
-      JSON.stringify(baseState({ active: true, pid: null, session_dir: staleSessionDir })),
+      JSON.stringify(baseState({ active: true, pid: null, session_dir: staleSessionDir, started_at: '2020-01-01T00:00:00.000Z' })),
     );
     const liveStateFile = path.join(liveSessionDir, 'state.json');
     fs.writeFileSync(
       liveStateFile,
-      JSON.stringify(baseState({ active: true, session_dir: liveSessionDir })),
+      JSON.stringify(baseState({ active: true, session_dir: liveSessionDir, started_at: '2025-01-01T00:00:00.000Z' })),
     );
     fs.writeFileSync(
       path.join(tmp, 'current_sessions.json'),
