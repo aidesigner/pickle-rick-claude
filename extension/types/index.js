@@ -272,6 +272,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'ticket_runnability_resolved',
     'codex_manager_self_bootstrap_attempted',
     'orphan_test_runner_reaped',
+    'orphan_manager_reaped',
     'orphan_session_detected',
     'session_map_collision_blocked',
     'state_write_override_used',

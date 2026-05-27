@@ -314,6 +314,95 @@ export function reapOrphanedFastTestRunnersOnStartup(statePath, extensionDir, lo
     }
     return orphans;
 }
+// ---------------------------------------------------------------------------
+// R-OMS: orphan manager reaping at iteration boundaries
+// ---------------------------------------------------------------------------
+/** R-OMS-1: Write the active manager pid sidecar. */
+export function writeActivePidFile(sessionDir, pid) {
+    fs.writeFileSync(path.join(sessionDir, '.active_manager.pid'), String(pid));
+}
+/** R-OMS-1: Clear the active manager pid sidecar (ENOENT-safe). */
+export function clearActivePidFile(sessionDir) {
+    try {
+        fs.unlinkSync(path.join(sessionDir, '.active_manager.pid'));
+    }
+    catch (err) {
+        if (err.code !== 'ENOENT')
+            throw err;
+    }
+}
+/** R-OMS-2: Parse orphaned claude manager processes from ps output. */
+export function parseOrphanedManagersFromPs(psOutput, sessionDir) {
+    const results = [];
+    for (const rawLine of psOutput.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line)
+            continue;
+        const match = line.match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
+        if (!match)
+            continue;
+        const rawPid = Number(match[1]);
+        if (!Number.isInteger(rawPid) || rawPid <= 0)
+            continue;
+        const command = match[4].trim();
+        // Must be the claude binary
+        const binaryPart = command.split(/\s+/)[0] ?? '';
+        if (path.basename(binaryPart) !== 'claude')
+            continue;
+        // Must have --dangerously-skip-permissions
+        if (!command.includes('--dangerously-skip-permissions'))
+            continue;
+        // Must reference this sessionDir
+        if (!command.includes(sessionDir))
+            continue;
+        results.push({ pid: rawPid, argv_summary: command });
+    }
+    return results;
+}
+/** R-OMS-2: Reap stray manager processes at iteration_start before spawning a new one. */
+export function reapOrphanedManagersAtIterationStart(statePath, sessionDir, log, opts = {}) {
+    const kill = opts.kill ?? ((pid) => { process.kill(pid, 'SIGTERM'); });
+    const psOutput = opts.psOutput ?? execFileSync('ps', ['-axo', 'pid=,ppid=,etime=,command='], {
+        encoding: 'utf-8',
+        timeout: 5000,
+        maxBuffer: 1024 * 1024 * 8,
+    });
+    // Build suspect set: ps-scan first, then pidfile
+    const suspects = new Map();
+    for (const orphan of parseOrphanedManagersFromPs(psOutput, sessionDir)) {
+        suspects.set(orphan.pid, orphan.argv_summary);
+    }
+    // Add pid from sidecar pidfile (covers processes that exited but left the pidfile)
+    const pidfilePath = path.join(sessionDir, '.active_manager.pid');
+    try {
+        const raw = fs.readFileSync(pidfilePath, 'utf-8').trim();
+        const pidFromFile = Number(raw);
+        if (Number.isInteger(pidFromFile) && pidFromFile > 0 && !suspects.has(pidFromFile)) {
+            suspects.set(pidFromFile, 'from-pidfile');
+        }
+    }
+    catch {
+        // ENOENT or unreadable — no pidfile, skip
+    }
+    const reaped = [];
+    for (const [pid, argv_summary] of suspects) {
+        if (pid === process.pid)
+            continue; // never kill self
+        try {
+            kill(pid);
+        }
+        catch { /* best effort — process may have already exited */ }
+        writeActivityEntry(statePath, {
+            event: 'orphan_manager_reaped',
+            ts: new Date().toISOString(),
+            pid,
+            argv_summary,
+        });
+        log(`reaped orphan manager pid=${pid}`);
+        reaped.push({ pid, argv_summary });
+    }
+    return reaped;
+}
 function normalizeBetweenTicketFailureFile(rawFile, workingDir) {
     const trimmed = rawFile.trim();
     if (!trimmed)
@@ -2003,6 +2092,13 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
             stdio: ['inherit', 'pipe', 'pipe'],
         });
         currentChildProc = proc;
+        const spawnedPid = proc.pid;
+        if (spawnedPid != null) {
+            try {
+                writeActivePidFile(sessionDir, spawnedPid);
+            }
+            catch { /* best effort */ }
+        }
         timeoutStdoutClosed = proc.stdout === null;
         timeoutStderrClosed = proc.stderr === null;
         const hangGuardMs = (runtimeOverrides.maxIterationSeconds ?? Defaults.MAX_ITERATION_SECONDS) * 1000;
@@ -2154,11 +2250,16 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
             timeoutStderrClosed = true;
             scheduleTimeoutResolutionFinish();
         });
+        // eslint-disable-next-line complexity -- R-OMS-1 clearActivePidFile adds one branch; pre-existing callback retained behavior-preserving for global bin acceptance
         proc.on('close', (code) => {
             if (settled)
                 return;
             settled = true;
             currentChildProc = null;
+            try {
+                clearActivePidFile(sessionDir);
+            }
+            catch { /* best effort */ }
             clearIterationGuards();
             try {
                 fs.fsyncSync(logFd);
@@ -4277,6 +4378,12 @@ async function runMuxRunnerMain() {
         }
         log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
         logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration, backend: resolveBackend(state) });
+        try {
+            reapOrphanedManagersAtIterationStart(statePath, sessionDir, log);
+        }
+        catch (err) {
+            log(`orphan manager reaper failed (ignored): ${safeErrorMessage(err)}`);
+        }
         if (templateName !== 'meeseeks.md' && applyAllTicketsDoneCompletion(statePath, sessionDir, iteration, log)) {
             exitReason = 'success';
             break;
