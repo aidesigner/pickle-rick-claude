@@ -104,9 +104,9 @@ function runWithRealExtension(args = []) {
     return spawnSync(process.execPath, [TMUX_RUNNER_BIN, ...args], {
         env,
         encoding: 'utf-8',
-        // See run() above: 60s → 150s to survive 8-way full-suite load
-        // without the outer spawnSync SIGKILL'ing a still-starting runner.
-        timeout: 150000,
+        // Gate-halt tests exit in <5s (readiness or ticket-audit fires before
+        // any worker spawn). 30s is ample headroom under 8-way full-suite load.
+        timeout: 30000,
     });
 }
 
@@ -1062,8 +1062,11 @@ test('mux-runner.audit-bundle-halt: halts before manager spawn on defective tick
         const ticketDir = path.join(sessionDir, 'deadbeef');
         fs.mkdirSync(ticketDir, { recursive: true });
         // Body contains a backtick path that doesn't exist in git → path-drift (fatal) finding.
-        // working_dir is tmpRoot (not a git repo) so gitListFiles returns an empty Set,
-        // making every path-shaped token in the ticket body appear as drift.
+        // .xyz extension is not in check-readiness.js PATH_RE extension allowlist so
+        // readiness passes without a bypass flag; audit-ticket-bundle.js flags the path
+        // as path-drift because gitListFiles(tmpRoot) returns empty (non-git working_dir).
+        // No flags needed — R-QGSK-3 migration promotes skip_readiness_reason to the
+        // unified skip_quality_gates_reason which would bypass both gates.
         fs.writeFileSync(path.join(ticketDir, 'linear_ticket_deadbeef.md'), [
             '---',
             'id: deadbeef',
@@ -1074,7 +1077,7 @@ test('mux-runner.audit-bundle-halt: halts before manager spawn on defective tick
             '',
             '# Description',
             '',
-            'Modify `extension/src/does-not-exist-phantom.ts` to add a function.',
+            'Modify `extension/src/does-not-exist-phantom.xyz` to add a function.',
             '',
         ].join('\n'));
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
@@ -1086,10 +1089,6 @@ test('mux-runner.audit-bundle-halt: halts before manager spawn on defective tick
             original_prompt: 'test audit gate',
             working_dir: tmpRoot,
             command_template: 'pickle.md',
-            flags: {
-                // bypass readiness gate so we reach the ticket audit gate
-                skip_readiness_reason: 'test-skip-readiness-for-audit-test',
-            },
         }, null, 2));
 
         // @add-dir-safe: audit-bundle-halt fires BEFORE any worker spawn —

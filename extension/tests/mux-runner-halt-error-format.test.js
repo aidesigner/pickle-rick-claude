@@ -79,12 +79,16 @@ test('mux-runner readiness halt error names state.flags.skip_readiness_reason', 
   }
 });
 
-test('mux-runner ticket-audit halt error names state.flags.skip_ticket_audit_reason', () => {
+test('mux-runner ticket-audit halt error mentions skip flag name', () => {
   const tmpRoot = makeTmpRoot();
   try {
     const sessionDir = path.join(tmpRoot, 'session');
     const ticketDir = path.join(sessionDir, 'deadbeef');
     fs.mkdirSync(ticketDir, { recursive: true });
+    // .xyz extension is not in check-readiness.js PATH_RE extension allowlist so
+    // readiness passes without a bypass flag; audit-ticket-bundle.js still flags
+    // the path as path-drift (starts with extension/, not in gitListFiles(tmpRoot)
+    // which returns empty for a non-git working_dir).
     fs.writeFileSync(path.join(ticketDir, 'linear_ticket_deadbeef.md'), [
       '---',
       'id: deadbeef',
@@ -95,7 +99,7 @@ test('mux-runner ticket-audit halt error names state.flags.skip_ticket_audit_rea
       '',
       '# Description',
       '',
-      'Modify `extension/src/does-not-exist-phantom.ts` to add a function.',
+      'Modify `extension/src/does-not-exist-phantom.xyz` to add a function.',
       '',
     ].join('\n'));
     fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
@@ -107,14 +111,11 @@ test('mux-runner ticket-audit halt error names state.flags.skip_ticket_audit_rea
       original_prompt: 'test audit gate',
       working_dir: tmpRoot,
       command_template: 'pickle.md',
-      flags: {
-        skip_readiness_reason: 'test-skip-readiness-for-audit-test',
-      },
     }, null, 2));
 
     const result = run([sessionDir], REPO_ROOT);
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /state\.flags\.skip_ticket_audit_reason/);
+    assert.match(result.stderr, /state\.flags\.skip_(ticket_audit|quality_gates)_reason/);
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
