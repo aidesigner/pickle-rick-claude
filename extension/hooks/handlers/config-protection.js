@@ -515,7 +515,7 @@ function isExpensiveTestFile(testPath, cwd) {
  * R-CSIS-B1: Blocks `node --test <path>` when <path> is an expensive-tier test file.
  * Emits `closer_expensive_node_test_blocked` for the audit trail and calls block().
  */
-function isExpensiveNodeTestBlockedByRCSIS(input, state) {
+function isExpensiveNodeTestBlockedByRCSIS(input, _state) {
     if (input.tool_name !== 'Bash' || !input.tool_input?.command)
         return false;
     const command = input.tool_input.command;

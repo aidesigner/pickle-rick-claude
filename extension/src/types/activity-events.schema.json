@@ -1237,6 +1237,44 @@
           }
         }
       }
+    },
+    "ticket_timeout_progress_extension": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "ticket_timeout_progress_extension" },
+        "ts": { "type": "string" },
+        "ticket": { "type": ["string", "null"] },
+        "gate_payload": {
+          "type": "object",
+          "required": ["latest_mtime_epoch", "timeout_count", "no_progress_window_seconds"],
+          "properties": {
+            "latest_mtime_epoch": { "type": "number" },
+            "latest_commit_sha": { "type": ["string", "null"] },
+            "timeout_count": { "type": "number" },
+            "no_progress_window_seconds": { "type": "number" }
+          }
+        }
+      }
+    },
+    "ticket_timeout_halted_no_progress": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "ticket_timeout_halted_no_progress" },
+        "ts": { "type": "string" },
+        "ticket": { "type": ["string", "null"] },
+        "gate_payload": {
+          "type": "object",
+          "required": ["timeout_count", "no_progress_window_seconds"],
+          "properties": {
+            "timeout_count": { "type": "number" },
+            "no_progress_window_seconds": { "type": "number" },
+            "latest_mtime_epoch": { "type": "number" },
+            "latest_commit_sha": { "type": ["string", "null"] }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -1317,6 +1355,8 @@
     { "$ref": "#/definitions/spawn_morty_invalid_ticket_path" },
     { "$ref": "#/definitions/ticket_preskipped_already_terminal" },
     { "$ref": "#/definitions/manager_turn_progress" },
-    { "$ref": "#/definitions/closer_expensive_node_test_blocked" }
+    { "$ref": "#/definitions/closer_expensive_node_test_blocked" },
+    { "$ref": "#/definitions/ticket_timeout_progress_extension" },
+    { "$ref": "#/definitions/ticket_timeout_halted_no_progress" }
   ]
 }

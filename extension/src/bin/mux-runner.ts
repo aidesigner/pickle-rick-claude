@@ -21,6 +21,7 @@ import {
   type ManagerRelaunchExitKind,
 } from '../services/manager-relaunch.js';
 import { getHeadBranch } from '../services/git-utils.js';
+import { detectArtifactProgress, resolveNoProgressWindowSeconds, type ArtifactProgressSnapshot } from '../services/artifact-progress-detector.js';
 export { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream } from '../services/classifier-utils.js';
 export { hasCompletionCommit, stripSetupSection } from '../services/pickle-utils.js';
 export {
@@ -4736,6 +4737,8 @@ async function runMuxRunnerMain() {
   // Non-persisted per-ticket timeout counter (FR-B3/B4) — resets on runner restart.
   let timeoutCount = 0;
   let lastTimeoutTicket: string | null = null;
+  // Artifact-progress snapshot for R-WTB-A1 no-progress window check.
+  let lastArtifactProgressSnapshot: ArtifactProgressSnapshot = { latestMtimeEpoch: 0, latestCommitSha: null };
   // Commit-pending probe: track the last outer-loop iteration where state.iteration
   // advanced. Used to detect stagnation independently of the circuit breaker (the
   // probe runs whether CB is enabled or not).
@@ -5448,10 +5451,54 @@ async function runMuxRunnerMain() {
     }
 
     if (counterNext.halt) {
-      log(`Timeout halt: ticket ${ticketForTimeout} timed out ${timeoutCount} consecutive iterations`);
-      executeTimeoutHalt({ statePath, sessionDir, ticketNow: ticketForTimeout, timeoutCount });
-      exitReason = 'timeout_repeat';
-      break;
+      // R-WTB-A1: check artifact progress before halting — if the worker produced new
+      // artifacts or commits within the no-progress window, reset the counter and continue.
+      const noProgressWindowS = resolveNoProgressWindowSeconds();
+      const ticketDir = ticketForTimeout ? path.join(sessionDir, ticketForTimeout) : null;
+      const scopeJsonPath = path.join(sessionDir, 'scope.json');
+      let progressDetected = false;
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+      if (ticketDir && fs.existsSync(ticketDir)) {
+        const pResult = detectArtifactProgress(ticketDir, lastArtifactProgressSnapshot, {
+          workingDir: state.working_dir || sessionDir,
+          scopeJsonPath,
+        });
+        lastArtifactProgressSnapshot = { latestMtimeEpoch: pResult.latestMtimeEpoch, latestCommitSha: pResult.latestCommitSha };
+        if (pResult.progressed) {
+          progressDetected = true;
+          writeActivityEntry(statePath, {
+            event: 'ticket_timeout_progress_extension',
+            ts: new Date().toISOString(),
+            ticket: ticketForTimeout,
+            gate_payload: {
+              latest_mtime_epoch: pResult.latestMtimeEpoch,
+              latest_commit_sha: pResult.latestCommitSha,
+              timeout_count: timeoutCount,
+              no_progress_window_seconds: noProgressWindowS,
+            },
+          });
+          timeoutCount = 1;
+          lastTimeoutTicket = ticketForTimeout;
+          log(`[info] Artifact progress detected for ticket ${ticketForTimeout} — timeout counter reset (window: ${noProgressWindowS}s)`);
+        }
+      }
+      if (!progressDetected) {
+        writeActivityEntry(statePath, {
+          event: 'ticket_timeout_halted_no_progress',
+          ts: new Date().toISOString(),
+          ticket: ticketForTimeout,
+          gate_payload: {
+            timeout_count: timeoutCount,
+            no_progress_window_seconds: noProgressWindowS,
+            latest_mtime_epoch: lastArtifactProgressSnapshot.latestMtimeEpoch,
+            latest_commit_sha: lastArtifactProgressSnapshot.latestCommitSha,
+          },
+        });
+        log(`Timeout halt: ticket ${ticketForTimeout} timed out ${timeoutCount} consecutive iterations`);
+        executeTimeoutHalt({ statePath, sessionDir, ticketNow: ticketForTimeout, timeoutCount });
+        exitReason = 'timeout_repeat';
+        break;
+      }
     }
 
     // === Existing CB recording — only reached for non-rate-limit ===

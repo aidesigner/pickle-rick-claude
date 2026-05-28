@@ -285,6 +285,8 @@ export const VALID_ACTIVITY_EVENTS = [
     'spawn_morty_invalid_ticket_path',
     'ticket_preskipped_already_terminal',
     'closer_expensive_node_test_blocked',
+    'ticket_timeout_progress_extension',
+    'ticket_timeout_halted_no_progress',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {
