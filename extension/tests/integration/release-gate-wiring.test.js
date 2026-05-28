@@ -19,6 +19,7 @@ const GATE = [
   'npx tsc',
   'bash scripts/audit-test-tiers.sh',
   'bash scripts/audit-test-isolation.sh',
+  'bash scripts/audit-subprocess-heavy-tests.sh',
   'bash scripts/audit-fix-commits.sh',
   'bash scripts/audit-bundle-thesis.sh',
   'bash scripts/audit-quarantine.sh',
