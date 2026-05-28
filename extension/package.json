@@ -25,6 +25,7 @@
     "test:integration:parallel": "node bin/test-runner.js --tier integration --manifest tests/integration/.serial-tests.json --manifest-mode exclude",
     "test:integration:serial": "node bin/test-runner.js --tier integration --manifest tests/integration/.serial-tests.json --manifest-mode include --test-concurrency=1",
     "test:expensive": "node bin/test-runner.js --tier expensive",
+    "test:regression-3x": "bash scripts/regression-test-fast-integration-3x.sh",
     "test:behavioral": "node --test tests/feature-flag-baseline.test.js",
     "wire-check": "bash scripts/check-wired.sh"
   },
