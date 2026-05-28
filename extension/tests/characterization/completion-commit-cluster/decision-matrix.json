@@ -1,0 +1,518 @@
+{
+  "schema_version": 1,
+  "prd": "prds/p1-bug-fix-bundle-b-afcc-deep-autofill-done-flip-cluster-2026-05-28.md",
+  "ac_ref": "AC-AFCC-DEEP-01",
+  "description": "Inventory of all 8 distinct paths that can stamp status:Done and/or persist completion_commit. Used as the safety-net fixture for Phase 1 characterization tests (R-AFCC-DEEP-1B) before any deletion or refactor.",
+
+  "evidence_sources": [
+    {
+      "kind": "explicit",
+      "description": "completion_commit: field present in frontmatter and valid via normalizeCompletionCommitField (hex SHA 7-40 chars, any quote-form stripped)",
+      "read_site": "extension/services/pickle-utils.js:786"
+    },
+    {
+      "kind": "inferred",
+      "description": "completion_commit_inferred: field present AND gitCommitExists() returns true, OR findMatchingCommit() locates a commit referencing ticket id/r_code via git-log scan",
+      "read_site": "extension/services/pickle-utils.js:790-803"
+    },
+    {
+      "kind": "absent",
+      "description": "Neither field present, git-log scan returns null",
+      "read_site": "extension/services/pickle-utils.js:804"
+    }
+  ],
+
+  "sha_quote_forms": [
+    {
+      "form_id": 1,
+      "label": "bare-short",
+      "example": "4b38893c",
+      "description": "Unquoted 8-hex short SHA. Written by autoFillCompletionCommit via upsertFrontmatterField.",
+      "normalizer_strips": false
+    },
+    {
+      "form_id": 2,
+      "label": "double-quoted-short",
+      "example": "\"4b38893c\"",
+      "description": "Double-quoted short SHA. Codex tool-call natural form for short refs.",
+      "normalizer_strips": true
+    },
+    {
+      "form_id": 3,
+      "label": "double-quoted-full",
+      "example": "\"724f69d4db8aae9b5f8e4ab7f3abfa0a72c5f6c8\"",
+      "description": "Double-quoted 40-hex full SHA. Most common codex tool-call form; caused R-CCQF live incident (session 2026-05-23-48e6309a, ticket 26301c6a).",
+      "normalizer_strips": true
+    },
+    {
+      "form_id": 4,
+      "label": "single-quoted-full",
+      "example": "'724f69d4db8aae9b5f8e4ab7f3abfa0a72c5f6c8'",
+      "description": "Single-quoted 40-hex full SHA. Human-edit natural form.",
+      "normalizer_strips": true
+    }
+  ],
+
+  "paths": [
+    {
+      "path_id": 1,
+      "label": "worker-explicit-stamp",
+      "triggering_function": "updateTicketFrontmatter",
+      "file_line": "extension/bin/spawn-morty.js:956",
+      "description": "Worker successfully exits. runWorkerGate returns completionCommitSha. updateTicketFrontmatter writes status:Done + completion_commit:<sha> in one atomic frontmatter write.",
+      "fixture": {
+        "session_dir_skeleton": {
+          "state.json": {
+            "active": true,
+            "current_ticket": "aabbccdd",
+            "working_dir": "<synthetic-git-repo>",
+            "backend": "claude",
+            "schema_version": 3,
+            "iteration": 1,
+            "max_iterations": 15
+          },
+          "aabbccdd/linear_ticket_aabbccdd.md": {
+            "frontmatter": {
+              "id": "aabbccdd",
+              "status": "In Progress",
+              "title": "Test ticket"
+            }
+          }
+        },
+        "preconditions": [
+          "Worker subprocess exits 0",
+          "runWorkerGate returns { ok: true, completionCommitSha: 'abc1234' }",
+          "isSuccess = true"
+        ]
+      },
+      "expected_end_state": {
+        "status": "Done",
+        "completion_commit": "abc1234",
+        "completion_commit_inferred": null,
+        "watcher_decision": "keep",
+        "notes": "completion_commit written as bare short SHA (form 1) by updateTicketFrontmatter fallback to getHeadSha when completionCommitSha is null"
+      },
+      "evidence_source": "explicit",
+      "known_failure_modes": [
+        "R-WUWC: completionCommitSha is null AND getHeadSha fails — completion_commit ends up null, watcher reverts",
+        "fsync race: autoFillCompletionCommit (path 2) runs concurrently and reads stale file before path 1 write flushes"
+      ]
+    },
+
+    {
+      "path_id": 2,
+      "label": "worker-autofill-belt-and-suspenders",
+      "triggering_function": "autoFillCompletionCommit",
+      "file_line": "extension/bin/auto-fill-completion-commit.js:36",
+      "call_site": "extension/bin/spawn-morty.js:966",
+      "description": "Belt-and-suspenders call after path 1. If completion_commit already present: action='already_present', no-op. If absent: reads hasCompletionCommit (inferred scan), writes completion_commit via upsertFrontmatterField, then calls stageTicketFile (git add). Runs only when isSuccess=true.",
+      "fixture": {
+        "session_dir_skeleton": {
+          "state.json": {
+            "active": true,
+            "current_ticket": "aabbccdd",
+            "working_dir": "<synthetic-git-repo>",
+            "backend": "claude",
+            "schema_version": 3
+          },
+          "aabbccdd/linear_ticket_aabbccdd.md": {
+            "frontmatter": {
+              "id": "aabbccdd",
+              "status": "Done",
+              "title": "Test ticket"
+            },
+            "notes": "completion_commit field ABSENT — simulates path 1 write failure or belt-and-suspenders scenario"
+          }
+        },
+        "git_preconditions": [
+          "At least one commit in working_dir whose message contains 'aabbccdd' made since start_time_epoch"
+        ]
+      },
+      "expected_end_state": {
+        "status": "Done",
+        "completion_commit": "<inferred-sha-from-git-log>",
+        "completion_commit_inferred": null,
+        "staged": true,
+        "watcher_decision": "keep",
+        "action_reported": "filled"
+      },
+      "expected_end_state_when_already_present": {
+        "status": "Done",
+        "completion_commit": "<unchanged>",
+        "action_reported": "already_present"
+      },
+      "evidence_source": "inferred",
+      "known_failure_modes": [
+        "R-AFCC-STAGE: stageTicketFile calls git add which throws outside a git repo — swallows action='filled' signal",
+        "R-CCQF: bare readFrontmatterField used for already-present check (line 53) instead of normalizeCompletionCommitField — quoted SHA treated as absent, triggers spurious re-fill"
+      ]
+    },
+
+    {
+      "path_id": 3,
+      "label": "manager-drift-auto-completion-validation",
+      "triggering_function": "applyAutoTicketCompletionValidation",
+      "file_line": "extension/bin/mux-runner.js:1635",
+      "call_site": "extension/bin/mux-runner.js:4715",
+      "description": "Manager detects drift: previous ticket was In Progress but model changed current_ticket without protocol. Calls guardCompletionCommitBeforeDone with allow_inferred_completion_commit:true, then markTicketDone, then autoFillCompletionCommit (post-markTicketDone, since autoFill requires status=Done).",
+      "fixture": {
+        "session_dir_skeleton": {
+          "state.json": {
+            "active": true,
+            "current_ticket": "bbccddee",
+            "working_dir": "<synthetic-git-repo>",
+            "backend": "claude",
+            "schema_version": 3,
+            "iteration": 2
+          },
+          "aabbccdd/linear_ticket_aabbccdd.md": {
+            "frontmatter": {
+              "id": "aabbccdd",
+              "status": "In Progress",
+              "title": "Previous ticket"
+            },
+            "notes": "This is the previousTicket; model drifted away from it without marking Done"
+          },
+          "bbccddee/linear_ticket_bbccddee.md": {
+            "frontmatter": {
+              "id": "bbccddee",
+              "status": "Todo",
+              "title": "New ticket"
+            }
+          }
+        },
+        "runtime_preconditions": [
+          "previousTicket = 'aabbccdd' in outer loop",
+          "postTicket = 'bbccddee' (model changed current_ticket)",
+          "normalizedStatus of aabbccdd is NOT 'done' (In Progress) — triggers drift branch at 4712"
+        ],
+        "git_preconditions": [
+          "Commit referencing 'aabbccdd' exists since previousTicketStartCommit"
+        ]
+      },
+      "expected_end_state": {
+        "status": "Done",
+        "completion_commit": "<inferred-sha>",
+        "watcher_decision": "keep",
+        "notes": "markTicketDone flips to Done, then autoFillCompletionCommit writes completion_commit"
+      },
+      "evidence_source": "inferred",
+      "flags_required": {
+        "allow_inferred_completion_commit": true
+      },
+      "known_failure_modes": [
+        "R-CCRC-2: applyAutoTicketCompletionValidation NOT routed through guard before markTicketDone — re-opens silent Done-without-commit class",
+        "R-PEDC: clearStaleDoneWithoutCommitEvidence not called after guard.ok — stale exit_reason persists"
+      ]
+    },
+
+    {
+      "path_id": 4,
+      "label": "process-task-completed-guard",
+      "triggering_function": "processTaskCompleted",
+      "file_line": "extension/bin/mux-runner.js:3603",
+      "call_chain": "classifyCompletion -> 'task_completed' -> processCompletionBranch (mux-runner.js:3506) -> processTaskCompleted (mux-runner.js:3568) -> guardCompletionCommitBeforeDone (mux-runner.js:3603) -> markTicketDone (mux-runner.js:3621)",
+      "description": "EPIC_COMPLETED token emitted by manager. classifyCompletion maps EPIC_COMPLETED -> 'task_completed'. processCompletionBranch routes to processTaskCompleted. Guard called without allow_inferred flag; markTicketDone called. No autoFillCompletionCommit follows this path.",
+      "fixture": {
+        "session_dir_skeleton": {
+          "state.json": {
+            "active": true,
+            "current_ticket": "aabbccdd",
+            "working_dir": "<synthetic-git-repo>",
+            "backend": "claude",
+            "schema_version": 3
+          },
+          "aabbccdd/linear_ticket_aabbccdd.md": {
+            "frontmatter": {
+              "id": "aabbccdd",
+              "status": "In Progress",
+              "completion_commit": "abc1234",
+              "title": "Test ticket"
+            },
+            "notes": "completion_commit already present — guard will pass immediately"
+          }
+        },
+        "runtime_preconditions": [
+          "classifyCompletion returns 'task_completed' (EPIC_COMPLETED token present in assistant content)",
+          "processCompletionBranch called via processIterationOutcome (exported test path)"
+        ]
+      },
+      "expected_end_state": {
+        "status": "Done",
+        "completion_commit": "abc1234",
+        "watcher_decision": "keep",
+        "notes": "No autoFillCompletionCommit called — completion_commit must be present before this path fires cleanly"
+      },
+      "evidence_source": "explicit",
+      "known_failure_modes": [
+        "R-CCQF: quoted SHA in completion_commit field fails normalizeCompletionCommitField check — guard classifies as absent, exits with done_without_commit_evidence"
+      ]
+    },
+
+    {
+      "path_id": 5,
+      "label": "runMuxRunnerMain-direct-guard-calls",
+      "description": "Three direct guardCompletionCommitBeforeDone call sites in the runMuxRunnerMain loop. All require explicit evidence (no allow_inferred flag). See callsites sub-entries for per-site fixture.",
+      "callsites": [
+        {
+          "callsite_id": "5a",
+          "triggering_function": "guardCompletionCommitBeforeDone",
+          "file_line": "extension/bin/mux-runner.js:4694",
+          "trigger": "Worker-self-attested Done detected at ticket boundary",
+          "description": "Outer loop detects that previousTicket status is already 'done' after iteration (worker stamped Done itself via prompt-driven validation). Guard validates completion_commit evidence. If guard passes, clearStaleDoneWithoutCommitEvidence. NO markTicketDone call (ticket already Done).",
+          "fixture": {
+            "session_dir_skeleton": {
+              "state.json": {
+                "active": true,
+                "current_ticket": "bbccddee",
+                "working_dir": "<synthetic-git-repo>",
+                "schema_version": 3
+              },
+              "aabbccdd/linear_ticket_aabbccdd.md": {
+                "frontmatter": {
+                  "id": "aabbccdd",
+                  "status": "Done",
+                  "completion_commit": "abc1234",
+                  "title": "Previous ticket"
+                }
+              }
+            },
+            "runtime_preconditions": [
+              "previousTicket = 'aabbccdd'",
+              "postTicket = 'bbccddee' (new ticket selected)",
+              "normalizedStatus of aabbccdd is 'done' — triggers guard-only branch at 4691"
+            ]
+          },
+          "expected_end_state": {
+            "status": "Done",
+            "completion_commit": "abc1234",
+            "watcher_decision": "keep",
+            "notes": "status unchanged (already Done); guard validates evidence; clearStaleDoneWithoutCommitEvidence runs"
+          },
+          "evidence_source": "explicit"
+        },
+        {
+          "callsite_id": "5b",
+          "triggering_function": "guardCompletionCommitBeforeDone",
+          "file_line": "extension/bin/mux-runner.js:5083",
+          "trigger": "False EPIC_COMPLETED, recover_advance branch",
+          "description": "Manager emits EPIC_COMPLETED with pending tickets. evaluateEpicCompletion returns recover_advance. current_ticket is already Done. Guard validates evidence at 5083, then markTicketDone at 5099. No autoFillCompletionCommit.",
+          "fixture": {
+            "session_dir_skeleton": {
+              "state.json": {
+                "active": true,
+                "current_ticket": "aabbccdd",
+                "working_dir": "<synthetic-git-repo>",
+                "schema_version": 3,
+                "false_epic_completed_count": 1
+              },
+              "aabbccdd/linear_ticket_aabbccdd.md": {
+                "frontmatter": {
+                  "id": "aabbccdd",
+                  "status": "In Progress",
+                  "completion_commit": "abc1234",
+                  "title": "Current ticket"
+                }
+              },
+              "bbccddee/linear_ticket_bbccddee.md": {
+                "frontmatter": {
+                  "id": "bbccddee",
+                  "status": "Todo",
+                  "title": "Pending ticket"
+                }
+              }
+            },
+            "runtime_preconditions": [
+              "EPIC_COMPLETED token in assistant content",
+              "evaluateEpicCompletion returns { kind: 'recover_advance', ... }",
+              "curState.current_ticket = 'aabbccdd'"
+            ]
+          },
+          "expected_end_state": {
+            "status": "Done",
+            "completion_commit": "abc1234",
+            "watcher_decision": "keep",
+            "notes": "markTicketDone called at 5099; no autoFill"
+          },
+          "evidence_source": "explicit"
+        },
+        {
+          "callsite_id": "5c",
+          "triggering_function": "guardCompletionCommitBeforeDone",
+          "file_line": "extension/bin/mux-runner.js:5159",
+          "trigger": "Genuine EPIC_COMPLETED, final ticket Done stamp",
+          "description": "Manager emits EPIC_COMPLETED and evaluateEpicCompletion returns genuine. current_ticket needs final Done stamp. Guard validates at 5159, markTicketDone at 5176. No autoFillCompletionCommit. clearStaleDoneWithoutCommitEvidence at 5175.",
+          "fixture": {
+            "session_dir_skeleton": {
+              "state.json": {
+                "active": true,
+                "current_ticket": "aabbccdd",
+                "working_dir": "<synthetic-git-repo>",
+                "schema_version": 3
+              },
+              "aabbccdd/linear_ticket_aabbccdd.md": {
+                "frontmatter": {
+                  "id": "aabbccdd",
+                  "status": "In Progress",
+                  "completion_commit": "abc1234",
+                  "title": "Final ticket"
+                }
+              }
+            },
+            "runtime_preconditions": [
+              "EPIC_COMPLETED token in assistant content",
+              "evaluateEpicCompletion returns { kind: 'genuine' }",
+              "curState.current_ticket = 'aabbccdd'"
+            ]
+          },
+          "expected_end_state": {
+            "status": "Done",
+            "completion_commit": "abc1234",
+            "watcher_decision": "keep",
+            "notes": "markTicketDone at 5176; clearStaleDoneWithoutCommitEvidence at 5175; no autoFill"
+          },
+          "evidence_source": "explicit"
+        }
+      ],
+      "known_failure_modes": [
+        "R-CCRC-2: any of the three callsites bypassed — Done flip without guard check, completion_commit can be absent",
+        "R-PEDC: clearStaleDoneWithoutCommitEvidence missing after guard.ok — stale exit_reason persists into finalizePipeline"
+      ]
+    },
+
+    {
+      "path_id": 6,
+      "label": "phantom-done-watcher-revert",
+      "triggering_function": "correctPhantomDoneTickets",
+      "file_line": "extension/bin/mux-runner.js:1007",
+      "description": "Watcher scans Done tickets. For each: checks hasCompletionCommit. If evidence.source='inferred' -> skip (keep). Calls phantomDoneShouldKeepDone. If keepDone=false AND evidence.source='absent' -> writeTicketStatus('Todo'). This is the REVERT path (Done -> Todo).",
+      "fixture": {
+        "session_dir_skeleton": {
+          "state.json": {
+            "active": true,
+            "working_dir": "<synthetic-git-repo>",
+            "schema_version": 3
+          },
+          "aabbccdd/linear_ticket_aabbccdd.md": {
+            "frontmatter": {
+              "id": "aabbccdd",
+              "status": "Done",
+              "title": "Phantom Done ticket"
+            },
+            "notes": "completion_commit ABSENT; completion_commit_inferred ABSENT; no matching git commit"
+          }
+        },
+        "runtime_preconditions": [
+          "correctPhantomDoneTickets called with { sessionDir, workingDir, iteration }",
+          "hasCompletionCommit returns { source: 'absent', sha: null }",
+          "phantomDoneShouldKeepDone returns { keepDone: false }",
+          "No operator bypass flag set (state.flags.allow_inferred_completion_commit not set)"
+        ]
+      },
+      "expected_end_state": {
+        "status": "Todo",
+        "completion_commit": null,
+        "watcher_decision": "revert",
+        "activity_event": "ticket_phantom_done_corrected",
+        "notes": "writeTicketStatus('Todo') called; corrected count incremented"
+      },
+      "evidence_source": "absent",
+      "known_failure_modes": [
+        "R-RIC-EXPLICIT-4: explicit SHA present but gitCommitExists check skipped — explicit branch falls through to reachability probe which incorrectly reverts a valid Done",
+        "R-AFCC-STALE: start_time_epoch not passed — findMatchingCommit scans all commits, finds cross-session SHA, keeps ticket Done when it should revert"
+      ]
+    },
+
+    {
+      "path_id": 7,
+      "label": "phantom-done-watcher-backfill",
+      "triggering_function": "inspectPhantomDoneTicketFile",
+      "file_line": "extension/bin/mux-runner.js:1089",
+      "description": "Watcher inspects single Done ticket file. If completion_commit absent but git-log finds inferred SHA: writes completion_commit_inferred:<sha> via insertCompletionCommitField. If no SHA found: reverts status to priorStatus. Two sub-outcomes: backfilled (reason='backfilled') or reverted (reason='reverted').",
+      "fixture": {
+        "session_dir_skeleton": {
+          "state.json": {
+            "active": true,
+            "working_dir": "<synthetic-git-repo>",
+            "schema_version": 3
+          },
+          "aabbccdd/linear_ticket_aabbccdd.md": {
+            "frontmatter": {
+              "id": "aabbccdd",
+              "status": "Done",
+              "title": "Backfill candidate ticket"
+            },
+            "notes": "completion_commit ABSENT; completion_commit_inferred ABSENT"
+          }
+        },
+        "runtime_preconditions_backfill": [
+          "hasCompletionCommit returns { source: 'inferred', sha: 'abc1234' }",
+          "insertCompletionCommitField succeeds (completion_commit not already present)"
+        ],
+        "runtime_preconditions_revert": [
+          "hasCompletionCommit returns { source: 'absent', sha: null }",
+          "priorStatus defaults to 'Todo'"
+        ]
+      },
+      "expected_end_state_backfill": {
+        "status": "Done",
+        "completion_commit": null,
+        "completion_commit_inferred": "abc1234",
+        "watcher_decision": "keep + backfilled",
+        "result": { "changed": true, "reason": "backfilled", "commit": "abc1234" }
+      },
+      "expected_end_state_revert": {
+        "status": "Todo",
+        "completion_commit": null,
+        "completion_commit_inferred": null,
+        "watcher_decision": "revert",
+        "result": { "changed": true, "reason": "reverted", "priorStatus": "Todo" }
+      },
+      "evidence_source": "inferred",
+      "known_failure_modes": [
+        "Paths 2 and 7 are functionally identical inferred-backfill helpers separated only by field name (completion_commit vs completion_commit_inferred) — invariant divergence risk",
+        "insertCompletionCommitField returns null if completion_commit already present — but inspectPhantomDoneTicketFile already checked for explicit field at line 1101, so this is a race condition only"
+      ]
+    },
+
+    {
+      "path_id": 8,
+      "label": "operator-salvage-edit",
+      "triggering_function": "n/a (manual frontmatter write)",
+      "file_line": "n/a",
+      "description": "Operator manually edits linear_ticket_*.md frontmatter to add completion_commit:<sha>. Documented bypass path. After edit, watcher (correctPhantomDoneTickets or inspectPhantomDoneTicketFile) sees explicit evidence and keeps ticket Done. No code path in the runtime triggers this — purely an operator action.",
+      "fixture": {
+        "session_dir_skeleton": {
+          "state.json": {
+            "active": true,
+            "working_dir": "<synthetic-git-repo>",
+            "schema_version": 3
+          },
+          "aabbccdd/linear_ticket_aabbccdd.md": {
+            "frontmatter": {
+              "id": "aabbccdd",
+              "status": "Done",
+              "completion_commit": "abc1234",
+              "title": "Salvaged ticket"
+            },
+            "notes": "Operator manually added completion_commit field after ticket was reverted or stalled"
+          }
+        },
+        "preconditions": [
+          "completion_commit written in one of the 4 SHA quote-forms",
+          "normalizeCompletionCommitField successfully parses the value"
+        ]
+      },
+      "expected_end_state": {
+        "status": "Done",
+        "completion_commit": "abc1234",
+        "watcher_decision": "keep",
+        "notes": "correctPhantomDoneTickets: hasCompletionCommit returns explicit -> skip (no revert). inspectPhantomDoneTicketFile: explicit field present -> returns { changed: false, reason: 'has_completion_commit' }."
+      },
+      "evidence_source": "explicit",
+      "known_failure_modes": [
+        "R-CCQF: operator writes quoted SHA (e.g. \"abc1234\") — if normalizeCompletionCommitField not used, bare readFrontmatterField returns quoted string, SHA validation fails, classified as absent"
+      ]
+    }
+  ]
+}
