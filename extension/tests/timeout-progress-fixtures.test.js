@@ -46,7 +46,6 @@ function writeArtifact(ticketDir, name) {
   fs.writeFileSync(p, `artifact: ${name}\n`);
   const mocked = new Date(Date.now());
   fs.utimesSync(p, mocked, mocked);
-  return p;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,12 +57,8 @@ test('R-WTB-A3 productive: 50-min implement with regular artifact writes fires n
 
   const { sessionDir, ticketDir } = makeTmpSession();
   try {
-    // Simulate 10 worker runs, each 5 min long (total 50 min).
-    // Artifacts are written at every run — modelling a productive worker that
-    // emits research/plan/conformance artifacts throughout its lifecycle.
-    // Specific mocked-clock timestamps: 5, 10, 15, 20, 25, 30, 35, 40, 45, 50 min.
-    // Highlighting the spec-required set: 5/15/30/45 min are among these writes.
-
+    // 10 worker runs × 5 min/run = 50-min simulate. Each run writes an artifact
+    // (mocked mtime at 5, 10, 15, … 50 min — spec-required 5/15/30/45 min included).
     let snapshot = { latestMtimeEpoch: 0, latestCommitSha: null };
     let timeoutCount = 0;
     let lastTimeoutTicket = null;
