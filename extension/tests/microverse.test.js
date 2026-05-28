@@ -1,4 +1,5 @@
-// @tier: fast
+// @tier: integration
+// SERIAL: see tests/integration/.serial-tests.json (R-TFP) — subprocess-heavy (spawnSync/execSync gate-remediation orphan-tmp recovery); flakes at --test-concurrency=8
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';

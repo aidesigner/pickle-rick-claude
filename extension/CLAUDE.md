@@ -14,6 +14,10 @@ R-TSPF stabilization spans five admitted flakes across four race classes. `load-
 
 Use `## Trap Doors` as the source of truth for the per-file invariant text, race class, and `PATTERN_SHAPE` anchors. For the pre-merge external proof of AC-1', operators run `gh workflow run stability-gate.yml -f run_count=30` once per bundle; worker AC-7 keeps the single-pass `test:fast` path.
 
+## R-TFP
+
+R-TFP serialization precedent: subprocess-heavy `@tier: fast` tests promoted to `@tier: integration` + added to `tests/integration/.serial-tests.json` to run at `--test-concurrency=1`. Precedent set in v1.76.0 (commit `cf600408`) for B-FLAKE class: `council-publish.test.js`, `mux-runner-claude-max-turns-relaunch.test.js`, `install-script-real.test.js`, `mux-runner.output-stall.test.js`, `check-update.test.js`. R-TFP-C1 (2026-05-28) extends the same pattern to `auto-resume-stop-conditions.test.js` (load-dependent-timeout: auto-resume.sh subprocess starvation at c=8; also covered by R-TSPF-2 trap door) and `microverse.test.js` (subprocess-spawn-timing: spawnSync/execSync orphan-tmp recovery at c=8).
+
 ## Trap Doors
 
 - `src/bin/mux-runner.ts` (R-WTB-A1 artifact-progress-aware timeout) — INVARIANT: the `if (counterNext.halt)` block in `runMuxRunnerMain` MUST call `detectArtifactProgress(ticketDir, lastArtifactProgressSnapshot, ...)` BEFORE calling `executeTimeoutHalt`; if `pResult.progressed`, reset `timeoutCount = 1` and emit `ticket_timeout_progress_extension` WITHOUT halting; only emit `ticket_timeout_halted_no_progress` + call `executeTimeoutHalt` when progress is absent. `PICKLE_TIMEOUT_NO_PROGRESS_WINDOW_SECONDS` (default 1500) controls the silence window. BREAKS: reverting the check to a bare `executeTimeoutHalt` call restores the original aggressive halt on 2 consecutive timeouts regardless of worker productivity (live incident b04f41d6 in v1.81.0: sound 40-min implement halted). ENFORCE: extension/tests/timeout-progress-aware.test.js, extension/tests/timeout-progress-fixtures.test.js. PATTERN_SHAPE: `detectArtifactProgress(ticketDir, lastArtifactProgressSnapshot` inside `if (counterNext.halt)` block.

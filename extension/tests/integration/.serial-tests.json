@@ -29,6 +29,8 @@
     "tests/council-publish.test.js",
     "tests/mux-runner.output-stall.test.js",
     "tests/check-update.test.js",
-    "tests/dispatch.test.js"
+    "tests/dispatch.test.js",
+    "tests/auto-resume-stop-conditions.test.js",
+    "tests/microverse.test.js"
   ]
 }

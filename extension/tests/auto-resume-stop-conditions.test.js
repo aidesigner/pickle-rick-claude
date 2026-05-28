@@ -1,4 +1,5 @@
-// @tier: fast
+// @tier: integration
+// SERIAL: see tests/integration/.serial-tests.json (R-TFP) — subprocess-heavy (spawns auto-resume.sh child processes); flakes at --test-concurrency=8
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
