@@ -328,3 +328,11 @@ R-TFP serialization precedent: subprocess-heavy `@tier: fast` tests promoted to 
 - Worker AC-7 remains unchanged and continues to rely on a single `npm run test:fast` pass.
 - `src/bin/pipeline-runner.ts` (R-PRJT-2 judge_timeout recovery) — INVARIANT: when microverse exits with `exit_reason === 'judge_timeout'` from anatomy-park or szechuan-sauce, pipeline-runner MUST spawn finalize-gate.js (skill = 'anatomy-park' or 'szechuan') and continue or halt based on the gate's exit code, NOT abort. `judge_timeout` is a transient measurement timeout (4-attempt backoff); the converged work is valid. `judge_timeout` MUST NOT appear in `MICROVERSE_FAILURE_REASONS`. BREAKS: re-adding 'judge_timeout' to MICROVERSE_FAILURE_REASONS routes it to the "pipeline aborting (no finalize-gate)" path, discarding convergence work from anatomy-park/szechuan-sauce phases that had already converged. ENFORCE: extension/tests/integration/pipeline-runner-judge-timeout-recovery.test.js.
 - `src/bin/pipeline-runner.ts` (R-SOA-5 handleShutdown diagnostic invariant) — INVARIANT: `installShutdownHandlers().handleShutdown` MUST emit a structured `signal_received` activity event for every signal entry, MUST persist the specific signal name as `state.json.exit_reason` (`signal:SIGINT`, `signal:SIGTERM`, `signal:SIGHUP`), and MUST dual-write the shutdown payload to `pipeline-runner.log` via both the human-readable `Received <signal> — shutting down pipeline` line and the structured `signal_received { ... }` line. BREAKS: collapsing signal-specific shutdown paths or dropping either write re-introduces unattributable shutdown sessions and burns 10-30 minutes of operator triage per event, the same class observed in session `2026-05-10-84ad0873`. ENFORCE: extension/tests/pipeline-runner-signal-attribution.test.js.
+
+## R-CLOSER-ADJACENCY-AUDIT
+
+Every closer MUST run the 6-step adjacency-audit checklist from `.claude/commands/citadel.md` under `## R-CLOSER-ADJACENCY-AUDIT` before committing. This template catches adjacent-mode bugs (the R-AFCC-STAGE class) that narrow per-symptom fixes miss.
+
+Steps: (1) adjacent-path enumeration, (2) adjacent-mode enumeration, (3) trap-door delta confirmation, (4) cross-module importer check, (5) stamp-pair parity, (6) pre-flight context grep.
+
+Maps to AC-AFCC-DEEP-02. See `.claude/commands/citadel.md` for the full template.
