@@ -169,8 +169,9 @@ Gated behind operator's drain-bug-bundles-first directive. Do not count toward o
 |---|---|---|---|
 | **R-PIAP** | P2 | `p2-proportional-intent-aware-pipeline-2026-05-21.md` | Proportional + intent-aware processing. Pillar A: tier-proportional lifecycle + auto-sizing classifier. Pillar B: anatomy/szechuan auto-detect UI-primary branches. 11 reqs. |
 | **R-PGI** | P2 | `p2-pipeline-graph-intelligence-2026-05-21.md` | GitNexus embedding. Graph-preflight stage + staged consumption (direct `.gitnexus/` target, MCP fallback). 9 reqs. Feeds R-PIAP-A5 classifier. |
+| **R-DC** | P2 | `p2-death-crystal-architectural-deepening-skill-2026-05-28.md` | `/death-crystal` skill — vendors mattpocock/skills:improve-codebase-architecture. Two modes: `--deepen` (shallow-module HTML report) + `--interface <module>` (4-Morty "Design It Twice" parallel synthesis). Adds `## Architectural Vocabulary` pin (Module/Interface/Depth/Seam/Adapter/Leverage/Locality) to `extension/CLAUDE.md`. 11 ACs / 8 P1-tickets + closer (schema-neutral, 1.81.x → 1.82.0 MINOR). Optional Phase 2 `/jerryboree` (Clairvoyance cherry-picks) + Phase 3 `/cromulons` (Feathers safety net). |
 
-**Order when bug queue allows:** R-PGI first (infrastructure R-PIAP-A5 consumes), then R-PIAP.
+**Order when bug queue allows:** R-PGI first (infrastructure R-PIAP-A5 consumes), then R-PIAP, then R-DC.
 
 ### Deferred future epics
 
