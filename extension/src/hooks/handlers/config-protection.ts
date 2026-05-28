@@ -473,6 +473,69 @@ export function detectProhibitedGitVerb(command: string): { verb: string } | nul
 }
 
 /**
+ * R-CSIS-B1: Extract the file path argument from `node --test <path>` commands.
+ * Returns the first non-flag token after `--test`, or null if the pattern doesn't match.
+ */
+function extractNodeTestPath(command: string): string | null {
+  if (!command) return null;
+  const trimmed = command.trim();
+  if (!trimmed) return null;
+  const tokens = trimmed.split(/\s+/);
+  let idx = 0;
+  while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx])) idx++;
+  if (tokens[idx] !== 'node') return null;
+  idx++;
+  let foundTestFlag = false;
+  while (idx < tokens.length) {
+    const t = tokens[idx];
+    if (t === '--test') { foundTestFlag = true; idx++; continue; }
+    if (foundTestFlag && !t.startsWith('-')) return t;
+    idx++;
+  }
+  return null;
+}
+
+/**
+ * R-CSIS-B1: Returns true when testPath resolves to a file whose first line
+ * is `// @tier: expensive`. Fails safe (returns false) on any read error.
+ */
+function isExpensiveTestFile(testPath: string, cwd: string): boolean {
+  if (!testPath) return false;
+  try {
+    const resolved = path.isAbsolute(testPath) ? testPath : path.resolve(cwd, testPath);
+    const content = fs.readFileSync(resolved, 'utf8');
+    const firstLine = content.split('\n')[0] ?? '';
+    return firstLine.trim() === '// @tier: expensive';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * R-CSIS-B1: Blocks `node --test <path>` when <path> is an expensive-tier test file.
+ * Emits `closer_expensive_node_test_blocked` for the audit trail and calls block().
+ */
+function isExpensiveNodeTestBlockedByRCSIS(input: PreToolUseInput, state: State): boolean {
+  if (input.tool_name !== 'Bash' || !input.tool_input?.command) return false;
+  const command = input.tool_input.command;
+  const testPath = extractNodeTestPath(command);
+  if (!testPath) return false;
+  const extensionDir = getExtensionRoot();
+  if (!isExpensiveTestFile(testPath, extensionDir)) return false;
+
+  try {
+    logActivity({
+      event: 'closer_expensive_node_test_blocked',
+      source: 'hook',
+      gate_payload: { command, blocked_path: testPath },
+    });
+  } catch { /* best-effort */ }
+
+  block('R-CSIS-B1: Directly running an expensive-tier test file via `node --test <path>` bypasses the RUN_EXPENSIVE_TESTS=1 skip guard and runs the full soak unconditionally. Use `RUN_EXPENSIVE_TESTS=1 npm run test:expensive` instead.');
+  return true;
+}
+
+/**
  * R-PIPE-3 extracted helper — keeps main() complexity <= 15.
  * Returns true if we handled (blocked or approved via override); caller should return.
  */
@@ -641,6 +704,12 @@ function main(): void {
   // Extracted to keep main() cyclomatic complexity <= 15.
   if (isBashInstallBlockedByRWSRC(input, state)) {
     return; // block() or approve() already called inside
+  }
+
+  // R-CSIS-B1: Block `node --test <expensive-tier-file>` to prevent the bypass
+  // of RUN_EXPENSIVE_TESTS=1 that causes a timeout→relaunch→re-soak infinite loop.
+  if (isExpensiveNodeTestBlockedByRCSIS(input, state)) {
+    return;
   }
 
   // R-WSRC-GR: Block prohibited git verbs (reset, checkout w/ ref, switch, stash, rebase,

@@ -20,6 +20,18 @@ Use this runbook when a closer exits with `state.exit_reason = closer_handoff_te
 
 If the worker reports release-gate failures, verify whether they are pre-existing before reverting closer work. Cross-check open flake/regression findings such as Finding #32 `R-TFP`; inherited failures should become handoff notes, not rollback triggers.
 
+## Release Gate
+
+When the closer must run the release gate, use **only** the canonical sequence from `CLAUDE.md`:
+
+```
+cd extension && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh && bash scripts/audit-fix-commits.sh && bash scripts/audit-bundle-thesis.sh && bash scripts/audit-quarantine.sh && bash scripts/audit-trap-door-enforcement.sh && npm run test:fast && npm run test:integration && RUN_EXPENSIVE_TESTS=1 npm run test:expensive
+```
+
+**Never** invoke an expensive-tier test file directly via `node --test <path>`. The `npm run test:expensive` script gates on `RUN_EXPENSIVE_TESTS=1` and controls the skip path; bypassing it with a bare `node --test` runs the full 30-minute soak unconditionally and can produce a timeout → relaunch → re-soak infinite loop.
+
+The correct invocation is always `RUN_EXPENSIVE_TESTS=1 npm run test:expensive`.
+
 ## Recovery
 
 If mux-runner did not stop cleanly:

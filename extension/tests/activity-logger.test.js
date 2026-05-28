@@ -210,6 +210,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // manager-turn freshness heartbeat (R-SJLAG #82).
         'orphan_manager_reaped',
         'manager_turn_progress',
+        'closer_expensive_node_test_blocked',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {

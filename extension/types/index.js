@@ -284,6 +284,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'monitor_respawn_session_dir_invalid',
     'spawn_morty_invalid_ticket_path',
     'ticket_preskipped_already_terminal',
+    'closer_expensive_node_test_blocked',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {
