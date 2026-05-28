@@ -6,6 +6,7 @@ EXTENSION_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$EXTENSION_ROOT/.." && pwd)"
 CLAUDE_PATH="${CLAUDE_PATH_OVERRIDE:-$EXTENSION_ROOT/CLAUDE.md}"
 SOURCE_CLAUDE_PATH="$EXTENSION_ROOT/src/bin/CLAUDE.md"
+CLOSER_AUDIT_REPO="${CLOSER_AUDIT_REPO_OVERRIDE:-$REPO_ROOT}"
 
 if [ ! -f "$CLAUDE_PATH" ]; then
   echo "[skipped: extension/CLAUDE.md not found]" >&2
@@ -321,6 +322,102 @@ _MUXQG_VIOLATIONS=$(
 if [ -n "$_MUXQG_VIOLATIONS" ]; then
   fail "R-MUXQG test-reset contract: _resetQualityGateSkipDeprecation referenced in prod source:
 $_MUXQG_VIOLATIONS"
+fi
+
+# R-CLOSER-ADJACENCY-AUDIT: closer commits must include the 6-step adjacency-audit section
+if ! node - "$CLOSER_AUDIT_REPO" <<'NODE'
+const { execFileSync } = require('child_process');
+
+const [,, repoRoot] = process.argv;
+
+// Find the commit that introduced R-CLOSER-ADJACENCY-AUDIT to citadel.md.
+// Only check closer commits after that point — the template didn't exist before.
+let baselineSha = '';
+try {
+  const pickaxeOut = execFileSync(
+    'git',
+    ['log', '--oneline', '-S', 'R-CLOSER-ADJACENCY-AUDIT', '--', '.claude/commands/citadel.md'],
+    { encoding: 'utf8', cwd: repoRoot, timeout: 10000 }
+  ).trim();
+  const lines = pickaxeOut.split('\n').filter(Boolean);
+  if (lines.length > 0) {
+    // Last line is the oldest commit that introduced the template
+    baselineSha = lines[lines.length - 1].trim().split(/\s+/)[0];
+  }
+} catch (_) {
+  // Can't determine baseline; check all commits
+}
+
+const range = baselineSha ? `${baselineSha}..HEAD` : 'HEAD';
+let logOutput;
+try {
+  logOutput = execFileSync(
+    'git',
+    ['log', '--format=%H%x00%s%x00%b%x02', range],
+    { encoding: 'utf8', cwd: repoRoot, timeout: 15000 }
+  );
+} catch (e) {
+  const msg = e instanceof Error ? e.message : String(e);
+  process.stderr.write(`R-CLOSER-ADJACENCY-AUDIT: git log failed: ${msg}\n`);
+  process.exit(1);
+}
+
+const commits = logOutput.split('\x02').map(s => s.trim()).filter(Boolean);
+
+const closerSubjectRe = /^(fix|chore|docs)\([0-9a-f]{6,12}\): R-.*[Cc]loser/;
+// Detect by body only when the section header itself is present — prevents false
+// positives on implementation commits that describe the audit protocol in prose.
+const adjacencyBodyRe = /^## Adjacency audit \(R-CLOSER-ADJACENCY-AUDIT\)/m;
+const sectionHeaderRe = /^## Adjacency audit \(R-CLOSER-ADJACENCY-AUDIT\)/m;
+const itemRe = /^(?:\d+\.|-) .+: (?:Y|N|N\/A)\b/gm;
+
+const failures = [];
+let closerCount = 0;
+
+for (const commitText of commits) {
+  const nul1 = commitText.indexOf('\x00');
+  const nul2 = nul1 >= 0 ? commitText.indexOf('\x00', nul1 + 1) : -1;
+  if (nul1 < 0 || nul2 < 0) continue;
+
+  const hash = commitText.slice(0, nul1).trim();
+  const subject = commitText.slice(nul1 + 1, nul2).trim();
+  const body = commitText.slice(nul2 + 1);
+
+  const isCloser = closerSubjectRe.test(subject) || adjacencyBodyRe.test(body);
+  if (!isCloser) continue;
+  closerCount++;
+
+  if (!sectionHeaderRe.test(body)) {
+    failures.push(
+      `${hash.slice(0, 12)} "${subject}": missing "## Adjacency audit (R-CLOSER-ADJACENCY-AUDIT)" section`
+    );
+    continue;
+  }
+
+  const items = body.match(itemRe) || [];
+  if (items.length < 6) {
+    failures.push(
+      `${hash.slice(0, 12)} "${subject}": adjacency-audit section has ${items.length}/6 Y/N items (need ≥6)`
+    );
+  }
+}
+
+if (failures.length > 0) {
+  process.stderr.write(
+    `R-CLOSER-ADJACENCY-AUDIT: ${failures.length} closer commit(s) missing adjacency-audit section:\n`
+  );
+  for (const f of failures) {
+    process.stderr.write(`  ${f}\n`);
+  }
+  process.exit(1);
+}
+
+console.log(
+  `audit-trap-door-enforcement: R-CLOSER-ADJACENCY-AUDIT: ${closerCount} closer commit(s) checked, all pass`
+);
+NODE
+then
+  audit_exit_code=1
 fi
 
 exit "$audit_exit_code"
