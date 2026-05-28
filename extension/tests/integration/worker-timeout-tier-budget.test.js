@@ -2,13 +2,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { getTicketTierBudgetWithOverrides } from '../../services/pickle-utils.js';
+import { getTicketTierBudgetWithOverrides, TICKET_TIER_BUDGETS } from '../../services/pickle-utils.js';
 import { makeState } from './test-harness.js';
 
 const TIER_ROWS = [
   ['trivial', 300],
   ['small', 600],
-  ['medium', 2400],
+  ['medium', 3600],
   ['large', 4800],
 ];
 
@@ -75,10 +75,14 @@ describe.each ??= function each(rows) {
   };
 };
 
+it("TICKET_TIER_BUDGETS.medium.worker_timeout_seconds is 3600 (R-WTB-A2)", () => {
+  assert.equal(TICKET_TIER_BUDGETS.medium.worker_timeout_seconds, 3600);
+});
+
 describe.each(PRECEDENCE_ROWS)('worker timeout tier budget precedence', ({ label, buildCase }) => {
   it('builds fresh fixtures per suite row', () => {
-    const left = buildCase('medium', 2400);
-    const right = buildCase('medium', 2400);
+    const left = buildCase('medium', 3600);
+    const right = buildCase('medium', 3600);
 
     assert.notStrictEqual(left.state, right.state);
     if (left.settings !== null || right.settings !== null) {

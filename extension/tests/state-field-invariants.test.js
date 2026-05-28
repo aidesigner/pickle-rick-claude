@@ -84,7 +84,7 @@ test('R-CNAR-1 ticket-tier-budget invariant: state.flags > pickle_settings.tier_
   // 1) defaults only (state=null, settings=null)
   assert.deepEqual(
     getTicketTierBudgetWithOverrides(null, 'medium', null),
-    { tier: 'medium', max_iterations: 30, worker_timeout_seconds: 40 * 60 },
+    { tier: 'medium', max_iterations: 30, worker_timeout_seconds: 60 * 60 },
   );
 
   // 2) settings beats defaults (state=null)

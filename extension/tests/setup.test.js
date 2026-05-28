@@ -1207,7 +1207,7 @@ test('setup: ignores fractional numeric settings and backend budgets', () => {
         const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
         assert.equal(state.max_iterations, 100, 'fractional max_iterations and backend budgets must fall back to defaults');
         assert.equal('max_time_minutes' in state, false, 'fractional max_time setting should be ignored and no default cap should be written');
-        assert.equal(state.worker_timeout_seconds, 2400, 'fractional worker timeout must fall back to defaults');
+        assert.equal(state.worker_timeout_seconds, 3600, 'fractional worker timeout must fall back to defaults');
     } finally {
         codexEnv.cleanup();
         fs.rmSync(extRoot, { recursive: true, force: true });

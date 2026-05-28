@@ -57,7 +57,7 @@ test('ticket-tier.budget-mapping: all tiers map to documented iteration and work
   const cases = [
     ['trivial', 5, 5 * 60],
     ['small', 10, 10 * 60],
-    ['medium', 30, 40 * 60],
+    ['medium', 30, 60 * 60],
     ['large', 60, 80 * 60],
   ];
 
@@ -99,7 +99,7 @@ test('ticket-tier.default: missing and invalid tiers default to medium budget', 
   const expected = {
     tier: 'medium',
     max_iterations: 30,
-    worker_timeout_seconds: 40 * 60,
+    worker_timeout_seconds: 60 * 60,
   };
 
   assert.deepEqual(ticketTierBudget(undefined), expected);
@@ -155,7 +155,7 @@ test('ticket-tier.budget-mapping: cached tier is stable when frontmatter changes
 
 test('ticket-tier-budget overrides: defaults applied when no settings or flags', () => {
   const budget = getTicketTierBudgetWithOverrides(null, 'medium', null);
-  assert.deepEqual(budget, { tier: 'medium', max_iterations: 30, worker_timeout_seconds: 40 * 60 });
+  assert.deepEqual(budget, { tier: 'medium', max_iterations: 30, worker_timeout_seconds: 60 * 60 });
 });
 
 test('ticket-tier-budget overrides: pickle_settings.tier_caps fully overrides field-level', () => {
@@ -227,7 +227,7 @@ test('ticket-tier-budget overrides: invalid (zero/negative/NaN/non-int) values f
     },
   };
   const medium = getTicketTierBudgetWithOverrides(state, 'medium', settings);
-  assert.deepEqual(medium, { tier: 'medium', max_iterations: 30, worker_timeout_seconds: 40 * 60 });
+  assert.deepEqual(medium, { tier: 'medium', max_iterations: 30, worker_timeout_seconds: 60 * 60 });
   const large = getTicketTierBudgetWithOverrides(state, 'large', settings);
   assert.deepEqual(large, { tier: 'large', max_iterations: 60, worker_timeout_seconds: 80 * 60 });
 });
