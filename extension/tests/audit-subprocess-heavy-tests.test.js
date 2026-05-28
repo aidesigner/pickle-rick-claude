@@ -1,4 +1,6 @@
-// @tier: fast
+// @tier: integration
+// SERIAL: subprocess-heavy — the audit script itself spawns bash+grep across all test files (~19s
+// under no load); R-TFP precedent (cf600408) promotes such tests to integration+serial.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as path from 'node:path';

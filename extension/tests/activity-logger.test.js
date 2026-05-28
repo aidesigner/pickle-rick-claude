@@ -211,6 +211,8 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'orphan_manager_reaped',
         'manager_turn_progress',
         'closer_expensive_node_test_blocked',
+        'ticket_timeout_progress_extension',
+        'ticket_timeout_halted_no_progress',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {

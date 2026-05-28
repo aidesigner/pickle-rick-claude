@@ -13,6 +13,7 @@ const RELEASE_WORKFLOW = path.join(REPO_ROOT, '.github', 'workflows', 'release.y
 const AUDIT_SCRIPTS = [
   'bash scripts/audit-test-tiers.sh',
   'bash scripts/audit-test-isolation.sh',
+  'bash scripts/audit-subprocess-heavy-tests.sh',
   'bash scripts/audit-fix-commits.sh',
   'bash scripts/audit-bundle-thesis.sh',
   'bash scripts/audit-quarantine.sh',
