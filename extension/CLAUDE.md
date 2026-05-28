@@ -336,3 +336,9 @@ Every closer MUST run the 6-step adjacency-audit checklist from `.claude/command
 Steps: (1) adjacent-path enumeration, (2) adjacent-mode enumeration, (3) trap-door delta confirmation, (4) cross-module importer check, (5) stamp-pair parity, (6) pre-flight context grep.
 
 Maps to AC-AFCC-DEEP-02. See `.claude/commands/citadel.md` for the full template.
+
+## Characterization Safety Nets
+
+The completion-commit cluster characterization suite lives at `extension/tests/characterization/completion-commit-cluster/` (8 test files, 35 tests, committed in 3de26d83). Every file carries `// @tier: integration`, so `npm run test:integration` automatically discovers and enforces the suite via the recursive `discoverTierFiles` scanner in `extension/bin/test-runner.js`.
+
+**Release-gate invariant (R-AFCC-DEEP-CONSOLIDATED):** These tests MUST pass on every release. They are the primary regression guard for the 8 Done-stamping paths in the completion-commit cluster. A passing `npm run test:integration` is required evidence before tagging any release (see `## Versioning` in this file's parent CLAUDE.md). Do NOT quarantine or suppress these files without a corresponding R-AFCC-DEEP-CONSOLIDATED exception record.
