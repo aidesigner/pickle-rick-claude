@@ -68,6 +68,8 @@ export interface WorkerInvocationOptions {
   toolsets?: string[];
   provider?: string;
   maxTurns?: number;
+  /** R-PGI-6: inline JSON or file path for claude --mcp-config (claude backend only). */
+  mcpConfig?: string;
 }
 
 export interface ManagerInvocationOptions {
@@ -342,6 +344,8 @@ function buildClaudeWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvoca
     args.push('--output-format', opts.outputFormat);
   }
   if (opts.model) args.push('--model', opts.model);
+  // R-PGI-6: wire gitnexus MCP server when caller provides an mcp config.
+  if (opts.mcpConfig) args.push('--mcp-config', opts.mcpConfig);
   // NOTE: claude CLI has no public reasoning-effort flag for `claude -p`; opts.effort
   // is intentionally ignored here. Don't inject --append-system-prompt or env vars
   // as a workaround — the value still survives in state.json for future logging/use.
