@@ -61,30 +61,36 @@ assertIncludesBefore(
 );
 
 // --- batchLoopPhantomDoneKind ---
-// R-RIC-EXPLICIT-4: only `inferred` evidence (gitCommitExists/grep-verified)
-// short-circuits; `explicit` and `absent` MUST fall through to the reachability
-// gate so a stamped-but-unreachable completion_commit still reverts a phantom Done.
+// R-RIC-EXPLICIT-4 / R-AFCC-DEEP-4A: batchLoopPhantomDoneKind delegates to
+// gateForPhantomDoneRevert (the ticket-completion-evidence.ts oracle).
+// The old hasCompletionCommit/phantomDoneShouldKeepDone direct calls were
+// migrated in R-AFCC-DEEP-4A (commit fadc2477). Updated invariant:
+// - MUST call gateForPhantomDoneRevert( (new oracle)
+// - MUST return 'inferred' (for persist-inferred decisions)
+// - MUST return 'explicit-reachable' (for keep decisions)
 const batchHelperBody = extractFunctionBody('batchLoopPhantomDoneKind');
-if (!batchHelperBody.includes('hasCompletionCommit(')) {
-  throw new Error("batchLoopPhantomDoneKind: missing hasCompletionCommit call (R-RIC-EXPLICIT-4)");
+if (!batchHelperBody.includes('gateForPhantomDoneRevert(')) {
+  throw new Error("batchLoopPhantomDoneKind: missing gateForPhantomDoneRevert call (R-RIC-EXPLICIT-4 / R-AFCC-DEEP-4A)");
 }
-if (!batchHelperBody.includes("evidence.source === 'inferred'")) {
-  throw new Error("batchLoopPhantomDoneKind: missing inferred-source check (R-RIC-EXPLICIT-4)");
+if (!batchHelperBody.includes("return 'inferred';")) {
+  throw new Error("batchLoopPhantomDoneKind: missing 'inferred' return for persist-inferred path (R-RIC-EXPLICIT-4)");
 }
-if (!batchHelperBody.includes('phantomDoneShouldKeepDone(')) {
-  throw new Error("batchLoopPhantomDoneKind: missing reachability gate for explicit/absent sources (R-RIC-EXPLICIT-4)");
+if (!batchHelperBody.includes("return 'explicit-reachable';")) {
+  throw new Error("batchLoopPhantomDoneKind: missing 'explicit-reachable' return for keep path (R-RIC-EXPLICIT-4)");
 }
 
 // --- validateAutoTicketCompletion ---
+// R-AFCC-DEEP-4A: readEvidence replaces hasCompletionCommit.
+// MUST use readEvidence( and check evidence.kind === 'absent'.
 const validateBody = extractFunctionBody('validateAutoTicketCompletion');
 assertIncludesBefore(
   validateBody,
-  'const evidence = hasCompletionCommit(',
+  'readEvidence(',
   "return { action: 'skip', reason: 'no_commit_referencing_ticket_since_current_set' };",
   'validateAutoTicketCompletion',
 );
-if (!validateBody.includes("if (evidence.source === 'absent')")) {
-  throw new Error("validateAutoTicketCompletion: missing absent-source branch");
+if (!validateBody.includes("evidence.kind === 'absent'")) {
+  throw new Error("validateAutoTicketCompletion: missing absent-kind branch (R-AFCC-DEEP-4A)");
 }
 
 // --- inspectPhantomDoneTicketFile ---
@@ -95,14 +101,15 @@ if (!inspectBody.includes('applyInspectPhantomDoneDecision(')) {
 }
 
 // --- applyInspectPhantomDoneDecision ---
-// Must call hasCompletionCommit before writeTicketStatus (R-ICP-5 gate ordering).
+// R-AFCC-DEEP-4A: gateForPhantomDoneRevert replaces hasCompletionCommit.
+// Must call gateForPhantomDoneRevert before writeTicketStatus (R-ICP-5 gate ordering).
 const applyBody = extractFunctionBody('applyInspectPhantomDoneDecision');
 assertIncludesBefore(
   applyBody,
-  'hasCompletionCommit(',
+  'gateForPhantomDoneRevert(',
   'writeTicketStatus(',
   'applyInspectPhantomDoneDecision',
 );
 
-console.log('audit-phantom-done-call-sites: all phantom-Done gates consult hasCompletionCommit first');
+console.log('audit-phantom-done-call-sites: all phantom-Done gates consult gateForPhantomDoneRevert/readEvidence (R-AFCC-DEEP-4A)');
 NODE

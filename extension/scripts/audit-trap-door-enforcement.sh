@@ -420,4 +420,158 @@ then
   audit_exit_code=1
 fi
 
+# R-AFCC-STAGE: non-repo workingDir containment — verify canonical literals present in ticket-completion-evidence.ts
+if ! node - "$EXTENSION_ROOT/src/services/ticket-completion-evidence.ts" <<'NODE'
+const fs = require('fs');
+const [,, sourcePath] = process.argv;
+
+const text = fs.readFileSync(sourcePath, 'utf8');
+
+// Canonical literal 1: R-AFCC-STAGE annotation comment
+if (!text.includes('// R-AFCC-STAGE:')) {
+  process.stderr.write('R-AFCC-STAGE: canonical annotation "// R-AFCC-STAGE:" missing from ticket-completion-evidence.ts\n');
+  process.exit(1);
+}
+
+// Canonical literal 2: required-throw guard in persistEvidence
+if (!text.includes("if (opts.stage === 'required') throw")) {
+  process.stderr.write('R-AFCC-STAGE: canonical literal "if (opts.stage === \'required\') throw" missing from ticket-completion-evidence.ts\n');
+  process.exit(1);
+}
+
+console.log('audit-trap-door-enforcement: R-AFCC-STAGE literals verified');
+NODE
+then
+  audit_exit_code=1
+fi
+
+# R-AFCC-WRITE-OBSERVABILITY: write-vs-stage telemetry split — verify staged?: boolean in PersistResult
+if ! node - "$EXTENSION_ROOT/src/services/ticket-completion-evidence.ts" <<'NODE'
+const fs = require('fs');
+const [,, sourcePath] = process.argv;
+
+const text = fs.readFileSync(sourcePath, 'utf8');
+
+// Canonical literal: staged?: boolean field in PersistResult
+if (!text.includes('staged?: boolean')) {
+  process.stderr.write('R-AFCC-WRITE-OBSERVABILITY: canonical literal "staged?: boolean" missing from ticket-completion-evidence.ts\n');
+  process.exit(1);
+}
+
+console.log('audit-trap-door-enforcement: R-AFCC-WRITE-OBSERVABILITY literal verified');
+NODE
+then
+  audit_exit_code=1
+fi
+
+# R-AFCC-CALLER-ENUMERATION: oracle callsite audit — verify exactly 3 caller files import ticket-completion-evidence
+if ! node - "$EXTENSION_ROOT/src" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
+
+const [,, srcDir] = process.argv;
+
+let grepOutput;
+try {
+  grepOutput = execFileSync(
+    'grep',
+    ['-rln', 'ticket-completion-evidence', srcDir, '--include=*.ts'],
+    { encoding: 'utf8', timeout: 10000 }
+  );
+} catch (e) {
+  // grep exits 1 when no matches — treat as 0 files
+  grepOutput = (e.stdout) || '';
+}
+
+const files = grepOutput.trim().split('\n').filter(Boolean)
+  .filter(f => !f.endsWith('ticket-completion-evidence.ts'));
+
+const EXPECTED_CALLERS = [
+  'mux-runner.ts',
+  'auto-fill-completion-commit.ts',
+  'pickle-utils.ts',
+];
+
+const basenames = files.map(f => path.basename(f));
+const missing = EXPECTED_CALLERS.filter(e => !basenames.includes(e));
+const unexpected = basenames.filter(b => !EXPECTED_CALLERS.includes(b));
+
+let failures = 0;
+
+if (files.length !== EXPECTED_CALLERS.length) {
+  process.stderr.write(
+    `R-AFCC-CALLER-ENUMERATION: expected exactly ${EXPECTED_CALLERS.length} caller files, found ${files.length}\n`
+  );
+  failures++;
+}
+
+if (missing.length > 0) {
+  process.stderr.write(
+    `R-AFCC-CALLER-ENUMERATION: expected caller(s) missing: ${missing.join(', ')}\n`
+  );
+  failures++;
+}
+
+if (unexpected.length > 0) {
+  process.stderr.write(
+    `R-AFCC-CALLER-ENUMERATION: unexpected new caller(s) found — update pin count: ${unexpected.join(', ')}\n`
+  );
+  failures++;
+}
+
+if (failures > 0) {
+  process.exit(1);
+}
+
+console.log(`audit-trap-door-enforcement: R-AFCC-CALLER-ENUMERATION verified (${files.length} callers: ${basenames.join(', ')})`);
+NODE
+then
+  audit_exit_code=1
+fi
+
+# R-AFCC-DEEP-CONSOLIDATED: single oracle — verify surviving entry points present and pruned exports absent
+if ! node - "$EXTENSION_ROOT/src/services/ticket-completion-evidence.ts" <<'NODE'
+const fs = require('fs');
+const [,, sourcePath] = process.argv;
+
+const text = fs.readFileSync(sourcePath, 'utf8');
+
+const requiredExports = [
+  'export function readEvidence',
+  'export function persistEvidence',
+  'export function gateForPhantomDoneRevert',
+];
+
+const prunedExports = [
+  'export function gateForDoneFlip',
+  'export function recordPostGateOutcome',
+];
+
+let failures = 0;
+
+for (const sym of requiredExports) {
+  if (!text.includes(sym)) {
+    process.stderr.write(`R-AFCC-DEEP-CONSOLIDATED: required export missing: "${sym}" in ticket-completion-evidence.ts\n`);
+    failures++;
+  }
+}
+
+for (const sym of prunedExports) {
+  if (text.includes(sym)) {
+    process.stderr.write(`R-AFCC-DEEP-CONSOLIDATED: pruned export re-introduced: "${sym}" in ticket-completion-evidence.ts\n`);
+    failures++;
+  }
+}
+
+if (failures > 0) {
+  process.exit(1);
+}
+
+console.log('audit-trap-door-enforcement: R-AFCC-DEEP-CONSOLIDATED oracle surface verified');
+NODE
+then
+  audit_exit_code=1
+fi
+
 exit "$audit_exit_code"
