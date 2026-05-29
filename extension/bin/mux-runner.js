@@ -907,14 +907,6 @@ export function classifyGitProbeError(err) {
     return e.status === 128 || e.code === 'ENOENT' ? 'git-could-not-run' : 'not-reachable';
 }
 /**
- * R-AFCC-DEEP-3C: collapse to a 1-line check on the four-state `CompletionCommitEvidence`.
- * `frontmatterCompletionCommitReachable` deleted — reachability now lives in
- * `hasCompletionCommit` (explicit branch via `probeCatFileExists`).
- */
-function phantomDoneShouldKeepDone(input, evidence) {
-    return { keepDone: evidence.source === 'explicit-reachable' || (input.flags ?? {})['allow_inferred_completion_commit'] === true, fallbackFired: evidence.usedFallback === true };
-}
-/**
  * R-CCR-1: emit the phantom-Done "kept" log lines, including the fallback-probe
  * note. Extracted from `correctPhantomDoneTickets` to keep that loop under the
  * eslint complexity ceiling.
@@ -2641,6 +2633,14 @@ export function clearStaleDoneWithoutCommitEvidence(statePath) {
     }
     catch { /* best-effort — finalize path will resolve terminal state */ }
 }
+/** Map a four-state EvidenceKind back to the legacy CompletionCommitEvidence source for error callers. */
+function mapEvidenceKindToLegacySource(kind) {
+    if (kind === 'explicit')
+        return 'explicit-reachable';
+    if (kind === 'inferred-fresh' || kind === 'inferred-stale')
+        return 'inferred';
+    return 'absent';
+}
 export function guardCompletionCommitBeforeDone(args) {
     // R-WSRC-4 parity: PICKLE_TEST_MODE=1 bypasses for sandboxed test fixtures
     // whose workingDir is a synthetic temp dir without a real git repo.
@@ -2686,10 +2686,7 @@ export function guardCompletionCommitBeforeDone(args) {
         return { ok: true, sha: evidenceR.sha };
     }
     // Map EvidenceKind back to legacy source for callers that inspect the error.
-    const legacySource = evidenceR.kind === 'explicit' ? 'explicit-reachable' :
-        evidenceR.kind === 'inferred-fresh' ? 'inferred' :
-            evidenceR.kind === 'inferred-stale' ? 'inferred' :
-                'absent';
+    const legacySource = mapEvidenceKindToLegacySource(evidenceR.kind);
     return {
         ok: false,
         source: legacySource,

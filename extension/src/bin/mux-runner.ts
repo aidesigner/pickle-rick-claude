@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, hasCompletionCommit, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, type CompletionCommitEvidence, type TicketInfo, type TicketStatus, type TicketTierBudget } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, type CompletionCommitEvidence, type TicketInfo, type TicketStatus, type TicketTierBudget } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -1029,18 +1029,6 @@ export function classifyGitProbeError(err: unknown): 'not-reachable' | 'git-coul
   const e = err as { status?: number | null; code?: string; signal?: string | null };
   if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM') return 'git-could-not-run';
   return e.status === 128 || e.code === 'ENOENT' ? 'git-could-not-run' : 'not-reachable';
-}
-
-/**
- * R-AFCC-DEEP-3C: collapse to a 1-line check on the four-state `CompletionCommitEvidence`.
- * `frontmatterCompletionCommitReachable` deleted — reachability now lives in
- * `hasCompletionCommit` (explicit branch via `probeCatFileExists`).
- */
-function phantomDoneShouldKeepDone(
-  input: CorrectPhantomDoneTicketsInput,
-  evidence: CompletionCommitEvidence,
-): { keepDone: boolean; fallbackFired: boolean } {
-  return { keepDone: evidence.source === 'explicit-reachable' || (input.flags ?? {})['allow_inferred_completion_commit'] === true, fallbackFired: evidence.usedFallback === true };
 }
 
 /**
@@ -3004,6 +2992,13 @@ export function clearStaleDoneWithoutCommitEvidence(statePath: string): void {
   } catch { /* best-effort — finalize path will resolve terminal state */ }
 }
 
+/** Map a four-state EvidenceKind back to the legacy CompletionCommitEvidence source for error callers. */
+function mapEvidenceKindToLegacySource(kind: string): CompletionCommitEvidence['source'] {
+  if (kind === 'explicit') return 'explicit-reachable';
+  if (kind === 'inferred-fresh' || kind === 'inferred-stale') return 'inferred';
+  return 'absent';
+}
+
 export function guardCompletionCommitBeforeDone(args: {
   sessionDir: string;
   ticketId: string;
@@ -3056,11 +3051,7 @@ export function guardCompletionCommitBeforeDone(args: {
     return { ok: true, sha: evidenceR.sha };
   }
   // Map EvidenceKind back to legacy source for callers that inspect the error.
-  const legacySource: CompletionCommitEvidence['source'] =
-    evidenceR.kind === 'explicit' ? 'explicit-reachable' :
-    evidenceR.kind === 'inferred-fresh' ? 'inferred' :
-    evidenceR.kind === 'inferred-stale' ? 'inferred' :
-    'absent';
+  const legacySource = mapEvidenceKindToLegacySource(evidenceR.kind);
   return {
     ok: false,
     source: legacySource,

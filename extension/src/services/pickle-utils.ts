@@ -452,11 +452,6 @@ export function readFrontmatterField(content: string, field: string): string | n
   return raw.length > 0 ? raw : null;
 }
 
-function readFirstMarkdownHeading(content: string): string | null {
-  const match = content.match(/^#\s+(.+)$/m);
-  return match?.[1]?.trim() || null;
-}
-
 export function upsertFrontmatterField(content: string, field: string, value: string): string | null {
   const fm = extractFrontmatter(content);
   if (!fm) return null;
@@ -779,52 +774,6 @@ export interface CompletionCommitEvidence {
   usedFallback?: boolean;
 }
 
-function resolveTicketPath(args: {
-  sessionDir?: string;
-  ticketId?: string;
-  ticketPath?: string;
-}): string | null {
-  if (typeof args.ticketPath === 'string' && args.ticketPath.length > 0) return args.ticketPath;
-  if (typeof args.sessionDir === 'string' && args.sessionDir.length > 0 && typeof args.ticketId === 'string' && args.ticketId.length > 0) {
-    return path.join(args.sessionDir, args.ticketId, `linear_ticket_${args.ticketId}.md`);
-  }
-  return null;
-}
-
-function gitCommitExists(workingDir: string, sha: string): boolean {
-  try {
-    execFileSync('git', ['-C', workingDir, 'cat-file', '-e', `${sha}^{commit}`], {
-      timeout: 5000,
-      stdio: ['ignore', 'ignore', 'ignore'],
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * R-AFCC-DEEP-3C: 3-way probe using `git cat-file -e <sha>^{commit}`.
- * Returns 'exists' (exit 0), 'not-exists' (exit 1), or 'git-could-not-run'
- * (exit 128, ENOENT, ETIMEDOUT, SIGTERM — git produced no definitive answer).
- * 'git-could-not-run' triggers the R-CCR-1 fallback-dir retry in hasCompletionCommit.
- */
-function probeCatFileExists(workingDir: string, sha: string): 'exists' | 'not-exists' | 'git-could-not-run' {
-  try {
-    execFileSync('git', ['-C', workingDir, 'cat-file', '-e', `${sha}^{commit}`], {
-      timeout: 5000,
-      stdio: ['ignore', 'ignore', 'ignore'],
-    });
-    return 'exists';
-  } catch (err) {
-    const e = err as { status?: number | null; code?: string; signal?: string | null };
-    if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM' || e.status === 128 || e.code === 'ENOENT') {
-      return 'git-could-not-run';
-    }
-    return 'not-exists';
-  }
-}
-
 function extractRequirementCodes(title: string | null): string[] {
   if (!title) return [];
   return [...new Set(Array.from(title.matchAll(/\bR-[A-Z0-9-]+\b/gi), match => match[0].toLowerCase()))];
@@ -978,7 +927,11 @@ export function hasCompletionCommit(args: {
     r.kind === 'inferred-fresh' ? 'inferred' :
     r.kind === 'inferred-stale' ? 'inferred' :
     'absent';
-  return { sha: r.sha ?? null, source, usedFallback: r.usedFallback };
+  const evidence: CompletionCommitEvidence = { sha: r.sha ?? null, source };
+  // R-CCR-1: surface the fallback-dir flag only when it actually fired; an
+  // explicit `usedFallback: undefined` would break strict-equality consumers.
+  if (r.usedFallback) evidence.usedFallback = r.usedFallback;
+  return evidence;
 }
 
 /**

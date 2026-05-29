@@ -71,9 +71,11 @@ function writeTicket(sessionDir, ticketId, completionLine) {
 // ── RED-STATE tests (AC-BRIC-01) ─────────────────────────────────────────────
 // All four assertions below FAIL until R-RIC-EXPLICIT-2 is applied.
 
-// R-AFCC-DEEP-3C: INCIDENT_SHA is NOT in the fresh test repo, so git cat-file -e
-// returns non-zero → source: 'unreachable'. The critical invariant: presence of
-// completion_commit field does NOT fall through to findMatchingCommit (no 'inferred').
+// R-AFCC-DEEP-3C/4A: INCIDENT_SHA is NOT in the fresh test repo, so git cat-file -e
+// returns non-zero → source: 'absent' (R-AFCC-DEEP-4A collapsed the legacy
+// 'unreachable' source into 'absent'). The critical invariant is unchanged: presence
+// of a completion_commit field does NOT fall through to findMatchingCommit (no
+// 'inferred'), so guardCompletionCommitBeforeDone still refuses the Done flip.
 
 test('R-RIC-EXPLICIT: quoted full SHA in frontmatter → source must not be inferred (unreachable when SHA absent from repo)', () => {
   const root = mkTmp('pickle-bric-qf-');
@@ -84,7 +86,7 @@ test('R-RIC-EXPLICIT: quoted full SHA in frontmatter → source must not be infe
     writeTicket(sessionDir, TICKET_ID, `completion_commit: "${INCIDENT_SHA}"`);
     const ev = hasCompletionCommit({ sessionDir, ticketId: TICKET_ID, workingDir: root });
     assert.notEqual(ev.source, 'inferred', 'explicit frontmatter must not fall through to findMatchingCommit');
-    assert.equal(ev.source, 'unreachable', 'INCIDENT_SHA not in fresh test repo → unreachable');
+    assert.equal(ev.source, 'absent', 'INCIDENT_SHA not in fresh test repo → absent (R-AFCC-DEEP-4A collapsed legacy unreachable into absent; guard still refuses Done)');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -99,7 +101,7 @@ test('R-RIC-EXPLICIT: unquoted full SHA in frontmatter → source must not be in
     writeTicket(sessionDir, TICKET_ID, `completion_commit: ${INCIDENT_SHA}`);
     const ev = hasCompletionCommit({ sessionDir, ticketId: TICKET_ID, workingDir: root });
     assert.notEqual(ev.source, 'inferred', 'explicit frontmatter must not fall through to findMatchingCommit');
-    assert.equal(ev.source, 'unreachable', 'INCIDENT_SHA not in fresh test repo → unreachable');
+    assert.equal(ev.source, 'absent', 'INCIDENT_SHA not in fresh test repo → absent (R-AFCC-DEEP-4A collapsed legacy unreachable into absent; guard still refuses Done)');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -114,7 +116,7 @@ test('R-RIC-EXPLICIT: unquoted short SHA in frontmatter → source must not be i
     writeTicket(sessionDir, TICKET_ID, `completion_commit: ${INCIDENT_SHORT}`);
     const ev = hasCompletionCommit({ sessionDir, ticketId: TICKET_ID, workingDir: root });
     assert.notEqual(ev.source, 'inferred', 'explicit frontmatter must not fall through to findMatchingCommit');
-    assert.equal(ev.source, 'unreachable', 'INCIDENT_SHORT not in fresh test repo → unreachable');
+    assert.equal(ev.source, 'absent', 'INCIDENT_SHORT not in fresh test repo → absent (R-AFCC-DEEP-4A collapsed legacy unreachable into absent; guard still refuses Done)');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -129,7 +131,7 @@ test('R-RIC-EXPLICIT: quoted short SHA in frontmatter → source must not be inf
     writeTicket(sessionDir, TICKET_ID, `completion_commit: "${INCIDENT_SHORT}"`);
     const ev = hasCompletionCommit({ sessionDir, ticketId: TICKET_ID, workingDir: root });
     assert.notEqual(ev.source, 'inferred', 'explicit frontmatter must not fall through to findMatchingCommit');
-    assert.equal(ev.source, 'unreachable', 'INCIDENT_SHORT not in fresh test repo → unreachable');
+    assert.equal(ev.source, 'absent', 'INCIDENT_SHORT not in fresh test repo → absent (R-AFCC-DEEP-4A collapsed legacy unreachable into absent; guard still refuses Done)');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

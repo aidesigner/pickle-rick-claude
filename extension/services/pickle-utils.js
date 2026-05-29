@@ -378,10 +378,6 @@ export function readFrontmatterField(content, field) {
     const raw = match[1].trim().replace(/^["']|["']$/g, '');
     return raw.length > 0 ? raw : null;
 }
-function readFirstMarkdownHeading(content) {
-    const match = content.match(/^#\s+(.+)$/m);
-    return match?.[1]?.trim() || null;
-}
 export function upsertFrontmatterField(content, field, value) {
     const fm = extractFrontmatter(content);
     if (!fm)
@@ -640,48 +636,6 @@ export function getTicketStatus(sessionRoot, ticketId) {
     }
     return parsed.status;
 }
-function resolveTicketPath(args) {
-    if (typeof args.ticketPath === 'string' && args.ticketPath.length > 0)
-        return args.ticketPath;
-    if (typeof args.sessionDir === 'string' && args.sessionDir.length > 0 && typeof args.ticketId === 'string' && args.ticketId.length > 0) {
-        return path.join(args.sessionDir, args.ticketId, `linear_ticket_${args.ticketId}.md`);
-    }
-    return null;
-}
-function gitCommitExists(workingDir, sha) {
-    try {
-        execFileSync('git', ['-C', workingDir, 'cat-file', '-e', `${sha}^{commit}`], {
-            timeout: 5000,
-            stdio: ['ignore', 'ignore', 'ignore'],
-        });
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
-/**
- * R-AFCC-DEEP-3C: 3-way probe using `git cat-file -e <sha>^{commit}`.
- * Returns 'exists' (exit 0), 'not-exists' (exit 1), or 'git-could-not-run'
- * (exit 128, ENOENT, ETIMEDOUT, SIGTERM — git produced no definitive answer).
- * 'git-could-not-run' triggers the R-CCR-1 fallback-dir retry in hasCompletionCommit.
- */
-function probeCatFileExists(workingDir, sha) {
-    try {
-        execFileSync('git', ['-C', workingDir, 'cat-file', '-e', `${sha}^{commit}`], {
-            timeout: 5000,
-            stdio: ['ignore', 'ignore', 'ignore'],
-        });
-        return 'exists';
-    }
-    catch (err) {
-        const e = err;
-        if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM' || e.status === 128 || e.code === 'ENOENT') {
-            return 'git-could-not-run';
-        }
-        return 'not-exists';
-    }
-}
 function extractRequirementCodes(title) {
     if (!title)
         return [];
@@ -812,7 +766,12 @@ export function hasCompletionCommit(args) {
         r.kind === 'inferred-fresh' ? 'inferred' :
             r.kind === 'inferred-stale' ? 'inferred' :
                 'absent';
-    return { sha: r.sha ?? null, source, usedFallback: r.usedFallback };
+    const evidence = { sha: r.sha ?? null, source };
+    // R-CCR-1: surface the fallback-dir flag only when it actually fired; an
+    // explicit `usedFallback: undefined` would break strict-equality consumers.
+    if (r.usedFallback)
+        evidence.usedFallback = r.usedFallback;
+    return evidence;
 }
 /**
  * Marks a ticket's frontmatter status as "Done" by rewriting the status line.
