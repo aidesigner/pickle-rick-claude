@@ -1,25 +1,25 @@
 ---
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Updated 2026-05-24.** Live ledger: status, open findings, queue, feature epics. Historical narrative (mega-campaign saga, per-commit detail, pre-2026-05-15 releases) lives in `MASTER_PLAN-archive.md` and git history.
+**Updated 2026-05-29.** Live ledger: status, open findings, queue, feature epics. Historical narrative (mega-campaign saga, per-commit detail, pre-2026-05-15 releases) lives in `MASTER_PLAN-archive.md` and git history.
 
 ## Status
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.81.0** — 2026-05-27 |
-| Latest GitHub release | v1.81.0 — 2026-05-27 |
+| Version (source/deployed) | **v1.82.0** — 2026-05-29 (source/deployed in sync after `install.sh`) |
+| Latest GitHub release | v1.81.0 — 2026-05-27 (v1.81.1 + v1.82.0 push/tag pending — operator-gated) |
 | Active pipeline | none |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive (operator):** drain bug bundles before feature epics. Feature epics do not count toward the open-bug ceiling.
 
-**Dispatch order (reprioritized 2026-05-28 — RCA-driven):**
-1. **B-PIPE-HARDEN-2** — IN-FLIGHT (8 of 9 tickets shipped in session `pickle-dfb58722`; closer `c7feae53` pending). Bumps v1.81.0 → v1.81.1.
-2. **B-AFCC-DEEP** — **NEXT (RCA-driven priority promotion 2026-05-28).** 3-agent root-cause analysis on the 30-day autofill / Done-flip failed-fix cluster (6 recurrences: #52 R-WUWC + #70 R-CCQF + #71 R-PEDC + #78 R-AFCC-STALE + #83 R-RIC-EXPLICIT + R-AFCC-STAGE) converged on 70% simplification + 25% architecture + 5% process. Phased: (1) cromulons safety net → (2) `R-CLOSER-ADJACENCY-AUDIT` standing template → (3) delete ~-300 LOC of dead code → (4) deepen what remains via R-DC `/death-crystal --interface`. Rationale: this cluster has had 6 fixes in 30 days, each followed within days by an adjacent-mode discovery. Recurrence is the dominant cost — fix the surface, not the latest path. PRD `p1-bug-fix-bundle-b-afcc-deep-autofill-done-flip-cluster-2026-05-28.md`.
-3. **R-CSI Phase 1** forensics (operator-gated, B-CSI awaiting next sibling-session incident).
-4. **B-CWRR** — citadel monorepo workingDir doubling (#88, sized ~3 tickets, unbundled; can ship before or after B-AFCC-DEEP depending on monorepo-pipeline urgency).
-5. Feature epics R-PGI → R-PIAP → R-DC, after the bug drain. R-DC `/death-crystal` is a Phase-4 dependency for B-AFCC-DEEP — sequencing them together maximizes leverage (death-crystal's first paying customer is the deepen of `TicketCompletionEvidence`).
+**Dispatch order (updated 2026-05-29 after B-PIPE-HARDEN-2 + B-AFCC-DEEP shipped):**
+1. ~~**B-PIPE-HARDEN-2**~~ — **SHIPPED v1.81.1** (2026-05-28). Closer `c7feae53` landed via `6dc6a987` (release-gate parity fixture + lockfile) + `2052107b` (closer residuals — parity test / audit-logger / tier promotion drift). Session `pickle-dfb58722`.
+2. ~~**B-AFCC-DEEP**~~ — **SHIPPED v1.82.0** (2026-05-29). 12/12 tickets landed in session `pickle-a9e25752` (commits `ab432842`..`0e64a705`). Closer ran full release gate green + bumped to v1.82.0 + masked-failure remediation. PRD `p1-bug-fix-bundle-b-afcc-deep-autofill-done-flip-cluster-2026-05-28.md`. Bundle eliminated the 30-day autofill / Done-flip cluster: created `TicketCompletionEvidence` module with 5 entry points (5 callsites migrated), collapsed `auto-fill-completion-commit` + `inspectPhantomDoneTicketFile` + `correctPhantomDoneTickets` into thin shims, pushed `git cat-file -e` reachability into `hasCompletionCommit`, pinned 3 new trap doors + R-AFCC-DEEP-CONSOLIDATED master pin, added 8-path characterization suite + R-CLOSER-ADJACENCY-AUDIT 6-step template.
+3. **NEXT — B-CWRR** — citadel monorepo workingDir doubling (#88, sized ~3 tickets, **PRD authoring pending** — only `BUG-REPORT-2026-05-28-citadel-monorepo-workingdir-as-reporoot-path-doubling.md` exists; needs `/pickle-prd` or `/pickle-refine-prd` to produce a launchable `prds/p1-bug-fix-bundle-b-cwrr-*.md`).
+4. **R-CSI Phase 1** forensics (operator-gated, B-CSI awaiting next sibling-session incident).
+5. Feature epics R-PGI → R-PIAP → R-DC, after the bug drain. R-DC `/death-crystal` would have been a Phase-4 dependency for B-AFCC-DEEP — B-AFCC-DEEP shipped without it (Phase 4 deferred), so R-DC sequencing now stands on its own merit.
 
 Promotions explained inline in Open Findings tables.
 
@@ -193,6 +193,8 @@ Gated behind operator's drain-bug-bundles-first directive. Do not count toward o
 
 | Release | Date | Content |
 |---|---|---|
+| v1.82.0 | 2026-05-29 | **B-AFCC-DEEP CLOSED** (12/12, session `pickle-a9e25752`) — autofill / Done-flip cluster RCA bundle. Created `TicketCompletionEvidence` module + 5 callsite migration (`fadc2477`), collapsed `auto-fill-completion-commit` (`8b0e741a`) + `inspectPhantomDoneTicketFile`/`correctPhantomDoneTickets` (`d235d24d`) into thin shims, pushed `git cat-file -e` reachability into `hasCompletionCommit` (`434774fc`), 8-path characterization suite (`3de26d83` + `db992304`), R-CLOSER-ADJACENCY-AUDIT 6-step template (`ab432842`) + audit-trap-door-enforcement wiring (`dfbd252d`), 3 new trap doors + R-AFCC-DEEP-CONSOLIDATED master pin (`219a5e63`), closer release-gate green + v1.82.0 + masked-failure remediation (`0e64a705`). |
+| v1.81.1 | 2026-05-28 | **B-PIPE-HARDEN-2 CLOSED** (session `pickle-dfb58722`) — 9/9 tickets including hardening on R-TFP-C1/C2/C3 (test:fast c=8 flake serialization + audit-subprocess-heavy-tests forward-protection + 3× regression loop). Closer `c7feae53` synced release-gate parity fixture + lockfile (`6dc6a987`); residual sync (`2052107b`) caught remaining drift in `release-gate-parity.test.js` + outer `CLAUDE.md` gate prose + `activity-logger.test.js` expected list (missing R-WTB-A1 events) + `audit-subprocess-heavy-tests.test.js` integration+serial promotion (self-flake at c=8). |
 | v1.79.0 | 2026-05-24 | **#66+#67+#68+#69 B-FRA CLOSED** — forward-ref annotation bundle: R-FRA-6 (shared FORWARD_REF_ANNOTATION_RE), R-FRA-2 (pre-flight audit-ticket-forward-refs.sh), R-FRA-1 (Step 7c reminder), R-FRA-3 (persona Step 0 heuristic), R-FRA-4 (prds/CLAUDE.md authoring guide). 3 new trap doors: R-FRA-1, R-FRA-2, R-FRA-6. PRD: `prds/p1-bug-fix-bundle-b-fra-forward-ref-annotations-2026-05-23.md`. |
 | v1.78.2 | 2026-05-23 | #52 R-WUWC **CLOSED** — B-WUWC-REPRODUCER: wuwc-reproducer.test.js confirms all 4 prevention layers (R-WSE-1/2/3 + R-PIPE-2). Reproducer (`d9bdb589`) + trap-door (`4b38893c`) + closer 26301c6a. |
 | v1.78.1 | 2026-05-23 | #53 R-SRAA (`scope-resolver:writeScopeArchive` rotates to `.bak`; `SCOPE_ARCHIVE_EXISTS` retired) + #48 R-PCFG + #54 R-MRFP verified + #5 B-AUDIT partial (`hooks/`+`lib/`→OK). |
