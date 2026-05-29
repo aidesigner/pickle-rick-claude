@@ -962,6 +962,8 @@ test('activity-event-payload: schema defines all registered event type definitio
     'closer_expensive_node_test_blocked',
     'ticket_timeout_progress_extension',
     'ticket_timeout_halted_no_progress',
+    'graph_preflight_completed',
+    'graph_preflight_degraded',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.
