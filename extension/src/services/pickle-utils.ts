@@ -547,6 +547,68 @@ export function normalizeTicketComplexityTier(value: unknown): TicketComplexityT
   return 'medium';
 }
 
+/**
+ * Input shape for the deterministic tier classifier.
+ * All fields are pure data — no I/O, no clock, no randomness needed.
+ */
+export interface TicketClassifierInfo {
+  /** Number of distinct in-scope source files */
+  fileCount: number;
+  /** Number of acceptance criteria */
+  acCount: number;
+  /** LOC/diff estimate (0 when unknown) */
+  locEstimate: number;
+  /** Full ticket text for keyword scanning */
+  text: string;
+}
+
+const CLASSIFIER_SMALLER_KEYWORDS = ['padding', 'typo', 'rename', 'delete', 'copy', 'label', 'color'] as const;
+const CLASSIFIER_LARGER_KEYWORDS = ['integrate', 'migrate', 'schema', 'cross-cutting', 'refactor'] as const;
+
+function classifyDimension(val: number, thresholds: readonly [number, number, number]): number {
+  if (val < thresholds[0]) return 0; // trivial
+  if (val < thresholds[1]) return 1; // small
+  if (val < thresholds[2]) return 2; // medium
+  return 3; // large
+}
+
+/**
+ * Pure, deterministic ticket complexity classifier.
+ * No I/O, no clock, no randomness. Ties round UP to the larger tier.
+ *
+ * Tier thresholds:
+ *   trivial: ≤1 file, ≤1 AC, ≤20 LOC
+ *   small:    2 files, 2-3 ACs, 21-80 LOC
+ *   medium:  3-4 files, 4-6 ACs, 81-250 LOC
+ *   large:   ≥5 files, ≥7 ACs, ≥251 LOC
+ *
+ * Conservative tie-breaking: max() over dimension scores so any single
+ * dimension that signals "large" produces at least "large" output.
+ * Keyword delta (±1) is applied after the dimension max.
+ */
+export function classifyTicketTier(info: TicketClassifierInfo): TicketComplexityTier {
+  const fileScore = classifyDimension(info.fileCount, [2, 3, 5]);
+  const acScore = classifyDimension(info.acCount, [2, 4, 7]);
+  const locScore = classifyDimension(info.locEstimate, [21, 81, 251]);
+
+  // Conservative: ties round UP (take the maximum across dimensions)
+  let score = Math.max(fileScore, acScore, locScore);
+
+  // Keyword adjustment — clamped to [-1, 1] so keywords can't overwhelm signals
+  const textLower = info.text.toLowerCase();
+  let delta = 0;
+  for (const kw of CLASSIFIER_LARGER_KEYWORDS) {
+    if (new RegExp(`\\b${kw}\\b`).test(textLower)) delta++;
+  }
+  for (const kw of CLASSIFIER_SMALLER_KEYWORDS) {
+    if (new RegExp(`\\b${kw}\\b`).test(textLower)) delta--;
+  }
+  delta = Math.max(-1, Math.min(1, delta));
+  score = Math.max(0, Math.min(3, score + delta));
+
+  return VALID_TICKET_COMPLEXITY_TIERS[score];
+}
+
 function readTierCapsBlock(block: unknown): TierCapsConfig {
   if (!block || typeof block !== 'object') return {};
   const result: TierCapsConfig = {};

@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, classifyTicketTier, VALID_TICKET_COMPLEXITY_TIERS, } from '../services/pickle-utils.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { buildWorkerInvocation, isBackend } from '../services/backend-spawn.js';
 import { PromiseTokens, hasToken, Defaults, VALID_ACTIVITY_EVENTS, PipelineRunnerExitCode } from '../types/index.js';
@@ -1009,6 +1009,11 @@ function normalizeTicketEntry(value, source_worker, source_file) {
     const title = asString(record.title);
     if (!id || !title)
         return undefined;
+    // Capture analyst's complexity_tier hint (overridden by classifier in buildRefinementManifest)
+    const rawTier = asString(record.complexity_tier)?.trim().toLowerCase();
+    const complexity_tier = rawTier && VALID_TICKET_COMPLEXITY_TIERS.includes(rawTier)
+        ? rawTier
+        : undefined;
     return {
         id,
         title,
@@ -1020,6 +1025,26 @@ function normalizeTicketEntry(value, source_worker, source_file) {
         justification: asString(record.justification),
         source_worker,
         source_file,
+        complexity_tier,
+    };
+}
+/** Build classifier inputs from a manifest entry's available text signals. */
+function buildClassifierInfoForEntry(entry) {
+    const text = [entry.title, entry.acceptance_test, entry.justification]
+        .filter((s) => Boolean(s))
+        .join(' ');
+    // Count distinct backtick-enclosed file references (path-like: contains / or has file extension)
+    const fileRefs = new Set();
+    for (const m of text.matchAll(/`([^`]+)`/g)) {
+        const t = m[1];
+        if (/\//.test(t) || /\.[a-zA-Z]{1,8}$/.test(t))
+            fileRefs.add(t);
+    }
+    return {
+        fileCount: fileRefs.size,
+        acCount: (entry.source_ac_ids ?? []).length,
+        locEstimate: 0, // not known at refinement time
+        text,
     };
 }
 function extractAcShapeJson(content) {
@@ -1674,6 +1699,14 @@ export function runSymbolAuditEnforcement(report) {
 }
 export function buildRefinementManifest(args, results, ticketQualityWarnings) {
     const shapeData = collectAcShapeData(results);
+    const enrichedTickets = enrichManifestTicketsFromSourcePrds(args.prdPath, shapeData.tickets);
+    // R-PIAP-A5: run deterministic classifier after tickets drafted; result is
+    // authoritative — analyst judgment captured in normalizeTicketEntry is a hint
+    // that the classifier may override.
+    const classifiedTickets = enrichedTickets.map((t) => ({
+        ...t,
+        complexity_tier: classifyTicketTier(buildClassifierInfoForEntry(t)),
+    }));
     const manifest = {
         prd_path: args.prdPath,
         refinement_dir: results.refinementDir,
@@ -1682,7 +1715,7 @@ export function buildRefinementManifest(args, results, ticketQualityWarnings) {
         cycles_completed: results.allCycleResults.length,
         max_turns_per_worker: results.maxTurns,
         ac_shape_smells: shapeData.acShapeSmells,
-        tickets: enrichManifestTicketsFromSourcePrds(args.prdPath, shapeData.tickets),
+        tickets: classifiedTickets,
         workers: results.finalResults.map((r) => {
             const outputFile = path.join(results.refinementDir, `analysis_${r.roleId}.md`);
             return {

@@ -13,6 +13,11 @@ import {
   parseTicketFrontmatter,
   getTicketTierBudgetWithOverrides,
   resolveWorkerTestGateTimeoutMs,
+  classifyTicketTier,
+  VALID_TICKET_COMPLEXITY_TIERS,
+  extractFrontmatter,
+  type TicketClassifierInfo,
+  type TicketComplexityTier,
 } from '../services/pickle-utils.js';
 import { spawn, spawnSync } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS, type Backend, type BackendResolutionSource, type LastToolErrorState, type PickleSettings, type State } from '../types/index.js';
@@ -1344,6 +1349,52 @@ function readTicketInfo(ticketFilePath: string | null): ReturnType<typeof parseT
   }
 }
 
+/** Build classifier inputs from raw ticket file content. */
+function buildClassifierInfoFromContent(content: string): TicketClassifierInfo {
+  // Count AC bullet points after the Acceptance Criteria heading
+  const acSection = /##\s+Acceptance Criteria\b([\s\S]*?)(?=\n##|$)/i.exec(content)?.[1] ?? '';
+  const acCount = (acSection.match(/^\s*[-*•]\s+\S/gm) ?? []).length;
+  // Count distinct backtick-enclosed file references
+  const fileRefs = new Set<string>();
+  for (const m of content.matchAll(/`([^`]+)`/g)) {
+    const t = m[1];
+    if (/\//.test(t) || /\.[a-zA-Z]{1,8}$/.test(t)) fileRefs.add(t);
+  }
+  // Extract LOC estimate from patterns like "~100 LOC" or "50 lines"
+  const locMatch = /\b~?(\d+)(?:\s*[-–]\s*\d+)?\s*(?:LOC|lines?)\b/i.exec(content);
+  const locEstimate = locMatch ? parseInt(locMatch[1], 10) : 0;
+  return { fileCount: fileRefs.size, acCount, locEstimate, text: content };
+}
+
+/**
+ * R-PIAP-A5: Resolve the effective complexity tier for a ticket.
+ * If the frontmatter has a valid explicit `complexity_tier`, use it.
+ * Otherwise, run the deterministic classifier on the ticket content.
+ * Never falls back to the bare `medium` default-without-classification.
+ *
+ * Returns null when the ticket file cannot be read (caller falls back to
+ * the parsed frontmatter value from parseTicketFrontmatter).
+ */
+export function resolveEffectiveTierForTicket(ticketFilePath: string | null): TicketComplexityTier | null {
+  if (!ticketFilePath) return null;
+  let content: string;
+  try {
+    content = fs.readFileSync(ticketFilePath, 'utf-8');
+  } catch {
+    return null;
+  }
+  const fm = extractFrontmatter(content);
+  if (fm) {
+    const rawTierMatch = /^complexity_tier:\s*(.+)$/m.exec(fm.body);
+    const rawTier = rawTierMatch?.[1]?.trim().replace(/^["']|["']$/g, '').toLowerCase();
+    if (rawTier && (VALID_TICKET_COMPLEXITY_TIERS as readonly string[]).includes(rawTier)) {
+      return rawTier as TicketComplexityTier;
+    }
+  }
+  // No explicit tier — classify from content (never bare default)
+  return classifyTicketTier(buildClassifierInfoFromContent(content));
+}
+
 type BackendResolution = {
   backend: Backend;
   source: BackendResolutionSource;
@@ -1739,6 +1790,11 @@ async function main() {
   _smCrumb(`readSessionRuntime done — state=${runtime.state ? 'loaded' : 'null'}`);
   const ticketInfo = readTicketInfo(parsed.ticketFilePath);
   _smCrumb('readTicketInfo done');
+  // R-PIAP-A5: classify if no explicit tier was set (never bare medium default)
+  if (ticketInfo) {
+    const resolvedTier = resolveEffectiveTierForTicket(parsed.ticketFilePath);
+    if (resolvedTier) ticketInfo.complexity_tier = resolvedTier;
+  }
   const requestedTimeout = ticketInfo
     ? getTicketTierBudgetWithOverrides(runtime.state, ticketInfo.complexity_tier).worker_timeout_seconds
     : parsed.timeout;
