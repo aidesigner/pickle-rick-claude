@@ -5,15 +5,12 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
     extractScopeSymbols,
     readGitNexusRepoName,
     buildGraphContextSlice,
     buildWorkerPrompt,
 } from '../bin/spawn-morty.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function makeTmpDir(prefix = 'pgi7-test-') {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -23,7 +20,6 @@ function makeTmpDirWithGitNexus(repoName = 'test-repo') {
     const tmpDir = makeTmpDir();
     const gnDir = path.join(tmpDir, '.gitnexus');
     fs.mkdirSync(gnDir, { recursive: true });
-    // Write a stub binary to satisfy statSync().isDirectory()
     fs.writeFileSync(path.join(gnDir, 'meta.json'), JSON.stringify({
         repoPath: path.join('/fake/repos', repoName),
         stats: { nodes: 100, edges: 200 },
