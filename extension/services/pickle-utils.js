@@ -7,6 +7,7 @@ import { VALID_STEPS, LockError } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
+import { readEvidence } from './ticket-completion-evidence.js';
 let stateWriteSeq = 0;
 const DEFAULT_MICROVERSE_SETTINGS = {
     judge_backend: 'claude',
@@ -794,44 +795,24 @@ export function normalizeCompletionCommitField(raw) {
         return null;
     return /^[0-9a-f]{7,40}$/i.test(stripped) ? stripped : null;
 }
+/**
+ * @deprecated R-AFCC-DEEP-4A: use readEvidence from ticket-completion-evidence.ts.
+ * Retained as a compatibility shim for one minor version. Maps EvidenceKind back
+ * to the legacy CompletionCommitEvidence.source union.
+ *
+ * Mapping:
+ *   explicit       → 'explicit-reachable'
+ *   inferred-fresh → 'inferred'
+ *   inferred-stale → 'inferred'  (closest legacy mapping; SHA is preserved)
+ *   absent         → 'absent'    (collapses legacy 'unreachable' into 'absent')
+ */
 export function hasCompletionCommit(args) {
-    const ticketPath = resolveTicketPath(args);
-    if (!ticketPath)
-        return { sha: null, source: 'absent' };
-    let content;
-    try {
-        content = fs.readFileSync(ticketPath, 'utf8');
-    }
-    catch {
-        return { sha: null, source: 'absent' };
-    }
-    const explicit = normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit'));
-    if (explicit) {
-        const primary = probeCatFileExists(args.workingDir, explicit);
-        if (primary === 'exists')
-            return { sha: explicit, source: 'explicit-reachable' };
-        if (primary === 'git-could-not-run' && args.fallbackDir && args.fallbackDir !== args.workingDir) {
-            if (probeCatFileExists(args.fallbackDir, explicit) === 'exists') {
-                return { sha: explicit, source: 'explicit-reachable', usedFallback: true };
-            }
-        }
-        return { sha: explicit, source: 'unreachable' };
-    }
-    const inferredField = normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit_inferred'));
-    if (inferredField && gitCommitExists(args.workingDir, inferredField)) {
-        return { sha: inferredField, source: 'inferred' };
-    }
-    const inferred = findMatchingCommit({
-        workingDir: args.workingDir,
-        ticketId: readFrontmatterField(content, 'id') ?? args.ticketId ?? null,
-        title: readFrontmatterField(content, 'title') ?? readFirstMarkdownHeading(content),
-        startTimeEpoch: args.startTimeEpoch,
-        ticketPath,
-        rCode: readFrontmatterField(content, 'r_code'),
-    });
-    if (inferred)
-        return { sha: inferred.sha, source: 'inferred' };
-    return { sha: null, source: 'absent' };
+    const r = readEvidence(args);
+    const source = r.kind === 'explicit' ? 'explicit-reachable' :
+        r.kind === 'inferred-fresh' ? 'inferred' :
+            r.kind === 'inferred-stale' ? 'inferred' :
+                'absent';
+    return { sha: r.sha ?? null, source, usedFallback: r.usedFallback };
 }
 /**
  * Marks a ticket's frontmatter status as "Done" by rewriting the status line.

@@ -9,7 +9,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { hasCompletionCommit, readFrontmatterField, ticketFilePath, upsertFrontmatterField } from '../services/pickle-utils.js';
+import { readFrontmatterField, ticketFilePath, upsertFrontmatterField } from '../services/pickle-utils.js';
+import { readEvidence } from '../services/ticket-completion-evidence.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { writeActivityEntry } from '../services/state-manager.js';
 
@@ -70,14 +71,15 @@ export function autoFillCompletionCommit(input: AutoFillCompletionCommitInput): 
       continue;
     }
 
-    const evidence = hasCompletionCommit({
+    // R-AFCC-DEEP-4A: readEvidence replaces hasCompletionCommit.
+    const evidence = readEvidence({
       sessionDir: input.sessionDir,
       ticketId: id,
       ticketPath: filePath,
       workingDir: input.workingDir,
       startTimeEpoch,
     });
-    if (evidence.source === 'absent' || !evidence.sha) {
+    if (evidence.kind === 'absent' || !evidence.sha) {
       results.push({ ticketId: id, sha: null, action: 'no_evidence' });
       continue;
     }

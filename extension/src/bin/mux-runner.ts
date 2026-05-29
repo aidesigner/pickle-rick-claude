@@ -21,6 +21,7 @@ import {
 } from '../services/manager-relaunch.js';
 import { getHeadBranch } from '../services/git-utils.js';
 import { detectArtifactProgress, resolveNoProgressWindowSeconds, type ArtifactProgressSnapshot } from '../services/artifact-progress-detector.js';
+import { readEvidence, persistEvidence, gateForPhantomDoneRevert, type EvidenceCtx, type RevertDecision } from '../services/ticket-completion-evidence.js';
 export { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream } from '../services/classifier-utils.js';
 export { hasCompletionCommit, stripSetupSection } from '../services/pickle-utils.js';
 export {
@@ -1079,26 +1080,28 @@ function batchLoopPhantomDoneKind(
   ticketId: string,
   workingDir: string,
 ): PhantomDoneKind {
-  const evidence = hasCompletionCommit({ sessionDir: input.sessionDir, ticketId, workingDir, fallbackDir: input.workingDir });
-  if (evidence.source === 'inferred') {
-    // R-PDWR: persist SHA so the batch loop stamps the field (was: only keep, no persist).
+  // R-AFCC-DEEP-4A: migrated from hasCompletionCommit to gateForPhantomDoneRevert.
+  const ctx: EvidenceCtx = { sessionDir: input.sessionDir, ticketId, workingDir, fallbackDir: input.workingDir };
+  const decision: RevertDecision = gateForPhantomDoneRevert(ctx, { flags: input.flags });
+
+  if (decision.action === 'persist-inferred') {
+    // R-PDWR: persist SHA so the batch loop stamps the field (inferred-fresh path).
     const fp = ticketFilePath(input.sessionDir, ticketId);
     try {
       const raw = fs.readFileSync(fp, 'utf8');
-      if (!readFrontmatterField(raw, 'completion_commit') && evidence.sha) {
-        const upd = upsertFrontmatterField(raw, 'completion_commit_inferred', evidence.sha);
+      if (!readFrontmatterField(raw, 'completion_commit') && decision.sha) {
+        const upd = upsertFrontmatterField(raw, 'completion_commit_inferred', decision.sha);
         if (upd) fs.writeFileSync(fp, upd);
       }
     } catch { /* best-effort: persist failure must not block keep-Done */ }
     return 'inferred';
   }
-  // R-AFCC-DEEP-3C: phantomDoneShouldKeepDone is now a 1-line check on the four-state return.
-  const keepDoneResult = phantomDoneShouldKeepDone(input, evidence);
-  if (keepDoneResult.keepDone) {
-    logPhantomDoneKept(input, ticketId, workingDir, keepDoneResult.fallbackFired);
+  if (decision.action === 'keep') {
+    logPhantomDoneKept(input, ticketId, workingDir, decision.fallbackFired ?? false);
     return 'explicit-reachable';
   }
-  return evidence.source; // 'unreachable' | 'absent'
+  // decision.action === 'revert'
+  return 'absent';
 }
 
 export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput): number {
@@ -1187,35 +1190,31 @@ function applyInspectPhantomDoneDecision(
   workingDir: string,
   priorStatus: string,
 ): PhantomDoneInspectResult {
-  let phantomKind: PhantomDoneKind;
-  let foundSha: string | null = null;
+  // Explicit completion_commit field: keep without any git probe (path-7 invariant).
   if (readFrontmatterField(content, 'completion_commit')) {
-    phantomKind = 'explicit-reachable';
-  } else {
-    try {
-      const evidence = hasCompletionCommit({ sessionDir, ticketId, ticketPath: filePath, workingDir });
-      if (evidence.source === 'inferred') {
-        phantomKind = 'inferred';
-        foundSha = evidence.sha;
-      } else {
-        phantomKind = 'absent';
-      }
-    } catch (err) {
-      return { changed: false, reason: 'unparseable', gitFailureReason: safeErrorMessage(err) };
-    }
+    return { changed: false, reason: 'has_completion_commit' };
   }
 
-  switch (phantomKind) {
-    case 'explicit-reachable':
+  // R-AFCC-DEEP-4A: delegate to gateForPhantomDoneRevert.
+  const ctx: EvidenceCtx = { sessionDir, ticketId, ticketPath: filePath, workingDir };
+  let decision: RevertDecision;
+  try {
+    decision = gateForPhantomDoneRevert(ctx);
+  } catch (err) {
+    return { changed: false, reason: 'unparseable', gitFailureReason: safeErrorMessage(err) };
+  }
+
+  switch (decision.action) {
+    case 'keep':
       return { changed: false, reason: 'has_completion_commit' };
-    case 'inferred': {
-      // completion_commit absent here (else branch above); upsert inferred field directly.
-      const updated = upsertFrontmatterField(content, 'completion_commit_inferred', foundSha ?? '');
+    case 'persist-inferred': {
+      // completion_commit absent (checked above); upsert inferred field.
+      const updated = upsertFrontmatterField(content, 'completion_commit_inferred', decision.sha ?? '');
       if (!updated) return { changed: false, reason: 'unparseable' };
       try { fs.writeFileSync(filePath, updated); } catch { return { changed: false, reason: 'unparseable' }; }
-      return { changed: true, reason: 'backfilled', commit: foundSha ?? undefined };
+      return { changed: true, reason: 'backfilled', commit: decision.sha ?? undefined };
     }
-    case 'absent': {
+    case 'revert': {
       const wrote = writeTicketStatus(sessionDir, ticketId, priorStatus);
       if (!wrote) return { changed: false, reason: 'unparseable' };
       return { changed: true, reason: 'reverted', priorStatus };
@@ -1824,13 +1823,15 @@ export function validateAutoTicketCompletion(
   if (!hasCheckedAcceptanceCriteria(content)) {
     return { action: 'skip', reason: 'acceptance_criteria_not_checked' };
   }
-  const evidence = hasCompletionCommit({
+  // R-AFCC-DEEP-4A: readEvidence replaces hasCompletionCommit. 'absent' covers
+  // the legacy 'unreachable' case (explicit SHA present but not git-reachable).
+  const evidence = readEvidence({
     sessionDir,
     ticketId,
     workingDir,
     startTimeEpoch: gitCommitEpoch(workingDir, startCommit),
   });
-  if (evidence.source === 'absent' || evidence.source === 'unreachable') {
+  if (evidence.kind === 'absent') {
     return { action: 'skip', reason: 'no_commit_referencing_ticket_since_current_set' };
   }
 
@@ -3018,47 +3019,52 @@ export function guardCompletionCommitBeforeDone(args: {
     return { ok: true, sha: 'pickle-test-mode-bypass' };
   }
   const allowInferred = (args.flags ?? {})['allow_inferred_completion_commit'] === true;
-  const probe = {
+  const probe: EvidenceCtx = {
     sessionDir: args.sessionDir,
     ticketId: args.ticketId,
     workingDir: args.workingDir,
   };
-  const guardPasses = (e: { source: string; sha: string | null }): boolean =>
-    (e.source === 'explicit-reachable' && !!e.sha) || (allowInferred && !!e.sha);
-  let evidence = hasCompletionCommit(probe);
-  if (!guardPasses(evidence)) {
+  // R-AFCC-DEEP-4A: use readEvidence (replaces hasCompletionCommit).
+  const evidenceAccepted = (r: { kind: string; sha?: string | null }): boolean =>
+    (r.kind === 'explicit' && !!r.sha) || (allowInferred && !!r.sha);
+  let evidenceR = readEvidence(probe);
+  if (!evidenceAccepted(evidenceR)) {
     // R-CCGR: the worker commits + stamps `completion_commit`, then emits its
     // done-promise; mux-runner can read this guard before that frontmatter
     // write is durably visible. Re-read once after a short backoff so a
     // genuinely-complete ticket is not FATAL'd on a flush race.
     sleepSyncMs(args.rereadBackoffMs ?? guardRereadBackoffMs());
-    evidence = hasCompletionCommit(probe);
+    evidenceR = readEvidence(probe);
   }
-  // R-WUWC SOFT-variant: the worker `git commit`-ed with the ticket-id in the
-  // message, flipped frontmatter status=Done, but did NOT add `completion_commit:`.
-  // `hasCompletionCommit` returns `source: 'inferred'` (matched by git log scan).
-  // Auto-promote to 'explicit-reachable' by writing the SHA into the ticket frontmatter,
-  // then re-probe. This is the runtime equivalent of the documented operator
-  // workaround `edit ticket frontmatter to include completion_commit: <sha>`.
-  if (evidence.source === 'inferred' && evidence.sha) {
+  // R-WUWC SOFT-variant: inferred-fresh — auto-promote to explicit by writing
+  // the SHA into ticket frontmatter via persistEvidence, then re-probe.
+  // This is the runtime equivalent of the operator workaround:
+  // `edit ticket frontmatter to include completion_commit: <sha>`.
+  if (evidenceR.kind === 'inferred-fresh' && evidenceR.sha) {
     try {
-      const _fp = ticketFilePath(args.sessionDir, args.ticketId);
-      const _raw = fs.readFileSync(_fp, 'utf8');
-      const _upd = upsertFrontmatterField(_raw, 'completion_commit', evidence.sha);
-      if (_upd) { fs.writeFileSync(_fp, _upd); evidence = hasCompletionCommit(probe); }
+      const result = persistEvidence(probe, evidenceR.sha, { stage: 'best-effort' });
+      if (result.action === 'written') {
+        evidenceR = readEvidence(probe);
+      }
     } catch { /* best-effort — fall through to existing classification */ }
   }
-  if (evidence.source === 'explicit-reachable' && evidence.sha) {
-    return { ok: true, sha: evidence.sha };
+  if (evidenceR.kind === 'explicit' && evidenceR.sha) {
+    return { ok: true, sha: evidenceR.sha };
   }
-  if (allowInferred && evidence.sha) {
-    // Operator bypass — proceed but record the source for audit.
-    return { ok: true, sha: evidence.sha };
+  if (allowInferred && evidenceR.sha) {
+    // Operator bypass — proceed but record the kind for audit.
+    return { ok: true, sha: evidenceR.sha };
   }
+  // Map EvidenceKind back to legacy source for callers that inspect the error.
+  const legacySource: CompletionCommitEvidence['source'] =
+    evidenceR.kind === 'explicit' ? 'explicit-reachable' :
+    evidenceR.kind === 'inferred-fresh' ? 'inferred' :
+    evidenceR.kind === 'inferred-stale' ? 'inferred' :
+    'absent';
   return {
     ok: false,
-    source: evidence.source,
-    reason: `ticket ${args.ticketId} cannot flip Done: hasCompletionCommit().source === '${evidence.source}' (expected 'explicit-reachable'); ` +
+    source: legacySource,
+    reason: `ticket ${args.ticketId} cannot flip Done: readEvidence().kind === '${evidenceR.kind}' (expected 'explicit'); ` +
       `worker did not produce an attributable git commit. Set state.flags.allow_inferred_completion_commit=true to bypass, ` +
       `or edit ticket frontmatter to include completion_commit: <sha>.`,
   };
