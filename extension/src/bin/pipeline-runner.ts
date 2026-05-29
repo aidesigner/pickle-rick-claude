@@ -2813,8 +2813,25 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'pipeline-runner.js') 
   const scopeBase = parseArgvFlag(argv, '--scope-base');
   const strictPhases = argv.includes('--strict-phases');
   main(sessionDir, { scopeFlag, scopeBase, strictPhases }).catch((err) => {
+    // AC-CWRR-5: carry forward completed/skipped/total from the last writeRunningStatus
+    // call so the fatal-exit status does not zero out phases that already completed.
+    let fatalCompletedPhases = 0;
+    let fatalSkippedPhases = 0;
+    let fatalTotalPhases = 0;
     try {
-      writePipelineStatus(sessionDir, 'failed');
+      const prior = readRecoverableJsonObject(path.join(sessionDir, 'pipeline-status.json')) as Record<string, unknown> | null;
+      if (prior) {
+        if (typeof prior.completed_phases === 'number') fatalCompletedPhases = prior.completed_phases;
+        if (typeof prior.skipped_phases === 'number') fatalSkippedPhases = prior.skipped_phases;
+        if (typeof prior.total_phases === 'number') fatalTotalPhases = prior.total_phases;
+      }
+    } catch { /* best effort — fall back to zero counts */ }
+    try {
+      writePipelineStatus(sessionDir, 'failed', {
+        completed_phases: fatalCompletedPhases,
+        skipped_phases: fatalSkippedPhases,
+        total_phases: fatalTotalPhases,
+      });
     } catch { /* best effort */ }
     const fatalStatePath = path.join(sessionDir, 'state.json');
     try {

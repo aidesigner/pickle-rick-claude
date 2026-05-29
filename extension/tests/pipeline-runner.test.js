@@ -1857,6 +1857,58 @@ describe('pipeline-runner fatal catch', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // AC-CWRR-5: fatal exit must not zero out already-completed phase counters.
+  test('fatal-exit carries forward completed/skipped/total from prior writeRunningStatus (AC-CWRR-5)', () => {
+    // Simulate: phases 1+2 complete (writeRunningStatus persists counters), then
+    // main() throws and the fatal catch reads those counters and writes 'failed'.
+    const dir = tmpDir();
+    try {
+      // Phase completion: writeRunningStatus would write this
+      writePipelineStatus(dir, 'running', {
+        current_phase: null,
+        completed_phases: 2,
+        skipped_phases: 1,
+        total_phases: 4,
+      });
+
+      // Simulate the AC-CWRR-5 fix: read prior counters, write 'failed' with them
+      const prior = JSON.parse(fs.readFileSync(path.join(dir, 'pipeline-status.json'), 'utf-8'));
+      writePipelineStatus(dir, 'failed', {
+        completed_phases: typeof prior.completed_phases === 'number' ? prior.completed_phases : 0,
+        skipped_phases: typeof prior.skipped_phases === 'number' ? prior.skipped_phases : 0,
+        total_phases: typeof prior.total_phases === 'number' ? prior.total_phases : 0,
+      });
+
+      const result = JSON.parse(fs.readFileSync(path.join(dir, 'pipeline-status.json'), 'utf-8'));
+      assert.equal(result.status, 'failed');
+      assert.equal(result.completed_phases, 2, 'prior completed_phases must survive fatal exit');
+      assert.equal(result.skipped_phases, 1, 'prior skipped_phases must survive fatal exit');
+      assert.equal(result.total_phases, 4, 'total_phases must survive fatal exit');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fatal-exit with no prior pipeline-status.json falls back to zero counts (AC-CWRR-5)', () => {
+    // When main() throws before writeRunningStatus has written anything (e.g.
+    // loadPipelineRuntime fails), there is no prior file — zeros are correct.
+    const dir = tmpDir();
+    try {
+      writePipelineStatus(dir, 'failed', {
+        completed_phases: 0,
+        skipped_phases: 0,
+        total_phases: 0,
+      });
+      const result = JSON.parse(fs.readFileSync(path.join(dir, 'pipeline-status.json'), 'utf-8'));
+      assert.equal(result.status, 'failed');
+      assert.equal(result.completed_phases, 0);
+      assert.equal(result.skipped_phases, 0);
+      assert.equal(result.total_phases, 0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
