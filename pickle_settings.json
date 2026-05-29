@@ -1,5 +1,6 @@
 {
   "schema_version": 2,
+  "gitnexus_pinned_version": "1.6.5",
   "microverse": {
     "judge_backend": "claude",
     "judge_backend_fallback": "codex",
