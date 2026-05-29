@@ -129,6 +129,7 @@ function makeRuntime({
       },
       target: repo,
       workingDir: repo,
+      repoRoot: repo,
       backend: 'claude',
       phaseEnv: {},
       log: () => {},
