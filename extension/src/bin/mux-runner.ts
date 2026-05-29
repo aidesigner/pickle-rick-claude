@@ -3073,6 +3073,12 @@ export function hasSubstantiveManagerHandoff(content: string): boolean {
   // First non-empty line starting with "none", "n/a", "na", "nothing" → no handoff,
   // regardless of any explanatory text on subsequent lines or on the same line.
   if (/^(none|n\/a|na|nothing)\b/i.test(firstNonEmptyLine)) return false;
+  // Explicit no-handoff phrasings ("No `[manager]` criteria in this ticket",
+  // "No manager items", "No handoff needed") are boilerplate, not a deferred item.
+  // Workers write the `## Manager Handoff` header unconditionally; only a real
+  // deferred item is a halt trigger. Bounded to the first clause ([^.\n]{0,40}) so a
+  // genuine handoff that merely happens to start with "No" cannot be misclassified.
+  if (/^no\b[^.\n]{0,40}\b(manager|criteria|handoff|items?|deferred)\b/i.test(firstNonEmptyLine)) return false;
   return true;
 }
 

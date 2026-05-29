@@ -2412,6 +2412,24 @@ test('hasSubstantiveManagerHandoff: body "None. The ticket file contains no [man
     assert.equal(hasSubstantiveManagerHandoff(content), false);
 });
 
+test('hasSubstantiveManagerHandoff: body "No `[manager]` criteria in this ticket." (R-PGI 20043815 fixture) returns false', async () => {
+    const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
+    const content = '## Manager Handoff\n\nNo `[manager]` criteria in this ticket.\n\n## Verdict: ALL_PASS\n';
+    assert.equal(hasSubstantiveManagerHandoff(content), false);
+});
+
+test('hasSubstantiveManagerHandoff: "No manager handoff items needed" returns false', async () => {
+    const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
+    const content = '## Manager Handoff\n- No manager handoff items needed\n';
+    assert.equal(hasSubstantiveManagerHandoff(content), false);
+});
+
+test('hasSubstantiveManagerHandoff: substantive body starting with a non-"no" word still returns true', async () => {
+    const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
+    const content = '## Manager Handoff\n\n| Item | Action |\n|---|---|\n| pickle_settings key | Manager must add the key |\n';
+    assert.equal(hasSubstantiveManagerHandoff(content), true);
+});
+
 test('hasSubstantiveManagerHandoff: body "- none" with list marker returns false', async () => {
     const { hasSubstantiveManagerHandoff } = await import('../bin/mux-runner.js');
     const content = '## Manager Handoff\n- none\n';
