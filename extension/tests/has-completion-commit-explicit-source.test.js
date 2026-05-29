@@ -71,7 +71,11 @@ function writeTicket(sessionDir, ticketId, completionLine) {
 // ── RED-STATE tests (AC-BRIC-01) ─────────────────────────────────────────────
 // All four assertions below FAIL until R-RIC-EXPLICIT-2 is applied.
 
-test('R-RIC-EXPLICIT: quoted full SHA in frontmatter → source must be explicit [RED]', () => {
+// R-AFCC-DEEP-3C: INCIDENT_SHA is NOT in the fresh test repo, so git cat-file -e
+// returns non-zero → source: 'unreachable'. The critical invariant: presence of
+// completion_commit field does NOT fall through to findMatchingCommit (no 'inferred').
+
+test('R-RIC-EXPLICIT: quoted full SHA in frontmatter → source must not be inferred (unreachable when SHA absent from repo)', () => {
   const root = mkTmp('pickle-bric-qf-');
   try {
     initGitRepo(root);
@@ -79,14 +83,14 @@ test('R-RIC-EXPLICIT: quoted full SHA in frontmatter → source must be explicit
     const sessionDir = path.join(root, 'session');
     writeTicket(sessionDir, TICKET_ID, `completion_commit: "${INCIDENT_SHA}"`);
     const ev = hasCompletionCommit({ sessionDir, ticketId: TICKET_ID, workingDir: root });
-    assert.equal(ev.source, 'explicit',
-      'quoted full SHA must resolve to explicit — not inferred via findMatchingCommit');
+    assert.notEqual(ev.source, 'inferred', 'explicit frontmatter must not fall through to findMatchingCommit');
+    assert.equal(ev.source, 'unreachable', 'INCIDENT_SHA not in fresh test repo → unreachable');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('R-RIC-EXPLICIT: unquoted full SHA in frontmatter → source must be explicit [RED]', () => {
+test('R-RIC-EXPLICIT: unquoted full SHA in frontmatter → source must not be inferred (unreachable when SHA absent from repo)', () => {
   const root = mkTmp('pickle-bric-uf-');
   try {
     initGitRepo(root);
@@ -94,14 +98,14 @@ test('R-RIC-EXPLICIT: unquoted full SHA in frontmatter → source must be explic
     const sessionDir = path.join(root, 'session');
     writeTicket(sessionDir, TICKET_ID, `completion_commit: ${INCIDENT_SHA}`);
     const ev = hasCompletionCommit({ sessionDir, ticketId: TICKET_ID, workingDir: root });
-    assert.equal(ev.source, 'explicit',
-      'unquoted full SHA must resolve to explicit — not inferred via findMatchingCommit');
+    assert.notEqual(ev.source, 'inferred', 'explicit frontmatter must not fall through to findMatchingCommit');
+    assert.equal(ev.source, 'unreachable', 'INCIDENT_SHA not in fresh test repo → unreachable');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('R-RIC-EXPLICIT: unquoted short SHA in frontmatter → source must be explicit [RED]', () => {
+test('R-RIC-EXPLICIT: unquoted short SHA in frontmatter → source must not be inferred (unreachable when SHA absent from repo)', () => {
   const root = mkTmp('pickle-bric-us-');
   try {
     initGitRepo(root);
@@ -109,14 +113,14 @@ test('R-RIC-EXPLICIT: unquoted short SHA in frontmatter → source must be expli
     const sessionDir = path.join(root, 'session');
     writeTicket(sessionDir, TICKET_ID, `completion_commit: ${INCIDENT_SHORT}`);
     const ev = hasCompletionCommit({ sessionDir, ticketId: TICKET_ID, workingDir: root });
-    assert.equal(ev.source, 'explicit',
-      'unquoted short SHA must resolve to explicit — not inferred via findMatchingCommit');
+    assert.notEqual(ev.source, 'inferred', 'explicit frontmatter must not fall through to findMatchingCommit');
+    assert.equal(ev.source, 'unreachable', 'INCIDENT_SHORT not in fresh test repo → unreachable');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('R-RIC-EXPLICIT: quoted short SHA in frontmatter → source must be explicit [RED]', () => {
+test('R-RIC-EXPLICIT: quoted short SHA in frontmatter → source must not be inferred (unreachable when SHA absent from repo)', () => {
   const root = mkTmp('pickle-bric-qs-');
   try {
     initGitRepo(root);
@@ -124,8 +128,8 @@ test('R-RIC-EXPLICIT: quoted short SHA in frontmatter → source must be explici
     const sessionDir = path.join(root, 'session');
     writeTicket(sessionDir, TICKET_ID, `completion_commit: "${INCIDENT_SHORT}"`);
     const ev = hasCompletionCommit({ sessionDir, ticketId: TICKET_ID, workingDir: root });
-    assert.equal(ev.source, 'explicit',
-      'quoted short SHA must resolve to explicit — not inferred via findMatchingCommit');
+    assert.notEqual(ev.source, 'inferred', 'explicit frontmatter must not fall through to findMatchingCommit');
+    assert.equal(ev.source, 'unreachable', 'INCIDENT_SHORT not in fresh test repo → unreachable');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

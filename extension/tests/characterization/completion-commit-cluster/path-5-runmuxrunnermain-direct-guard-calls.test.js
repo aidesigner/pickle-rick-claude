@@ -10,11 +10,12 @@
 // This test characterizes that shared observable behaviour.
 //
 // Decision-matrix: path_id 5 — assert what the code DOES today.
-// No live git against host. Explicit completion_commit in frontmatter → source:explicit
-// without any git check.
+// R-AFCC-DEEP-3C: guard now calls hasCompletionCommit which runs git cat-file -e.
+// Tests use a real git repo so the explicit SHA is verifiable → source:explicit-reachable.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,6 +34,16 @@ function makeTmp(prefix = 'char-path5-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
+function initGitRepo(dir) {
+  execFileSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+  execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: dir });
+  fs.writeFileSync(path.join(dir, 'README.md'), 'fixture\n');
+  execFileSync('git', ['add', 'README.md'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-q', '-m', 'initial', '--no-gpg-sign'], { cwd: dir, stdio: 'ignore' });
+  return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+}
+
 function writeTicket(sessionDir, ticketId, frontmatter) {
   const ticketDir = path.join(sessionDir, ticketId);
   fs.mkdirSync(ticketDir, { recursive: true });
@@ -45,13 +56,13 @@ function writeTicket(sessionDir, ticketId, frontmatter) {
   return path.join(ticketDir, `linear_ticket_${ticketId}.md`);
 }
 
-// Shared guard args builder
-function makeGuardArgs(sessionDir, ticketId, prevTicketId = null) {
+// Shared guard args builder — uses a real git workingDir
+function makeGuardArgs(sessionDir, gitDir, ticketId) {
   return {
     sessionDir,
-    ticketId: prevTicketId ?? ticketId,
-    workingDir: sessionDir, // synthetic dir, no git
-    rereadBackoffMs: 0,     // no sleep in tests
+    ticketId,
+    workingDir: gitDir, // real git repo containing the commit
+    rereadBackoffMs: 0,
   };
 }
 
@@ -59,28 +70,26 @@ function makeGuardArgs(sessionDir, ticketId, prevTicketId = null) {
 // Path 5a: guard-worker-self-attested
 // Callsite: mux-runner.js:4694
 // Trigger: previousTicket status already 'done' after iteration.
-// Observable: guard validates explicit sha, returns {ok:true, sha:'abc1234'}.
+// Observable: guard validates explicit-reachable sha, returns {ok:true, sha}.
 // ---
-test('path-5a guard-worker-self-attested: explicit completion_commit → {ok:true, sha:abc1234}', () => {
+test('path-5a guard-worker-self-attested: explicit completion_commit → {ok:true}', () => {
   const root = makeTmp();
   try {
-    const prevTicketId = ENTRY.callsites.find(c => c.callsite_id === '5a')
-      .fixture.session_dir_skeleton['state.json'].current_ticket;
-    // prevTicket is 'aabbccdd', we guard the PREVIOUS ticket (callsite guards previousTicket)
+    const realSha = initGitRepo(root);
     const prevFm = ENTRY.callsites.find(c => c.callsite_id === '5a')
       .fixture.session_dir_skeleton[`aabbccdd/linear_ticket_aabbccdd.md`].frontmatter;
     writeTicket(root, 'aabbccdd', {
       id: 'aabbccdd',
       status: prevFm.status,
-      completion_commit: prevFm.completion_commit,
+      completion_commit: realSha, // use real reachable SHA (R-AFCC-DEEP-3C)
       title: prevFm.title,
     });
 
-    const result = guardCompletionCommitBeforeDone(makeGuardArgs(root, 'aabbccdd'));
+    const result = guardCompletionCommitBeforeDone(makeGuardArgs(root, root, 'aabbccdd'));
 
-    // Characterize: explicit SHA in frontmatter → guard ok, sha returned
+    // Characterize: explicit-reachable SHA in frontmatter → guard ok, sha returned
     assert.equal(result.ok, true, `5a expected ok=true, got ${result.ok}`);
-    assert.equal(result.sha, 'abc1234', `5a expected sha=abc1234, got '${result.sha}'`);
+    assert.equal(result.sha, realSha, `5a expected sha=${realSha}, got '${result.sha}'`);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -90,25 +99,26 @@ test('path-5a guard-worker-self-attested: explicit completion_commit → {ok:tru
 // Path 5b: guard-false-epic-recover-advance
 // Callsite: mux-runner.js:5083
 // Trigger: false EPIC_COMPLETED, current_ticket In Progress but has explicit sha.
-// Observable: guard validates explicit sha, returns {ok:true, sha:'abc1234'}.
+// Observable: guard validates explicit-reachable sha, returns {ok:true}.
 // ---
 test('path-5b guard-false-epic-recover-advance: In-Progress ticket with explicit completion_commit → {ok:true}', () => {
   const root = makeTmp();
   try {
+    const realSha = initGitRepo(root);
     const cs5b = ENTRY.callsites.find(c => c.callsite_id === '5b');
     const fm = cs5b.fixture.session_dir_skeleton['aabbccdd/linear_ticket_aabbccdd.md'].frontmatter;
     writeTicket(root, 'aabbccdd', {
       id: 'aabbccdd',
       status: fm.status,
-      completion_commit: fm.completion_commit,
+      completion_commit: realSha, // use real reachable SHA (R-AFCC-DEEP-3C)
       title: fm.title,
     });
 
-    const result = guardCompletionCommitBeforeDone(makeGuardArgs(root, 'aabbccdd'));
+    const result = guardCompletionCommitBeforeDone(makeGuardArgs(root, root, 'aabbccdd'));
 
-    // Characterize: explicit SHA → guard ok regardless of status field
+    // Characterize: explicit-reachable SHA → guard ok regardless of status field
     assert.equal(result.ok, true, `5b expected ok=true, got ${result.ok}`);
-    assert.equal(result.sha, 'abc1234', `5b expected sha=abc1234, got '${result.sha}'`);
+    assert.equal(result.sha, realSha, `5b expected sha=${realSha}, got '${result.sha}'`);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -118,24 +128,25 @@ test('path-5b guard-false-epic-recover-advance: In-Progress ticket with explicit
 // Path 5c: guard-genuine-epic-final-ticket
 // Callsite: mux-runner.js:5159
 // Trigger: genuine EPIC_COMPLETED, final ticket needs Done stamp.
-// Observable: same as 5b — explicit sha passes guard.
+// Observable: same as 5b — explicit-reachable sha passes guard.
 // ---
 test('path-5c guard-genuine-epic-final-ticket: final ticket with explicit completion_commit → {ok:true}', () => {
   const root = makeTmp();
   try {
+    const realSha = initGitRepo(root);
     const cs5c = ENTRY.callsites.find(c => c.callsite_id === '5c');
     const fm = cs5c.fixture.session_dir_skeleton['aabbccdd/linear_ticket_aabbccdd.md'].frontmatter;
     writeTicket(root, 'aabbccdd', {
       id: 'aabbccdd',
       status: fm.status,
-      completion_commit: fm.completion_commit,
+      completion_commit: realSha, // use real reachable SHA (R-AFCC-DEEP-3C)
       title: fm.title,
     });
 
-    const result = guardCompletionCommitBeforeDone(makeGuardArgs(root, 'aabbccdd'));
+    const result = guardCompletionCommitBeforeDone(makeGuardArgs(root, root, 'aabbccdd'));
 
     assert.equal(result.ok, true, `5c expected ok=true, got ${result.ok}`);
-    assert.equal(result.sha, 'abc1234', `5c expected sha=abc1234, got '${result.sha}'`);
+    assert.equal(result.sha, realSha, `5c expected sha=${realSha}, got '${result.sha}'`);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

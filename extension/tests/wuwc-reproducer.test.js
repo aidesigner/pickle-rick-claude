@@ -322,7 +322,7 @@ describe('R-WUWC Case B — SOFT: worker commits with ticket-id, no completion_c
         assert.equal(result.source, 'inferred', 'failed guard must report source: inferred');
         assert.match(
           result.reason,
-          /cannot flip Done: hasCompletionCommit\(\)\.source === 'inferred' \(expected 'explicit'\); worker did not produce an attributable git commit/,
+          /cannot flip Done: hasCompletionCommit\(\)\.source === 'inferred' \(expected 'explicit-reachable'\); worker did not produce an attributable git commit/,
           `guard error must match pinned format; got: ${result.reason}`,
         );
         assert.ok(
@@ -358,11 +358,11 @@ describe('R-WUWC Case B — SOFT: worker commits with ticket-id, no completion_c
       fs.writeFileSync(ticketFile, content);
     }
 
-    // Re-probe: source must now be explicit (AC-WUWC-12 step 1)
+    // Re-probe: source must now be explicit-reachable (AC-WUWC-12 step 1)
     const evidence = hasCompletionCommit({ sessionDir, ticketId, workingDir: repo });
     assert.equal(
-      evidence.source, 'explicit',
-      'after writing completion_commit field, source must be explicit',
+      evidence.source, 'explicit-reachable',
+      'after writing completion_commit field, source must be explicit-reachable',
     );
     assert.equal(evidence.sha, commitSha);
 

@@ -48,7 +48,7 @@ test('hasCompletionCommit: explicit completion_commit wins when SHA exists', () 
     ]);
 
     const evidence = hasCompletionCommit({ sessionDir, ticketId: 'explicit01', workingDir: root });
-    assert.deepEqual(evidence, { sha, source: 'explicit' });
+    assert.deepEqual(evidence, { sha, source: 'explicit-reachable' });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

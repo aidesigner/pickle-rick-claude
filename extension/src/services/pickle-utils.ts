@@ -773,7 +773,9 @@ export function getTicketStatus(sessionRoot: string, ticketId: string): TicketSt
 
 export interface CompletionCommitEvidence {
   sha: string | null;
-  source: 'explicit' | 'inferred' | 'absent';
+  source: 'explicit-reachable' | 'inferred' | 'absent' | 'unreachable';
+  /** R-CCR-1: true when per-ticket workingDir was unusable and fallbackDir succeeded. */
+  usedFallback?: boolean;
 }
 
 function resolveTicketPath(args: {
@@ -797,6 +799,28 @@ function gitCommitExists(workingDir: string, sha: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * R-AFCC-DEEP-3C: 3-way probe using `git cat-file -e <sha>^{commit}`.
+ * Returns 'exists' (exit 0), 'not-exists' (exit 1), or 'git-could-not-run'
+ * (exit 128, ENOENT, ETIMEDOUT, SIGTERM — git produced no definitive answer).
+ * 'git-could-not-run' triggers the R-CCR-1 fallback-dir retry in hasCompletionCommit.
+ */
+function probeCatFileExists(workingDir: string, sha: string): 'exists' | 'not-exists' | 'git-could-not-run' {
+  try {
+    execFileSync('git', ['-C', workingDir, 'cat-file', '-e', `${sha}^{commit}`], {
+      timeout: 5000,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return 'exists';
+  } catch (err) {
+    const e = err as { status?: number | null; code?: string; signal?: string | null };
+    if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM' || e.status === 128 || e.code === 'ENOENT') {
+      return 'git-could-not-run';
+    }
+    return 'not-exists';
   }
 }
 
@@ -933,6 +957,8 @@ export function hasCompletionCommit(args: {
   ticketPath?: string;
   workingDir: string;
   startTimeEpoch?: number | null;
+  /** R-CCR-1: session-dir fallback when ticket.working_dir is stale/non-git. */
+  fallbackDir?: string;
 }): CompletionCommitEvidence {
   const ticketPath = resolveTicketPath(args);
   if (!ticketPath) return { sha: null, source: 'absent' };
@@ -945,7 +971,14 @@ export function hasCompletionCommit(args: {
 
   const explicit = normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit'));
   if (explicit) {
-    return { sha: explicit, source: 'explicit' };
+    const primary = probeCatFileExists(args.workingDir, explicit);
+    if (primary === 'exists') return { sha: explicit, source: 'explicit-reachable' };
+    if (primary === 'git-could-not-run' && args.fallbackDir && args.fallbackDir !== args.workingDir) {
+      if (probeCatFileExists(args.fallbackDir, explicit) === 'exists') {
+        return { sha: explicit, source: 'explicit-reachable', usedFallback: true };
+      }
+    }
+    return { sha: explicit, source: 'unreachable' };
   }
 
   const inferredField = normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit_inferred'));

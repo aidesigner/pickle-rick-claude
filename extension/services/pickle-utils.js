@@ -659,6 +659,28 @@ function gitCommitExists(workingDir, sha) {
         return false;
     }
 }
+/**
+ * R-AFCC-DEEP-3C: 3-way probe using `git cat-file -e <sha>^{commit}`.
+ * Returns 'exists' (exit 0), 'not-exists' (exit 1), or 'git-could-not-run'
+ * (exit 128, ENOENT, ETIMEDOUT, SIGTERM — git produced no definitive answer).
+ * 'git-could-not-run' triggers the R-CCR-1 fallback-dir retry in hasCompletionCommit.
+ */
+function probeCatFileExists(workingDir, sha) {
+    try {
+        execFileSync('git', ['-C', workingDir, 'cat-file', '-e', `${sha}^{commit}`], {
+            timeout: 5000,
+            stdio: ['ignore', 'ignore', 'ignore'],
+        });
+        return 'exists';
+    }
+    catch (err) {
+        const e = err;
+        if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM' || e.status === 128 || e.code === 'ENOENT') {
+            return 'git-could-not-run';
+        }
+        return 'not-exists';
+    }
+}
 function extractRequirementCodes(title) {
     if (!title)
         return [];
@@ -785,7 +807,15 @@ export function hasCompletionCommit(args) {
     }
     const explicit = normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit'));
     if (explicit) {
-        return { sha: explicit, source: 'explicit' };
+        const primary = probeCatFileExists(args.workingDir, explicit);
+        if (primary === 'exists')
+            return { sha: explicit, source: 'explicit-reachable' };
+        if (primary === 'git-could-not-run' && args.fallbackDir && args.fallbackDir !== args.workingDir) {
+            if (probeCatFileExists(args.fallbackDir, explicit) === 'exists') {
+                return { sha: explicit, source: 'explicit-reachable', usedFallback: true };
+            }
+        }
+        return { sha: explicit, source: 'unreachable' };
     }
     const inferredField = normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit_inferred'));
     if (inferredField && gitCommitExists(args.workingDir, inferredField)) {

@@ -103,8 +103,8 @@ test('R-CCQF: hasCompletionCommit classifies quoted full SHA as explicit', () =>
     const sessionDir = path.join(root, 'session');
     writeTicket(sessionDir, 'qf001', `completion_commit: "${sha}"`);
     const ev = hasCompletionCommit({ sessionDir, ticketId: 'qf001', workingDir: root });
-    assert.deepEqual(ev, { sha, source: 'explicit' },
-      'quoted full SHA must classify as explicit (R-CCQF live incident class)');
+    assert.deepEqual(ev, { sha, source: 'explicit-reachable' },
+      'quoted full SHA must classify as explicit-reachable (R-CCQF live incident class)');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -118,7 +118,7 @@ test('R-CCQF: hasCompletionCommit classifies unquoted full SHA as explicit', () 
     const sessionDir = path.join(root, 'session');
     writeTicket(sessionDir, 'uf001', `completion_commit: ${sha}`);
     const ev = hasCompletionCommit({ sessionDir, ticketId: 'uf001', workingDir: root });
-    assert.deepEqual(ev, { sha, source: 'explicit' });
+    assert.deepEqual(ev, { sha, source: 'explicit-reachable' });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -133,7 +133,7 @@ test('R-CCQF: hasCompletionCommit classifies single-quoted short SHA as explicit
     const sessionDir = path.join(root, 'session');
     writeTicket(sessionDir, 'sq001', `completion_commit: '${shortSha}'`);
     const ev = hasCompletionCommit({ sessionDir, ticketId: 'sq001', workingDir: root });
-    assert.equal(ev.source, 'explicit');
+    assert.equal(ev.source, 'explicit-reachable');
     assert.equal(ev.sha, shortSha);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -181,8 +181,8 @@ test('R-CCQF: live-incident fixture (session 2026-05-23-48e6309a/26301c6a shape)
       '# Description',
     ].join('\n'));
     const ev = hasCompletionCommit({ sessionDir, ticketId: '26301c6a', workingDir: root });
-    assert.deepEqual(ev, { sha, source: 'explicit' },
-      'live incident shape must classify as explicit — gate must not refuse a fully-shipped commit');
+    assert.deepEqual(ev, { sha, source: 'explicit-reachable' },
+      'live incident shape must classify as explicit-reachable — gate must not refuse a fully-shipped commit');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

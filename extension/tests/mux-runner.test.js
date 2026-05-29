@@ -3404,7 +3404,7 @@ test('R-CCC-5 hasCompletionCommit: explicit frontmatter + reachable SHA returns 
         writeAutoMarkTicketWithCompletionCommit(sessionDir, ticketId, sha);
 
         const evidence = hasCompletionCommit({ sessionDir, ticketId, workingDir: tmpDir });
-        assert.equal(evidence.source, 'explicit');
+        assert.equal(evidence.source, 'explicit-reachable');
         assert.equal(evidence.sha, sha);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -3518,7 +3518,10 @@ test('R-PDWR correctPhantomDoneTickets: allow_inferred_completion_commit flag su
     }
 });
 
-test('R-PDWR correctPhantomDoneTickets: backtick-decorated completion_commit resolving to HEAD-reachable commit is NOT reverted', () => {
+test('R-AFCC-DEEP-3C correctPhantomDoneTickets: backtick-decorated completion_commit is reverted (no lax-strip fallback after 3C)', () => {
+    // R-AFCC-DEEP-3C: frontmatterCompletionCommitReachable (which lax-stripped backticks)
+    // is deleted. The strict normalizeCompletionCommitField in hasCompletionCommit returns
+    // null for backtick-decorated SHAs → evidence.source='absent' → ticket reverted.
     const tmpDir = makeTmpRoot();
     const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rpdwr-tick-')));
     const prev = process.env.PICKLE_DATA_ROOT;
@@ -3528,16 +3531,14 @@ test('R-PDWR correctPhantomDoneTickets: backtick-decorated completion_commit res
         const startCommit = gitHead(tmpDir);
         fs.writeFileSync(path.join(tmpDir, 'worker.txt'), 'work');
         spawnSync('git', ['add', '.'], { cwd: tmpDir });
-        // Subject carries no ticket hash and no R-* code, so the git --grep
-        // inference path also misses — hasCompletionCommit returns 'absent'.
         spawnSync('git', ['commit', '-m', 'misc cleanup', '--no-gpg-sign'], { cwd: tmpDir });
         const completionSha = gitHead(tmpDir);
         const sessionDir = path.join(tmpDir, 'session');
         const ticketId = 'rpdwrtick';
         const ticketDir = path.join(sessionDir, ticketId);
         fs.mkdirSync(ticketDir, { recursive: true });
-        // completion_commit stamped with backtick decoration — defeats the
-        // strict hasCompletionCommit hex check, which then returns 'absent'.
+        // completion_commit with backtick decoration — normalizeCompletionCommitField
+        // does not strip backticks → explicit=null → hasCompletionCommit returns 'absent'.
         fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
             '---',
             `id: ${ticketId}`,
@@ -3550,11 +3551,11 @@ test('R-PDWR correctPhantomDoneTickets: backtick-decorated completion_commit res
             '',
         ].join('\n'));
 
-        // hasCompletionCommit returns 'absent' for the decorated value...
+        // hasCompletionCommit returns 'absent' for the decorated value.
         const evidence = hasCompletionCommit({ sessionDir, ticketId, workingDir: tmpDir });
         assert.equal(evidence.source, 'absent', 'precondition: strict check misses the decorated SHA');
 
-        // ...but the watcher's lenient HEAD-reachability re-check keeps it Done.
+        // Without the lax-strip fallback, the watcher reverts the ticket.
         const corrected = correctPhantomDoneTickets({
             sessionDir,
             workingDir: tmpDir,
@@ -3562,8 +3563,8 @@ test('R-PDWR correctPhantomDoneTickets: backtick-decorated completion_commit res
             iteration: 3,
         });
 
-        assert.equal(corrected, 0, 'a HEAD-reachable completion_commit must not be reverted');
-        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Done');
+        assert.equal(corrected, 1, 'backtick-decorated SHA with no fallback must be reverted (R-AFCC-DEEP-3C)');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Todo');
     } finally {
         if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
         else process.env.PICKLE_DATA_ROOT = prev;
@@ -3572,7 +3573,7 @@ test('R-PDWR correctPhantomDoneTickets: backtick-decorated completion_commit res
     }
 });
 
-// --- R-CCR-1: session-dir fallback for frontmatterCompletionCommitReachable ---
+// --- R-CCR-1: session-dir fallback (now via hasCompletionCommit fallbackDir arg) ---
 
 function writeTicketWithWorkingDir(sessionDir, ticketId, sha, ticketWorkingDir) {
     const ticketDir = path.join(sessionDir, ticketId);
@@ -3636,12 +3637,11 @@ test('R-CCR-1 fallback keeps Done: stale ticket working_dir, real commit in sess
     }
 });
 
-test('R-CCR-1 no-fallback on clean miss: git runs, SHA is valid but not ancestor', () => {
-    // The per-ticket working_dir is a real git repo. The SHA is a valid commit
-    // but not an ancestor of HEAD (exit 1). The SHA uses backtick decoration so
-    // hasCompletionCommit (strict hex check) returns 'absent' — reaching the
-    // frontmatterCompletionCommitReachable path. Since git runs fine (exit 1,
-    // not exit 128), the fallback must NOT fire — ticket reverts.
+test('R-CCR-1 no-fallback on clean miss: git runs, SHA is valid but not in repo (backtick-decorated)', () => {
+    // The SHA is backtick-decorated → normalizeCompletionCommitField returns null →
+    // hasCompletionCommit returns 'absent' (no explicit field, no git-log match).
+    // No fallback fires because evidence.source is 'absent' (not unreachable).
+    // Ticket reverts.
     const tmpDir = makeTmpRoot();
     const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rccr1-miss-')));
     const prev = process.env.PICKLE_DATA_ROOT;
@@ -3661,7 +3661,7 @@ test('R-CCR-1 no-fallback on clean miss: git runs, SHA is valid but not ancestor
         const sessionDir = path.join(tmpDir, 'session');
         const ticketId = 'rccr1miss';
         // Use backtick-decorated SHA so hasCompletionCommit (strict hex check)
-        // misses it and returns 'absent', reaching frontmatterCompletionCommitReachable.
+        // misses it and returns 'absent' (no fallback for absent evidence).
         const ticketDir = path.join(sessionDir, ticketId);
         fs.mkdirSync(ticketDir, { recursive: true });
         fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
@@ -3771,7 +3771,11 @@ test('4aa8be51 classifyGitProbeError: exit 128 and ENOENT are git-could-not-run'
 
 // --- R-CCR-8: coverage backfill for completion_commit_inferred and non-reachable SHA ---
 
-test('R-CCR-8 R-PDWR correctPhantomDoneTickets: completion_commit_inferred-only HEAD-reachable SHA is NOT reverted', () => {
+test('R-AFCC-DEEP-3C correctPhantomDoneTickets: backtick-decorated completion_commit_inferred is reverted (frontmatterCompletionCommitReachable deleted)', () => {
+    // R-AFCC-DEEP-3C: frontmatterCompletionCommitReachable (which lax-stripped backticks
+    // from completion_commit_inferred) is deleted. The strict normalizeCompletionCommitField
+    // in hasCompletionCommit returns null for backtick-decorated inferred SHAs.
+    // Without a matching git-log commit, source='absent' → ticket reverted.
     const tmpDir = makeTmpRoot();
     const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rccr8-inferred-')));
     const prev = process.env.PICKLE_DATA_ROOT;
@@ -3779,7 +3783,6 @@ test('R-CCR-8 R-PDWR correctPhantomDoneTickets: completion_commit_inferred-only 
         process.env.PICKLE_DATA_ROOT = dataRoot;
         initGitRepo(tmpDir);
         const startCommit = gitHead(tmpDir);
-        // Create a real commit reachable from HEAD.
         fs.writeFileSync(path.join(tmpDir, 'work.txt'), 'done');
         spawnSync('git', ['add', '.'], { cwd: tmpDir });
         spawnSync('git', ['commit', '-m', 'misc work (no ticket ref)', '--no-gpg-sign'], { cwd: tmpDir });
@@ -3790,9 +3793,7 @@ test('R-CCR-8 R-PDWR correctPhantomDoneTickets: completion_commit_inferred-only 
         const ticketDir = path.join(sessionDir, ticketId);
         fs.mkdirSync(ticketDir, { recursive: true });
         // completion_commit_inferred with backtick decoration: hasCompletionCommit strict
-        // hex check misses it (returns 'absent'), but frontmatterCompletionCommitReachable
-        // strips the decoration and finds the SHA is reachable from HEAD.
-        // NO completion_commit field — only completion_commit_inferred.
+        // hex check misses it (returns 'absent'). After 3C, no lax-strip fallback exists.
         fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
             '---',
             `id: ${ticketId}`,
@@ -3805,7 +3806,6 @@ test('R-CCR-8 R-PDWR correctPhantomDoneTickets: completion_commit_inferred-only 
             '',
         ].join('\n'));
 
-        // Precondition: hasCompletionCommit strict hex check misses the decorated value.
         const evidence = hasCompletionCommit({ sessionDir, ticketId, workingDir: tmpDir });
         assert.equal(evidence.source, 'absent', 'precondition: strict check misses the decorated inferred SHA');
 
@@ -3816,8 +3816,8 @@ test('R-CCR-8 R-PDWR correctPhantomDoneTickets: completion_commit_inferred-only 
             iteration: 1,
         });
 
-        assert.equal(corrected, 0, 'HEAD-reachable completion_commit_inferred must not be reverted');
-        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Done');
+        assert.equal(corrected, 1, 'backtick-decorated inferred SHA with no matching commit → reverted (R-AFCC-DEEP-3C)');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Todo');
     } finally {
         if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
         else process.env.PICKLE_DATA_ROOT = prev;
@@ -3849,10 +3849,9 @@ test('R-CCR-8 R-PDWR correctPhantomDoneTickets: completion_commit SHA that is a 
         const ticketId = 'rccr8orp';
         const ticketDir = path.join(sessionDir, ticketId);
         fs.mkdirSync(ticketDir, { recursive: true });
-        // Backtick-decorated SHA: hasCompletionCommit strict hex check returns 'absent',
-        // allowing frontmatterCompletionCommitReachable to exercise the reachability path.
-        // Single-repo: no working_dir in ticket → uses input.workingDir, so fallbackDir ===
-        // workingDir → R-CCR-1 session-dir fallback does not fire.
+        // Backtick-decorated SHA: hasCompletionCommit strict hex check returns 'absent'
+        // (backticks not stripped by normalizeCompletionCommitField). No fallback fires
+        // since evidence.source is 'absent'. Ticket reverts.
         fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
             '---',
             `id: ${ticketId}`,

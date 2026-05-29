@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, hasCompletionCommit, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, type TicketInfo, type TicketStatus, type TicketTierBudget } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, hasCompletionCommit, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, type CompletionCommitEvidence, type TicketInfo, type TicketStatus, type TicketTierBudget } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -1010,12 +1010,6 @@ export interface CorrectPhantomDoneTicketsInput {
   log?: (msg: string) => void;
 }
 
-// R-CCR-1: memoize "can git run in this dir" per process lifetime to avoid
-// redundant probes across multiple tickets with the same stale working_dir.
-// true = git ran successfully, false = exit 128 or ENOENT (git-could-not-run).
-const _gitReachabilityCache = new Map<string, boolean>();
-
-type GitCommitReachability = 'reachable' | 'not-reachable' | 'git-could-not-run';
 
 /**
  * R-CCR-1: probe whether `sha` is an ancestor of HEAD in `dir`. Distinguishes a
@@ -1036,99 +1030,16 @@ export function classifyGitProbeError(err: unknown): 'not-reachable' | 'git-coul
   return e.status === 128 || e.code === 'ENOENT' ? 'git-could-not-run' : 'not-reachable';
 }
 
-function probeCommitReachable(dir: string, sha: string): GitCommitReachability {
-  try {
-    execFileSync('git', ['-C', dir, 'merge-base', '--is-ancestor', sha, 'HEAD'], {
-      timeout: 5000,
-      stdio: ['ignore', 'ignore', 'ignore'],
-    });
-    return 'reachable';
-  } catch (err) {
-    return classifyGitProbeError(err);
-  }
-}
-
 /**
- * R-PDWR: a lenient, watcher-only re-check before a destructive revert.
- * `hasCompletionCommit`'s strict explicit path can return 'absent' for a
- * genuinely-complete ticket — a stamped `completion_commit` carrying
- * decoration (backticks), a stale `workingDir`, or a transient read all
- * defeat it. Reverting a real completion to Todo costs a full redo, so before
- * the phantom-Done watcher reverts, give the stamped field the benefit of the
- * doubt: if it resolves to a real commit reachable from HEAD, the ticket is
- * genuinely done.
- *
- * R-CCR-1: when `workingDir` is a stale/non-existent dir and git exits 128
- * (or ENOENT), retry once against `fallbackDir` (the session working dir).
- * A clean not-an-ancestor exit (1) does NOT trigger the fallback.
- */
-function frontmatterCompletionCommitReachable(
-  ticketPath: string,
-  workingDir: string,
-  fallbackDir?: string,
-): { reachable: boolean; usedFallback: boolean } {
-  let content: string;
-  try {
-    content = fs.readFileSync(ticketPath, 'utf8');
-  } catch {
-    return { reachable: false, usedFallback: false };
-  }
-  for (const field of ['completion_commit', 'completion_commit_inferred']) {
-    const raw = readFrontmatterField(content, field);
-    if (!raw) continue;
-    const sha = raw.replace(/[`'"]/g, '').trim();
-    if (!/^[0-9a-f]{7,40}$/i.test(sha)) continue;
-
-    const primaryCanRun = _gitReachabilityCache.get(workingDir) !== false;
-    if (primaryCanRun) {
-      const primary = probeCommitReachable(workingDir, sha);
-      if (primary === 'reachable') {
-        _gitReachabilityCache.set(workingDir, true);
-        return { reachable: true, usedFallback: false };
-      }
-      if (primary === 'not-reachable') {
-        // Clean not-ancestor (exit 1): git ran fine, SHA just not reachable.
-        // Do NOT retry against fallback — only git-could-not-run triggers it.
-        _gitReachabilityCache.set(workingDir, true);
-        continue;
-      }
-      _gitReachabilityCache.set(workingDir, false); // git-could-not-run
-    }
-
-    // workingDir is unusable for git — retry once against fallbackDir.
-    if (!fallbackDir || fallbackDir === workingDir) continue;
-    const fallbackCanRun = _gitReachabilityCache.get(fallbackDir) !== false;
-    if (!fallbackCanRun) continue;
-
-    const fallback = probeCommitReachable(fallbackDir, sha);
-    if (fallback === 'reachable') {
-      _gitReachabilityCache.set(fallbackDir, true);
-      return { reachable: true, usedFallback: true };
-    }
-    _gitReachabilityCache.set(fallbackDir, fallback === 'git-could-not-run' ? false : true);
-  }
-  return { reachable: false, usedFallback: false };
-}
-
-/**
- * R-PDWR: decides whether the phantom-Done watcher must leave a Done ticket
- * alone despite `hasCompletionCommit` returning 'absent'.
- * R-CCR-1: threads `input.workingDir` as the session-dir fallback.
+ * R-AFCC-DEEP-3C: collapse to a 1-line check on the four-state `CompletionCommitEvidence`.
+ * `frontmatterCompletionCommitReachable` deleted — reachability now lives in
+ * `hasCompletionCommit` (explicit branch via `probeCatFileExists`).
  */
 function phantomDoneShouldKeepDone(
   input: CorrectPhantomDoneTicketsInput,
-  ticketId: string,
-  workingDir: string,
+  evidence: CompletionCommitEvidence,
 ): { keepDone: boolean; fallbackFired: boolean } {
-  if ((input.flags ?? {})['allow_inferred_completion_commit'] === true) {
-    return { keepDone: true, fallbackFired: false };
-  }
-  const result = frontmatterCompletionCommitReachable(
-    ticketFilePath(input.sessionDir, ticketId),
-    workingDir,
-    input.workingDir,
-  );
-  return { keepDone: result.reachable, fallbackFired: result.usedFallback };
+  return { keepDone: evidence.source === 'explicit-reachable' || (input.flags ?? {})['allow_inferred_completion_commit'] === true, fallbackFired: evidence.usedFallback === true };
 }
 
 /**
@@ -1149,25 +1060,26 @@ function logPhantomDoneKept(
 }
 
 /**
- * R-AFCC-DEEP-3B: classify a Done ticket for the batch phantom-Done loop and
+ * R-AFCC-DEEP-3B/3C: classify a Done ticket for the batch phantom-Done loop and
  * apply side-effects (persist inferred SHA). Extracted to keep the loop under
  * the ESLint complexity ceiling.
  *
- * Decision matrix:
+ * Decision matrix (R-AFCC-DEEP-3C four-state):
  *   explicit-reachable → keep Done (reachability-verified or bypass flag set)
  *   inferred           → persist completion_commit_inferred + keep Done
  *   absent             → revert (no evidence found)
  *   unreachable        → revert (explicit SHA stamped but not reachable from HEAD)
  *
- * R-CCC-5 / R-RIC-EXPLICIT-4: only `inferred` (already git-verified) short-circuits
- * to keep+persist; `explicit` and `absent` both fall through to the reachability probe.
+ * R-RIC-EXPLICIT-4: only `inferred` (already git-verified) short-circuits
+ * to keep+persist; all others fall through to phantomDoneShouldKeepDone.
+ * R-CCR-1 fallback-dir is passed into hasCompletionCommit via fallbackDir.
  */
 function batchLoopPhantomDoneKind(
   input: CorrectPhantomDoneTicketsInput,
   ticketId: string,
   workingDir: string,
 ): PhantomDoneKind {
-  const evidence = hasCompletionCommit({ sessionDir: input.sessionDir, ticketId, workingDir });
+  const evidence = hasCompletionCommit({ sessionDir: input.sessionDir, ticketId, workingDir, fallbackDir: input.workingDir });
   if (evidence.source === 'inferred') {
     // R-PDWR: persist SHA so the batch loop stamps the field (was: only keep, no persist).
     const fp = ticketFilePath(input.sessionDir, ticketId);
@@ -1180,15 +1092,13 @@ function batchLoopPhantomDoneKind(
     } catch { /* best-effort: persist failure must not block keep-Done */ }
     return 'inferred';
   }
-  // R-PDWR: keep Done when operator bypass is set or when a stamped completion_commit
-  // resolves to a real HEAD-reachable commit that hasCompletionCommit strict path missed.
-  // R-CCR-1: fallbackFired is true when per-ticket dir was unusable and session dir used.
-  const keepDoneResult = phantomDoneShouldKeepDone(input, ticketId, workingDir);
+  // R-AFCC-DEEP-3C: phantomDoneShouldKeepDone is now a 1-line check on the four-state return.
+  const keepDoneResult = phantomDoneShouldKeepDone(input, evidence);
   if (keepDoneResult.keepDone) {
     logPhantomDoneKept(input, ticketId, workingDir, keepDoneResult.fallbackFired);
     return 'explicit-reachable';
   }
-  return evidence.source === 'explicit' ? 'unreachable' : 'absent';
+  return evidence.source; // 'unreachable' | 'absent'
 }
 
 export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput): number {
@@ -1920,7 +1830,7 @@ export function validateAutoTicketCompletion(
     workingDir,
     startTimeEpoch: gitCommitEpoch(workingDir, startCommit),
   });
-  if (evidence.source === 'absent') {
+  if (evidence.source === 'absent' || evidence.source === 'unreachable') {
     return { action: 'skip', reason: 'no_commit_referencing_ticket_since_current_set' };
   }
 
@@ -3100,7 +3010,7 @@ export function guardCompletionCommitBeforeDone(args: {
   flags?: Record<string, unknown> | null;
   /** R-CCGR: backoff (ms) before the single re-read; pass 0 in test fixtures. */
   rereadBackoffMs?: number;
-}): { ok: true; sha: string } | { ok: false; reason: string; source: 'explicit' | 'inferred' | 'absent' } {
+}): { ok: true; sha: string } | { ok: false; reason: string; source: CompletionCommitEvidence['source'] } {
   // R-WSRC-4 parity: PICKLE_TEST_MODE=1 bypasses for sandboxed test fixtures
   // whose workingDir is a synthetic temp dir without a real git repo.
   // Production sessions never set this env var; production guard is intact.
@@ -3114,7 +3024,7 @@ export function guardCompletionCommitBeforeDone(args: {
     workingDir: args.workingDir,
   };
   const guardPasses = (e: { source: string; sha: string | null }): boolean =>
-    (e.source === 'explicit' && !!e.sha) || (allowInferred && !!e.sha);
+    (e.source === 'explicit-reachable' && !!e.sha) || (allowInferred && !!e.sha);
   let evidence = hasCompletionCommit(probe);
   if (!guardPasses(evidence)) {
     // R-CCGR: the worker commits + stamps `completion_commit`, then emits its
@@ -3127,7 +3037,7 @@ export function guardCompletionCommitBeforeDone(args: {
   // R-WUWC SOFT-variant: the worker `git commit`-ed with the ticket-id in the
   // message, flipped frontmatter status=Done, but did NOT add `completion_commit:`.
   // `hasCompletionCommit` returns `source: 'inferred'` (matched by git log scan).
-  // Auto-promote to 'explicit' by writing the SHA into the ticket frontmatter,
+  // Auto-promote to 'explicit-reachable' by writing the SHA into the ticket frontmatter,
   // then re-probe. This is the runtime equivalent of the documented operator
   // workaround `edit ticket frontmatter to include completion_commit: <sha>`.
   if (evidence.source === 'inferred' && evidence.sha) {
@@ -3138,7 +3048,7 @@ export function guardCompletionCommitBeforeDone(args: {
       if (_upd) { fs.writeFileSync(_fp, _upd); evidence = hasCompletionCommit(probe); }
     } catch { /* best-effort — fall through to existing classification */ }
   }
-  if (evidence.source === 'explicit' && evidence.sha) {
+  if (evidence.source === 'explicit-reachable' && evidence.sha) {
     return { ok: true, sha: evidence.sha };
   }
   if (allowInferred && evidence.sha) {
@@ -3148,7 +3058,7 @@ export function guardCompletionCommitBeforeDone(args: {
   return {
     ok: false,
     source: evidence.source,
-    reason: `ticket ${args.ticketId} cannot flip Done: hasCompletionCommit().source === '${evidence.source}' (expected 'explicit'); ` +
+    reason: `ticket ${args.ticketId} cannot flip Done: hasCompletionCommit().source === '${evidence.source}' (expected 'explicit-reachable'); ` +
       `worker did not produce an attributable git commit. Set state.flags.allow_inferred_completion_commit=true to bypass, ` +
       `or edit ticket frontmatter to include completion_commit: <sha>.`,
   };
