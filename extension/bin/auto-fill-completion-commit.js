@@ -1,11 +1,18 @@
 #!/usr/bin/env node
+// CLI shim — R-AFCC-DEEP-3A.
+// The core 4-line inferred→explicit upsert now lives inline at each runtime
+// callsite in mux-runner.ts (guardCompletionCommitBeforeDone, line ~3107) and
+// spawn-morty.ts (post-updateTicketFrontmatter belt-and-suspenders, line ~1163).
+// This module is preserved for backwards-compat CLI invocations and as the
+// target of the path-2 characterization test in
+// extension/tests/characterization/completion-commit-cluster/.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { hasCompletionCommit, readFrontmatterField, ticketFilePath, upsertFrontmatterField } from '../services/pickle-utils.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { writeActivityEntry } from '../services/state-manager.js';
-function parseStateStartEpoch(statePath) {
+function parseStartEpoch(statePath) {
     if (!statePath)
         return null;
     try {
@@ -17,7 +24,7 @@ function parseStateStartEpoch(statePath) {
         return null;
     }
 }
-function targetTicketIds(sessionDir, ticketId) {
+function targetIds(sessionDir, ticketId) {
     if (ticketId)
         return [ticketId];
     try {
@@ -27,16 +34,10 @@ function targetTicketIds(sessionDir, ticketId) {
         return [];
     }
 }
-function stageTicketFile(workingDir, filePath) {
-    execFileSync('git', ['-C', workingDir, 'add', '--', filePath], {
-        timeout: 5000,
-        stdio: ['ignore', 'ignore', 'pipe'],
-    });
-}
 export function autoFillCompletionCommit(input) {
-    const startTimeEpoch = parseStateStartEpoch(input.statePath);
+    const startTimeEpoch = parseStartEpoch(input.statePath);
     const results = [];
-    for (const id of targetTicketIds(input.sessionDir, input.ticketId)) {
+    for (const id of targetIds(input.sessionDir, input.ticketId)) {
         const filePath = ticketFilePath(input.sessionDir, id);
         let content;
         try {
@@ -71,7 +72,10 @@ export function autoFillCompletionCommit(input) {
             continue;
         }
         fs.writeFileSync(filePath, updated);
-        stageTicketFile(input.workingDir, filePath);
+        execFileSync('git', ['-C', input.workingDir, 'add', '--', filePath], {
+            timeout: 5000,
+            stdio: ['ignore', 'ignore', 'pipe'],
+        });
         if (input.statePath) {
             writeActivityEntry(input.statePath, {
                 event: 'completion_commit_auto_filled',
@@ -87,7 +91,7 @@ export function autoFillCompletionCommit(input) {
     }
     return results;
 }
-function parseArgs(argv) {
+function parseCliArgs(argv) {
     const args = new Map();
     for (let index = 0; index < argv.length; index += 2) {
         const key = argv[index];
@@ -109,6 +113,7 @@ function parseArgs(argv) {
     };
 }
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-    const result = autoFillCompletionCommit(parseArgs(process.argv.slice(2)));
+    process.stderr.write('[auto-fill-completion-commit] DEPRECATED: runtime callsites now inline the upsert. See R-AFCC-DEEP-3A.\n');
+    const result = autoFillCompletionCommit(parseCliArgs(process.argv.slice(2)));
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }

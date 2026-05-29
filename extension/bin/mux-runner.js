@@ -10,7 +10,6 @@ import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides } from '../services/backend-spawn.js';
 import { resolveCodexModel } from './spawn-morty.js';
-import { autoFillCompletionCommit } from './auto-fill-completion-commit.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream, CODEX_DELIMITER_RE } from '../services/classifier-utils.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
@@ -1637,9 +1636,9 @@ export function applyAutoTicketCompletionValidation(input) {
     if (verdict.action === 'done') {
         // R-CCRC-2: route Done-flip through guard so the R-WUWC SOFT-variant
         // auto-fill runs and completion_commit is persisted to the frontmatter.
-        // Manager drift path: ticket starts 'In Progress', so the guard's internal
-        // autoFillCompletionCommit (which requires status=Done) cannot run yet.
-        // Allow inferred evidence here; autoFillCompletionCommit runs post-markTicketDone.
+        // Manager drift path: ticket starts 'In Progress', so the guard's inline
+        // upsert (which requires status=Done) cannot run yet.
+        // Allow inferred evidence here; the post-markTicketDone upsert runs below.
         const guard = guardCompletionCommitBeforeDone({
             sessionDir: input.sessionDir,
             ticketId: input.ticketId,
@@ -1660,17 +1659,18 @@ export function applyAutoTicketCompletionValidation(input) {
             input.log?.(`Marked ticket ${input.ticketId} as Done (validated: evidence found, completion_commit: ${guard.sha})`);
         }
         // R-WUWC SOFT-variant (manager path): ticket was 'In Progress' at guard
-        // time so the auto-fill inside guardCompletionCommitBeforeDone couldn't
-        // write completion_commit (autoFillCompletionCommit requires status=Done).
-        // Now that markTicketDone has flipped the status, run auto-fill to persist
-        // the SHA. Best-effort: failure must not block the Done flip.
+        // time so the inline upsert inside guardCompletionCommitBeforeDone couldn't
+        // write completion_commit (requires status=Done).
+        // Now that markTicketDone has flipped the status, persist the SHA.
+        // Best-effort: failure must not block the Done flip.
         try {
-            autoFillCompletionCommit({
-                sessionDir: input.sessionDir,
-                workingDir: input.workingDir,
-                ticketId: input.ticketId,
-                statePath: input.statePath,
-            });
+            const _fp = ticketFilePath(input.sessionDir, input.ticketId);
+            const _raw = fs.readFileSync(_fp, 'utf8');
+            if (!readFrontmatterField(_raw, 'completion_commit') && guard.sha) {
+                const _upd = upsertFrontmatterField(_raw, 'completion_commit', guard.sha);
+                if (_upd)
+                    fs.writeFileSync(_fp, _upd);
+            }
         }
         catch { /* best-effort */ }
         return verdict;
@@ -2736,13 +2736,11 @@ export function guardCompletionCommitBeforeDone(args) {
     // workaround `edit ticket frontmatter to include completion_commit: <sha>`.
     if (evidence.source === 'inferred' && evidence.sha) {
         try {
-            const filled = autoFillCompletionCommit({
-                sessionDir: args.sessionDir,
-                workingDir: args.workingDir,
-                ticketId: args.ticketId,
-                statePath: null,
-            });
-            if (filled.some(r => r.action === 'filled' && r.ticketId === args.ticketId)) {
+            const _fp = ticketFilePath(args.sessionDir, args.ticketId);
+            const _raw = fs.readFileSync(_fp, 'utf8');
+            const _upd = upsertFrontmatterField(_raw, 'completion_commit', evidence.sha);
+            if (_upd) {
+                fs.writeFileSync(_fp, _upd);
                 evidence = hasCompletionCommit(probe);
             }
         }

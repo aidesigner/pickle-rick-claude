@@ -21,10 +21,10 @@ import { getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, update
 import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
+import { autoFillCompletionCommit } from './auto-fill-completion-commit.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { loadAgentMd, type AgentModel } from '../services/agent-md-loader.js';
 import { flushAndExit } from '../services/worker-shutdown.js';
-import { autoFillCompletionCommit } from './auto-fill-completion-commit.js';
 
 const TIER_MODEL_MAP: Record<string, string> = {
   trivial: 'haiku',
@@ -1159,6 +1159,10 @@ async function finalizeWorkerTurn(params: WorkerFinalizeArgs): Promise<void> {
 
   if (isSuccess) {
     // R-CCC-2: Auto-fill completion_commit: for Done tickets that missed the ACK.
+    // Kept as autoFillCompletionCommit (preserved CLI shim) — its git-log scan
+    // handles the no-ACK case where completionCommitSha is null but the worker
+    // committed with the ticket-id in the message. R-AFCC-DEEP-3A inlined the
+    // explicit-SHA-known callsites in mux-runner.ts.
     try {
       autoFillCompletionCommit({
         sessionDir: sessionRoot,
