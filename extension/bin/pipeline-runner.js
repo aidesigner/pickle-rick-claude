@@ -28,6 +28,7 @@ import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { runAcPhaseGate } from '../services/ac-phase-gate.js';
 import { resolveScope, refreshScope, filterBySubsystem, ScopeError, } from '../services/scope-resolver.js';
 import { runCitadelAudit } from '../services/citadel/audit-runner.js';
+import { ensureGraph } from '../services/graph-preflight.js';
 const sm = new StateManager();
 const DEFAULT_IGNORE_DIRTY_PATHS = ['prds', 'docs'];
 const CODEX_REQUIRED_BACKEND = 'codex-required';
@@ -1564,10 +1565,23 @@ function refreshPhaseScope(phaseConfig, runtime, counters) {
         throw err;
     }
 }
+function loadGraphPreflightEnabled() {
+    try {
+        const settingsPath = path.join(getExtensionRoot(), 'pickle_settings.json');
+        const raw = readRecoverableJsonObject(settingsPath);
+        if (raw && raw.enable_graph_preflight === false)
+            return false;
+    }
+    catch { /* best-effort */ }
+    return true;
+}
 async function runConfiguredPhase(runtime, phaseConfig, counters) {
     await postPhaseCleanup(phaseConfig.name, runtime.sessionDir);
     preparePhaseState(phaseConfig, runtime);
     const scope = refreshPhaseScope(phaseConfig, runtime, counters);
+    if ((phaseConfig.name === 'anatomy-park' || phaseConfig.name === 'szechuan-sauce') && loadGraphPreflightEnabled()) {
+        await ensureGraph(runtime.repoRoot);
+    }
     const setupResult = phaseConfig.setup ? phaseConfig.setup({
         sessionDir: runtime.sessionDir,
         target: runtime.target,

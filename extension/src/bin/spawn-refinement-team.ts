@@ -15,6 +15,7 @@ import { buildWorkerInvocation, isBackend, SpawnInvocation } from '../services/b
 import { Backend, PromiseTokens, hasToken, Defaults, VALID_ACTIVITY_EVENTS, PipelineRunnerExitCode } from '../types/index.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { runAcPhaseGate } from '../services/ac-phase-gate.js';
+import { ensureGraph } from '../services/graph-preflight.js';
 
 // PRD refinement is planning, not implementation. Codex is reserved for
 // implementation loops only — if the parent session opted into codex, we
@@ -220,12 +221,14 @@ export interface RefinementArgs {
   timeout?: number;
   cycles?: number;
   maxTurns?: number;
+  noGraph?: boolean;
 }
 
 export interface RefinementSettings {
   defaultCycles: number;
   defaultMaxTurns: number;
   defaultWorkerTimeout: number;
+  enableGraphPreflight: boolean;
 }
 
 export interface CycleResults {
@@ -824,6 +827,7 @@ export function parseAndValidateArgs(argv: string[]): RefinementArgs {
     timeout: parseTimeoutFlag(argv),
     cycles: parsePositiveFlag(argv, argv.indexOf('--cycles'), '--cycles'),
     maxTurns: parsePositiveFlag(argv, argv.indexOf('--max-turns'), '--max-turns'),
+    noGraph: argv.includes('--no-graph'),
   };
 }
 
@@ -832,6 +836,7 @@ export function loadRefinementSettings(settingsPath = path.join(getExtensionRoot
     defaultCycles: 3,
     defaultMaxTurns: 100,
     defaultWorkerTimeout: Defaults.WORKER_TIMEOUT_SECONDS,
+    enableGraphPreflight: true,
   };
 
   if (!fs.existsSync(settingsPath)) return settings;
@@ -845,6 +850,7 @@ export function loadRefinementSettings(settingsPath = path.join(getExtensionRoot
     if (cycles !== undefined) settings.defaultCycles = cycles;
     if (maxTurns !== undefined) settings.defaultMaxTurns = maxTurns;
     if (workerTimeout !== undefined) settings.defaultWorkerTimeout = workerTimeout;
+    if (loaded.enable_graph_preflight === false) settings.enableGraphPreflight = false;
   } catch { /* use hardcoded defaults */ }
 
   return settings;
@@ -1961,6 +1967,14 @@ export function scanAnalystOutputsForUnverifiedPaths(refinementDir: string, work
 async function main() {
   const args = parseAndValidateArgs(process.argv.slice(2));
   const settings = loadRefinementSettings();
+  if (!args.noGraph && settings.enableGraphPreflight) {
+    let workingDir = process.cwd();
+    try {
+      const state = sm.read(path.join(args.sessionDir, 'state.json'));
+      if (typeof state.working_dir === 'string' && state.working_dir.trim()) workingDir = state.working_dir;
+    } catch { /* fall back to cwd */ }
+    await ensureGraph(workingDir);
+  }
   const prdContent = await fs.promises.readFile(args.prdPath, 'utf-8');
   const cycleResults = await orchestrateCycles(args, settings, prdContent);
   const runtime = resolveRuntime(args, settings);

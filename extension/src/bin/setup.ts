@@ -12,6 +12,7 @@ import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaV
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
+import { ensureGraph } from '../services/graph-preflight.js';
 
 const sm = new StateManager();
 
@@ -63,6 +64,7 @@ export interface SetupArgs {
   acknowledgeUndersized: boolean;
   managerIdleBackoffFallbackMs: number;
   forceTicketStatusSync: boolean;
+  noGraph: boolean;
 }
 
 export const DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS = 60_000;
@@ -144,6 +146,7 @@ function createSetupConfig(): SetupArgs {
     acknowledgeUndersized: false,
     managerIdleBackoffFallbackMs: DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS,
     forceTicketStatusSync: false,
+    noGraph: false,
   };
 }
 
@@ -345,6 +348,7 @@ function loadSettings(config: SetupArgs, rootDir: string) {
     config.managerIdleBackoffFallbackMs = resolveManagerIdleBackoffFallbackMs(settings.manager_idle_backoff_fallback_ms);
     config.iterationBudgetPerBackend = readIterationBudgetPerBackend(settings);
     config.throughputBaselines = readThroughputBaselines(settings);
+    if (settings.enable_graph_preflight === false) config.noGraph = true;
   } catch (err) {
     const msg = safeErrorMessage(err);
     console.error(`Warning: could not parse pickle_settings.json — using defaults: ${msg}`);
@@ -582,6 +586,10 @@ const ARG_HANDLERS: Record<string, ArgHandler> = {
   '--force-ticket-status-sync': (config, _args, index) => {
     config.forceTicketStatusSync = true;
     config.explicitFlags.add('force-ticket-status-sync');
+    return index;
+  },
+  '--no-graph': (config, _args, index) => {
+    config.noGraph = true;
     return index;
   },
   '-s': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
@@ -1268,6 +1276,10 @@ async function main() {
   // ticket count. Runs after session resolution so we can read the manifest from
   // the actual session dir. Best-effort; never throws.
   try { evaluateLaunchSizing(session.sessionRoot, args); } catch { /* sizing is advisory */ }
+
+  if (!args.noGraph) {
+    await ensureGraph(process.cwd());
+  }
 
   try {
     updateSessionMap(paths.sessionsMap, process.cwd(), session.sessionRoot);
