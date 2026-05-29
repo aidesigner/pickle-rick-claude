@@ -513,6 +513,23 @@ export const TICKET_TIER_BUDGETS: Record<TicketComplexityTier, Omit<TicketTierBu
   large: { max_iterations: 60, worker_timeout_seconds: 80 * 60 },
 } as const;
 
+export type LifecyclePhase =
+  | 'research'
+  | 'research_review'
+  | 'plan'
+  | 'plan_review'
+  | 'implement'
+  | 'conformance'
+  | 'code_review'
+  | 'simplify';
+
+export const TIER_LIFECYCLE: Record<TicketComplexityTier, LifecyclePhase[]> = {
+  trivial: ['implement', 'code_review'],
+  small: ['plan', 'implement', 'code_review'],
+  medium: ['research', 'research_review', 'plan', 'plan_review', 'implement', 'conformance', 'code_review', 'simplify'],
+  large: ['research', 'research_review', 'plan', 'plan_review', 'implement', 'conformance', 'code_review', 'simplify'],
+} as const;
+
 export interface TierCapPartial {
   max_iterations?: number;
   worker_timeout_seconds?: number;

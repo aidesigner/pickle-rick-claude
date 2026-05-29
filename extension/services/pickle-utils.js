@@ -414,6 +414,12 @@ export const TICKET_TIER_BUDGETS = {
     medium: { max_iterations: 30, worker_timeout_seconds: 60 * 60 },
     large: { max_iterations: 60, worker_timeout_seconds: 80 * 60 },
 };
+export const TIER_LIFECYCLE = {
+    trivial: ['implement', 'code_review'],
+    small: ['plan', 'implement', 'code_review'],
+    medium: ['research', 'research_review', 'plan', 'plan_review', 'implement', 'conformance', 'code_review', 'simplify'],
+    large: ['research', 'research_review', 'plan', 'plan_review', 'implement', 'conformance', 'code_review', 'simplify'],
+};
 export function normalizeTicketComplexityTier(value) {
     if (typeof value === 'string') {
         const normalized = value.trim().toLowerCase();
