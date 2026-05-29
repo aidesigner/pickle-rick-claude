@@ -14,7 +14,6 @@
  */
 
 import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   readFrontmatterField,
@@ -22,8 +21,6 @@ import {
   normalizeCompletionCommitField,
   ticketFilePath,
 } from './pickle-utils.js';
-import { readRecoverableJsonObject } from './recoverable-json.js';
-import { clearExitReason, recordExitReason } from './state-manager.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -84,18 +81,6 @@ export interface PersistResult {
   /** True when git-stage succeeded; false when it failed (best-effort only). */
   staged?: boolean;
 }
-
-/** Policy for gateForDoneFlip. */
-export interface DoneFlipPolicy {
-  /** When true, inferred-fresh evidence (unverified commit) is accepted. Default false. */
-  allowInferred?: boolean;
-  /** Override backoff in ms before the single re-read. Default 500ms. */
-  rereadBackoffMs?: number;
-}
-
-export type GateDecision =
-  | { ok: true; sha: string }
-  | { ok: false; reason: string; kind: EvidenceKind };
 
 /** Policy for gateForPhantomDoneRevert. */
 export interface RevertPolicy {
@@ -225,20 +210,6 @@ function scanGitLog(args: {
   return null;
 }
 
-/** R-CCGR: process-blocking sleep for the guard's single re-read backoff. */
-function sleepSyncMs(ms: number): void {
-  if (!(ms > 0)) return;
-  try {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-  } catch { /* SharedArrayBuffer disabled — skip */ }
-}
-
-function defaultRereadBackoffMs(): number {
-  const raw = Number(process.env.PICKLE_GUARD_REREAD_BACKOFF_MS);
-  if (Number.isFinite(raw) && raw >= 0) return Math.min(raw, 5000);
-  return 500;
-}
-
 // ---------------------------------------------------------------------------
 // Entry point 1: readEvidence
 // ---------------------------------------------------------------------------
@@ -355,64 +326,7 @@ export function persistEvidence(ctx: EvidenceCtx, sha: string, opts: PersistOpts
 }
 
 // ---------------------------------------------------------------------------
-// Entry point 3: gateForDoneFlip
-// ---------------------------------------------------------------------------
-
-/**
- * Gate that must pass before a ticket can be flipped to Done.
- *
- * Wraps the logic previously inline in guardCompletionCommitBeforeDone:
- *   1. Probe evidence; if not ok, sleep+re-probe once (R-CCGR backoff).
- *   2. R-WUWC SOFT-variant: when inferred-fresh, persistEvidence best-effort
- *      then re-probe so the field is promoted to explicit.
- *   3. Accept explicit (or inferred if allowInferred policy).
- *
- * Returns GateDecision compatible with guardCompletionCommitBeforeDone callers.
- */
-export function gateForDoneFlip(ctx: EvidenceCtx, policy?: DoneFlipPolicy): GateDecision {
-  // R-WSRC-4 parity: PICKLE_TEST_MODE=1 bypasses for sandboxed test fixtures.
-  if (process.env.PICKLE_TEST_MODE === '1') {
-    return { ok: true, sha: 'pickle-test-mode-bypass' };
-  }
-
-  const allowInferred = policy?.allowInferred === true;
-  const accepts = (r: EvidenceResult): boolean =>
-    (r.kind === 'explicit' && !!r.sha) || (allowInferred && !!r.sha);
-
-  let evidence = readEvidence(ctx);
-  if (!accepts(evidence)) {
-    sleepSyncMs(policy?.rereadBackoffMs ?? defaultRereadBackoffMs());
-    evidence = readEvidence(ctx);
-  }
-
-  // R-WUWC SOFT-variant: promote inferred-fresh → explicit by writing the field.
-  if (evidence.kind === 'inferred-fresh' && evidence.sha) {
-    try {
-      const result = persistEvidence(ctx, evidence.sha, { stage: 'best-effort' });
-      if (result.action === 'written') {
-        evidence = readEvidence(ctx);
-      }
-    } catch { /* best-effort — fall through to existing classification */ }
-  }
-
-  if (evidence.kind === 'explicit' && evidence.sha) {
-    return { ok: true, sha: evidence.sha };
-  }
-  if (allowInferred && evidence.sha) {
-    return { ok: true, sha: evidence.sha };
-  }
-  return {
-    ok: false,
-    kind: evidence.kind,
-    reason: `gateForDoneFlip: evidence.kind === '${evidence.kind}' (expected 'explicit'); ` +
-      `worker did not produce an attributable git commit. ` +
-      `Set state.flags.allow_inferred_completion_commit=true to bypass, ` +
-      `or edit ticket frontmatter to include completion_commit: <sha>.`,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Entry point 4: gateForPhantomDoneRevert
+// Entry point 3: gateForPhantomDoneRevert
 // ---------------------------------------------------------------------------
 
 /**
@@ -444,31 +358,3 @@ export function gateForPhantomDoneRevert(ctx: EvidenceCtx, policy?: RevertPolicy
   }
 }
 
-// ---------------------------------------------------------------------------
-// Entry point 5: recordPostGateOutcome
-// ---------------------------------------------------------------------------
-
-/**
- * Records the state outcome after a Done-flip gate decision.
- *
- * decision.ok=true: clear any stale done_without_commit_evidence exit_reason
- *   (R-PEDC — mirrors clearStaleDoneWithoutCommitEvidence in mux-runner).
- * decision.ok=false: stamp done_without_commit_evidence exit_reason.
- *
- * Best-effort: state I/O failures do not propagate.
- * Does NOT call safeDeactivate — that is the caller's responsibility.
- */
-export function recordPostGateOutcome(statePath: string, decision: { ok: boolean }): void {
-  if (decision.ok) {
-    try {
-      const snapshot = readRecoverableJsonObject(statePath) as { exit_reason?: unknown } | null;
-      if (snapshot?.exit_reason === 'done_without_commit_evidence') {
-        clearExitReason(statePath);
-      }
-    } catch { /* best-effort */ }
-  } else {
-    try {
-      recordExitReason(statePath, 'done_without_commit_evidence');
-    } catch { /* best-effort */ }
-  }
-}
