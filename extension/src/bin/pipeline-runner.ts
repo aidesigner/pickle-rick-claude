@@ -1647,7 +1647,7 @@ export function isFatalPhaseFailure(phase: PhaseName, runtime: PipelineRuntime):
     if (phase === 'pickle') {
       const startCommit = runnerState.start_commit?.trim();
       if (!startCommit) return true;
-      return countCommitsSince(startCommit, runtime.workingDir) === 0;
+      return countCommitsSince(startCommit, runtime.repoRoot) === 0;
     }
     if (phase === 'anatomy-park' || phase === 'szechuan-sauce') {
       const reason = runnerState.exit_reason;
@@ -1699,7 +1699,7 @@ function getRecoverablePhaseFailureReason(
     if (phase === 'pickle') {
       const startCommit = runnerState.start_commit?.trim();
       if (startCommit) {
-        const commits = countCommitsSince(startCommit, runtime.workingDir);
+        const commits = countCommitsSince(startCommit, runtime.repoRoot);
         if (commits > 0) {
           return 'non-fatal pickle exit, commits present';
         }
@@ -1902,12 +1902,12 @@ function refreshPhaseScope(
   if (!phaseConfig.refreshScope) return undefined;
   try {
     const refreshed = refreshScope(runtime.sessionDir, phaseConfig.name, {
-      repoRoot: runtime.workingDir,
+      repoRoot: runtime.repoRoot,
       target: runtime.target,
       log: runtime.log,
     });
     if (refreshed) {
-      writeSkippedByScope(runtime.sessionDir, phaseConfig.name, refreshed, runtime.target, runtime.workingDir);
+      writeSkippedByScope(runtime.sessionDir, phaseConfig.name, refreshed, runtime.target, runtime.repoRoot);
     }
     return refreshed ?? undefined;
   } catch (err) {
@@ -1936,7 +1936,7 @@ async function runConfiguredPhase(
   const setupResult: PhaseSetupResult = phaseConfig.setup ? phaseConfig.setup({
     sessionDir: runtime.sessionDir,
     target: runtime.target,
-    workingDir: runtime.workingDir,
+    workingDir: runtime.repoRoot,
     extensionRoot: runtime.extensionRoot,
     log: runtime.log,
     scope,
@@ -2311,6 +2311,7 @@ function collectPicklePhaseProgress(runtime: PipelineRuntime): {
   } catch { /* best-effort */ }
   if (startCommit) {
     try {
+      // why workingDir, not repoRoot: subprocess cwd — git log resolves HEAD from any dir in the repo
       const out = execFileSync('git', ['log', '--oneline', `${startCommit}..HEAD`], {
         cwd: runtime.workingDir,
         encoding: 'utf8',
@@ -2638,6 +2639,7 @@ async function runPhaseIteration(
   if (shouldHalt) {
     return dispatchHaltAction(runtime, counters, rawPhase, exitCode, log);
   }
+  // why workingDir, not repoRoot: AC gate commands run in the package dir, not the git toplevel
   const acGate = runAcPhaseGate({
     sessionDir: runtime.sessionDir,
     evaluationPhase: 'per-phase',
