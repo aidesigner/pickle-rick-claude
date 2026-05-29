@@ -17,9 +17,11 @@ const [, , filePath] = process.argv;
 const source = fs.readFileSync(filePath, 'utf8');
 
 function extractFunctionBody(name) {
-  const start = source.indexOf(`export function ${name}(`);
+  // Try exported function first, then non-exported
+  let start = source.indexOf(`export function ${name}(`);
+  if (start === -1) start = source.indexOf(`function ${name}(`);
   if (start === -1) {
-    throw new Error(`missing export function ${name}`);
+    throw new Error(`missing function ${name}`);
   }
   const braceStart = source.indexOf('{', start);
   if (braceStart === -1) {
@@ -47,24 +49,33 @@ function assertIncludesBefore(body, needle, beforeNeedle, label) {
   }
 }
 
+// --- correctPhantomDoneTickets ---
+// R-AFCC-DEEP-3B: decision matrix delegated to batchLoopPhantomDoneKind helper.
+// Check: the loop calls the helper before writeTicketStatus.
 const phantomBody = extractFunctionBody('correctPhantomDoneTickets');
 assertIncludesBefore(
   phantomBody,
-  'const evidence = hasCompletionCommit(',
+  'batchLoopPhantomDoneKind(',
   "if (!writeTicketStatus(input.sessionDir, ticket.id, 'Todo')) continue;",
   'correctPhantomDoneTickets',
 );
+
+// --- batchLoopPhantomDoneKind ---
 // R-RIC-EXPLICIT-4: only `inferred` evidence (gitCommitExists/grep-verified)
-// short-circuits; `explicit` (no longer reachability-verified after
-// R-RIC-EXPLICIT-2) and `absent` MUST fall through to the reachability gate so
-// a stamped-but-unreachable completion_commit still reverts a phantom Done.
-if (!phantomBody.includes("if (evidence.source === 'inferred') continue;")) {
-  throw new Error("correctPhantomDoneTickets: missing inferred-source short-circuit (R-RIC-EXPLICIT-4)");
+// short-circuits; `explicit` and `absent` MUST fall through to the reachability
+// gate so a stamped-but-unreachable completion_commit still reverts a phantom Done.
+const batchHelperBody = extractFunctionBody('batchLoopPhantomDoneKind');
+if (!batchHelperBody.includes('hasCompletionCommit(')) {
+  throw new Error("batchLoopPhantomDoneKind: missing hasCompletionCommit call (R-RIC-EXPLICIT-4)");
 }
-if (!phantomBody.includes('phantomDoneShouldKeepDone(')) {
-  throw new Error("correctPhantomDoneTickets: missing reachability gate for explicit/absent sources (R-RIC-EXPLICIT-4)");
+if (!batchHelperBody.includes("evidence.source === 'inferred'")) {
+  throw new Error("batchLoopPhantomDoneKind: missing inferred-source check (R-RIC-EXPLICIT-4)");
+}
+if (!batchHelperBody.includes('phantomDoneShouldKeepDone(')) {
+  throw new Error("batchLoopPhantomDoneKind: missing reachability gate for explicit/absent sources (R-RIC-EXPLICIT-4)");
 }
 
+// --- validateAutoTicketCompletion ---
 const validateBody = extractFunctionBody('validateAutoTicketCompletion');
 assertIncludesBefore(
   validateBody,
@@ -76,12 +87,21 @@ if (!validateBody.includes("if (evidence.source === 'absent')")) {
   throw new Error("validateAutoTicketCompletion: missing absent-source branch");
 }
 
+// --- inspectPhantomDoneTicketFile ---
+// R-AFCC-DEEP-3B: decision logic delegated to applyInspectPhantomDoneDecision helper.
 const inspectBody = extractFunctionBody('inspectPhantomDoneTicketFile');
+if (!inspectBody.includes('applyInspectPhantomDoneDecision(')) {
+  throw new Error("inspectPhantomDoneTicketFile: missing applyInspectPhantomDoneDecision delegation (R-AFCC-DEEP-3B)");
+}
+
+// --- applyInspectPhantomDoneDecision ---
+// Must call hasCompletionCommit before writeTicketStatus (R-ICP-5 gate ordering).
+const applyBody = extractFunctionBody('applyInspectPhantomDoneDecision');
 assertIncludesBefore(
-  inspectBody,
-  'const evidence = hasCompletionCommit(',
-  "const wrote = writeTicketStatus(sessionDir, ticketId, priorStatus);",
-  'inspectPhantomDoneTicketFile',
+  applyBody,
+  'hasCompletionCommit(',
+  'writeTicketStatus(',
+  'applyInspectPhantomDoneDecision',
 );
 
 console.log('audit-phantom-done-call-sites: all phantom-Done gates consult hasCompletionCommit first');

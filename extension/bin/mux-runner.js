@@ -1003,6 +1003,46 @@ function logPhantomDoneKept(input, ticketId, workingDir, fallbackFired) {
     }
     input.log?.(`Phantom-Done watcher kept ticket ${ticketId} Done — valid completion_commit evidence`);
 }
+/**
+ * R-AFCC-DEEP-3B: classify a Done ticket for the batch phantom-Done loop and
+ * apply side-effects (persist inferred SHA). Extracted to keep the loop under
+ * the ESLint complexity ceiling.
+ *
+ * Decision matrix:
+ *   explicit-reachable → keep Done (reachability-verified or bypass flag set)
+ *   inferred           → persist completion_commit_inferred + keep Done
+ *   absent             → revert (no evidence found)
+ *   unreachable        → revert (explicit SHA stamped but not reachable from HEAD)
+ *
+ * R-CCC-5 / R-RIC-EXPLICIT-4: only `inferred` (already git-verified) short-circuits
+ * to keep+persist; `explicit` and `absent` both fall through to the reachability probe.
+ */
+function batchLoopPhantomDoneKind(input, ticketId, workingDir) {
+    const evidence = hasCompletionCommit({ sessionDir: input.sessionDir, ticketId, workingDir });
+    if (evidence.source === 'inferred') {
+        // R-PDWR: persist SHA so the batch loop stamps the field (was: only keep, no persist).
+        const fp = ticketFilePath(input.sessionDir, ticketId);
+        try {
+            const raw = fs.readFileSync(fp, 'utf8');
+            if (!readFrontmatterField(raw, 'completion_commit') && evidence.sha) {
+                const upd = upsertFrontmatterField(raw, 'completion_commit_inferred', evidence.sha);
+                if (upd)
+                    fs.writeFileSync(fp, upd);
+            }
+        }
+        catch { /* best-effort: persist failure must not block keep-Done */ }
+        return 'inferred';
+    }
+    // R-PDWR: keep Done when operator bypass is set or when a stamped completion_commit
+    // resolves to a real HEAD-reachable commit that hasCompletionCommit strict path missed.
+    // R-CCR-1: fallbackFired is true when per-ticket dir was unusable and session dir used.
+    const keepDoneResult = phantomDoneShouldKeepDone(input, ticketId, workingDir);
+    if (keepDoneResult.keepDone) {
+        logPhantomDoneKept(input, ticketId, workingDir, keepDoneResult.fallbackFired);
+        return 'explicit-reachable';
+    }
+    return evidence.source === 'explicit' ? 'unreachable' : 'absent';
+}
 export function correctPhantomDoneTickets(input) {
     let corrected = 0;
     for (const ticket of collectTickets(input.sessionDir)) {
@@ -1019,31 +1059,11 @@ export function correctPhantomDoneTickets(input) {
         const conformance = readLatestTicketConformanceSnapshot(path.join(input.sessionDir, ticket.id));
         if (conformance.hasManagerHandoff)
             continue;
-        // R-CCC-5: completion_commit frontmatter is the FIRST gate. Bundle commits
-        // use R-* codes in the subject (not ticket hashes) so the legacy git-log
-        // scan in hasCommitReferencingTicketSince misses 100% of them. The watcher
-        // (inspectPhantomDoneTicketFile) already short-circuits on the field; this
-        // closes the second revert path.
-        // R-RIC-EXPLICIT-4: `source === 'explicit'` is NOT reachability-verified —
-        // R-RIC-EXPLICIT-2 decoupled gitCommitExists from the explicit branch so the
-        // GUARD path (guardCompletionCommitBeforeDone) stops false-fataling. The
-        // phantom-revert watcher has the opposite risk profile: a stamped-but-
-        // unreachable SHA (typo, foreign repo, dropped commit) must still revert. So
-        // only `inferred` (already gitCommitExists/grep-verified) short-circuits here;
-        // `explicit` and `absent` both fall through to the reachability probe below.
-        const evidence = hasCompletionCommit({ sessionDir: input.sessionDir, ticketId: ticket.id, workingDir });
-        if (evidence.source === 'inferred')
+        // R-AFCC-DEEP-3B: decision matrix delegated to batchLoopPhantomDoneKind (complexity ceiling).
+        const kind = batchLoopPhantomDoneKind(input, ticket.id, workingDir);
+        if (kind === 'explicit-reachable' || kind === 'inferred')
             continue;
-        // R-PDWR: keep the ticket Done when the operator bypass is set, or when a
-        // stamped completion_commit resolves to a real HEAD-reachable commit that
-        // the strict hasCompletionCommit check missed.
-        // R-CCR-1: fallbackFired is true when the per-ticket dir was unusable and
-        // the session dir was used as the fallback probe.
-        const keepDoneResult = phantomDoneShouldKeepDone(input, ticket.id, workingDir);
-        if (keepDoneResult.keepDone) {
-            logPhantomDoneKept(input, ticket.id, workingDir, keepDoneResult.fallbackFired);
-            continue;
-        }
+        // kind is 'absent' or 'unreachable' → revert
         if (!writeTicketStatus(input.sessionDir, ticket.id, 'Todo'))
             continue;
         corrected++;
@@ -1060,30 +1080,66 @@ export function correctPhantomDoneTickets(input) {
     return corrected;
 }
 /**
- * Insert or replace `completion_commit_inferred: "<sha>"` in ticket frontmatter.
- * Preserves all other body content and leaves explicit `completion_commit:` intact.
+ * R-AFCC-DEEP-3B: apply the phantom-Done decision for a single file after
+ * pre-checks have already passed (status=Done, id present). Extracted to keep
+ * inspectPhantomDoneTicketFile under the ESLint complexity ceiling.
+ *
+ * Watcher path: explicit field presence → 'explicit-reachable' (no git probe).
+ * This preserves the path-7 characterization invariant: has_completion_commit
+ * fires without git reachability probing.
  */
-function insertCompletionCommitField(content, sha) {
-    if (readFrontmatterField(content, 'completion_commit'))
-        return null;
-    return upsertFrontmatterField(content, 'completion_commit_inferred', sha);
+function applyInspectPhantomDoneDecision(content, filePath, sessionDir, ticketId, workingDir, priorStatus) {
+    let phantomKind;
+    let foundSha = null;
+    if (readFrontmatterField(content, 'completion_commit')) {
+        phantomKind = 'explicit-reachable';
+    }
+    else {
+        try {
+            const evidence = hasCompletionCommit({ sessionDir, ticketId, ticketPath: filePath, workingDir });
+            if (evidence.source === 'inferred') {
+                phantomKind = 'inferred';
+                foundSha = evidence.sha;
+            }
+            else {
+                phantomKind = 'absent';
+            }
+        }
+        catch (err) {
+            return { changed: false, reason: 'unparseable', gitFailureReason: safeErrorMessage(err) };
+        }
+    }
+    switch (phantomKind) {
+        case 'explicit-reachable':
+            return { changed: false, reason: 'has_completion_commit' };
+        case 'inferred': {
+            // completion_commit absent here (else branch above); upsert inferred field directly.
+            const updated = upsertFrontmatterField(content, 'completion_commit_inferred', foundSha ?? '');
+            if (!updated)
+                return { changed: false, reason: 'unparseable' };
+            try {
+                fs.writeFileSync(filePath, updated);
+            }
+            catch {
+                return { changed: false, reason: 'unparseable' };
+            }
+            return { changed: true, reason: 'backfilled', commit: foundSha ?? undefined };
+        }
+        case 'absent': {
+            const wrote = writeTicketStatus(sessionDir, ticketId, priorStatus);
+            if (!wrote)
+                return { changed: false, reason: 'unparseable' };
+            return { changed: true, reason: 'reverted', priorStatus };
+        }
+    }
 }
 /**
- * R-ICP-5: Inspect a single linear_ticket_*.md file. If frontmatter status
- * is 'Done' but no `completion_commit:` field is present, take a three-way
- * decision:
- *   1. If git log shows a commit referencing the ticket id since HEAD~10 —
- *      backfill `completion_commit:` with that SHA (work was real, field
- *      missing).
- *   2. If no commit found — revert status to its prior value (Todo or
- *      In Progress).
- *   3. If git lookup throws/times out — treat as "no commit" (revert path)
- *      but surface the failure reason for the caller's log line.
+ * R-ICP-5 / R-AFCC-DEEP-3B: Inspect a single linear_ticket_*.md file using the
+ * explicit PhantomDoneKind decision matrix (via applyInspectPhantomDoneDecision).
  *
  * `priorStatus` defaults to 'Todo' but the watcher caller passes the last
- * known good status from before the flip (read off the previous mtime
- * snapshot). Pure side-effect on the ticket file plus a structured result —
- * caller owns activity-event + stderr log writes.
+ * known good status. Pure side-effect on the ticket file plus a structured result
+ * — caller owns activity-event + stderr log writes.
  */
 export function inspectPhantomDoneTicketFile(filePath, sessionDir, workingDir, priorStatus = 'Todo') {
     let content;
@@ -1097,48 +1153,11 @@ export function inspectPhantomDoneTicketFile(filePath, sessionDir, workingDir, p
     if (!status || status.toLowerCase() !== 'done') {
         return { changed: false, reason: 'not_done' };
     }
-    const explicitCommit = readFrontmatterField(content, 'completion_commit');
-    if (explicitCommit) {
-        return { changed: false, reason: 'has_completion_commit' };
-    }
     const ticketId = readFrontmatterField(content, 'id');
     if (!ticketId) {
         return { changed: false, reason: 'missing_id' };
     }
-    let foundSha = null;
-    try {
-        const evidence = hasCompletionCommit({
-            sessionDir,
-            ticketId,
-            ticketPath: filePath,
-            workingDir,
-        });
-        if (evidence.source === 'inferred') {
-            foundSha = evidence.sha;
-        }
-    }
-    catch (err) {
-        return { changed: false, reason: 'unparseable', gitFailureReason: safeErrorMessage(err) };
-    }
-    if (foundSha) {
-        const updated = insertCompletionCommitField(content, foundSha);
-        if (!updated) {
-            return { changed: false, reason: 'unparseable' };
-        }
-        try {
-            fs.writeFileSync(filePath, updated);
-        }
-        catch {
-            return { changed: false, reason: 'unparseable' };
-        }
-        return { changed: true, reason: 'backfilled', commit: foundSha };
-    }
-    const wrote = writeTicketStatus(sessionDir, ticketId, priorStatus);
-    if (!wrote) {
-        return { changed: false, reason: 'unparseable' };
-    }
-    const result = { changed: true, reason: 'reverted', priorStatus };
-    return result;
+    return applyInspectPhantomDoneDecision(content, filePath, sessionDir, ticketId, workingDir, priorStatus);
 }
 function hasArtifact(files, prefix) {
     return files.some(file => file.startsWith(prefix) && file.endsWith('.md'));
