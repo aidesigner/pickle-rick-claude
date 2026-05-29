@@ -8,7 +8,7 @@
 | Item | Value |
 |---|---|
 | Version (source/deployed) | **v1.82.0** — 2026-05-29 (source/deployed in sync after `install.sh`) |
-| Latest GitHub release | v1.81.0 — 2026-05-27 (v1.81.1 + v1.82.0 push/tag pending — operator-gated) |
+| Latest GitHub release | v1.81.0 — 2026-05-27 (v1.81.1 + v1.82.0 push/tag pending — auto-finalize on next babysitter tick `7e209376` PART 2) |
 | Active pipeline | none |
 | Codex backend | `gpt-5.4` |
 
