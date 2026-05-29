@@ -484,11 +484,23 @@
         "event": { "type": "string", "const": "tier_phase_skipped" },
         "ts": { "type": "string" },
         "ticket_id": { "type": "string" },
-        "tier": { "type": "string", "enum": ["small"] },
+        "tier": { "type": "string", "enum": ["trivial", "small", "medium"] },
         "skipped_phases": {
           "type": "array",
-          "items": { "type": "string", "enum": ["test:fast", "test:integration"] }
+          "items": { "type": "string", "enum": ["test:fast", "test:integration", "research", "research_review", "plan", "plan_review", "conformance", "simplify"] }
         }
+      }
+    },
+    "tier_diff_envelope_exceeded": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "tier", "changed_loc", "envelope"],
+      "properties": {
+        "event": { "type": "string", "const": "tier_diff_envelope_exceeded" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "tier": { "type": "string", "enum": ["trivial", "small", "medium", "large"] },
+        "changed_loc": { "type": "number" },
+        "envelope": { "type": "number" }
       }
     },
     "cross_ticket_regression_detected": {
@@ -1341,6 +1353,7 @@
     { "$ref": "#/definitions/phantom_done_detected" },
     { "$ref": "#/definitions/worker_lint_gate_passed" },
     { "$ref": "#/definitions/tier_phase_skipped" },
+    { "$ref": "#/definitions/tier_diff_envelope_exceeded" },
     { "$ref": "#/definitions/between_ticket_gate_timeout" },
     { "$ref": "#/definitions/cross_ticket_regression_detected" },
     { "$ref": "#/definitions/worker_gate_failed" },

@@ -174,6 +174,18 @@ const EVENT_CASES = [
     drop: 'skipped_phases',
   },
   {
+    type: 'tier_diff_envelope_exceeded',
+    valid: {
+      event: 'tier_diff_envelope_exceeded',
+      ts: TS,
+      ticket_id: 'abc12345',
+      tier: 'medium',
+      changed_loc: 350,
+      envelope: 200,
+    },
+    drop: 'changed_loc',
+  },
+  {
     type: 'recoverable_phase_failure',
     valid: {
       event: 'recoverable_phase_failure',
@@ -911,6 +923,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'phantom_done_detected',
     'worker_lint_gate_passed',
     'tier_phase_skipped',
+    'tier_diff_envelope_exceeded',
     'between_ticket_gate_timeout',
     'mux_runner_stall_detected',
     'cross_ticket_regression_detected',
@@ -980,5 +993,48 @@ test('activity-event-payload: schema defines all registered event type definitio
     assertedNotInSchema,
     [],
     `EVENT_NAMES contains events absent from schema: ${assertedNotInSchema.join(', ')}`,
+  );
+});
+
+// AC-PIAP-A6-1: tier_phase_skipped accepts trivial tier + lifecycle phase IDs
+test('activity-event-payload: tier_phase_skipped accepts trivial tier with lifecycle phase IDs (AC-PIAP-A6-1)', () => {
+  const result = validate({
+    event: 'tier_phase_skipped',
+    ts: TS,
+    ticket_id: 'abc12345',
+    tier: 'trivial',
+    skipped_phases: ['research', 'research_review', 'plan', 'plan_review', 'conformance', 'simplify'],
+  }, 'tier_phase_skipped');
+  assert.equal(result.valid, true, `tier_phase_skipped trivial+lifecycle: ${result.error}`);
+});
+
+test('activity-event-payload: tier_phase_skipped rejects unknown tier value', () => {
+  const result = validate({
+    event: 'tier_phase_skipped',
+    ts: TS,
+    ticket_id: 'abc12345',
+    tier: 'large',
+    skipped_phases: ['test:fast'],
+  }, 'tier_phase_skipped');
+  assert.equal(result.valid, false, 'tier_phase_skipped: large is not a valid tier');
+});
+
+// AC-PIAP-A6: tier_diff_envelope_exceeded validates a well-formed payload
+test('activity-event-payload: tier_diff_envelope_exceeded validates well-formed payload', () => {
+  const result = validate({
+    event: 'tier_diff_envelope_exceeded',
+    ts: TS,
+    ticket_id: 'abc12345',
+    tier: 'medium',
+    changed_loc: 420,
+    envelope: 300,
+  }, 'tier_diff_envelope_exceeded');
+  assert.equal(result.valid, true, `tier_diff_envelope_exceeded: ${result.error}`);
+});
+
+test('activity-event-payload: tier_diff_envelope_exceeded registered in VALID_ACTIVITY_EVENTS', () => {
+  assert.ok(
+    VALID_ACTIVITY_EVENTS.includes('tier_diff_envelope_exceeded'),
+    'tier_diff_envelope_exceeded must be present in VALID_ACTIVITY_EVENTS',
   );
 });
