@@ -230,11 +230,8 @@ export function buildRefinementGraphContext(
 // This must never regress — heuristics-only fallback is the baseline behavior.
 export function buildTierClassificationSection(graphResult?: { available: boolean }): string {
   if (!graphResult || !graphResult.available) {
-    // Heuristics-only fallback — behavior unchanged from pre-PGI-8 baseline.
     return TICKET_COMPLEXITY_PROMPT_SECTION;
   }
-  // Graph is available — augment heuristics with a fan-out advisory so analysts
-  // can use structural evidence when assigning complexity_tier.
   return `${TICKET_COMPLEXITY_PROMPT_SECTION}
 **Graph advisory (structural data available):** When sizing a ticket, factor in symbol fan-out from the GRAPH CONTEXT section above. A ticket touching a symbol with many upstream callers (HIGH or CRITICAL risk) should lean toward \`large\`; a symbol with zero callers can lean toward \`small\` or \`trivial\`.`;
 }
