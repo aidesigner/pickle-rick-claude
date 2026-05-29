@@ -1254,7 +1254,7 @@ async function executeCitadelPhase(runtime) {
     const result = await runCitadelAudit({
         prdPath: state.prd_path,
         diffRange: `${state.start_commit}..HEAD`,
-        repoRoot: runtime.workingDir,
+        repoRoot: runtime.repoRoot,
         sessionDir: runtime.sessionDir,
         reportPath,
         strict: runtime.config.citadel_strict,
@@ -1288,6 +1288,7 @@ function findingMeetsThreshold(finding, threshold) {
 }
 const MICROVERSE_FATAL_REASON_SET = new Set(MICROVERSE_FATAL_REASONS);
 const GIT_PHASE_COMMIT_COUNT_TIMEOUT_MS = 10_000;
+const GIT_REPO_ROOT_TIMEOUT_MS = 5_000;
 function countCommitsSince(startCommit, workingDir) {
     const output = execFileSync('git', ['rev-list', '--count', `${startCommit}..HEAD`], {
         cwd: workingDir,
@@ -1680,6 +1681,16 @@ function loadPipelineRuntime(sessionDir, opts, log) {
     const { backend, phaseEnv } = resolvePipelineBackend(statePath, state, config, sessionDir, log);
     assertCleanWorkingTree(workingDir, config.ignore_dirty_paths);
     setupRuntimeScope(sessionDir, workingDir, config.target || workingDir, opts, pipelineRaw, log);
+    let repoRoot = workingDir;
+    try {
+        const out = execFileSync('git', ['-C', workingDir, 'rev-parse', '--show-toplevel'], {
+            encoding: 'utf-8',
+            timeout: GIT_REPO_ROOT_TIMEOUT_MS,
+        }).trim();
+        if (out)
+            repoRoot = out;
+    }
+    catch { /* non-git dir — fall back to workingDir */ }
     return {
         sessionDir,
         extensionRoot,
@@ -1687,6 +1698,7 @@ function loadPipelineRuntime(sessionDir, opts, log) {
         config,
         target: config.target || workingDir,
         workingDir,
+        repoRoot,
         backend,
         phaseEnv,
         log,
