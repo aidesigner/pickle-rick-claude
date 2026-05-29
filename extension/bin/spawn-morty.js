@@ -399,13 +399,7 @@ function hasGitNexusIndex(repoRoot) {
         return false;
     }
 }
-/**
- * R-PGI-6: inline JSON config for `claude --mcp-config` that wires the
- * gitnexus MCP server into the worker session. Claude workers with a
- * `.gitnexus/` index can then use query()/context()/impact()/cypher() tools.
- * Codex workers receive only the analyze-refreshed text context injected by
- * buildWorkerPrompt and do not support --mcp-config.
- */
+// R-PGI-6: gitnexus MCP config for claude --mcp-config; codex workers use text context only.
 export function buildGitNexusMcpConfig() {
     return JSON.stringify({
         mcpServers: {
@@ -1294,7 +1288,6 @@ function evaluateWorkerOutcome(params) {
 }
 export async function runWorkerProcess(ctx) {
     const { args, ticketPath, ticketId, sessionRoot, sessionLog, sessionLogPath, sessionWorkingDir } = ctx;
-    // R-PGI-6: wire gitnexus MCP server for claude workers when index is present.
     const gitnexusMcpConfig = args.backend === 'claude' && hasGitNexusIndex(sessionWorkingDir)
         ? buildGitNexusMcpConfig()
         : undefined;
