@@ -7,8 +7,8 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.83.0** — 2026-05-29 (R-PGI feature epic shipped; deployed + tagged) |
-| Latest GitHub release | v1.83.0 — 2026-05-29 (v1.81.1/v1.82.0/v1.82.1/v1.83.0 all tagged via babysitter finalization) |
+| Version (source/deployed) | **v1.84.0** — 2026-05-29 (R-PIAP feature epic shipped; deployed + tagged) |
+| Latest GitHub release | v1.84.0 — 2026-05-29 (v1.81.1..v1.84.0 all tagged via babysitter finalization; R-PGI+R-PIAP feature epics shipped) |
 | Active pipeline | R-PIAP (launching) |
 | Codex backend | `gpt-5.4` |
 
@@ -19,7 +19,7 @@
 2. ~~**B-AFCC-DEEP**~~ — **SHIPPED v1.82.0** (2026-05-29). 12/12 tickets landed in session `pickle-a9e25752` (commits `ab432842`..`0e64a705`). Closer ran full release gate green + bumped to v1.82.0 + masked-failure remediation. PRD `p1-bug-fix-bundle-b-afcc-deep-autofill-done-flip-cluster-2026-05-28.md`. Bundle eliminated the 30-day autofill / Done-flip cluster: created `TicketCompletionEvidence` module with 5 entry points (5 callsites migrated), collapsed `auto-fill-completion-commit` + `inspectPhantomDoneTicketFile` + `correctPhantomDoneTickets` into thin shims, pushed `git cat-file -e` reachability into `hasCompletionCommit`, pinned 3 new trap doors + R-AFCC-DEEP-CONSOLIDATED master pin, added 8-path characterization suite + R-CLOSER-ADJACENCY-AUDIT 6-step template.
 3. ~~**B-CWRR**~~ — **SHIPPED v1.82.1** (2026-05-29). Citadel monorepo workingDir doubling (#88) closed in session `2026-05-29-58a9de87` (commits `cd139d23`..`10b787c9`). F3 fix: `PipelineRuntime.repoRoot` distinct from `workingDir`, computed once via `git rev-parse --show-toplevel` (fallback to `workingDir` on non-repo); `executeCitadelPhase` repointed; 5 toplevel-intent call sites converted + remaining `workingDir` uses annotated; Class C pipeline-status fatal-exit counter accuracy; regression spec `citadel-reporoot-monorepo.test.js`. Closer `10b787c9` (full release gate green + PATCH bump). PRD `p1-bug-fix-bundle-b-cwrr-citadel-workingdir-as-reporoot-2026-05-29.md`.
 4. **R-CSI Phase 1** forensics (operator-gated, B-CSI awaiting next sibling-session incident).
-5. Feature epics: ~~**R-PGI**~~ **SHIPPED v1.83.0** (2026-05-29, session `pickle-53ace8c2`, 5 tickets commits `cd139d23`..`0f60b485` + bump; full release gate green, test:fast c=8 flakes confirmed isolation-clean at c=1; babysitter also fixed  false-positive `8af9aa07`). **NEXT → R-PIAP** (`p2-proportional-intent-aware-pipeline-2026-05-21.md`), then R-DC. R-DC `/death-crystal` stands on its own merit (B-AFCC-DEEP shipped without its Phase-4 dep).
+5. Feature epics: ~~**R-PGI**~~ **SHIPPED v1.83.0** (2026-05-29, session `pickle-53ace8c2`, 5 tickets commits `cd139d23`..`0f60b485` + bump; full release gate green, test:fast c=8 flakes confirmed isolation-clean at c=1; babysitter also fixed  false-positive `8af9aa07`). ~~**R-PIAP**~~ **SHIPPED v1.84.0** (session `pickle-88a98a05`, 11 tickets, full gate green; test:fast c=8 flakes confirmed isolation-clean at c=1). **NEXT → R-DC** (`p2-death-crystal-architectural-deepening-skill-2026-05-28.md`, launched session pickle-a29d8404). R-DC `/death-crystal` stands on its own merit (B-AFCC-DEEP shipped without its Phase-4 dep).
 
 Promotions explained inline in Open Findings tables.
 
