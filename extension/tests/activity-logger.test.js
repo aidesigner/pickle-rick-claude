@@ -148,6 +148,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'install_sh_parity_check',
         'worker_backend_resolved',
         'tier_phase_skipped',
+        'tier_diff_envelope_exceeded',
         'between_ticket_gate_timeout',
         'mux_runner_stall_detected',
         'worker_gate_failed',

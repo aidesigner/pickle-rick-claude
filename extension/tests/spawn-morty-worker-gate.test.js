@@ -623,8 +623,13 @@ test('spawn-morty: small-tier success skips npm test gate and records tier_phase
 
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     const state = readState(sessionRoot);
-    const skippedEvent = state.activity.find((entry) => entry.event === 'tier_phase_skipped');
-    assert.ok(skippedEvent, `missing tier_phase_skipped in ${JSON.stringify(state.activity)}`);
+    // R-PIAP-A2 added a second tier_phase_skipped emission for lifecycle-pruned
+    // phases; this test asserts the worker-gate skip, so select that event by its
+    // skipped_phases payload rather than the first tier_phase_skipped entry.
+    const skippedEvent = state.activity.find(
+      (entry) => entry.event === 'tier_phase_skipped' && Array.isArray(entry.skipped_phases) && entry.skipped_phases.includes('test:fast'),
+    );
+    assert.ok(skippedEvent, `missing test:fast tier_phase_skipped in ${JSON.stringify(state.activity)}`);
     assert.equal(skippedEvent.ticket_id, ticketId);
     assert.equal(skippedEvent.tier, 'small');
     assert.deepEqual(skippedEvent.skipped_phases, ['test:fast']);
