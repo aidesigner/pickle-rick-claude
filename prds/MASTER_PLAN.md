@@ -7,8 +7,8 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.85.0** — 2026-05-30 |
-| Latest GitHub release | v1.85.0 (v1.81.1..v1.85.0 all tagged) |
+| Version (source/deployed) | **v1.86.0** — 2026-05-30 |
+| Latest GitHub release | v1.86.0 (v1.81.1..v1.86.0 all tagged) |
 | Active pipeline | none |
 | Codex backend | `gpt-5.4` |
 
@@ -24,19 +24,18 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 
 | # | Bundle | Pri | Open findings | PRD / source | Size |
 |---|--------|-----|---------------|--------------|------|
-| 1 | **B-WSWA** | P1 | #74 R-WSWA + #33 R-WMW | **IN-FLIGHT 2026-05-30** — `prds/p1-bug-fix-bundle-b-wswa-schema-safe-rwmw-2026-05-30.md` (schema-safe re-land of R-WMW; LATEST_SCHEMA_VERSION 4→5 via `_internalSchemaBump`; MINOR → v1.86.0). Owns #33 per drain-queue overlap rule. | ~7 |
-| 2 | **B-PTSB** | P1 | #75 R-PTSB | author from finding #75 — phantom-session root-cause + auto-cleanup heuristic | ~2 |
-| 3 | **B-CMWL** | P1 | #86 R-CMWL | `prds/BUG-REPORT-2026-05-27-codex-manager-fixed-wall-pickle-stall.md` | ~4 |
-| 4 | **B-PNTR** | P1 | #77 R-PNTR-DEPS | `prds/p2-remove-non-tmux-pickle-loop.md` (RE-SCOPED 2026-05-30: extract manager template to `_pickle-manager-prompt.md`, then remove bare `/pickle`; schema-neutral). Refinement recommended pre-launch. | ~9 |
-| 5 | **B-R-MMTR** + **B-E2E** | P1+P3 | #28 R-ICDM, #19 R-MMTR | author — R-ICDM-2..7 audit + R-MMTRH heal + R-MMTR-7 closer; B-E2E re-attempts force-skipped R-MMTR-6 after | ~6 |
-| 6 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | author — verify-command host-tool check (#39) + zsh shell-glob safety (#40) | ~4+4 |
-| 7 | **B-PPCD** | P2 | #85 R-PPCD | author — doc-only: citadel phase list in `pickle-pipeline.md` + `persona.md` (verified still drifted 2026-05-30) | ~1-2 |
-| 8 | **B-ACSG** | P2 | #84 R-ACSG | `prds/BUG-REPORT-2026-05-27-refine-prd-ac-shape-gate-oscillation.md` (4 hypotheses — narrow=matcher, wide=convergence arch) | ~3-8 |
-| 9 | **B-WEDGE** | P2 | #30 R-RSU | R-RSU refinement over-collapse (#33 R-WMW moved to B-WSWA row 1 per overlap rule; absorbs B-QSRC R-RSU residual; R-QGSK already shipped) | ~3 |
-| 10 | **B-MONITOR** | P3 | #29 R-MWCL | author — monitor `inferMonitorMode` szechuan/anatomy fall-through (#27 R-MMRT already closed v1.80.1) | ~4 |
-| 11 | **B-LSOF** | P3 | #37e R-PIWG-5 | author — `lsof` launch-time concurrent-git-access probe | ~2-3 |
-| 12 | **R-PSAI** | P3 | #12 | `prds/p2-pickle-pipeline-no-scope-auto-inference.md` (UX friction; lowest) | ~2 |
-| 13 | **B-DWF** | P2 | (feature — no bug finding) | `prds/p2-dynamic-workflow-conversion-refine-prd-council.md` (convert `/pickle-refine-prd` + `/council-of-ricks` fan-out cores to Claude Code dynamic workflows; **researched + refined 2026-05-30**, no refinement needed). Feature → drains after the bug bundles. **Gated:** slot after B-PNTR (row 4 — verify the shared `mux-runner` call site, PRD Risk 9) AND after B-ACSG (row 8 — reconcile the `ac_shape_smells` parse-path logic collision, PRD Risk 7). **R-DWF-1 is a hard spike gate** (headless allowlist + batch-throughput probes); a FAIL shelves the bundle. Schema-neutral. | ~6 |
+| 1 | **B-PTSB** | P1 | #75 R-PTSB | author from finding #75 — phantom-session root-cause + auto-cleanup heuristic | ~2 |
+| 2 | **B-CMWL** | P1 | #86 R-CMWL | `prds/BUG-REPORT-2026-05-27-codex-manager-fixed-wall-pickle-stall.md` | ~4 |
+| 3 | **B-PNTR** | P1 | #77 R-PNTR-DEPS | `prds/p2-remove-non-tmux-pickle-loop.md` (RE-SCOPED 2026-05-30: extract manager template to `_pickle-manager-prompt.md`, then remove bare `/pickle`; schema-neutral). Refinement recommended pre-launch. | ~9 |
+| 4 | **B-R-MMTR** + **B-E2E** | P1+P3 | #28 R-ICDM, #19 R-MMTR | author — R-ICDM-2..7 audit + R-MMTRH heal + R-MMTR-7 closer; B-E2E re-attempts force-skipped R-MMTR-6 after | ~6 |
+| 5 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | author — verify-command host-tool check (#39) + zsh shell-glob safety (#40) | ~4+4 |
+| 6 | **B-PPCD** | P2 | #85 R-PPCD | author — doc-only: citadel phase list in `pickle-pipeline.md` + `persona.md` (verified still drifted 2026-05-30) | ~1-2 |
+| 7 | **B-ACSG** | P2 | #84 R-ACSG | `prds/BUG-REPORT-2026-05-27-refine-prd-ac-shape-gate-oscillation.md` (4 hypotheses — narrow=matcher, wide=convergence arch) | ~3-8 |
+| 8 | **B-WEDGE** | P2 | #30 R-RSU | R-RSU refinement over-collapse (#33 R-WMW shipped with B-WSWA v1.86.0 per overlap rule; absorbs B-QSRC R-RSU residual; R-QGSK already shipped) | ~3 |
+| 9 | **B-MONITOR** | P3 | #29 R-MWCL | author — monitor `inferMonitorMode` szechuan/anatomy fall-through (#27 R-MMRT already closed v1.80.1) | ~4 |
+| 10 | **B-LSOF** | P3 | #37e R-PIWG-5 | author — `lsof` launch-time concurrent-git-access probe | ~2-3 |
+| 11 | **R-PSAI** | P3 | #12 | `prds/p2-pickle-pipeline-no-scope-auto-inference.md` (UX friction; lowest) | ~2 |
+| 12 | **B-DWF** | P2 | (feature — no bug finding) | `prds/p2-dynamic-workflow-conversion-refine-prd-council.md` (convert `/pickle-refine-prd` + `/council-of-ricks` fan-out cores to Claude Code dynamic workflows; **researched + refined 2026-05-30**, no refinement needed). Feature → drains after the bug bundles. **Gated:** slot after B-PNTR (row 3 — verify the shared `mux-runner` call site, PRD Risk 9) AND after B-ACSG (row 7 — reconcile the `ac_shape_smells` parse-path logic collision, PRD Risk 7). **R-DWF-1 is a hard spike gate** (headless allowlist + batch-throughput probes); a FAIL shelves the bundle. Schema-neutral. | ~6 |
 | 14 | **B-DSEK** | P3 | (feature — no bug finding) | `prds/deepseek-integration.md` (add `'deepseek'` as a third backend — ride the `claude` CLI via DeepSeek's Anthropic-compat shim with honest `'deepseek'` identity in state/logs/metrics/jar; Shape A). Draft complete (checklist ✓); pricing figures removed (intentionally rate-free — Pickle does not track $/token). Refinement recommended pre-launch. Feature → drains after the bug bundles + B-DWF. | ~4 |
 
 **Watch-only — NOT in the drain (out of scope until their gate clears):**
@@ -55,7 +54,6 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 |---|---|---|---|
 | 25 | R-CSI | Concurrent claude-session destructive-command interference (3 SIGINT incidents/36h) — DATA LOSS class | `p1-concurrent-claude-session-interference-with-running-pipelines.md`. **Watch-only — external-event-gated:** Phase 1 forensics need a real incident to analyze. Skipped by the drain; surfaces on the next incident. |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
-| 74 | R-WSWA | Schema-version-bump bundle (`worker_artifact_progress`, LATEST_SCHEMA_VERSION 4→5) cannot self-deploy mid-run — the running mux-runner reads the v5 state with the old binary and trips R-WSRC-2 `state_schema_version_ahead`. **Babysitter-drainable:** author/launch as a normal bundle from a clean no-active-pipeline state — the fresh runner loads v5, so the mid-run restart caveat does not apply; the bump happens inside the bundle via the schema-migration ticket + `_internalSchemaBump` (per `extension/CLAUDE.md`). Sized ~3 (EVENT_NAMES + VALID_ACTIVITY_EVENTS drift fixes + R-WSWA event payload enrichment per original AC). **B-WSWA.** |
 | 75 | R-PTSB | Phantom teams-base "default-off" sessions recur (`original_prompt: "default-off"/"teams-base"/"effort-medium-test"` + `tmux_mode:false` + `iteration:0` + `history:[]`). Block `install.sh` until cancelled. Hypothesis: teams-mode worker subagent init writes a placeholder session via `setup.js` without spawning tmux. Babysitter band-aids by demoting each tick (see `prds/babysitter.md` step 1) — this finding is the real root-cause fix. Sized ~2 (root-cause + auto-cleanup). **B-PTSB.** |
 | 77 | R-PNTR-DEPS | B-PNTR R-PNTR-1 (`d586b545`) wrongly deleted load-bearing `.claude/commands/pickle.md` (read every tmux iteration by mux-runner/pipeline-runner/jar-runner as the manager-prompt template) → `[FATAL] pickle.md not found`. Restored `40f22573`. **RE-SCOPED 2026-05-30** (operator-confirmed): `pickle.md` is dual-purpose (bare-`/pickle` command + manager template). The bundle now **extracts** the manager-lifecycle body to `_pickle-manager-prompt.md` (infra template via the dormant `extensionRoot/templates/` resolver), repoints 3 consumers + the `command_template` default, adds a schema-neutral resume remap, then removes bare `/pickle`. Schema-neutral (dodges #74). PRD updated `prds/p2-remove-non-tmux-pickle-loop.md`, ~9 tickets, refinement recommended. **B-PNTR.** |
 | 86 | R-CMWL | Codex manager exits pickle at a fixed ~60-min wall; `pipeline-runner` treats clean-but-incomplete pickle as fatal (`phase_incomplete_tickets`), stranding the bundle (a 40-ticket bundle needs ~13 relaunches). `--max-time 0` does not lift the 60-min wall. claude backend relaunches at its 400-turn boundary (R-MMTR-3); codex path misclassifies the exit or is overridden by pipeline-runner's incomplete-fatal verdict. Want: turn/progress-based relaunch + stop treating progressing-but-incomplete pickle as fatal + no-progress guard + commit interrupted-ticket work before relaunch (else trips `assertCleanWorkingTree`). `BUG-REPORT-2026-05-27-codex-manager-fixed-wall-pickle-stall.md`. Sized ~4. **B-CMWL.** |
@@ -65,7 +63,6 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 | # | Code | Summary | Notes |
 |---|---|---|---|
 | 30 | R-RSU | refinement collapses `composes:` bundle PRDs to N section-umbrellas | R-RSU-1..5; B2-RSU residuals. **B-WEDGE.** (Possibly shares a matcher with #84 — inverse: over-collapse vs under-acceptance.) |
-| 33 | R-WMW | manager wedges on oversized ticket; spawns worker, no artifact progress | `p2-worker-manager-wedge-oversized-ticket-no-artifact-progress.md`. **Owned by B-WSWA** (row 1) — the fix introduces the `worker_artifact_progress` schema field, so it lands with the 4→5 migration. |
 | 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check → silent worker failures | PRD not drafted (~4). **B-GATE.** |
 | 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4). **B-GATE.** |
 | 84 | R-ACSG | AC-shape collapse-or-justify gate oscillates, false-rejects properly-consolidated analyst tickets (smell count 2→9 across 3 attempts, no monotonicity; ~9 worker quotas burned in one incident). Workarounds: table-driven PRD reshape or `--no-refine`. 4 root-cause hypotheses in PRD as a decision tree (H1 matcher-too-literal, H2 cycle-3 oscillation, H3 PRD/ticket conflation, H4 convergence-cost). `prds/BUG-REPORT-2026-05-27-refine-prd-ac-shape-gate-oscillation.md`. Sized ~3-8. **B-ACSG.** |
@@ -85,11 +82,11 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 ## Feature Epics
 
 **Shipped:** R-PGI v1.83.0 · R-PIAP v1.84.0 · R-DC v1.85.0. PRDs retained in `prds/`.
-**Queued:** B-DWF (R-DWF) — dynamic-workflow conversion of the refine-prd + council fan-out cores; researched + refined; drain row 13, gated after B-PNTR + B-ACSG. `prds/p2-dynamic-workflow-conversion-refine-prd-council.md`.
+**Queued:** B-DWF (R-DWF) — dynamic-workflow conversion of the refine-prd + council fan-out cores; researched + refined; drain row 12, gated after B-PNTR + B-ACSG. `prds/p2-dynamic-workflow-conversion-refine-prd-council.md`.
 
 ### Deferred future epics (not in drain scope until activated)
 
-- **Integrations:** `hermes-integration.md` (P2 ready) — (`deepseek-integration.md` promoted to drain row 14 / **B-DSEK** on 2026-05-30; `openrouter-multi-provider-workers.md` deleted 2026-05-30 — text-only workers with no tool use are useless to the lifecycle without a tool proxy)
+- **Integrations:** `hermes-integration.md` (P2 ready) — (`deepseek-integration.md` promoted to drain row 13 / **B-DSEK** on 2026-05-30; `openrouter-multi-provider-workers.md` deleted 2026-05-30 — text-only workers with no tool use are useless to the lifecycle without a tool proxy)
 - **Refactor:** `god-functions-remediation-phase-2.md` (27 carve-outs)
 - **Methodology PRDs:** `portal-gun.md`, `pickle-debate.md`, `pickle-microverse.md`
 - **Design docs (no ship target):** `citadel.md`, `pickle-dot-codegen-builder.md`, `council-of-ricks-catalog-mode-and-publish-fixes.md`, `plumbus-generative-audit-frames.md`, `pickle-agent-teams.md`, `smart-iteration-handoff.md`, `tool-error-retry-tracking.md`

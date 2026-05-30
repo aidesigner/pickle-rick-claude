@@ -11,6 +11,14 @@ Live `MASTER_PLAN.md` keeps only operational state. Browse here for full forensi
 
 These findings were CLOSED before 2026-05-09 and were occupying ~10K bytes in the live file as struck-through entries. Full original text preserved below in case the closing rationale needs to be re-read.
 
+### #74 (CLOSED by B-WSWA bundle — v1.86.0, 2026-05-30) — Schema-version-bump bundle cannot self-deploy mid-run
+
+Schema-version-bump bundle (`worker_artifact_progress`, LATEST_SCHEMA_VERSION 4→5) could not self-deploy mid-run — a running mux-runner reads the v5 state with the old binary and trips R-WSRC-2 `state_schema_version_ahead`. Resolved by draining B-WSWA as a normal bundle from a clean no-active-pipeline state: the schema bump lands inside the bundle via the schema-migration ticket (R-WSWA-1) + `_internalSchemaBump`, and the closer deploys at close so the fresh runner loads v5. R-WSWA-4 fixed the EVENT_NAMES + VALID_ACTIVITY_EVENTS drift and enriched the `worker_artifact_progress` / `worker_auto_skip_oversized` event payloads. Source PRD: `prds/p1-bug-fix-bundle-b-wswa-schema-safe-rwmw-2026-05-30.md`.
+
+### #33 (CLOSED by B-WSWA bundle — v1.86.0, 2026-05-30) — Manager wedges on oversized ticket; spawns worker, no artifact progress
+
+Manager wedged on an oversized ticket — repeatedly spawning a worker that made no artifact progress. Fixed schema-safely under B-WSWA: R-WSWA-2 persists `worker_artifact_progress` (the new schema field landed with the 4→5 migration) and emits K=3 zero-delta observability; R-WSWA-3 auto-skips the oversized ticket at K=5 zero-progress spawns; R-WSWA-5 locks the behavior with an end-to-end oversized-wedge regression test; R-WSWA-6 pins the trap door. Owned by B-WSWA per the drain-queue overlap rule. Source PRD: `prds/p2-worker-manager-wedge-oversized-ticket-no-artifact-progress.md`.
+
 ### #1 (CLOSED by 2026-05-07-deferred-slots Slot G — R-CCPL-1..6) — MANAGER_PERSISTENT_HALLUCINATION root cause unaddressed
 
 `extractAssistantContent` + `classifyCompletion` now distinguish prompt content from model response in codex plain-text logs (block-delimiter-driven detection); worker template substring-broken tokens prevent the prompt-leak class. Trap-door pinned in `extension/CLAUDE.md` (R-CCPL-4 / classifier). Source PRD: `prds/codex-classifier-prompt-leak.md`.
