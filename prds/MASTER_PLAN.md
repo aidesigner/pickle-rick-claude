@@ -76,6 +76,7 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 | 19 | R-MMTR | claude manager max-turns family closeout pending | R-MMTR-1/5 shipped; 2/3/4 Skipped+commit; 6 force-skipped; 7 closer pending. **B-R-MMTR / B-E2E.** |
 | 29 | R-MWCL | monitor `inferMonitorMode` falls through to `'pickle'` for szechuan/anatomy | R-MWCL-1 shipped; 3..7 residual. **B-MONITOR** (#27 R-MMRT half already closed v1.80.1). |
 | 37e | R-PIWG-5 | git-isolation residual: `lsof` launch-time concurrent-access probe | **B-LSOF** (~2-3). |
+| 87 | R-LASP | Deployed `bin/log-activity.js:36` resolves the activity schema via `new URL('../src/types/activity-events.schema.json', import.meta.url)` → `~/.claude/pickle-rick/extension/src/types/…` which `install.sh` does NOT create; the schema is deployed to `extension/` root (`~/.claude/pickle-rick/extension/activity-events.schema.json`). Result: `log-activity.js` CLI logs `Failed to load activity schema: ENOENT` and degrades (fail-open, validation skipped). **Regression surfaced after v1.86.0 install (2026-05-30)** — worked earlier same session. Fix: align `log-activity.js` (TS source) schema resolution with `install.sh`'s deploy target (read from `extension/` root, with a `src/types/` fallback for the in-repo case), + a deploy-parity test. P3 (tooling, fail-open; pipelines unaffected — runtime logging uses compiled `state-manager.js`). Author bundle **B-LASP** (~2). |
 
 ---
 
