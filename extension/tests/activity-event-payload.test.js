@@ -712,6 +712,36 @@ const EVENT_CASES = [
     },
     drop: 'ticket_id',
   },
+  {
+    type: 'worker_artifact_progress_zero',
+    valid: {
+      event: 'worker_artifact_progress_zero',
+      ts: TS,
+      ticket: 'abc12345',
+      gate_payload: {
+        spawn_count: 3,
+        last_artifact_count: 2,
+        zero_progress_count: 3,
+        observe_k: 3,
+      },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    type: 'worker_auto_skip_oversized',
+    valid: {
+      event: 'worker_auto_skip_oversized',
+      ts: TS,
+      ticket: 'abc12345',
+      gate_payload: {
+        spawn_count: 5,
+        zero_progress_count: 5,
+        skip_k: 5,
+        failure_reason: 'oversized_no_progress',
+      },
+    },
+    drop: 'gate_payload',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {

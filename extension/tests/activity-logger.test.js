@@ -217,6 +217,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'graph_preflight_completed',
         'graph_preflight_degraded',
         'worker_artifact_progress_zero',
+        'worker_auto_skip_oversized',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
