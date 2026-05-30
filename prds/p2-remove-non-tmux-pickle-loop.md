@@ -1,223 +1,120 @@
 ---
-title: P2 — Remove the bare `/pickle` non-tmux build loop; consolidate on `/pickle-tmux` / `/pickle-zellij` / `/pickle-pipeline`; keep `/pickle-refine-prd`
-status: Queued (P2)
+title: P2 — Remove the bare `/pickle` non-tmux build loop; extract its load-bearing manager-prompt template; consolidate on `/pickle-tmux` / `/pickle-zellij` / `/pickle-pipeline`; keep `/pickle-refine-prd`
+status: Queued (P1 drain row 4 per Finding #77)
 filed: 2026-05-18
+rescoped: 2026-05-30
 priority: P2
 type: deprecation-removal
 code: R-PNTR
 bundle: B-PNTR
 related:
-  - prds/p1-szechuan-sauce-judge-etimedout-baseline-measurement.md  # B-SJET-2 (Finding #47) — the bare /pickle in-session loop's stop-hook noise surfaced the issue during B-SJET-2 babysitter run
-  - .claude/commands/pickle.md  # the surface to remove
-  - .claude/commands/pickle-tmux.md  # the survivor (multi-iteration build loop with true context isolation)
-  - .claude/commands/pickle-zellij.md  # parallel Zellij variant — survives
-  - .claude/commands/pickle-pipeline.md  # parent orchestrator — survives (already pickle-tmux internally)
-  - .claude/commands/pickle-refine-prd.md  # refinement — EXPLICITLY KEPT
+  - .claude/commands/pickle.md            # DUAL-PURPOSE: bare /pickle command surface (REMOVE) + manager-prompt template (EXTRACT, do NOT delete blindly)
+  - extension/src/bin/mux-runner.ts        # consumer: command_template default + composeManagerPromptFromSkill
+  - extension/src/bin/pipeline-runner.ts   # consumer: enterPicklePhase hardcodes command_template='pickle.md'
+  - extension/src/bin/jar-runner.ts        # consumer: reads ~/.claude/commands/pickle.md directly
+  - extension/src/services/pickle-utils.ts # composeManagerPromptFromSkill (strips Setup + Step-One)
+  - .claude/commands/pickle-tmux.md        # survivor
+  - .claude/commands/pickle-refine-prd.md  # EXPLICITLY KEPT
 ---
 
-# R-PNTR — Remove the bare `/pickle` non-tmux build loop
+# R-PNTR — Remove bare `/pickle`; extract its manager-prompt template (re-scoped 2026-05-30)
 
-**Author**: operator + pickle-rick autonomous babysitter session, 2026-05-18 PM
-**Project**: pickle-rick-claude
-**Repo**: `/Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude`
+## Why this was re-scoped (Finding #77 — the original premise was fatal)
 
-## Symptom
+The original R-PNTR-1 said **"delete `.claude/commands/pickle.md` (the canonical source)."** A worker did exactly that (`d586b545`) and the next dispatch hit `[FATAL] pickle.md not found in …/templates or …/commands`. `pickle.md` is **two things wearing one name**:
 
-Running `/pickle` (bare, no `-tmux`/`-zellij`/`-pipeline` suffix) launches the pickle build lifecycle INSIDE the parent claude session via in-process `spawn-morty.js` calls (Legacy Mode) or `Agent` harness primitives (Teams Mode). Both modes share the same structural problem: there is no true `/clear` between iterations, the stop-hook fires every turn in the parent session, and long epics degrade as context accumulates.
+1. **The bare `/pickle` slash-command surface** — the in-session build loop (no true `/clear` between iterations, stop-hook spam). *This is the deprecation target.*
+2. **The canonical manager-lifecycle prompt template** read on **every tmux iteration** by the survivors:
+   - `mux-runner.ts:2223`/`:4845` — `state.command_template || 'pickle.md'`, resolved templates-dir-first then `~/.claude/commands/`, fed to `composeManagerPromptFromSkill` (`:2281`).
+   - `pipeline-runner.ts:1014` (`enterPicklePhase`) — **hardcodes** `s.command_template = 'pickle.md'`.
+   - `jar-runner.ts:120`/`:142` — reads `~/.claude/commands/pickle.md` directly.
 
-Operator-observed during the B-SJET-2 babysitter run on 2026-05-18: 100+ consecutive turns of "Pickle Rick Loop Active (Iteration 1 of 100)" stop-hook blocks while waiting for pipeline halt signals. Stop-hook noise is the surface symptom; the root issue is that in-session loops cannot give the parent claude session a clean exit while the runtime considers the loop "active".
+`composeManagerPromptFromSkill` (`pickle-utils.ts:2817`) calls `stripSetupSection` + `stripStepOneBlock` before use — so the runtime already consumes **only the shared manager-lifecycle body**; the stripped Setup/Step-One blocks *are* the interactive-command surface. The body is load-bearing infra; the Setup/Step-One blocks are the thing to remove.
 
-The tmux variants (`/pickle-tmux`, `/pickle-zellij`) do NOT exhibit this — they spawn workers in detached tmux/Zellij panes with hard isolation between iterations, and the parent session can exit cleanly while workers continue.
+**Re-scope verdict (operator-confirmed 2026-05-30):** remove the bare `/pickle` command and its non-tmux execution path, but **extract** the manager-lifecycle body into a dedicated infra template `_pickle-manager-prompt.md` in the `extensionRoot/templates/` dir (the dormant templates-dir-first resolver, "hidden from slash command list"), repoint the three consumers + the `command_template` default, add a **schema-neutral** read-time remap so resumed sessions don't FATAL, then delete `pickle.md`. This eliminates the dual-name footgun permanently so the file can never be re-deleted by mistake.
 
-## Backend-modulated impact
+## Symptom (unchanged)
 
-| Surface | Mode | Stop-hook in parent session? | True `/clear` between iterations? | Recommendation |
-|---|---|---|---|---|
-| `/pickle` (bare, Legacy Mode) | spawn-morty.js inline | YES — blocks every turn until session inactive | NO — context accumulates in parent | REMOVE |
-| `/pickle --teams` (Teams Mode) | Agent harness primitives in parent | YES — same loop | NO — Agent calls reuse parent context | REMOVE (migrate to `/pickle-tmux --teams` per § Migration) |
-| `/pickle-tmux` | Detached tmux session | NO — parent exits clean | YES — each iteration starts a fresh claude subprocess | KEEP |
-| `/pickle-zellij` | Detached Zellij session | NO | YES | KEEP |
-| `/pickle-pipeline` | Wraps `/pickle-tmux` internally | NO | YES | KEEP |
-| `/pickle-refine-prd` | Detached refinement workers (spawn-refinement-team.js) | NO — parent observes manifest write and exits | N/A (single-pass refinement, not iterative) | KEEP — operator explicitly retained |
-| `/pickle-jar-open` | jar-runner.js batch | NO — own runner | YES — batch isolation | KEEP, but rewire prompt source (see § Implementation) |
-| `/pickle-retry` | Retries a single ticket | NO | N/A | KEEP |
-| `/pickle-microverse` | metric convergence | NO | YES (own loop) | KEEP |
+Bare `/pickle` launches the lifecycle INSIDE the parent claude session (in-process `spawn-morty` / `Agent` primitives). No true `/clear` between iterations; the stop-hook fires every parent turn; long epics degrade as context accumulates. Observed 2026-05-18: 100+ consecutive "Pickle Rick Loop Active" stop-hook blocks in one babysitter session. The tmux variants (`/pickle-tmux`, `/pickle-zellij`, `/pickle-pipeline`) spawn detached `claude -p` subprocesses with hard per-iteration isolation and do not exhibit this.
 
-## Root cause
+## Survivors (keep) vs targets (remove)
 
-`/pickle` was the original interactive entrypoint. The codebase evolved to spawn detached tmux runners (`/pickle-tmux`, `/pickle-pipeline`) which structurally avoid the stop-hook contention, but the bare `/pickle` surface remained as a "lightweight single-ticket" affordance. In practice:
-
-- Single-ticket invocations are rare; epics are the dominant case, and epics need tmux isolation.
-- The bare `/pickle` Legacy Mode and Teams Mode both share the parent claude session's context window. Long epics (8+ tickets) bloat context and trigger compression, degrading worker quality silently.
-- The stop-hook (designed to keep the manager loop alive during a tmux run) doubles as a blocker on the parent session, surfacing as 100+ "Pickle Rick Loop Active" reminders when used inline.
-
-Tmux runners run `claude -p <prompt>` as a fresh subprocess per iteration, killing parent-context contamination at every boundary. That's the design intent — `/pickle` undermines it.
-
-## Cost of keeping it
-
-| Metric | Value |
+| Surface | Disposition |
 |---|---|
-| Stop-hook spam observed 2026-05-18 PM | 100+ blocked turns in a single babysitter session |
-| Operator-visible drift (per-iteration context bloat) | not directly measurable; symptom: degraded later iterations |
-| Surface-area maintenance | `.claude/commands/pickle.md` is 236 lines, 2 modes, both bug-prone |
-| Documentation noise | README + every `pickle-*` skill references `/pickle` as fallback |
-| Test surface | `jar-runner.ts:120` hardcodes `~/.claude/commands/pickle.md` as prompt template |
+| `/pickle-tmux`, `/pickle-zellij`, `/pickle-pipeline` | KEEP — detached, true `/clear` per iteration |
+| `/pickle-refine-prd`, `/pickle-jar-open`, `/pickle-retry`, `/pickle-microverse`, `/pickle-status`/`-metrics`/`-standup` | KEEP |
+| **bare `/pickle` command + in-session (non-tmux) execution path** | **REMOVE** |
+| **`/pickle --teams` (in-session Teams Mode)** | **MIGRATE** → `/pickle-tmux --teams` (Teams Mode under tmux; `morty-phase-*` subagents preserved) |
+| **`pickle.md` manager-lifecycle body** | **EXTRACT** → `_pickle-manager-prompt.md` (infra template), then delete `pickle.md` |
 
-## Scope (what this PRD removes)
+## Schema impact
 
-1. **Delete `.claude/commands/pickle.md`** (the canonical source).
-2. **Stop deploying `~/.claude/commands/pickle.md`** (`install.sh` no longer copies it).
-3. **Remove `tmux_mode` opt-out path** in `extension/src/bin/setup.ts:862,1013` so all `setup()` invocations default to tmux. Direct invocation with `--no-tmux` (if present) becomes an explicit hard error.
-4. **Migrate `--teams` mode** into `/pickle-tmux --teams` (Teams Mode under tmux). Phase-personas dispatch and `morty-phase-*` subagents stay available; only the parent-session execution path changes.
-5. **Rewire `jar-runner.ts:120`** to read `~/.claude/commands/pickle-tmux.md` (or a new `pickle-manager-prompt.md` extracted from the shared subset) as its prompt template.
-6. **Update README + every cross-reference** in `.claude/commands/*.md`, `extension/src/bin/*.ts`, `extension/src/services/*.ts`, `docs/*.md`, `prds/*.md`, and `CLAUDE.md` so no live document points at `/pickle` (bare).
-7. **Update tests** that exercise bare-`/pickle` paths to drive `/pickle-tmux` instead, OR delete the test if it was covering only the now-removed surface.
-8. **Tombstone**: emit `pickle_command_deprecated` activity event when any old invocation route is detected; print a one-line migration message and exit.
-
-## Out of scope
-
-- **`/pickle-refine-prd`** — EXPLICITLY KEPT per operator directive 2026-05-18 PM. Refinement is single-pass, runs in detached spawn-refinement-team.js workers, and does NOT have the stop-hook spam problem.
-- **`/pickle-zellij`** — alternative tmux replacement; structurally equivalent; keep.
-- **`/pickle-pipeline`** — wraps `/pickle-tmux`; keep.
-- **`/pickle-jar-open`** — batch queue with own isolation; keep (rewire prompt source).
-- **`/pickle-retry`, `/pickle-microverse`, `/pickle-status`, `/pickle-metrics`, `/pickle-standup`** — utility commands; keep unchanged.
-- **`tmux_mode` field on `state.json`** — keep the field for backward-compatibility on existing session resume, but new sessions always write `tmux_mode: true`.
+**Schema-neutral — no `LATEST_SCHEMA_VERSION` bump (dodges #74 R-WSWA).** `command_template` is an existing `state.json` field; this bundle only changes its default *value* and adds a read-time value remap (`'pickle.md'` → `'_pickle-manager-prompt.md'`). No new field, no version bump, so it self-deploys cleanly from a clean no-active-pipeline state.
 
 ## Atomic ticket scope
 
-### R-PNTR-1 (small, ≤30m) — Delete `.claude/commands/pickle.md`
+### R-PNTR-1 — Extract the manager-lifecycle template (do NOT delete pickle.md yet)
+- Create `templates/_pickle-manager-prompt.md` (forward-created) — the source for `extensionRoot/templates/_pickle-manager-prompt.md`, deployed by the existing `install.sh` `$SCRIPT_DIR/templates/ → $EXTENSION_ROOT/templates/` rsync (install.sh:467-468).
+- Content = the manager-lifecycle body of the current `pickle.md` (the post-`stripSetupSection`/`stripStepOneBlock` content; the Setup + Step-One blocks are intentionally dropped).
+- **Acceptance / trap door (R-PNTR-TEMPLATE-PARITY):** a characterization test asserts `composeManagerPromptFromSkill('_pickle-manager-prompt.md', backend, opts)` produces byte-identical output to `composeManagerPromptFromSkill(<historical pickle.md>, backend, opts)` for both backends — i.e. zero manager-prompt regression.
 
-**Files to modify**:
-- Delete `.claude/commands/pickle.md` (the source file).
-- Update `install.sh` to skip `pickle.md` in the rsync (if present in install logic).
+### R-PNTR-2 — Repoint the three runtime consumers + the default
+- `mux-runner.ts` (`:2223`, `:4845`): default fallback `state.command_template || '_pickle-manager-prompt.md'`.
+- `pipeline-runner.ts:1014` (`enterPicklePhase`): `s.command_template = '_pickle-manager-prompt.md'` (update the surrounding comment block that says "Always overwrite to 'pickle.md'").
+- `jar-runner.ts:120`: resolve via the templates-dir-first path (mirror mux-runner's `extensionRoot/templates` → `~/.claude/commands` resolution) targeting `_pickle-manager-prompt.md`; drop the hardcoded `~/.claude/commands/pickle.md`.
+- `setup.ts` (`config.commandTemplate` default + `:1044` write): default `_pickle-manager-prompt.md`.
+- **Acceptance:** `grep -rn "'pickle\.md'\|commands/pickle\.md" extension/src` returns only the deprecation tombstone (R-PNTR-5) and the legacy-remap branch (R-PNTR-3).
 
-**Acceptance**:
-- `ls .claude/commands/pickle.md` returns nonzero.
-- After `bash install.sh`, `~/.claude/commands/pickle.md` is absent (existing file may remain on old systems; install.sh does NOT remove it — operators delete it manually OR install.sh adds a one-shot `rm -f` for that path).
+### R-PNTR-3 — Schema-neutral resume migration
+- Read-time value remap: any persisted `state.command_template === 'pickle.md'` resolves as `'_pickle-manager-prompt.md'` (so in-flight sessions resumed after deploy don't FATAL). Put it in the same read path the other consumers share (mux-runner templateName resolution, mirrored in jar-runner), or a `state-manager` read normalization — value-only, **no** `LATEST_SCHEMA_VERSION` bump.
+- **Acceptance / trap door (R-PNTR-MIGRATION):** regression test — a `state.json` written with `command_template:'pickle.md'` resolves the new template on read; assert `schema_version` is unchanged (no bump).
 
-### R-PNTR-2 (medium, ≤2h) — Migrate `--teams` mode into `/pickle-tmux --teams`
+### R-PNTR-4 — Remove the bare `/pickle` execution path; migrate `--teams`
+- Remove the in-session (non-tmux) build-loop path in `setup.ts` (the historical `tmux_mode:false` branch — pin current lines, the PRD's old `862/1013` have drifted). Non-tmux invocation becomes an explicit hard error with a migration hint.
+- Add `## Teams Mode (--teams)` to `pickle-tmux.md`; `--teams` now sets `tmux_mode:true` + `teams_mode:true` jointly. Bare `--teams` without tmux rejected with a migration hint. Verify Agent-harness primitives work from the tmux subprocess context.
+- **Acceptance:** `/pickle-tmux --teams` launches Teams Mode in a tmux pane (`morty-phase-*` available); no `/pickle --teams` path remains.
 
-**Files to modify**:
-- `.claude/commands/pickle-tmux.md` — add `## Phase 3.B — Teams Mode (`--teams`)` section copied from `pickle.md:Phase 3.B` (preserve phase-personas dispatch + Agent harness invocation).
-- `extension/src/bin/setup.ts` — `--teams` flag now sets `tmux_mode: true, teams_mode: true` jointly. Bare `--teams` without tmux is rejected with a migration hint.
-- `extension/src/bin/mux-runner.ts` — Teams Mode runs inside tmux pane; verify Agent harness primitives work from tmux subprocess context (they should — Agent calls are HTTP, not parent-session bound).
+### R-PNTR-5 — Delete pickle.md + deprecation tombstone
+- Delete `.claude/commands/pickle.md`; `install.sh` adds/keeps a one-shot `rm -f ~/.claude/commands/pickle.md` (replace the R-PNTR-1-revert guard comment at install.sh:518-519 with the extract-then-delete rationale).
+- `pickle-deprecated.ts` (forward-created) — bare-`/pickle` invocation route prints: `/pickle is removed. Use /pickle-tmux <args> for the build loop, /pickle-refine-prd for refinement, /pickle-pipeline for the full pipeline.` and emits a `pickle_command_deprecated` activity event (register in `VALID_ACTIVITY_EVENTS` per the oneOf 5-touchpoint pattern).
+- **Acceptance:** `git ls-files .claude/commands/pickle.md` empty; old route exits nonzero with the message + event.
 
-**Acceptance**:
-- `/pickle-tmux --teams` launches the Teams Mode lifecycle inside a tmux pane.
-- No `/pickle --teams` invocation path remains.
+### R-PNTR-6 — Cross-reference sweep
+- README, `.claude/commands/*.md` (remove "or use /pickle for interactive mode" fallbacks), `docs/*.md`, `CLAUDE.md`, `persona.md` — migrate bare `/pickle` references to `/pickle-tmux`.
+- **Acceptance (revised — exempts the infra template + tombstone):** the conformance grep for bare `/pickle` and `pickle.md` MUST exclude: `_pickle-manager-prompt.md`, the R-PNTR-3 legacy-remap branch, the R-PNTR-5 tombstone, `pickle-*` subcommands, and `MASTER_PLAN-archive.md`.
 
-### R-PNTR-3 (small, ≤1h) — Rewire `jar-runner.ts` prompt source
+### R-PNTR-7 — Test migration
+- Migrate/remove tests exercising bare `/pickle` or `setup({tmuxMode:false})`.
+- Update `mux-runner.output-stall.spec.ts:43` — it writes `templates/pickle.md`; repoint to `_pickle-manager-prompt.md`.
+- **Acceptance:** `cd extension && npm run test:fast && npm run test:integration` exits 0, no `/pickle removed` skips.
 
-**Files to modify**:
-- `extension/src/bin/jar-runner.ts:120` — replace `~/.claude/commands/pickle.md` reference with `~/.claude/commands/pickle-tmux.md` OR extract the shared lifecycle prompt into `.claude/commands/_pickle-manager-prompt.md` (private include) and have both pickle-tmux.md and jar-runner.ts read it.
-
-**Acceptance**:
-- `/pickle-jar-open` continues to function unchanged from operator perspective.
-- `grep -c "commands/pickle.md" extension/src/bin/jar-runner.ts` = 0.
-
-### R-PNTR-4 (small, ≤1h) — Add deprecation tombstone
-
-**Files to create/modify**:
-- `extension/src/bin/pickle-deprecated.ts` (new) — invocation route that prints:
-  > `/pickle` is removed. Use `/pickle-tmux <args>` for the build loop, `/pickle-refine-prd <args>` for refinement, `/pickle-pipeline <args>` for the full pipeline.
-- Wire the route into any CLI / hook surface that previously dispatched to `pickle.md`.
-- Emit `pickle_command_deprecated` activity event with `gate_payload: { attempted_invocation: <original args>, suggested_replacement: <command> }`.
-
-**Acceptance**:
-- Old invocation paths return a clear migration message + nonzero exit.
-- Activity event emitted on every deprecated-route hit.
-
-### R-PNTR-5 (small, ≤1h) — Update README + cross-references
-
-**Files to modify**:
-- `README.md` — replace `/pickle` references with `/pickle-tmux`.
-- `.claude/commands/*.md` — remove all "or use /pickle for interactive mode" fallback lines (pickle-tmux.md `Step 1` currently says: "Install tmux: `brew install tmux` or `apt install tmux`, or use /pickle for interactive mode." → change to: "Install tmux: `brew install tmux` or `apt install tmux`. tmux is required.").
-- `docs/*.md` — sweep for `/pickle ` (with trailing space, to exclude `pickle-*` matches) and migrate.
-- `extension/src/services/pickle-utils.ts` — any `composeManagerPromptFromSkill` references to `pickle.md`.
-- `CLAUDE.md` (project root + global) — remove "`/pickle` for 1-2 tickets" workflow guidance; replace with: tmux always.
-
-**Acceptance**:
-- `grep -rn "\\b/pickle\\b" .claude/ docs/ prds/ extension/src/ README.md CLAUDE.md | grep -v "pickle-\\|pickle\\." | wc -l` = 0 (only `pickle-*` subcommand matches remain).
-
-### R-PNTR-6 (small, ≤1h) — Test migration
-
-**Files to modify**:
-- Any test under `extension/tests/` that invokes bare `/pickle` directly or via `setup({ tmuxMode: false })` — migrate to `tmuxMode: true` OR delete the test if it was covering the now-removed surface.
-
-**Acceptance**:
-- `cd extension && npm run test:fast && npm run test:integration` exits 0 with no skipped tests citing `/pickle removed`.
-
-## Hardening tickets (2)
-
-### T-HARDEN-PNTR-DOCS (small, ≤30m) — Documentation sweep
-
-- `prds/MASTER_PLAN.md` — update any historical mention of `/pickle` as recommended path.
-- `prds/MASTER_PLAN-archive.md` — leave historical narrative untouched (archive is read-only).
-- `.claude/skills/*` if any pickle-related skills exist outside `commands/`.
-
-### T-HARDEN-PNTR-CONFORMANCE (small, ≤30m) — Bundle conformance
-
-- Verify `grep -rn "\.claude/commands/pickle\.md\|/pickle\\b"` returns zero hits across live source/docs.
-- Confirm `install.sh` does not regress and re-deploy `pickle.md` on next run.
-- Run full release-gate audit (per `extension/CLAUDE.md`).
+## Hardening (2)
+- **T-HARDEN-PNTR-DOCS** — sweep `prds/MASTER_PLAN.md` (drain-queue row + Finding #77) and any pickle skills outside `commands/`; leave `MASTER_PLAN-archive.md` untouched.
+- **T-HARDEN-PNTR-CONFORMANCE** — full release-gate audit; confirm `install.sh` deploys `templates/_pickle-manager-prompt.md` and does NOT regress-redeploy `pickle.md`; the R-PNTR-6 exemption grep is the conformance assertion.
 
 ## Closer (1)
-
-### C-PNTR-CLOSER [manager] (small, ≤30m) — Bundle ship
-
-- Bump version patch +1.
-- Rebuild compiled JS.
-- `bash install.sh` — confirm `~/.claude/commands/pickle.md` deletion (one-shot `rm -f` in install.sh if added by R-PNTR-1).
-- Full release-gate audit.
-- Commit + push.
-- Update `prds/MASTER_PLAN.md` (move B-PNTR from Active Queue → Shipped).
-- `gh release create` with notes summarizing the removal + migration guide.
+- **C-PNTR-CLOSER [manager]** — version PATCH bump, rebuild JS, `bash install.sh` (confirm `pickle.md` removed + `templates/_pickle-manager-prompt.md` present), full release gate, commit, push, `gh release create` (notes: removal + migration guide + the extract rationale), move B-PNTR → Shipped in `prds/MASTER_PLAN.md` and close Finding #77.
 
 ## Acceptance criteria
 
 | ID | Criterion | Evidence | Owner |
 |---|---|---|---|
-| AC-PNTR-01 | `.claude/commands/pickle.md` deleted from source repo. | `git ls-files .claude/commands/pickle.md` empty after bundle. | R-PNTR-1 |
-| AC-PNTR-02 | `/pickle-tmux --teams` launches Teams Mode inside tmux; `morty-phase-*` subagents still available. | Integration test launches `/pickle-tmux --teams` against a 3-ticket fixture; asserts tmux pane started + Teams Mode active. | R-PNTR-2 |
-| AC-PNTR-03 | `/pickle-jar-open` functional with new prompt source; no reference to `pickle.md` in `jar-runner.ts`. | Grep + integration test against a 2-task jar fixture. | R-PNTR-3 |
-| AC-PNTR-04 | Old `/pickle` invocation route prints migration message + emits `pickle_command_deprecated` activity event. | Unit + integration test. | R-PNTR-4 |
-| AC-PNTR-05 | No live document references bare `/pickle` (only `pickle-*` subcommands remain). | Grep assertion across `.claude/`, `docs/`, `prds/` (excluding archive), `extension/src/`, `README.md`, `CLAUDE.md`. | R-PNTR-5 |
-| AC-PNTR-06 | Test suite exits 0 with no `/pickle removed` skipped tests. | `cd extension && npm run test:fast && npm run test:integration`. | R-PNTR-6 |
-| AC-PNTR-07 | Bundle ship: version bumped, install.sh idempotent, gh release published. | git log + gh release view. | C-PNTR-CLOSER |
-
-## Out of scope (explicit)
-
-- Renaming `/pickle-tmux` to `/pickle` for ergonomics — separate UX decision; this PRD only removes the dual-surface confusion.
-- Removing `tmux_mode` field from `state.json` schema — leave for backward compat; new sessions always write `true`.
-- Killing `--teams` mode entirely — Teams Mode survives under tmux per R-PNTR-2.
-- Adding a Zellij variant of Teams Mode — separate PRD if requested.
-- `/pickle-refine-prd` — explicitly KEPT.
+| AC-PNTR-01 | Manager-prompt parity: extracted template's composed output == historical `pickle.md` composed output (both backends). | Characterization test. | R-PNTR-1 |
+| AC-PNTR-02 | All 3 consumers + setup default read `_pickle-manager-prompt.md`; no live `'pickle.md'`/`commands/pickle.md` except tombstone + remap. | Grep + unit. | R-PNTR-2 |
+| AC-PNTR-03 | Resumed session with `command_template:'pickle.md'` resolves the new template; `schema_version` unchanged. | Regression test. | R-PNTR-3 |
+| AC-PNTR-04 | Bare `/pickle` + non-tmux path removed; `/pickle-tmux --teams` launches Teams Mode in tmux. | Integration test (3-ticket fixture). | R-PNTR-4 |
+| AC-PNTR-05 | `pickle.md` deleted; deprecation route prints message + emits `pickle_command_deprecated`. | `git ls-files` + unit/integration. | R-PNTR-5 |
+| AC-PNTR-06 | No live doc references bare `/pickle` (exemptions per R-PNTR-6). | Conformance grep. | R-PNTR-6 |
+| AC-PNTR-07 | Test suite exits 0, no `/pickle removed` skips. | `npm run test:fast && test:integration`. | R-PNTR-7 |
+| AC-PNTR-08 | Schema-neutral: no `LATEST_SCHEMA_VERSION` bump in the diff. | `git diff` on the schema constant. | T-HARDEN-PNTR-CONFORMANCE |
+| AC-PNTR-09 | Bundle ship: version bumped, install.sh idempotent (pickle.md gone, template present), gh release published. | git log + gh release view + `ls` deployed paths. | C-PNTR-CLOSER |
 
 ## Trap doors
+- **R-PNTR-TEMPLATE-PARITY** (R-PNTR-1) — characterization test pins composed-output equality.
+- **R-PNTR-MIGRATION** (R-PNTR-3) — legacy `command_template` remap; schema-neutral assertion.
+- **R-PNTR-NO-BARE** (R-PNTR-5/6) — conformance grep: no bare `/pickle` invocation route survives; tombstone present; template path exempted.
 
-- **R-PNTR-1 (file deletion)**: `git ls-files .claude/commands/pickle.md` returns empty after the diff lands.
-- **R-PNTR-2 (Teams under tmux)**: integration test for `--teams` mode runs inside a tmux pane fixture; asserts pane created + Agent harness call shape preserved.
-- **R-PNTR-3 (jar-runner rewire)**: `grep -c "pickle.md" extension/src/bin/jar-runner.ts` = 0 after diff.
-- **R-PNTR-4 (tombstone event)**: `pickle_command_deprecated` event in `VALID_ACTIVITY_EVENTS` registry; schema-conformance test added per R-PDD-oneOf 5-touchpoint pattern.
-- **R-PNTR-5 (cross-reference sweep)**: grep assertion in conformance doc enumerates every live file that previously cited `/pickle`.
-
-## Post-validation gaps
-
-1. Verify all third-party / community guides / Anthropic Skill registry references to `/pickle` (out-of-repo) — update if any.
-2. Confirm `claude-hud` statusline integration does not depend on `tmux_mode: false` detection.
-3. Confirm `/pickle-pipeline --no-refine` still works after the migration (it should — it doesn't touch `/pickle`).
-4. Decide whether to ALIAS `/pickle` → `/pickle-tmux` (deprecation soft-redirect) instead of hard-remove. Default in this PRD: hard remove with tombstone migration message. Operator may flip to alias if community usage signals warrant.
-
-## Related findings / bundles
-
-- **B-SJET-2** (in-flight 2026-05-18) — the babysitter run that surfaced the stop-hook spam. NOT a blocker for this bundle.
-- **Working Rule 1** — this is a P2 cleanup. Open P1 ceiling (currently B-SSDF + B-QSRC + B-SJET-2 in-flight = 3 at ceiling) is unaffected; this bundle queues behind P1 drain.
-- **Phase-personas dispatch (`pickle-agent-teams.md`)** — Teams Mode survives under tmux; no design rollback.
-
-## Bundle sizing
-
-- **Atomic**: R-PNTR-1 through R-PNTR-6 (6 tickets, all small/medium).
-- **Hardening**: T-HARDEN-PNTR-DOCS + T-HARDEN-PNTR-CONFORMANCE (2 small).
-- **Closer**: C-PNTR-CLOSER (manager, small).
-- **Total**: ~9 tickets, ≤8h codex / ≤12h claude.
-- Refinement recommended before launch — paths to `jar-runner.ts:120` and the `--teams` mode migration deserve a 3-cycle refinement pass to catch hidden coupling.
+## Notes
+- **Refinement recommended pre-launch** (3-cycle): the resume-migration + 3-consumer repoint have hidden coupling (`enterPicklePhase` resume semantics, jar-runner resolution parity, the `command_template` default in `setup.ts` config). Decompose with a refinement pass before dispatch.
+- **Out of scope:** renaming `/pickle-tmux`→`/pickle`; removing the `tmux_mode` state field; a Zellij Teams variant; `/pickle-refine-prd` (kept).
+- **Superseded:** the original "Scope" §1 ("Delete pickle.md") and §5 ("Rewire jar-runner to read pickle-tmux.md") — both replaced by the extract-to-infra-template approach above.
