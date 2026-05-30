@@ -16,8 +16,7 @@ const STRENGTH_CLASSES = {
     speculative: 'bg-gray-100 text-gray-600',
 };
 function renderStrengthBadge(strength) {
-    const cls = STRENGTH_CLASSES[strength];
-    return `<span class="inline-block px-2 py-0.5 rounded text-xs font-semibold ${cls} capitalize">${esc(strength)}</span>`;
+    return `<span class="inline-block px-2 py-0.5 rounded text-xs font-semibold ${STRENGTH_CLASSES[strength]} capitalize">${esc(strength)}</span>`;
 }
 function renderListItems(items, cls) {
     return items.map(item => `<li class="${cls}">${esc(item)}</li>`).join('');
@@ -87,11 +86,10 @@ function renderTopRecommendationContent(rec) {
     return renderTopRefCard(rec);
 }
 function renderCandidatesSection(candidates) {
-    const articles = candidates.map(renderCandidateArticle).join('\n');
     return [
         `<section class="mb-12">`,
         `  <h2 class="text-xl font-semibold text-gray-700 mb-6">Refactoring Candidates</h2>`,
-        articles,
+        candidates.map(renderCandidateArticle).join('\n'),
         `</section>`,
     ].join('\n');
 }
@@ -150,9 +148,7 @@ export function writeDeathCrystalReport(sessionRoot, report) {
     try {
         fs.unlinkSync(symlinkPath);
     }
-    catch {
-        // symlink may not exist on first write
-    }
+    catch { }
     fs.symlinkSync(htmlFile, symlinkPath);
     const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
     spawnSync(opener, [htmlPath], { timeout: OPEN_TIMEOUT_MS });

@@ -45,8 +45,7 @@ const STRENGTH_CLASSES: Record<DeathCrystalCandidate['strength'], string> = {
 };
 
 function renderStrengthBadge(strength: DeathCrystalCandidate['strength']): string {
-  const cls = STRENGTH_CLASSES[strength];
-  return `<span class="inline-block px-2 py-0.5 rounded text-xs font-semibold ${cls} capitalize">${esc(strength)}</span>`;
+  return `<span class="inline-block px-2 py-0.5 rounded text-xs font-semibold ${STRENGTH_CLASSES[strength]} capitalize">${esc(strength)}</span>`;
 }
 
 function renderListItems(items: string[], cls: string): string {
@@ -125,11 +124,10 @@ function renderTopRecommendationContent(rec: DeathCrystalTopRecommendation): str
 }
 
 function renderCandidatesSection(candidates: DeathCrystalCandidate[]): string {
-  const articles = candidates.map(renderCandidateArticle).join('\n');
   return [
     `<section class="mb-12">`,
     `  <h2 class="text-xl font-semibold text-gray-700 mb-6">Refactoring Candidates</h2>`,
-    articles,
+    candidates.map(renderCandidateArticle).join('\n'),
     `</section>`,
   ].join('\n');
 }
@@ -196,11 +194,7 @@ export function writeDeathCrystalReport(
 
   fs.writeFileSync(htmlPath, renderDeathCrystalReport(report), 'utf-8');
 
-  try {
-    fs.unlinkSync(symlinkPath);
-  } catch {
-    // symlink may not exist on first write
-  }
+  try { fs.unlinkSync(symlinkPath); } catch { }
   fs.symlinkSync(htmlFile, symlinkPath);
 
   const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
