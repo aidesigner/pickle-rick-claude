@@ -20,7 +20,7 @@ import {
   recordManagerRelaunch,
   type ManagerRelaunchExitKind,
 } from '../services/manager-relaunch.js';
-import { getHeadBranch } from '../services/git-utils.js';
+import { getHeadBranch, updateTicketFrontmatter } from '../services/git-utils.js';
 import { detectArtifactProgress, resolveNoProgressWindowSeconds, type ArtifactProgressSnapshot } from '../services/artifact-progress-detector.js';
 import { readEvidence, persistEvidence, gateForPhantomDoneRevert, type EvidenceCtx, type RevertDecision } from '../services/ticket-completion-evidence.js';
 export { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream } from '../services/classifier-utils.js';
@@ -4215,6 +4215,16 @@ export function resolveWmwObserveK(env: NodeJS.ProcessEnv = process.env): number
   return Number.isInteger(parsed) && parsed > 0 ? parsed : WMW_OBSERVE_K_DEFAULT;
 }
 
+export const WMW_SKIP_K_ENV = 'PICKLE_WMW_SKIP_K';
+export const WMW_SKIP_K_DEFAULT = 5;
+
+export function resolveWmwSkipK(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[WMW_SKIP_K_ENV];
+  if (!raw) return WMW_SKIP_K_DEFAULT;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : WMW_SKIP_K_DEFAULT;
+}
+
 /** Count the artifact files whose progress R-WMW tracks: code_review_* + conformance_* markdown. */
 export function countWorkerArtifacts(ticketDir: string): number {
   let n = 0;
@@ -5271,9 +5281,42 @@ async function runMuxRunnerMain() {
 
     // R-WSWA-2: persist the post-spawn artifact-count delta and emit
     // worker_artifact_progress_zero at exactly K consecutive zero-delta spawns.
+    let apProgressResult: { spawnCount: number; lastArtifactCount: number; zeroProgressCount: number; fired: boolean } | null = null;
     try {
-      if (apTicketId) recordWorkerArtifactProgress(statePath, sessionDir, apTicketId, apBeforeCount, { iteration, log });
+      if (apTicketId) apProgressResult = recordWorkerArtifactProgress(statePath, sessionDir, apTicketId, apBeforeCount, { iteration, log });
     } catch { /* best-effort observability — never block iteration on progress tracking */ }
+
+    // R-WSWA-3: at PICKLE_WMW_SKIP_K (default 5) consecutive zero-progress spawns, flip the
+    // ticket to Failed/oversized_no_progress (dirty tree preserved) and advance the loop.
+    const skipK = resolveWmwSkipK();
+    if (apTicketId && apProgressResult && apProgressResult.zeroProgressCount >= skipK) {
+      const skipMsg = `[wmw-auto-skip] ticket ${apTicketId}: ${apProgressResult.zeroProgressCount}/${skipK} consecutive zero-progress spawns — flipping to Failed/oversized_no_progress`;
+      log(skipMsg);
+      process.stderr.write(`${skipMsg}\n`);
+      try {
+        updateTicketFrontmatter(apTicketId, sessionDir, { status: 'Failed', completion_commit: null });
+        const tfPath = ticketFilePath(sessionDir, apTicketId);
+        const tfRaw = fs.readFileSync(tfPath, 'utf-8');
+        const tfUpdated = upsertFrontmatterField(tfRaw, 'failed_reason', 'oversized_no_progress');
+        if (tfUpdated) fs.writeFileSync(tfPath, tfUpdated);
+      } catch (err) { log(`[wmw-auto-skip] frontmatter flip failed (ignored): ${safeErrorMessage(err)}`); }
+      try {
+        writeActivityEntry(statePath, {
+          event: 'worker_auto_skip_oversized',
+          ts: new Date().toISOString(),
+          ticket: apTicketId,
+          gate_payload: {
+            spawn_count: apProgressResult.spawnCount,
+            zero_progress_count: apProgressResult.zeroProgressCount,
+            skip_k: skipK,
+            failure_reason: 'oversized_no_progress',
+          },
+        });
+      } catch { /* best-effort */ }
+      const nextAfterSkip = findNextPendingTicketId(sessionDir);
+      updateMuxLifecycleState(statePath, { currentTicket: nextAfterSkip ?? null });
+      continue;
+    }
 
     // R-WSE-2: detect partial lifecycle exit (research-review APPROVED, downstream artifacts missing)
     // R-WSE-3: emit stderr breadcrumb when ticket Failed after research APPROVED

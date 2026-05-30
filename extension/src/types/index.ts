@@ -637,10 +637,15 @@ export const VALID_ACTIVITY_EVENTS = [
   'graph_preflight_completed',
   'graph_preflight_degraded',
   'worker_artifact_progress_zero',
+  'worker_auto_skip_oversized',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
 export type ActivityEventSource = 'pickle' | 'hook' | 'persona' | 'force_flag' | BackendResolutionSource | WorkerBackendResolutionSource;
+
+/** Recoverable reasons a ticket can be flipped to Failed by the auto-skip guard (R-WSWA-3). */
+export const FAILURE_REASONS = ['oversized_no_progress'] as const;
+export type TicketFailureReason = typeof FAILURE_REASONS[number];
 
 export enum PipelineRunnerExitCode {
   Success = 0,

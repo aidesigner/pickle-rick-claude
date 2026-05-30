@@ -291,7 +291,10 @@ export const VALID_ACTIVITY_EVENTS = [
     'graph_preflight_completed',
     'graph_preflight_degraded',
     'worker_artifact_progress_zero',
+    'worker_auto_skip_oversized',
 ];
+/** Recoverable reasons a ticket can be flipped to Failed by the auto-skip guard (R-WSWA-3). */
+export const FAILURE_REASONS = ['oversized_no_progress'];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {
     PipelineRunnerExitCode[PipelineRunnerExitCode["Success"] = 0] = "Success";
