@@ -152,8 +152,8 @@ Earlier closed (detail in archive): #1-#4 (incl. R-CCPL reopened-P1 closed 2026-
 
 | Bundle | Status | Composes | Notes |
 |---|---|---|---|
-| **B-PIPE-HARDEN-2** | **NEXT** | #34 R-WTB + #87 R-CSIS + #32 R-TFP | bundle PRD `p2-bug-fix-bundle-b-pipe-harden-2-2026-05-28.md`. ~7-8 tickets, drains the 3 operator-salvage burdens from the B-PIPE-BABYSIT-HARDEN v1.81.0 run. A R-WTB worker-timeout floor + artifact-progress guard; B R-CSIS closer mandates `npm run test:expensive` not standalone `node --test`; C R-TFP serialize the two flaky subprocess-heavy tests. Closer bumps **v1.81.1** (PATCH — fixes only). Schema-neutral. |
-| **B-GATE** | PARTIAL | R-FGNC + R-PVTA + R-VSGE | **R-FGNC (#18) shipped 2026-05-22** (`48718c63`+`b5500da8`). R-PVTA (#39) / R-VSGE (#40) still need PRDs drafted. Verify-command host-tool gaps cause silent worker failures. |
+| **B-PIPE-HARDEN-2** | SHIPPED | #34 R-WTB + #87 R-CSIS + #32 R-TFP | **CLOSED v1.81.1** (2026-05-28, session `pickle-dfb58722`) — bundle PRD `p2-bug-fix-bundle-b-pipe-harden-2-2026-05-28.md`. 9/9 tickets: A R-WTB worker-timeout floor + artifact-progress guard; B R-CSIS closer mandates `npm run test:expensive` not standalone `node --test`; C R-TFP serialized the two flaky subprocess-heavy tests. Closer `c7feae53` + residual sync `2052107b`. Schema-neutral. Closes #34/#87/#32. |
+| **B-GATE** | **NEXT** | R-FGNC + R-PVTA + R-VSGE | **R-FGNC (#18) shipped 2026-05-22** (`48718c63`+`b5500da8`). R-PVTA (#39) / R-VSGE (#40) still need PRDs drafted (~4 tickets each). Verify-command host-tool gaps (`rg`/`fd`/`bat`/`jq` no host-tool check; shell-special chars under zsh glob) cause silent worker failures. Next dispatch target now B-PIPE-HARDEN-2 is shipped. |
 | **B-WEDGE** | QUEUED | R-RSU residuals + R-WMW | Closes #30/#33. Manager wedge on oversized ticket is visible (no data loss) but burns wall-time. |
 | **B-MONITOR** | QUEUED | R-MMRT + R-MWCL residuals | Closes #27/#29. Observability gap; cosmetic + diagnostic impact. |
 | **B-PNTR** | QUEUED | remove bare `/pickle` non-tmux loop | `p2-remove-non-tmux-pickle-loop.md`. Refinement recommended pre-launch. |
