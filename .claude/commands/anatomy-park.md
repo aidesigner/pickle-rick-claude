@@ -372,6 +372,8 @@ If zero findings: update `consecutive_clean` for this subsystem, rotate to next.
 
 Pick the **single highest-severity finding** from Phase 1 (CRITICAL before HIGH). Fix ONE finding per iteration — this keeps the commit atomic and revertible. Remaining findings are deferred to subsequent iterations on this subsystem.
 
+When `design_safe: true` (check `${SESSION_ROOT}/microverse.json`), skip any finding tagged `[report-only: intentional design choice]` when selecting the iteration's actioned fix — these are branch-authored visual findings (see R-PIAP-B4). They remain in the subsystem's finding report but are never selected, auto-fixed, or reverted. Non-visual findings and pre-existing-line findings are selected normally.
+
 1. **Apply the fix** — targeted, minimal edit. Do not refactor surrounding code. Do not add comments to code you didn't change.
 2. **Write a regression test** that would have caught the original bug:
    - Exercise the actual data flow (not just the function in isolation)
