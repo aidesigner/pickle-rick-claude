@@ -1,5 +1,5 @@
 // @tier: fast
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -12,6 +12,22 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SETUP = path.resolve(__dirname, '../bin/setup.js');
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
+// Per-invocation sandbox dirs — each runSetup/runSetupExpectFail call creates
+// its own tmpdir as PICKLE_DATA_ROOT so no sessions land in the operator's
+// production data dir. All sandbox dirs are cleaned up by the after() hook.
+const sandboxDirs = [];
+after(() => {
+    for (const dir of sandboxDirs) {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+});
+
+function makeSandboxDataRoot() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-teams-sandbox-'));
+    sandboxDirs.push(dir);
+    return dir;
+}
+
 // `setup.js` keys its session-map by `process.cwd()`. Concurrent setup-family
 // test files can transiently claim the same cwd; the loser exits with
 // `session-map collision blocked`. Retry deterministically until the sibling
@@ -22,12 +38,14 @@ function sleepSync(ms) {
 }
 
 function runSetup(args, extraEnv = {}) {
+    const dataRoot = makeSandboxDataRoot();
     const deadline = Date.now() + 30_000;
     for (;;) {
         try {
             const output = execFileSync(process.execPath, [SETUP, ...args], {
                 encoding: 'utf-8',
-                env: { ...process.env, FORCE_COLOR: '0', ...extraEnv },
+                // PICKLE_DATA_ROOT comes after ...extraEnv so the sandbox always wins.
+                env: { ...process.env, FORCE_COLOR: '0', ...extraEnv, PICKLE_DATA_ROOT: dataRoot },
             });
             const match = output.match(/SESSION_ROOT=(.+)/);
             if (!match) throw new Error(`SESSION_ROOT not found in output:\n${output}`);
@@ -44,9 +62,10 @@ function runSetup(args, extraEnv = {}) {
 }
 
 function runSetupExpectFail(args) {
+    const dataRoot = makeSandboxDataRoot();
     const result = spawnSync(process.execPath, [SETUP, ...args], {
         encoding: 'utf-8',
-        env: { ...process.env, FORCE_COLOR: '0' },
+        env: { ...process.env, FORCE_COLOR: '0', PICKLE_DATA_ROOT: dataRoot },
     });
     return { code: result.status, stdout: result.stdout, stderr: result.stderr };
 }
@@ -202,4 +221,25 @@ test('setup --teams --max-parallel 5.5: rejects (integer required)', () => {
 test('setup --teams --max-parallel abc: rejects (NaN string)', () => {
     const r = runSetupExpectFail(['--teams', '--max-parallel', 'abc']);
     assert.notEqual(r.code, 0, 'expected non-zero exit on non-numeric max-parallel');
+});
+
+// Regression: R-PTSB-1 — verify setup.js writes into the sandboxed PICKLE_DATA_ROOT,
+// not into the operator's production session dir.
+test('runSetup sandbox: session written to tmp PICKLE_DATA_ROOT, not default data root', () => {
+    const defaultDataRoot = path.join(os.homedir(), '.local', 'share', 'pickle-rick');
+    const sessionPath = runSetup(['--task', 'ptsb1-sandbox-regression']);
+    try {
+        assert.ok(
+            !sessionPath.startsWith(defaultDataRoot),
+            `Session landed in production data root — sandbox not active: ${sessionPath}`,
+        );
+        assert.ok(
+            sessionPath.startsWith(os.tmpdir()),
+            `Session not under os.tmpdir() — unexpected location: ${sessionPath}`,
+        );
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.original_prompt, 'ptsb1-sandbox-regression');
+    } finally {
+        cleanup(sessionPath);
+    }
 });

@@ -1,5 +1,5 @@
 // @tier: fast
-import { test, mock } from 'node:test';
+import { test, mock, after } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -12,6 +12,13 @@ import { compatibleCodexVersion, codexVersionLine } from './__helpers__/codex-sh
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SETUP = path.resolve(__dirname, '../bin/setup.js');
 const REPO_ROOT = path.resolve(__dirname, '../..');
+
+// Sandbox data root for all bare runSetup() calls — prevents session pollution
+// in the operator's production ~/.local/share/pickle-rick/sessions/ dir.
+const DATA_ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-test-data-')));
+after(() => {
+    try { fs.rmSync(DATA_ROOT, { recursive: true, force: true }); } catch { /* ignore */ }
+});
 
 // `setup.js` keys its session-map by `process.cwd()`. The fast-tier suite
 // runs setup-family test files concurrently (node --test cross-file
@@ -36,7 +43,9 @@ function runSetup(args) {
         try {
             const output = execFileSync(process.execPath, [SETUP, ...args], {
                 encoding: 'utf-8',
-                env: { ...process.env, FORCE_COLOR: '0' },
+                // Fall back to DATA_ROOT when no PICKLE_DATA_ROOT is already set on the
+                // test process — prevents sessions from landing in the production data dir.
+                env: { ...process.env, FORCE_COLOR: '0', PICKLE_DATA_ROOT: process.env.PICKLE_DATA_ROOT ?? DATA_ROOT },
             });
             const match = output.match(/SESSION_ROOT=(.+)/);
             if (!match) throw new Error(`SESSION_ROOT not found in output:\n${output}`);
@@ -802,7 +811,9 @@ test('setup: --resume syncs chain_meeseeks from state for display', () => {
 // ---------------------------------------------------------------------------
 
 function getActivityEvents(sessionId) {
-    const activityDir = path.join(os.homedir(), '.local/share/pickle-rick/activity');
+    // Activity events are written to DATA_ROOT/activity/ when sessions are
+    // created via runSetup() — which now always uses DATA_ROOT as PICKLE_DATA_ROOT.
+    const activityDir = path.join(DATA_ROOT, 'activity');
     const now = new Date();
     const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const filepath = path.join(activityDir, `${date}.jsonl`);
