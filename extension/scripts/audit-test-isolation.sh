@@ -240,10 +240,37 @@ $specs
 EOF
 }
 
+audit_session_bin_sandbox() {
+  local file="$1"
+  local matches entry line_number window
+
+  matches="$(grep -nE "execFileSync\(|spawnSync\(|execSync\(|\bspawn\(" "$file" || true)"
+  [ -z "$matches" ] && return
+
+  while IFS= read -r entry; do
+    [ -z "$entry" ] && continue
+    line_number="${entry%%:*}"
+    window="$(window_for_line "$file" "$line_number")"
+
+    if ! printf '%s\n' "$window" | grep -Eq "setup\.js|mux-runner\.js|spawn-morty\.js|jar-runner\.js"; then
+      continue
+    fi
+
+    if printf '%s\n' "$window" | grep -Fq "PICKLE_DATA_ROOT"; then
+      continue
+    fi
+
+    report_violation "$file" "$line_number" "session-writing bin without PICKLE_DATA_ROOT sandbox"
+  done <<EOF
+$matches
+EOF
+}
+
 audit_test_file() {
   local file="$1"
 
   audit_match_file "$file" "test"
+  audit_session_bin_sandbox "$file"
   collect_one_hop_source_imports "$file"
 }
 
@@ -257,7 +284,8 @@ else
       audit-test-isolation-fixture.test.js) continue ;;
     esac
     audit_test_file "$file"
-  done < <(find "$TEST_ROOT" -type f -name '*.test.js' | sort)
+  done < <(find "$TEST_ROOT" -type f -name '*.test.js' \
+    ! -path "$TEST_ROOT/fixtures/*" | sort)
 fi
 
 while IFS= read -r file; do

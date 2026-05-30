@@ -33,6 +33,7 @@
     "tests/dispatch.test.js",
     "tests/auto-resume-stop-conditions.test.js",
     "tests/microverse.test.js",
-    "tests/audit-subprocess-heavy-tests.test.js"
+    "tests/audit-subprocess-heavy-tests.test.js",
+    "tests/audit-test-isolation.test.js"
   ]
 }
