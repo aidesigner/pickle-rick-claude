@@ -339,6 +339,69 @@ test('financial principles file has diagnostic guide', () => {
 });
 
 // ---------------------------------------------------------------------------
+// UI domain principles file (AC-PIAP-B3-1)
+// ---------------------------------------------------------------------------
+
+const UI_PRINCIPLES_PATH = path.resolve(import.meta.dirname, '../szechuan-sauce-ui-principles.md');
+
+test('szechuan-sauce-ui-principles.md exists', () => {
+    assert.ok(fs.existsSync(UI_PRINCIPLES_PATH), `missing: ${UI_PRINCIPLES_PATH}`);
+});
+
+test('ui principles file has priority matrix', () => {
+    const content = fs.readFileSync(UI_PRINCIPLES_PATH, 'utf-8');
+    assert.ok(content.includes('## Priority Matrix'), 'missing Priority Matrix section');
+    assert.ok(content.includes('P0'), 'missing P0 priority');
+});
+
+test('ui principles file has diagnostic guide', () => {
+    const content = fs.readFileSync(UI_PRINCIPLES_PATH, 'utf-8');
+    assert.ok(content.includes('## Quick Diagnostic Guide'), 'missing Quick Diagnostic Guide');
+});
+
+test('ui principles file codifies four core principles', () => {
+    const content = fs.readFileSync(UI_PRINCIPLES_PATH, 'utf-8');
+    assert.ok(content.includes('Author Intent'), 'missing Author Intent principle');
+    assert.ok(
+        content.includes('Magic-Number') || content.includes('magic-number'),
+        'missing Magic-Number Spacing principle',
+    );
+    assert.ok(content.includes('Component Uniqueness'), 'missing Component Uniqueness principle');
+    assert.ok(
+        content.includes('Markup Structure') || content.includes('markup'),
+        'missing Markup Structure principle',
+    );
+});
+
+test('ui principles file has False Positives section', () => {
+    const content = fs.readFileSync(UI_PRINCIPLES_PATH, 'utf-8');
+    assert.ok(content.includes('False Positives'), 'missing False Positives section');
+});
+
+test('szechuan-sauce.md has --design-safe flag in argument parsing', () => {
+    const content = readCommand();
+    assert.ok(content.includes('--design-safe'), 'missing --design-safe flag');
+    assert.ok(content.includes('DESIGN_SAFE'), 'missing DESIGN_SAFE variable');
+});
+
+test('szechuan-sauce.md Step 8 includes ui-principles when DESIGN_SAFE is set', () => {
+    const content = readCommand();
+    const setupStart = content.indexOf('## SETUP MODE');
+    const workerStart = content.indexOf('## WORKER MODE');
+    const setup = content.slice(setupStart, workerStart);
+    assert.ok(setup.includes('szechuan-sauce-ui-principles.md'), 'Step 8 should reference ui-principles');
+    assert.ok(setup.includes('DESIGN_SAFE'), 'Step 8 should reference DESIGN_SAFE');
+});
+
+test('szechuan-sauce.md Worker Override 1 handles design_safe microverse field', () => {
+    const content = readCommand();
+    const workerStart = content.indexOf('## WORKER MODE');
+    const workerSection = content.slice(workerStart);
+    assert.ok(workerSection.includes('design_safe'), 'Worker Override 1 should check microverse.json design_safe field');
+    assert.ok(workerSection.includes('szechuan-sauce-ui-principles.md'), 'Worker Override 1 should reference ui-principles file');
+});
+
+// ---------------------------------------------------------------------------
 // --focus flag validation
 // ---------------------------------------------------------------------------
 

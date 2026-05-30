@@ -48,6 +48,7 @@ From `$ARGUMENTS`:
 - `--stall-limit <N>` → STALL_LIMIT (default: 5)
 - `--dry-run` → DRY_RUN mode (gap analysis only — catalog violations without fixing)
 - `--domain <name>` → DOMAIN (loads `szechuan-sauce-<name>-principles.md` as supplemental principles)
+- `--design-safe` → DESIGN_SAFE=true (protects deliberate visual decisions as author intent; auto-loaded by pipeline when diff is UI-dominant via B2 `design_safe` field in `microverse.json`)
 - `--focus "<text>"` → FOCUS (natural language review directive — narrows what to hunt for, elevates matching violations by one priority level)
 - `--scope <flag>` → SCOPE_FLAG (e.g. `branch`, `branch:one-hop`, `diff:<ref>`, `paths:<globs>`)
 - `--scope-base <ref>` → SCOPE_BASE (e.g. `main`, `origin/main`; optional — defaults to upstream or `main`)
@@ -60,6 +61,8 @@ Resolve TARGET to an absolute path. Verify it exists (file or directory). If not
 
 If DOMAIN is set, verify `$HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md` exists. If not found, print "Unknown domain: DOMAIN. Available domains:" then glob `$HOME/.claude/pickle-rick/szechuan-sauce-*-principles.md` and list them. Stop.
 
+If DESIGN_SAFE is set, verify `$HOME/.claude/pickle-rick/szechuan-sauce-ui-principles.md` exists. If not found, print "UI principles file missing — run bash install.sh to deploy it." and stop.
+
 ### Step 3: Validate Target
 
 Read the target to confirm it contains code:
@@ -71,7 +74,7 @@ Count source files. Print: "Target: TARGET (N source files)"
 ### Step 4: Dry Run (if `--dry-run`)
 
 If DRY_RUN mode: perform gap analysis without creating a session or modifying code:
-1. Read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If DOMAIN is set, also read `$HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md`.
+1. Read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If DOMAIN is set, also read `$HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md`. If DESIGN_SAFE is set, also read `$HOME/.claude/pickle-rick/szechuan-sauce-ui-principles.md` (UI principles supplement — its false-positives list takes precedence for visual decisions).
 2. If FOCUS is set, apply it as a review lens: prioritize violations matching the focus and elevate them by one priority level (e.g. a P2 violation matching the focus becomes P1).
 3. Read all target source files
 4. Catalog all violations using this format:
@@ -131,10 +134,11 @@ Omit `--scope-base` when SCOPE_BASE was not provided. If the command exits non-z
 
 ### Step 8: Create microverse.json
 
-If DOMAIN is set or FOCUS is set, create a combined judge context file:
+If DOMAIN is set or FOCUS is set or DESIGN_SAFE is set, create a combined judge context file:
 1. Read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`
 2. If DOMAIN is set, read `$HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md`
-3. If FOCUS is set, append a Focus section:
+3. If DESIGN_SAFE is set, read `$HOME/.claude/pickle-rick/szechuan-sauce-ui-principles.md` and append it (ADDITIVE — does not replace DOMAIN selection; when both DOMAIN and DESIGN_SAFE are set, all three files are included)
+4. If FOCUS is set, append a Focus section:
 ```markdown
 
 ## Focus Directive
@@ -143,10 +147,10 @@ FOCUS_TEXT
 
 Violations matching this focus are elevated by one priority level (e.g. P2 → P1). When two violations share the same priority, fix the one matching the focus first.
 ```
-4. Write all contents to `${SESSION_ROOT}/judge-context.md`
-5. Use `${SESSION_ROOT}/judge-context.md` as JUDGE_CONTEXT_PATH
+5. Write all contents to `${SESSION_ROOT}/judge-context.md`
+6. Use `${SESSION_ROOT}/judge-context.md` as JUDGE_CONTEXT_PATH
 
-If neither DOMAIN nor FOCUS is set, use `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md` as JUDGE_CONTEXT_PATH.
+If neither DOMAIN nor FOCUS nor DESIGN_SAFE is set, use `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md` as JUDGE_CONTEXT_PATH.
 
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${STALL_LIMIT} --convergence-target 0 --judge-context "${JUDGE_CONTEXT_PATH}" [if SCOPE_FLAG set: --allowed-paths-file "${SESSION_ROOT}/scope.json"]
@@ -171,6 +175,8 @@ TARGET_ABSOLUTE_PATH
 Read: $HOME/.claude/pickle-rick/szechuan-sauce-principles.md
 [If DOMAIN is set, add this line]: Read: $HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md
 [Domain principles override base principles where they conflict.]
+[If DESIGN_SAFE is set, add this line]: Read: $HOME/.claude/pickle-rick/szechuan-sauce-ui-principles.md
+[UI principles supplement — protects deliberate visual decisions as author intent. Its false-positives list overrides base principles for visual/layout decisions.]
 [If FOCUS is set, add this section]:
 ## Focus
 FOCUS_TEXT
@@ -291,7 +297,11 @@ Follow the **Microverse Worker protocol** (the standard microverse iteration loo
 
 ### Override 1: Principles Reference
 
-Before assessing the codebase, check the handoff's `microverse.json` for a `judge_context_path`. If set, read that file — it contains the combined base + domain principles and any focus directive. If not set, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If the PRD's Principles Reference section lists additional domain-specific principles files, also read those. Domain principles take precedence over base principles where they overlap. If a Focus Directive section is present, apply it: violations matching the focus are elevated by one priority level and take precedence over same-priority non-focus violations. Cross-reference each finding against the priority matrix (P0–P4) and the diagnostic guide. Then cross-reference each finding against `## Confidence Scoring` (score 0/25/50/75/100 — anything under 80 is dropped) and the `## False Positives — Do NOT Flag` list (exclude those categories before you even score).
+Before assessing the codebase, check the handoff's `microverse.json` for a `judge_context_path`. If set, read that file — it contains the combined base + domain principles and any focus directive. If not set, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If the PRD's Principles Reference section lists additional domain-specific principles files, also read those. Domain principles take precedence over base principles where they overlap. If a Focus Directive section is present, apply it: violations matching the focus are elevated by one priority level and take precedence over same-priority non-focus violations.
+
+Additionally, check `microverse.json` for `design_safe: true` (set by the pipeline runner when the diff is UI-dominant — see R-PIAP-B2). If `design_safe` is `true`, also read `$HOME/.claude/pickle-rick/szechuan-sauce-ui-principles.md` and apply its `## False Positives — Do NOT Flag` list BEFORE scoring any violation. Visual decisions (spacing, colors, component shape, markup formatting) that appear in that list are excluded from the candidate pool entirely. This is ADDITIVE — it does not replace any existing `judge_context_path` or domain principles already loaded above.
+
+Cross-reference each finding against the priority matrix (P0–P4) and the diagnostic guide. Then cross-reference each finding against `## Confidence Scoring` (score 0/25/50/75/100 — anything under 80 is dropped) and the `## False Positives — Do NOT Flag` list (exclude those categories before you even score).
 
 ### Override 2: Phase 0 — Contract Discovery (first iteration only)
 
