@@ -615,6 +615,102 @@ export function classifyTicketTier(info: TicketClassifierInfo): TicketComplexity
   return VALID_TICKET_COMPLEXITY_TIERS[score];
 }
 
+/**
+ * R-PIAP-B1: tunable threshold for "UI-primary" diffs. A diff is UI-primary when
+ * the share of changed lines that are visual STRICTLY EXCEEDS this value.
+ * Default 0.60. Tunable via the optional `threshold` arg of
+ * `classifyDiffVisualDominance`.
+ */
+export const VISUAL_DOMINANCE_THRESHOLD = 0.6;
+
+/** Whole-file visual stylesheets: every changed line counts as visual. */
+const VISUAL_FILE_EXT_RE = /\.(css|scss|sass|less)$/i;
+/** JS/TS sources where visual lines are classified per-line. */
+const SOURCE_FILE_EXT_RE = /\.(jsx|tsx|js|ts|mjs|cjs)$/i;
+/** Opening of a styled-component template (`styled.button\`` / `styled(Foo)\``). */
+const STYLED_TEMPLATE_OPENER_RE = /\bstyled(?:\.[A-Za-z]\w*|\([^)]*\))\s*`/;
+/**
+ * A single changed source line that is visual: JSX/TSX markup (`<Tag`, `</Tag`,
+ * self-closing `/>`, fragment `<>`/`</>`), or a `className=` / `style=` / `class=`
+ * edit.
+ */
+const VISUAL_SOURCE_LINE_RE = /<\/?[A-Za-z][\w.]*[\s/>]|\/>|<>|<\/>|\bclassName\s*=|\bstyle\s*=|\bclass\s*=/;
+
+/**
+ * Input shape for {@link classifyDiffVisualDominance}. One entry per changed file.
+ * `changedLines` is the list of added/modified line texts in that file's diff —
+ * its length is the per-file changed-line count, and its contents carry the
+ * signal needed to classify visual lines inside mixed source files. Pure data:
+ * no I/O is performed to obtain or interpret it.
+ */
+export interface DiffFileVisualStat {
+  /** Repo-relative path; its extension drives whole-file visual classification. */
+  path: string;
+  /** Added/modified line texts for this file (one entry per changed line). */
+  changedLines: string[];
+}
+
+export type DiffVisualStat = DiffFileVisualStat[];
+
+/**
+ * Count the visual changed lines in one file:
+ *   - stylesheet extension  → all changed lines are visual;
+ *   - non-source extension  → none are visual;
+ *   - JS/TS source          → lines inside/opening a styled-component template,
+ *                             or matching JSX/className/style markup, are visual.
+ */
+function countVisualChangedLines(filePath: string, changedLines: string[]): number {
+  if (VISUAL_FILE_EXT_RE.test(filePath)) return changedLines.length;
+  if (!SOURCE_FILE_EXT_RE.test(filePath)) return 0;
+
+  let count = 0;
+  let inStyledTemplate = false;
+  for (const line of changedLines) {
+    if (inStyledTemplate) {
+      count++;
+      if (line.includes('`')) inStyledTemplate = false;
+      continue;
+    }
+    if (STYLED_TEMPLATE_OPENER_RE.test(line)) {
+      count++;
+      // Stay inside the template only if it does not also close on this line.
+      if (!line.slice(line.indexOf('`') + 1).includes('`')) inStyledTemplate = true;
+      continue;
+    }
+    if (VISUAL_SOURCE_LINE_RE.test(line)) count++;
+  }
+  return count;
+}
+
+/**
+ * R-PIAP-B1: pure, deterministic predicate — is this diff UI-primary?
+ *
+ * Returns `true` when the share of changed lines that are visual strictly exceeds
+ * `threshold` (default {@link VISUAL_DOMINANCE_THRESHOLD} = 0.60). "Visual" =
+ * stylesheet files (`.css`/`.scss`/`.sass`/`.less`), styled-component template
+ * blocks, and JSX/TSX markup or `className`/`style` edits (see
+ * {@link countVisualChangedLines}).
+ *
+ * No I/O, no clock, no randomness. An empty diff (zero changed lines) returns
+ * `false`. This is the RAW boolean only — the "err toward design-safe near the
+ * threshold" policy is applied by the B2 caller, not here.
+ */
+export function classifyDiffVisualDominance(
+  diffStat: DiffVisualStat,
+  threshold: number = VISUAL_DOMINANCE_THRESHOLD,
+): boolean {
+  let totalChanged = 0;
+  let totalVisual = 0;
+  for (const file of diffStat) {
+    const changed = file.changedLines.length;
+    if (changed === 0) continue;
+    totalChanged += changed;
+    totalVisual += countVisualChangedLines(file.path, file.changedLines);
+  }
+  if (totalChanged === 0) return false;
+  return totalVisual / totalChanged > threshold;
+}
+
 function readTierCapsBlock(block: unknown): TierCapsConfig {
   if (!block || typeof block !== 'object') return {};
   const result: TierCapsConfig = {};
