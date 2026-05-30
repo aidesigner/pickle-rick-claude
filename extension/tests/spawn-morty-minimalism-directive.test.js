@@ -6,10 +6,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { buildWorkerPrompt, runWorkerGate } from '../bin/spawn-morty.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const MINIMALISM_RE = /This is a (trivial|small) ticket\. Make the smallest correct change\./;
 
