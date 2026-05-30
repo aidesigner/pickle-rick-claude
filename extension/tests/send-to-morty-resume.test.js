@@ -115,11 +115,11 @@ test('send-to-morty resume: empty dir first writes research artifact', () => {
     }
 });
 
-test('send-to-morty resume prompt routes completed research without review to Research Review', () => {
+test('send-to-morty resume prompt contains TIER_RESUME_TABLE placeholder for tier-specific injection', () => {
     const morty = readCommand(MORTY_COMMAND);
-    assert.match(
-        morty,
-        /\| `research_\*\.md` exists; no `research_review\.md` \| 2 \(Research Review\) \|/
+    assert.ok(
+        morty.includes('{{TIER_RESUME_TABLE}}'),
+        'send-to-morty.md must contain the TIER_RESUME_TABLE placeholder (R-PIAP-A2)'
     );
 });
 
@@ -137,11 +137,11 @@ test('send-to-morty resume: approved research first writes plan artifact', () =>
     }
 });
 
-test('send-to-morty resume prompt routes completed plan without review to Plan Review', () => {
+test('send-to-morty resume prompt contains TIER_LIFECYCLE_SECTIONS placeholder for tier-specific injection', () => {
     const morty = readCommand(MORTY_COMMAND);
-    assert.match(
-        morty,
-        /\| `plan_\*\.md` exists; no `plan_review\.md` \| 4 \(Plan Review\) \|/
+    assert.ok(
+        morty.includes('{{TIER_LIFECYCLE_SECTIONS}}'),
+        'send-to-morty.md must contain the TIER_LIFECYCLE_SECTIONS placeholder (R-PIAP-A2)'
     );
 });
 

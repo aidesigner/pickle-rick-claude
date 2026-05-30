@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, resolveWorkerTestGateTimeoutMs, classifyTicketTier, VALID_TICKET_COMPLEXITY_TIERS, extractFrontmatter, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, resolveWorkerTestGateTimeoutMs, classifyTicketTier, VALID_TICKET_COMPLEXITY_TIERS, extractFrontmatter, TIER_LIFECYCLE, } from '../services/pickle-utils.js';
 import { spawn, spawnSync } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS } from '../types/index.js';
 import { isRecord } from '../lib/is-record.js';
@@ -335,6 +335,82 @@ export function resolveEffectiveTimeout(configuredTimeoutSec, parentState, wallC
         return Math.max(MIN_TIMEOUT_SECONDS, remaining);
     return configuredTimeoutSec;
 }
+const ALL_LIFECYCLE_PHASES = [
+    'research', 'research_review', 'plan', 'plan_review',
+    'implement', 'conformance', 'code_review', 'simplify',
+];
+export function buildTierResumeTable(phases) {
+    const phaseSet = new Set(phases);
+    const rows = [];
+    let step = 1;
+    if (phaseSet.has('research')) {
+        rows.push(`| (none, or \`research_*.md\` missing) | ${step++} (Research) |`);
+        if (phaseSet.has('research_review')) {
+            rows.push(`| \`research_*.md\` exists; no \`research_review.md\` | ${step++} (Research Review) |`);
+        }
+    }
+    if (phaseSet.has('plan')) {
+        if (phaseSet.has('research_review')) {
+            rows.push(`| \`research_*.md\` exists; \`research_review.md\` says \`APPROVED\`; no \`plan_*.md\` | ${step++} (Plan) |`);
+        }
+        else {
+            rows.push(`| (none, or \`plan_*.md\` missing) | ${step++} (Plan) |`);
+        }
+        if (phaseSet.has('plan_review')) {
+            rows.push(`| \`plan_*.md\` exists; no \`plan_review.md\` | ${step++} (Plan Review) |`);
+            rows.push(`| \`plan_*.md\` exists; \`plan_review.md\` says \`APPROVED\`; no implementation diff | ${step++} (Implement) |`);
+        }
+        else {
+            rows.push(`| \`plan_*.md\` exists; no implementation diff | ${step++} (Implement) |`);
+        }
+    }
+    else {
+        rows.push(`| (none, or no implementation diff) | ${step++} (Implement) |`);
+    }
+    if (phaseSet.has('conformance')) {
+        rows.push(`| Implementation diff exists; no \`conformance_*.md\` | ${step++} (Conformance) |`);
+        if (phaseSet.has('code_review')) {
+            rows.push(`| \`conformance_*.md\` says \`ALL_PASS\`; no \`code_review_*.md\` | ${step++} (Code Review) |`);
+        }
+    }
+    else if (phaseSet.has('code_review')) {
+        rows.push(`| Implementation diff exists; no \`code_review_*.md\` | ${step++} (Code Review) |`);
+    }
+    if (phaseSet.has('simplify')) {
+        rows.push(`| \`code_review_*.md\` says \`PASS\`; no Simplify pass evidence | ${step} (Simplify) |`);
+    }
+    return `| Files in \`\${TICKET_DIR}\` | Enter at step |\n|---|---|\n${rows.join('\n')}`;
+}
+export function buildTierLifecycleSections(phases, tier) {
+    const phaseSet = new Set(phases);
+    const isReduced = phases.length < ALL_LIFECYCLE_PHASES.length;
+    let out = `**Tier: ${tier} | Active phases: ${phases.join(', ')}**\n`;
+    if (isReduced) {
+        out += `\n> **Plan/Research source for skipped phases**: The ticket body (\`## Problem\`, \`## Solution\`, \`## Research Seeds\`) is the specification — read it directly in place of research/plan artifacts. No new artifact format is needed for skipped phases.\n`;
+    }
+    let n = 1;
+    if (phaseSet.has('research')) {
+        out += `\n### ${n++}. Research\nWhat IS, not SHOULD BE. No solutioning. Every claim = \`file:line\` ref.\n- Read \`\${TICKET_DIR}/linear_ticket_\${TICKET_ID}.md\`\n- **Glob**, **Grep** (not bash grep), **Read** to trace code\n- Write \`\${TICKET_DIR}/research_[date].md\`: Summary, Context (file:line), Findings, Constraints\n`;
+    }
+    if (phaseSet.has('research_review')) {
+        out += `\n### ${n++}. Research Review\nFAIL if: proposes solutions, claims lack refs, incomplete.\n- Write \`\${TICKET_DIR}/research_review.md\`: APPROVED/NEEDS REVISION/REJECTED + feedback\n- APPROVED → next. Otherwise → redo previous.\n`;
+    }
+    if (phaseSet.has('plan')) {
+        out += `\n### ${n++}. Plan\nRead research${phaseSet.has('research') ? '' : ' (use ticket body ## Problem / ## Solution)'}. No guessing.\n- Write \`\${TICKET_DIR}/plan_[date].md\`: Scope, Current State (file:line), Phases with Goal/Steps/Verify command\n- Self-check: strict scope? No magic steps? Every phase has verification?\n`;
+    }
+    if (phaseSet.has('plan_review')) {
+        out += `\n### ${n++}. Plan Review\nFAIL if: vague steps, no verify commands, generic paths.\n- Write \`\${TICKET_DIR}/plan_review.md\`: APPROVED/RISKY/REJECTED\n- APPROVED → next. RISKY → revise. REJECTED → redo previous.\n`;
+    }
+    out += `\n### ${n++}. Implement\nNo plan = no code. Execute steps, mark \`[x]\`, verify after each phase.\n`;
+    if (phaseSet.has('conformance')) {
+        out += `\n### ${n++}. Spec Conformance\nWrite \`\${TICKET_DIR}/conformance_[date].md\`:\n\n1. **Acceptance Criteria**: Run each verify command from ticket's \`## Acceptance Criteria\`. For \`llm-conformance\` type: read impl, quote code, PASS/FAIL + justification. Table: \`| Criterion | Type | Command | Result | P/F |\`\n2. **Interface Contracts**: Read ticket's \`## Interface Contracts\`. Find impl signatures, resolve type aliases, compare field-by-field. Mismatch = fail.\n3. **Type Check**: Project type checker (tsc/mypy/equivalent) — no new errors in touched files.\n4. **Test Expectations**: Read ticket's \`## Test Expectations\`. Each expected test exists and passes. Table: \`| Test | File | Status |\`\n5. **Project Checks**: Read ticket's \`## Conformance Check\`. Run any additional checks listed.\n6. **Verdict**: ALL_PASS / FAIL (failures with file:line refs)\n\nALL_PASS → next. FAIL → fix, re-run.\n`;
+    }
+    out += `\n### ${n++}. Code Review\n\`git diff\` self-review. Write \`\${TICKET_DIR}/code_review_[date].md\`:\n1. Correctness (logic, off-by-one, null paths)\n2. Security (injection, auth, secrets, OWASP)\n3. Tests (coverage, fragile assertions, error paths)\n4. Architecture (coupling, abstraction leaks, contracts)\n5. Verdict: PASS / NEEDS_FIX (file:line refs)\n\nPASS → next. NEEDS_FIX → fix, re-verify.\n`;
+    if (phaseSet.has('simplify')) {
+        out += `\n### ${n}. Simplify\nModified files only (\`git diff --name-only\`). Delete dead code, merge dupes, flatten nesting (max 2), purge slop comments, replace \`any\` with project types. Verify after each file — revert if broken.\n`;
+    }
+    return out;
+}
 export function buildWorkerPrompt(opts) {
     const { ticket } = opts;
     const extensionRoot = opts.extensionRoot ?? getExtensionRoot();
@@ -350,6 +426,13 @@ export function buildWorkerPrompt(opts) {
         workerPrompt = ticket.isReviewTicket
             ? `# **REVIEW REQUEST**\n${ticket.task}\n\nYou are a Review Worker. Review the preceding implementation tickets for correctness, architecture, and code quality.`
             : `# **TASK REQUEST**\n${ticket.task}\n\nYou are a Morty Worker (Pickle Rick's assistant). Implement the request above.`;
+    }
+    if (!ticket.isReviewTicket) {
+        const tier = opts.complexityTier ?? 'medium';
+        const activePhases = TIER_LIFECYCLE[tier];
+        workerPrompt = workerPrompt
+            .replace('{{TIER_RESUME_TABLE}}', buildTierResumeTable(activePhases))
+            .replace('{{TIER_LIFECYCLE_SECTIONS}}', buildTierLifecycleSections(activePhases, tier));
     }
     workerPrompt += readActivePersonaBlock({
         sessionRoot: ticket.sessionRoot,
@@ -1569,6 +1652,8 @@ async function main() {
         if (resolvedTier)
             ticketInfo.complexity_tier = resolvedTier;
     }
+    // R-PIAP-A2: resolve effective tier for prompt injection and lifecycle-skip telemetry
+    const effectiveTier = (ticketInfo?.complexity_tier ?? 'medium');
     const requestedTimeout = ticketInfo
         ? getTicketTierBudgetWithOverrides(runtime.state, ticketInfo.complexity_tier).worker_timeout_seconds
         : parsed.timeout;
@@ -1580,6 +1665,22 @@ async function main() {
         console.log(`${Style.YELLOW}⚠️  Worker timeout clamped: ${effectiveTimeout}s${Style.RESET}`);
     }
     const statePath = path.join(parsed.sessionRoot, 'state.json');
+    // R-PIAP-A2: emit tier_phase_skipped for lifecycle phases pruned by the tier
+    if (!parsed.isReviewTicket) {
+        const lifecycleSkipped = ALL_LIFECYCLE_PHASES.filter(p => !TIER_LIFECYCLE[effectiveTier].includes(p));
+        if (lifecycleSkipped.length > 0) {
+            try {
+                writeActivityEntry(statePath, {
+                    event: 'tier_phase_skipped',
+                    ticket_id: parsed.ticketId,
+                    tier: effectiveTier,
+                    skipped_phases: lifecycleSkipped,
+                    ts: new Date().toISOString(),
+                });
+            }
+            catch { /* best-effort */ }
+        }
+    }
     // Reuse `runtime.state` (already loaded via `_sm.read()` in `readSessionRuntime`)
     // for downstream backend resolution. Each fresh `_sm.read()` re-runs
     // `recoverable-json` tmp recovery, which `readdirSync`'s the data root;
@@ -1666,6 +1767,7 @@ async function main() {
         model: model ?? 'sonnet',
         repoRoot: runtime.sessionWorkingDir,
         graphContextSlice,
+        complexityTier: effectiveTier,
     });
     _smCrumb('buildWorkerPrompt done — before runWorkerProcess');
     const sessionLog = fs.createWriteStream(args.sessionLogPath, { flags: 'w' });
