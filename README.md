@@ -187,9 +187,13 @@ Citadel writes a versioned JSON report with `schema: "1.0"`. Standalone runs use
 /szechuan-sauce src/services/                  # Deslop a directory
 /szechuan-sauce --dry-run src/                 # Catalog violations without fixing
 /szechuan-sauce --focus "error handling" src/  # Narrow the review
+/szechuan-sauce --design-safe src/             # Report-only for branch-authored visual code
+/szechuan-sauce --no-design-safe src/          # Force off (override auto-detection)
 ```
 
-**Anatomy Park** — traces data flows through subsystems looking for runtime bugs: data corruption, timezone issues, rounding errors, schema drift. Catalogs "trap doors" (files that keep breaking) in `CLAUDE.md` files for future engineers.
+**Design-safe mode** — when active, branch-authored visual findings (CSS layout, component styling, design tokens) are tagged `[report-only]` and never selected as the iteration's fix. Non-visual logic findings are unaffected. Auto-detected: when `>60%` of the branch diff is visual lines the pipeline enables design-safe automatically (errs toward safe within a 5% near-threshold band). Pass `--design-safe` to force it on or `--no-design-safe` to force it off. On `/pickle-pipeline`, the same flags apply to both cleanup phases.
+
+**Anatomy Park** — traces data flows through subsystems looking for runtime bugs: data corruption, timezone issues, rounding errors, schema drift. Catalogs "trap doors" (files that keep breaking) in `CLAUDE.md` files for future engineers. Respects `design_safe` mode: when enabled (auto-detected or via `--design-safe` on `/pickle-pipeline`), branch-authored visual findings are report-only and never auto-fixed.
 
 ```
 "Run anatomy park on src/"
@@ -199,6 +203,10 @@ Citadel writes a versioned JSON report with `schema: "1.0"`. Standalone runs use
 # Slash-command alternative:
 /anatomy-park src/                         # Deep subsystem review
 /anatomy-park --dry-run                    # Review only, no fixes
+
+# Via pipeline (design-safe applies to both anatomy-park and szechuan-sauce phases):
+/pickle-pipeline --design-safe             # Force design-safe for all cleanup phases
+/pickle-pipeline --no-design-safe          # Force off (override auto-detection)
 ```
 
 **Cronenberg (meta-router)** — when you don't know which cleanup metaphor fits, describe the goal and let `/cronenberg` pick the right pickle metaphor + cleanup chain for the task. Explicit invocation only — never auto-triggers.
