@@ -24,7 +24,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 
 | # | Bundle | Pri | Open findings | PRD / source | Size |
 |---|--------|-----|---------------|--------------|------|
-| 1 | **B-PTSB** | P1 | #75 R-PTSB | author from finding #75 — phantom-session root-cause + auto-cleanup heuristic | ~2 |
+| 1 | **B-PTSB** | P1 | #75 R-PTSB | `prds/p1-bug-fix-bundle-b-ptsb-phantom-session-leak-2026-05-30.md` (authored 2026-05-30: root cause = `setup-teams.test.js` `runSetup` invokes `setup.js` w/o `PICKLE_DATA_ROOT` sandbox → fixture-prompt phantoms leak into the real data root; + `setup.ts:1029` active=true/pid=null; + `state-manager.ts:469` age-gate blind spot). Schema-neutral. | ~4 |
 | 2 | **B-CMWL** | P1 | #86 R-CMWL | `prds/BUG-REPORT-2026-05-27-codex-manager-fixed-wall-pickle-stall.md` | ~4 |
 | 3 | **B-PNTR** | P1 | #77 R-PNTR-DEPS | `prds/p2-remove-non-tmux-pickle-loop.md` (RE-SCOPED 2026-05-30: extract manager template to `_pickle-manager-prompt.md`, then remove bare `/pickle`; schema-neutral). Refinement recommended pre-launch. | ~9 |
 | 4 | **B-R-MMTR** + **B-E2E** | P1+P3 | #28 R-ICDM, #19 R-MMTR | author — R-ICDM-2..7 audit + R-MMTRH heal + R-MMTR-7 closer; B-E2E re-attempts force-skipped R-MMTR-6 after | ~6 |
