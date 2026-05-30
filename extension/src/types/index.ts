@@ -135,6 +135,14 @@ export interface State {
   parent_session_hash?: string | null;
   /** Forward-created by R-CCPM-4: how the current session was invoked. */
   invocation_source?: 'operator' | 'manager_subprocess';
+  /** Forward-created by R-WSWA-1 (schema v5): per-ticket worker artifact-progress tracking for the R-WMW fix. */
+  worker_artifact_progress?: {
+    [ticketId: string]: {
+      spawn_count: number;
+      last_artifact_count: number;
+      zero_progress_count: number;
+    };
+  };
 }
 
 /**
@@ -286,11 +294,11 @@ export const STATE_MANAGER_DEFAULTS: StateManagerOptions = {
   baseLockDelayMs: 100,
   lockJitter: true,
   staleLockTimeoutMs: 30_000,
-  schemaVersion: 4,
+  schemaVersion: 5,
 };
 
 /** Latest schema_version that this code knows how to write/read. Must match the latest migration target in state-manager.ts. */
-export const LATEST_SCHEMA_VERSION = 4;
+export const LATEST_SCHEMA_VERSION = 5;
 
 export type StateErrorCode = 'MISSING' | 'CORRUPT' | 'SCHEMA_MISMATCH' | 'SCHEMA_DEPLOY_DRIFT' | 'LOCK_FAILED' | 'WRITE_FAILED';
 

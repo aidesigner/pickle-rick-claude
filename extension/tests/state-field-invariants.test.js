@@ -280,3 +280,68 @@ test('R-CCPM-WH-3: all three v4 fields survive a write→read round-trip via Sta
     fs.rmSync(tmpD, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// R-WSWA-1: schema v5 field invariant — worker_artifact_progress
+// ---------------------------------------------------------------------------
+
+function makeV4RawState(dir) {
+  return {
+    ...makeV3RawState(dir),
+    schema_version: 4,
+    orphans_detected: [],
+    parent_session_hash: null,
+    invocation_source: 'operator',
+  };
+}
+
+test('R-WSWA-1: AC-WSWA-01 — v4 state read migrates to v5 with worker_artifact_progress:{} and no SchemaVersionAheadError', async () => {
+  const { StateManager } = await import('../services/state-manager.js');
+  const { LATEST_SCHEMA_VERSION } = await import('../types/index.js');
+  const os = await import('node:os');
+  const tmpD = fs.mkdtempSync(path.join(os.tmpdir(), 'sfi-wswa-a-'));
+  try {
+    assert.equal(LATEST_SCHEMA_VERSION, 5, 'LATEST_SCHEMA_VERSION must be 5 after R-WSWA-1');
+    const sm = new StateManager();
+    const sp = path.join(tmpD, 'state.json');
+    const raw = makeV4RawState(tmpD);
+    assert.equal('worker_artifact_progress' in raw, false, 'fixture must omit worker_artifact_progress');
+    fs.writeFileSync(sp, JSON.stringify(raw, null, 2));
+
+    const state = sm.read(sp);
+    assert.equal(state.schema_version, 5, 'v4 read must migrate to schema_version 5');
+    assert.ok(
+      state.worker_artifact_progress && typeof state.worker_artifact_progress === 'object',
+      'worker_artifact_progress must be an object after migration',
+    );
+    assert.deepEqual(state.worker_artifact_progress, {}, 'worker_artifact_progress default must be {}');
+
+    const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(onDisk.schema_version, 5, 'migration must persist schema_version 5 to disk');
+    assert.deepEqual(onDisk.worker_artifact_progress, {}, 'persisted worker_artifact_progress must be {}');
+  } finally {
+    fs.rmSync(tmpD, { recursive: true, force: true });
+  }
+});
+
+test('R-WSWA-1: existing worker_artifact_progress entries are preserved (not clobbered to {})', async () => {
+  const { StateManager } = await import('../services/state-manager.js');
+  const os = await import('node:os');
+  const tmpD = fs.mkdtempSync(path.join(os.tmpdir(), 'sfi-wswa-b-'));
+  try {
+    const sm = new StateManager();
+    const sp = path.join(tmpD, 'state.json');
+    const raw = makeV4RawState(tmpD);
+    raw.worker_artifact_progress = { 'ticket-1': { spawn_count: 2, last_artifact_count: 5, zero_progress_count: 1 } };
+    fs.writeFileSync(sp, JSON.stringify(raw, null, 2));
+
+    const state = sm.read(sp);
+    assert.deepEqual(
+      state.worker_artifact_progress,
+      { 'ticket-1': { spawn_count: 2, last_artifact_count: 5, zero_progress_count: 1 } },
+      'populated worker_artifact_progress must survive migration untouched',
+    );
+  } finally {
+    fs.rmSync(tmpD, { recursive: true, force: true });
+  }
+});

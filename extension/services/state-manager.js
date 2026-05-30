@@ -333,11 +333,17 @@ function normalizeV4StateDefaults(state) {
     if (state.invocation_source === undefined)
         state.invocation_source = 'operator';
 }
+function normalizeV5StateDefaults(state) {
+    if (!isRecord(state.worker_artifact_progress))
+        state.worker_artifact_progress = {};
+}
 function normalizeUpToVersion(state, schemaVersion) {
     if (schemaVersion >= 3)
         normalizeV3StateDefaults(state);
     if (schemaVersion >= 4)
         normalizeV4StateDefaults(state);
+    if (schemaVersion >= 5)
+        normalizeV5StateDefaults(state);
 }
 function readFiniteCount(value) {
     const parsed = Number(value);

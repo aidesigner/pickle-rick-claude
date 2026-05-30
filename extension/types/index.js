@@ -11,10 +11,10 @@ export const STATE_MANAGER_DEFAULTS = {
     baseLockDelayMs: 100,
     lockJitter: true,
     staleLockTimeoutMs: 30_000,
-    schemaVersion: 4,
+    schemaVersion: 5,
 };
 /** Latest schema_version that this code knows how to write/read. Must match the latest migration target in state-manager.ts. */
-export const LATEST_SCHEMA_VERSION = 4;
+export const LATEST_SCHEMA_VERSION = 5;
 export class StateError extends Error {
     code;
     constructor(code, message) {
