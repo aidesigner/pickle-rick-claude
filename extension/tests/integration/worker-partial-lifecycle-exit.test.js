@@ -70,7 +70,9 @@ test('AC-WSE-02: research APPROVED + missing plan emits worker_partial_lifecycle
     assert.equal(ev.ticket, ticketId);
     assert.equal(typeof ev.ts, 'string', 'schema-required ts must be present');
     assert.match(ev.ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/, 'ts must be ISO 8601 UTC');
-    assert.deepStrictEqual(ev.gate_payload.artifacts_missing.sort(), ['code_review', 'conformance', 'plan']);
+    // R-PIAP-A4: medium required set is derived from TIER_LIFECYCLE[medium] and
+    // now includes plan_review (plan → plan_*.md + plan_review.md).
+    assert.deepStrictEqual(ev.gate_payload.artifacts_missing.sort(), ['code_review', 'conformance', 'plan', 'plan_review']);
     assert.equal(ev.gate_payload.session_log_size, 0);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -85,6 +87,7 @@ test('AC-WSE-02: all downstream artifacts present → no event', () => {
     mkdirSync(ticketDir, { recursive: true });
     writeFileSync(path.join(ticketDir, 'research_review.md'), 'APPROVED');
     writeFileSync(path.join(ticketDir, 'plan_2026-05-07.md'), 'plan');
+    writeFileSync(path.join(ticketDir, 'plan_review.md'), 'APPROVED'); // R-PIAP-A4: medium lifecycle requires plan_review
     writeFileSync(path.join(ticketDir, 'conformance_2026-05-07.md'), 'conformance');
     writeFileSync(path.join(ticketDir, 'code_review_2026-05-07.md'), 'review');
 

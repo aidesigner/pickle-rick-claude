@@ -3,7 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, type CompletionCommitEvidence, type TicketInfo, type TicketStatus, type TicketTierBudget } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, TIER_LIFECYCLE, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, type CompletionCommitEvidence, type TicketComplexityTier, type TicketInfo, type TicketStatus, type TicketTierBudget } from '../services/pickle-utils.js';
+import { findMissingPrefixes, requiredTierArtifactPrefixes } from '../services/artifact-validation.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -4193,23 +4194,41 @@ export function checkHeadPinMismatch(
 }
 
 /**
- * R-WSE-2: Emit worker_partial_lifecycle_exit when research-review is APPROVED
- * but downstream lifecycle artifacts are missing from the ticket dir.
+ * R-WSE-2 / R-PIAP-A4: Emit worker_partial_lifecycle_exit when a worker exits
+ * mid-lifecycle leaving required artifacts missing. The required set is derived
+ * from TIER_LIFECYCLE[tier] (R-PIAP-A1) via requiredTierArtifactPrefixes — never
+ * a hardcoded list — so a trivial ticket (implement + code_review only) is not
+ * penalized for absent research_*.md / plan_*.md.
+ *
+ * Progress gate: tiers whose lifecycle includes research_review keep the R-WSE-2
+ * "research APPROVED" precondition (don't flag a worker still iterating on
+ * research). Tiers without research (trivial/small) instead require at least one
+ * gated artifact to be present so a not-started worker is never flagged.
  */
 export function checkPartialLifecycleExit(sessionDir: string, statePath: string, ticketId: string): void {
   const ticketDir = path.join(sessionDir, ticketId);
   let files: string[];
   try { files = fs.readdirSync(ticketDir); } catch { return; }
 
-  if (!files.includes('research_review.md')) return;
-  let reviewContent: string;
-  try { reviewContent = fs.readFileSync(path.join(ticketDir, 'research_review.md'), 'utf-8'); } catch { return; }
-  if (!reviewContent.trimEnd().endsWith('APPROVED')) return;
+  let tier: TicketComplexityTier = 'medium';
+  try {
+    tier = parseTicketFrontmatter(ticketFilePath(sessionDir, ticketId))?.complexity_tier ?? 'medium';
+  } catch { /* default medium */ }
 
-  const downstreamPrefixes = ['plan', 'conformance', 'code_review'];
-  const artifactsMissing: string[] = downstreamPrefixes.filter(
-    prefix => !files.some(f => f === `${prefix}.md` || f.startsWith(`${prefix}_`)),
-  );
+  const requiredPrefixes = requiredTierArtifactPrefixes(tier);
+  const artifactsMissing = findMissingPrefixes(files, requiredPrefixes);
+
+  if (TIER_LIFECYCLE[tier].includes('research_review')) {
+    if (!files.includes('research_review.md')) return;
+    let reviewContent: string;
+    try { reviewContent = fs.readFileSync(path.join(ticketDir, 'research_review.md'), 'utf-8'); } catch { return; }
+    if (!reviewContent.trimEnd().endsWith('APPROVED')) return;
+  } else if (artifactsMissing.length === requiredPrefixes.length) {
+    // No research gate (trivial/small): require ≥1 gated artifact present as
+    // progress evidence so a not-started worker is never flagged.
+    return;
+  }
+
   if (artifactsMissing.length === 0) return;
 
   let sessionLogSize = 0;

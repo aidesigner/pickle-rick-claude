@@ -31,7 +31,7 @@ Machine-maintained export index for the `services/` subsystem. The audit script 
 - `ac-phase-gate.ts` -> `AC_PHASE_MANIFEST`, `AcEvaluationPhase`, `AcPhaseCriterion`, `AcPhaseGateFailure`, `AcPhaseGateResult`, `runAcPhaseGate`
 - `activity-logger.ts` -> `_clearPendingBuffer`, `_getPendingBuffer`, `_setRetryDelayMs`, `getActivityDir`, `logActivity`, `pruneActivity`
 - `agent-md-loader.ts` -> `AgentMdFrontmatter`, `AgentModel`, `LoadAgentMdOptions`, `LoadedAgentMd`, `defaultAgentsDir`, `loadAgentMd`, `parseAgentMdFrontmatter`, `resolveAgentMdPath`
-- `artifact-validation.ts` -> `findMissingPrefixes`, `listLinearTicketFiles`
+- `artifact-validation.ts` -> `findMissingPrefixes`, `listLinearTicketFiles`, `requiredTierArtifactPrefixes`
 - `backend-spawn.ts` -> `AddDirOutsideSandboxError`, `BackendPreSpawnAssertion`, `JudgeInvocationOptions`, `ManagerInvocationOptions`, `ReasoningEffort`, `SpawnInvocation`, `WorkerBackendResolution`, `WorkerInvocationOptions`, `__resetBackendWarnings`, `assertAddDirsUnderTmpdirIfTestMode`, `assertBackendPreSpawn`, `backendEnvOverrides`, `buildJudgeInvocation`, `buildManagerInvocation`, `buildWorkerInvocation`, `isBackend`, `loadBackendFromSession`, `resolveBackend`, `resolveBackendFromStateFile`, `resolveBackendFromStateFileWithSource`, `resolveWorkerBackendFromState`, `resolveWorkerBackendFromStateFile`
 - `bundle-finalize.ts` -> `BundleFinalizeTicket`, `BundleTestFloorContribution`, `BundleTestFloorInput`, `BundleTestFloorResult`, `computeBundleTestFloor`, `parseCommitTestDelta`, `parseRefinementBaseline`, `renderMorningSummaryFrontmatter`
 - `bundle-state-integrity.ts` -> `RelaunchCapAuditResult`, `RelaunchCapAuditViolation`, `auditCodexManagerRelaunchCaps`
