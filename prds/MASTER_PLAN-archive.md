@@ -288,3 +288,47 @@ Slots K and L stay deferred:
 ### Latest release links
 - v1.64.0 — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.64.0
 - v1.63.0 — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.63.0
+
+---
+
+## Offloaded from live MASTER_PLAN 2026-05-30 (reorg for babysitter-tick token-efficiency)
+
+Findings closed by shipped bundles, removed from the live Open-Findings tables:
+- **#34 R-WTB** + **#87 R-CSIS** + **#32 R-TFP** (Class C) — CLOSED via **B-PIPE-HARDEN-2 v1.81.1** (closer `c7feae53` + `2052107b`).
+- **#78 R-AFCC-STALE** — CLOSED via **B-AFCC-DEEP v1.82.0**: the autofill helper was collapsed (Phase 3A, `8b0e741a`), so the cross-session stale-attribution surface vanished.
+- **#27 R-MMRT** — CLOSED v1.80.1 (B-MONITOR partial); B-MONITOR residual is now only #29 R-MWCL.
+- **R-QGSK** (B-QSRC half) — shipped via the stale-PRD-sweep unified `skip_quality_gates_reason` flag; B-QSRC's remaining R-RSU residual folds into B-WEDGE.
+
+### Recently Shipped (v1.76.0..v1.82.1)
+| Release | Date | Content |
+|---|---|---|
+| v1.82.1 | 2026-05-29 | **B-CWRR CLOSED** (#88) — citadel monorepo `workingDir`-as-`repoRoot` doubling. Class A `PipelineRuntime.repoRoot` + AC-CWRR-4 spec (`cd139d23`), Class B 5-site audit (`cf9808e9`), Class C pipeline-status counter (`b9b00df2`), closer `10b787c9`. Schema-neutral. |
+| v1.82.0 | 2026-05-29 | **B-AFCC-DEEP CLOSED** (12/12) — autofill/Done-flip RCA. `TicketCompletionEvidence` module + 5 callsites (`fadc2477`), helper shims (`8b0e741a`,`d235d24d`), `git cat-file -e` reachability (`434774fc`), 8-path suite (`3de26d83`,`db992304`), R-CLOSER-ADJACENCY-AUDIT (`ab432842`), closer `0e64a705`. |
+| v1.81.1 | 2026-05-28 | **B-PIPE-HARDEN-2 CLOSED** (9/9) — #34 R-WTB timeout floor, #87 R-CSIS closer-gate-expensive fix, #32 R-TFP-C flake serialization. Closer `c7feae53`, parity+lockfile `6dc6a987`, residual sync `2052107b`. |
+| v1.81.0 | 2026-05-27 | **B-PIPE-BABYSIT-HARDEN** — #80 R-OMS orphan-manager reaping (`ed13a2a5`), #81 R-AISLOW pre-skip (`a03b1766`), #82 R-SJLAG heartbeat (`24cb85d0`+`94cb35c0`), closer `8978b306`. Schema-neutral. |
+| v1.80.3 | 2026-05-27 | #83 R-RIC-EXPLICIT — `hasCompletionCommit` honors explicit `completion_commit:` frontmatter (`3255dec5`,`6efc4e53`,`103ef20b`,`863016bb`). |
+| v1.80.2 | 2026-05-27 | #79 B-RELEASE-DRIFT — 5 root-cause classes of 12 gate failures (R-SMTEST/R-MUXQG/R-MUXAUDIT/R-EMWMOCK/R-RSFISO) + R-SMTEST-6 `827c6641`, R-RELDRIFT-2 `b2c286a2`. 13 tickets. Closer `957e3087`. |
+| v1.80.1 | 2026-05-25 | #27 R-MMRT — monitor respawn validates `sessionDir`; `65bf6bd3`,`d1e5f886`,`d0ff0a85`,`6e187f67`. B-MONITOR partial. |
+| v1.80.0 | 2026-05-25 | R-MEGA-SELF-FIX Phase 1+2 — #47 R-SJET (`c15b8332`,`710e5cfd`,`0286c356`,…), #46 R-SSDF AGENTS.md firewall (`82a5d453`). |
+| v1.79.0..v1.79.3 | 2026-05-24 | B-FRA (#66-#69), B-APWS (#11), B-WSRC-GR (#72), B-CCRC (#73). |
+| v1.78.0..v1.78.2 | 2026-05-22..23 | #18 R-FGNC, #53 R-SRAA, #48/#54 verified, #52 R-WUWC reproducer. |
+| v1.77.0 | 2026-05-22 | Readiness/scope false-positive cluster + B-PIPE-LAUNCH-FRICTION (#49/#50/#51/#57/#64/#65). |
+| v1.76.0 | 2026-05-22 | Release-gate stabilization + R-CCR review-hardening (16/16); flake-tail serialized via `.serial-tests.json`. |
+
+### Closed since last update — dated detail (2026-05-22 .. 2026-05-29)
+
+**(2026-05-22)** #58-#63 B-BABYSIT-FIX (`bf89a1a3`) + R-CCR (`e448b714`); #64 R-RHFP (`a0604987`); #65 R-RCEX (`8cb5ba79`); #50 R-SRGT (`6f71dd6a`); #57 R-RPRA verified; #49 R-PSSS (`988ed55a`,`9020c26b`); #51 R-PPSD verified; #18 R-FGNC (`48718c63`,`b5500da8`).
+
+**(2026-05-23)** #48 R-PCFG verified (`bd5e4466`); #54 R-MRFP verified (`5501d4ed`); #53 R-SRAA (`19ff0dd1`); #5 B-AUDIT partial (`1add4451`); #32 R-TFP gate-blocking → B-FLAKE v1.76.0; B-FRA/B-APWS PRDs drafted (`cfa38603`,`46db2c27`); #52 R-WUWC B-WUWC-REPRODUCER (`d9bdb589`,`4b38893c`, closer 26301c6a).
+
+**(2026-05-24)** #66 R-FRA, #67 R-RTRC8, #68 R-FRA-GATE, #69 R-FRA-5th — B-FRA CLOSED v1.79.0; #70 R-CCQF (`e3f510fd`); #71 R-PEDC (`e3f510fd`); #11 R-APWS B-APWS CLOSED v1.79.1 (`69aaa442`,`45223a06`,`e80eaed5`,`2aa079c2`); #72 R-WSRC-GR B-WSRC-GR CLOSED v1.79.2 (`b60d4cfb`).
+
+**(2026-05-25)** #27 R-MMRT B-MONITOR CLOSED v1.80.1 (`65bf6bd3`,`d1e5f886`,`d0ff0a85`,`6e187f67`).
+
+**(2026-05-26)** #5 B-AUDIT — all 5 subsystems OK under `audit-subsystem-claude-md.sh` (`6c8c29b2`→`bb7d040e`, `3255afb2`→`1a64117e`). Stale-PRD sweep: 7 P3 PRDs (R-RTPS/R-QGSK/R-POD/R-PDT/R-MWR/R-SOA) whose work shipped under other bundles — mark `status: Shipped`, no code change.
+
+**(2026-05-27)** #80 R-OMS + #81 R-AISLOW + #82 R-SJLAG B-PIPE-BABYSIT-HARDEN v1.81.0 (PRD `p1-bug-fix-bundle-b-pipe-babysit-harden-2026-05-27.md`); #79 B-RELEASE-DRIFT v1.80.2; #83 R-RIC-EXPLICIT v1.80.3 (trap door in `services/CLAUDE.md`, ENFORCE `has-completion-commit-explicit-source.test.js`).
+
+**(2026-05-29)** #88 R-CWRR B-CWRR v1.82.1 (PRD `p1-bug-fix-bundle-b-cwrr-citadel-workingdir-as-reporoot-2026-05-29.md`). Closer `10b787c9` (fast 5192/integration 725/expensive incl. self-skipping soak).
+
+**R-SJET #47 / R-SSDF #46** closed via R-MEGA-SELF-FIX v1.80.0 (R-SJET-3 `c15b8332`, R-SJET-4 `710e5cfd`, R-SJET-6 `0286c356`, T-HARDEN-PROBE `65d57aab`, T-HARDEN-AUTORESUME `5a25ef7b`, T-HARDEN-DOCS `e696ce16`, env-strip `b2936a41`; R-SSDF-FW `82a5d453`+`12373766`). **R-CCRC #73** via B-CCRC v1.79.3 (`06d6a905`,`0e04b5ca`).
