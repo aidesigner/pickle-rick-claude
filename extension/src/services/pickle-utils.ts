@@ -530,6 +530,12 @@ export const TIER_LIFECYCLE: Record<TicketComplexityTier, LifecyclePhase[]> = {
   large: ['research', 'research_review', 'plan', 'plan_review', 'implement', 'conformance', 'code_review', 'simplify'],
 } as const;
 
+/** R-PIAP-A3: max changed LOC (additions + deletions) for each compact tier. Tunable. */
+export const TIER_DIFF_ENVELOPE: Partial<Record<TicketComplexityTier, number>> = {
+  trivial: 20,
+  small: 80,
+} as const;
+
 export interface TierCapPartial {
   max_iterations?: number;
   worker_timeout_seconds?: number;

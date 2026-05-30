@@ -420,6 +420,11 @@ export const TIER_LIFECYCLE = {
     medium: ['research', 'research_review', 'plan', 'plan_review', 'implement', 'conformance', 'code_review', 'simplify'],
     large: ['research', 'research_review', 'plan', 'plan_review', 'implement', 'conformance', 'code_review', 'simplify'],
 };
+/** R-PIAP-A3: max changed LOC (additions + deletions) for each compact tier. Tunable. */
+export const TIER_DIFF_ENVELOPE = {
+    trivial: 20,
+    small: 80,
+};
 export function normalizeTicketComplexityTier(value) {
     if (typeof value === 'string') {
         const normalized = value.trim().toLowerCase();

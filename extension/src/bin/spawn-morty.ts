@@ -17,6 +17,7 @@ import {
   VALID_TICKET_COMPLEXITY_TIERS,
   extractFrontmatter,
   TIER_LIFECYCLE,
+  TIER_DIFF_ENVELOPE,
   type LifecyclePhase,
   type TicketClassifierInfo,
   type TicketComplexityTier,
@@ -524,6 +525,7 @@ export function buildTierLifecycleSections(phases: LifecyclePhase[], tier: strin
   return out;
 }
 
+// eslint-disable-next-line complexity -- HT-1 reviewed: R-PIAP-A3 added minimalism-directive branch; extract to helper in a focused refactor PR
 export function buildWorkerPrompt(opts: BuildWorkerPromptOptions): string {
   const { ticket } = opts;
   const extensionRoot = opts.extensionRoot ?? getExtensionRoot();
@@ -546,6 +548,9 @@ export function buildWorkerPrompt(opts: BuildWorkerPromptOptions): string {
     workerPrompt = workerPrompt
       .replace('{{TIER_RESUME_TABLE}}', buildTierResumeTable(activePhases))
       .replace('{{TIER_LIFECYCLE_SECTIONS}}', buildTierLifecycleSections(activePhases, tier));
+    if (TIER_DIFF_ENVELOPE[tier] !== undefined) {
+      workerPrompt += `\n\n**Minimalism:** This is a ${tier} ticket. Make the smallest correct change. Do not refactor adjacent code, do not add abstractions, do not rename or restructure beyond the ticket's explicit ask. If the fix is one line, it is one line.`;
+    }
   }
 
   workerPrompt += readActivePersonaBlock({
@@ -1194,6 +1199,22 @@ function didWorkerGateFail(lintOk: boolean, tscOk: boolean, testsOk: boolean): b
   return !lintOk || !tscOk || !testsOk;
 }
 
+/** R-PIAP-A3: Count total changed LOC (additions + deletions) between preWorkerHead and current HEAD. */
+export function computeChangedLoc(preWorkerHead: string, workingDir: string): number {
+  try {
+    const currentHead = getHeadSha(workingDir);
+    const out = runCmd(['git', 'diff', '--numstat', preWorkerHead, currentHead], { cwd: workingDir });
+    let total = 0;
+    for (const line of out.split('\n')) {
+      const match = line.match(/^(\d+)\s+(\d+)\s+/);
+      if (match) total += parseInt(match[1], 10) + parseInt(match[2], 10);
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
 // TODO(R-LINT): refactor — pre-existing 123 lines / complexity 16 introduced
 // 2026-05-11 (c5e7f92a7); extract per-phase helpers in a focused PR.
 // eslint-disable-next-line max-lines-per-function, complexity -- HT-1 reviewed: pre-existing length/complexity tracked by R-LINT; per-phase helper extraction deferred to a focused refactor PR.
@@ -1206,6 +1227,26 @@ export async function runWorkerGate(changedFiles: string[], args: {
   ticketTier?: string;
 }): Promise<WorkerGateResult> {
   const fileList = [...changedFiles];
+  // R-PIAP-A3: soft diff-envelope check — never hard-blocks, never reverts
+  if (args.preWorkerHead && args.ticketTier) {
+    const envelope = TIER_DIFF_ENVELOPE[args.ticketTier as TicketComplexityTier];
+    if (envelope !== undefined) {
+      try {
+        const changedLoc = computeChangedLoc(args.preWorkerHead, args.workingDir);
+        if (changedLoc > envelope) {
+          writeActivityEntry(args.statePath, {
+            event: 'tier_diff_envelope_exceeded',
+            ts: new Date().toISOString(),
+            ticket_id: args.ticketId,
+            tier: args.ticketTier as TicketComplexityTier,
+            changed_loc: changedLoc,
+            envelope,
+          });
+          console.warn(`[spawn-morty] ⚠️  Diff envelope exceeded for ${args.ticketTier} ticket: ${changedLoc} LOC changed (envelope: ${envelope}). Soft signal — run continues.`);
+        }
+      } catch { /* best-effort */ }
+    }
+  }
   const extensionDir = path.join(args.workingDir, 'extension');
   if (!fs.existsSync(extensionDir)) {
     return {
