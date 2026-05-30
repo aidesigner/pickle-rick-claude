@@ -664,6 +664,22 @@ Plumbus runs six analysis frames during the first iteration Edge Walk (Override 
 
 **Kill-switch**: set `PLUMBUS_GENERATIVE_AUDIT=off` to skip Override 6 entirely (no analyzer invocation, no `## Generative Findings` written). Any other value (including absent) runs the audit normally.
 
+### 💎 Death Crystal — Architectural Deepening Lens
+
+> *"Your finger goes on there, Morty, and you think about the architecture you want. The crystal shows you the path to it."*
+
+Reads code through John Ousterhout's *A Philosophy of Software Design* and Ben Pocock's interface-shape essays, then surfaces **shallow modules** — components whose interface complexity rivals their implementation — and proposes **deeper** alternatives. Sibling to Szechuan Sauce (*is it well-designed?*) and Anatomy Park (*is it correct?*): Death Crystal asks *"is this interface deeper than its implementation, or just hiding the mess?"*
+
+| Command | Description |
+|---|---|
+| `/death-crystal --deepen` | Architectural deepening lens — scan the target for shallow modules, information leakage, temporal decomposition, and pass-through methods; rank by depth deficit and propose deeper consolidations |
+| `/death-crystal --interface <module>` | Pocock-style interface-shape analysis — enumerate what every caller of `<module>` actually needs and propose the minimal sufficient interface |
+
+```bash
+/death-crystal --deepen                       # Surface shallow modules across the target
+/death-crystal --interface src/services/audit # Minimal sufficient interface for one module
+```
+
 ---
 
 ## 🚀 Command & Flag Reference
