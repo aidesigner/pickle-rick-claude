@@ -9,7 +9,7 @@
 |---|---|
 | Version (source/deployed) | **v1.85.0** — 2026-05-30 (R-DC feature epic shipped; deployed + tagged) |
 | Latest GitHub release | v1.85.0 — 2026-05-30 (v1.81.1..v1.85.0 all tagged; R-PGI+R-PIAP+R-DC feature epics shipped — dispatch order drained) |
-| Active pipeline | R-PIAP (launching) |
+| Active pipeline | none (queue drained — all bundles shipped through v1.85.0) |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive (operator):** drain bug bundles before feature epics. Feature epics do not count toward the open-bug ceiling.
