@@ -20,7 +20,7 @@ import { execFileSync, spawn } from 'child_process';
 import { BACKENDS, MICROVERSE_FATAL_REASONS, PipelineRunnerExitCode, isMicroverseFailureExit } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
-import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, writeStateFile, collectTickets, respawnMonitorWindowForMode, } from '../services/pickle-utils.js';
+import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, writeStateFile, collectTickets, respawnMonitorWindowForMode, classifyDiffVisualDominance, VISUAL_DOMINANCE_THRESHOLD, } from '../services/pickle-utils.js';
 import { isGitIgnoredPath, listWorkingTreeDirtyPaths } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 import { emitBundleLinearComments } from '../services/linear-integration.js';
@@ -34,6 +34,8 @@ const DEFAULT_IGNORE_DIRTY_PATHS = ['prds', 'docs'];
 const CODEX_REQUIRED_BACKEND = 'codex-required';
 const WATCHER_TERMINATED_BANNER = '◤ FEED TERMINATED ◢';
 const DIRTY_ALLOWED_FILE_REL = path.join('extension', '.pipeline-runner-dirty-allowed.json');
+// R-PIAP-B2: within this many points of the threshold (0.60), err toward design-safe.
+const NEAR_THRESHOLD_BAND = 0.05;
 // ---------------------------------------------------------------------------
 // Config Parsing
 // ---------------------------------------------------------------------------
@@ -262,6 +264,86 @@ export function assertCleanWorkingTree(workingDir, ignoreDirtyPaths) {
         return;
     const suffix = ignore.length > 0 ? ` (ignored prefixes: ${ignore.join(', ')})` : '';
     throw new Error(`Working tree at ${workingDir} is dirty${suffix}. Dirty files:\n${blockingPaths.join('\n')}\nCommit, stash, or discard changes before starting the pipeline.`);
+}
+// ---------------------------------------------------------------------------
+// R-PIAP-B2: Design-safe detection helpers
+// ---------------------------------------------------------------------------
+/**
+ * Parse unified `git diff` output into a `DiffVisualStat` for
+ * `classifyDiffVisualDominance`. Each file's added lines (those prefixed with
+ * `+` but not `+++`) are collected under the file path from the `+++ b/…` header.
+ */
+export function parseDiffForVisualStat(diffOutput) {
+    const stat = [];
+    let currentPath = null;
+    let currentLines = [];
+    for (const line of diffOutput.split('\n')) {
+        if (line.startsWith('+++ b/')) {
+            if (currentPath !== null)
+                stat.push({ path: currentPath, changedLines: currentLines });
+            currentPath = line.slice('+++ b/'.length);
+            currentLines = [];
+        }
+        else if (currentPath !== null && line.startsWith('+') && !line.startsWith('+++')) {
+            currentLines.push(line.slice(1));
+        }
+    }
+    if (currentPath !== null)
+        stat.push({ path: currentPath, changedLines: currentLines });
+    return stat;
+}
+const GIT_DIFF_DESIGN_SAFE_TIMEOUT_MS = 30_000;
+/**
+ * R-PIAP-B2: resolve whether the current branch is design-safe.
+ *
+ * Precedence:
+ *   1. `override` (from `--design-safe` / `--no-design-safe` CLI flags) — wins unconditionally.
+ *   2. Auto-detect: run `git diff <startCommit>..HEAD`, parse, classify.
+ *      Near-threshold policy: effective threshold = `VISUAL_DOMINANCE_THRESHOLD - NEAR_THRESHOLD_BAND`
+ *      so any visual ratio within the band of 0.60 errs toward design-safe.
+ *   3. If diff cannot be obtained → false (logic-primary assumed).
+ */
+export function resolveDesignSafe(startCommit, repoRoot, override) {
+    if (override !== undefined)
+        return override;
+    if (!startCommit || typeof startCommit !== 'string')
+        return false;
+    let diffOutput;
+    try {
+        diffOutput = execFileSync('git', ['diff', `${startCommit}..HEAD`], {
+            cwd: repoRoot,
+            encoding: 'utf-8',
+            timeout: GIT_DIFF_DESIGN_SAFE_TIMEOUT_MS,
+        });
+    }
+    catch {
+        return false;
+    }
+    const diffStat = parseDiffForVisualStat(diffOutput);
+    // Lower the threshold by the near-band so ratios within [threshold-band, threshold]
+    // also classify as UI-primary (err toward design-safe).
+    return classifyDiffVisualDominance(diffStat, VISUAL_DOMINANCE_THRESHOLD - NEAR_THRESHOLD_BAND);
+}
+/**
+ * R-PIAP-B2: After `init-microverse.js` creates `microverse.json`, read it back
+ * and inject `design_safe: boolean` so cleanup-phase workers can read the flag.
+ * Best-effort: a read/write failure is logged but does not block the phase.
+ */
+function injectDesignSafeIntoMicroverse(sessionDir, designSafe, log) {
+    const microversePath = path.join(sessionDir, 'microverse.json');
+    try {
+        const existing = readRecoverableJsonObject(microversePath);
+        if (!existing) {
+            log('design_safe inject: microverse.json not found or empty');
+            return;
+        }
+        existing.design_safe = designSafe ?? false;
+        writeStateFile(microversePath, existing);
+        log(`design_safe=${String(existing.design_safe)} written to microverse.json`);
+    }
+    catch (err) {
+        log(`design_safe inject failed (non-fatal): ${safeErrorMessage(err)}`);
+    }
 }
 // ---------------------------------------------------------------------------
 // Bundle Pre-flight
@@ -1022,7 +1104,7 @@ function writeAnatomyConfig(sessionDir, subsystems, stallLimit) {
     };
     writeStateFile(path.join(sessionDir, 'anatomy-park.json'), apState);
 }
-export function setupAnatomyPark(sessionDir, target, stallLimit, extensionRoot, log, scope) {
+export function setupAnatomyPark(sessionDir, target, stallLimit, extensionRoot, log, scope, designSafe) {
     const persistedAllowedPaths = !scope || scope.allowedPaths.length === 0
         ? readPersistedAllowedPaths(sessionDir)
         : undefined;
@@ -1068,6 +1150,7 @@ export function setupAnatomyPark(sessionDir, target, stallLimit, extensionRoot, 
         log(`init-microverse.js failed: ${safeErrorMessage(err)}`);
         return { skipReason: 'setup_error' };
     }
+    injectDesignSafeIntoMicroverse(sessionDir, designSafe, log);
     archiveFile(sessionDir, 'prd.md', 'pickle');
     fs.writeFileSync(path.join(sessionDir, 'prd.md'), buildAnatomyPrd(target, subsystems, stallLimit, runnerStallLimit, citadelReport));
     log('Anatomy Park setup complete');
@@ -1131,7 +1214,7 @@ function buildSzechuanPrd(target, stallLimit, principlesPath, extensionRoot, dom
     prdParts.push(...buildCitadelSzechuanContext(citadelReport));
     return prdParts.join('\n');
 }
-export function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot, domain, focus, log, scope) {
+export function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot, domain, focus, log, scope, designSafe) {
     const principlesPath = path.join(extensionRoot, 'szechuan-sauce-principles.md');
     const judgeContextArg = buildSzechuanJudgeContext(sessionDir, principlesPath, extensionRoot, domain, focus, log);
     const citadelReport = readCitadelReport(sessionDir);
@@ -1172,6 +1255,7 @@ export function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot
         log(`init-microverse.js failed: ${safeErrorMessage(err)}`);
         return { skipReason: 'setup_error' };
     }
+    injectDesignSafeIntoMicroverse(sessionDir, designSafe, log);
     archiveFile(sessionDir, 'prd.md', 'anatomy-park');
     fs.writeFileSync(path.join(sessionDir, 'prd.md'), buildSzechuanPrd(target, stallLimit, principlesPath, extensionRoot, domain, focus, citadelReport));
     log('Szechuan Sauce setup complete');
@@ -1217,7 +1301,7 @@ function anatomyPhaseConfig(config) {
         name: 'anatomy-park',
         prevPhase: 'citadel',
         runnerScript: 'microverse-runner.js',
-        setup: (args) => setupAnatomyPark(args.sessionDir, args.target, config.anatomy_stall_limit, args.extensionRoot, args.log, args.scope ? { allowedPaths: args.scope.allowed_paths, repoRoot: args.workingDir } : undefined),
+        setup: (args) => setupAnatomyPark(args.sessionDir, args.target, config.anatomy_stall_limit, args.extensionRoot, args.log, args.scope ? { allowedPaths: args.scope.allowed_paths, repoRoot: args.workingDir } : undefined, args.designSafe),
         refreshScope: true,
         throwOnEmptyScope: true,
         preSpawnStateMutation: null,
@@ -1228,7 +1312,7 @@ function szechuanPhaseConfig(config) {
         name: 'szechuan-sauce',
         prevPhase: 'anatomy-park',
         runnerScript: 'microverse-runner.js',
-        setup: (args) => setupSzechuanSauce(args.sessionDir, args.target, config.szechuan_stall_limit, args.extensionRoot, config.szechuan_domain, config.szechuan_focus, args.log, args.scope ? { allowedPaths: args.scope.allowed_paths } : undefined),
+        setup: (args) => setupSzechuanSauce(args.sessionDir, args.target, config.szechuan_stall_limit, args.extensionRoot, config.szechuan_domain, config.szechuan_focus, args.log, args.scope ? { allowedPaths: args.scope.allowed_paths } : undefined, args.designSafe),
         setupExtraArgs: { domain: config.szechuan_domain, focus: config.szechuan_focus },
         refreshScope: true,
         throwOnEmptyScope: false,
@@ -1589,6 +1673,7 @@ async function runConfiguredPhase(runtime, phaseConfig, counters) {
         extensionRoot: runtime.extensionRoot,
         log: runtime.log,
         scope,
+        designSafe: runtime.designSafe,
     }) : true;
     // R-PSSS-3: a non-`true` setup result carries the skip reason.
     if (setupResult !== true)
@@ -1705,6 +1790,8 @@ function loadPipelineRuntime(sessionDir, opts, log) {
             repoRoot = out;
     }
     catch { /* non-git dir — fall back to workingDir */ }
+    const designSafe = resolveDesignSafe(state.start_commit, repoRoot, opts.designSafeFlag);
+    log(`design_safe resolved: ${String(designSafe)}${opts.designSafeFlag !== undefined ? ' (CLI override)' : ' (auto-detected)'}`);
     return {
         sessionDir,
         extensionRoot,
@@ -1716,6 +1803,7 @@ function loadPipelineRuntime(sessionDir, opts, log) {
         backend,
         phaseEnv,
         log,
+        designSafe,
     };
 }
 export function installShutdownHandlers(runtime, counters, cancelMarker) {
@@ -2349,13 +2437,17 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'pipeline-runner.js') 
     const sessionDir = findPositional(argv, valuedFlags);
     const statePath = sessionDir ? path.join(sessionDir, 'state.json') : '';
     if (!sessionDir || readRecoverableJsonObject(statePath) === null) {
-        console.error('Usage: node pipeline-runner.js <session-dir> [--scope <flag>] [--scope-base <ref>] [--strict-phases]');
+        console.error('Usage: node pipeline-runner.js <session-dir> [--scope <flag>] [--scope-base <ref>] [--strict-phases] [--design-safe | --no-design-safe]');
         process.exit(1);
     }
     const scopeFlag = parseArgvFlag(argv, '--scope');
     const scopeBase = parseArgvFlag(argv, '--scope-base');
     const strictPhases = argv.includes('--strict-phases');
-    main(sessionDir, { scopeFlag, scopeBase, strictPhases }).catch((err) => {
+    // R-PIAP-B2: explicit override wins; if both present, --design-safe wins.
+    const designSafeFlag = argv.includes('--design-safe') ? true :
+        argv.includes('--no-design-safe') ? false :
+            undefined;
+    main(sessionDir, { scopeFlag, scopeBase, strictPhases, designSafeFlag }).catch((err) => {
         // AC-CWRR-5: carry forward completed/skipped/total from the last writeRunningStatus
         // call so the fatal-exit status does not zero out phases that already completed.
         let fatalCompletedPhases = 0;
