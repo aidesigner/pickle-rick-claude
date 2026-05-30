@@ -36,6 +36,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 | 10 | **B-MONITOR** | P3 | #29 R-MWCL | author — monitor `inferMonitorMode` szechuan/anatomy fall-through (#27 R-MMRT already closed v1.80.1) | ~4 |
 | 11 | **B-LSOF** | P3 | #37e R-PIWG-5 | author — `lsof` launch-time concurrent-git-access probe | ~2-3 |
 | 12 | **R-PSAI** | P3 | #12 | `prds/p2-pickle-pipeline-no-scope-auto-inference.md` (UX friction; lowest) | ~2 |
+| 13 | **B-DWF** | P2 | (feature — no bug finding) | `prds/p2-dynamic-workflow-conversion-refine-prd-council.md` (convert `/pickle-refine-prd` + `/council-of-ricks` fan-out cores to Claude Code dynamic workflows; **researched + refined 2026-05-30**, no refinement needed). Feature → drains after the bug bundles. **Gated:** slot after B-PNTR (row 4 — verify the shared `mux-runner` call site, PRD Risk 9) AND after B-ACSG (row 8 — reconcile the `ac_shape_smells` parse-path logic collision, PRD Risk 7). **R-DWF-1 is a hard spike gate** (headless allowlist + batch-throughput probes); a FAIL shelves the bundle. Schema-neutral. | ~6 |
 
 **Watch-only — NOT in the drain (out of scope until their gate clears):**
 - **B-CSI** (#25 R-CSI) — external-event-gated: needs a real concurrent-session destructive-command incident to analyze. Re-activates on the next incident. Not operator-interaction.
@@ -80,9 +81,10 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 
 ---
 
-## Feature Epics — ALL SHIPPED
+## Feature Epics
 
-R-PGI v1.83.0 · R-PIAP v1.84.0 · R-DC v1.85.0. PRDs retained in `prds/`.
+**Shipped:** R-PGI v1.83.0 · R-PIAP v1.84.0 · R-DC v1.85.0. PRDs retained in `prds/`.
+**Queued:** B-DWF (R-DWF) — dynamic-workflow conversion of the refine-prd + council fan-out cores; researched + refined; drain row 13, gated after B-PNTR + B-ACSG. `prds/p2-dynamic-workflow-conversion-refine-prd-council.md`.
 
 ### Deferred future epics (not in drain scope until activated)
 
