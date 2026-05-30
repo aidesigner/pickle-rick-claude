@@ -1,6 +1,6 @@
 ## Subsystem invariants
 
-Four contracts apply to every script in `bin/`. Per-file trap doors (below) enforce these at the file level — this section makes the subsystem-wide contract findable before diving into per-file detail.
+Five contracts apply to every script in `bin/`. Per-file trap doors (below) enforce these at the file level — this section makes the subsystem-wide contract findable before diving into per-file detail.
 
 1. **CLI guard** — Every `bin/` script is a CLI entry-point and MUST have a `if (process.argv[1] && path.basename(process.argv[1]) === '<script>.js')` guard before executing any side-effectful logic. Enforced per-file via `audit-trap-door-enforcement.sh`; canonical `PATTERN_SHAPE` is in the `check-flake-budget.ts` trap door.
 
@@ -9,6 +9,8 @@ Four contracts apply to every script in `bin/`. Per-file trap doors (below) enfo
 3. **Finite spawn timeout** — Every script that spawns subprocesses MUST pass a finite `timeout` to `spawnSync` / `execFileSync` / `spawn`. Enforced per-file by: `test-runner.ts` trap door, `plumbus-frame-analyzer.ts` trap door (`BUN_TIMEOUT_MS`), R-APMW-6 (`mux-runner.ts`), `spawn-morty.ts` timeout-CLI trap door.
 
 4. **Module Export Catalog** — Every helper module exported from `bin/` that is imported by other modules MUST appear in the `## Module Export Catalog` below. The catalog is the canonical index for import surface; add new exports when you add them to source. Enforced by `audit-subsystem-claude-md.sh` (R-CMD-4 trap door).
+
+5. **Command files can be load-bearing runtime templates** — files under `.claude/commands/` and `extensionRoot/templates/` may be consumed at runtime as the manager-prompt template, not just as user slash-commands: `mux-runner.ts`, `pipeline-runner.ts`, and `jar-runner.ts` resolve `state.command_template` (default `pickle.md`) through `composeManagerPromptFromSkill` (which strips Setup + Step-One). NEVER delete or rename such a file without first grepping `command_template` + `composeManagerPromptFromSkill` for a runtime consumer — deleting `pickle.md` on the "it's just the bare `/pickle` command" premise bricked dispatch (Finding #77 / B-PNTR). Hard enforcement (template-parity + no-bare-`/pickle`) lands with B-PNTR.
 
 ## Trap Doors
 
