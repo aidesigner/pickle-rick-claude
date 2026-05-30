@@ -24,7 +24,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 
 | # | Bundle | Pri | Open findings | PRD / source | Size |
 |---|--------|-----|---------------|--------------|------|
-| 1 | **B-WSWA** | P1 | #74 R-WSWA | author from finding #74 — schema-bump bundle (LATEST_SCHEMA_VERSION 4→5 inside the bundle via `_internalSchemaBump`) | ~3 |
+| 1 | **B-WSWA** | P1 | #74 R-WSWA + #33 R-WMW | **IN-FLIGHT 2026-05-30** — `prds/p1-bug-fix-bundle-b-wswa-schema-safe-rwmw-2026-05-30.md` (schema-safe re-land of R-WMW; LATEST_SCHEMA_VERSION 4→5 via `_internalSchemaBump`; MINOR → v1.86.0). Owns #33 per drain-queue overlap rule. | ~7 |
 | 2 | **B-PTSB** | P1 | #75 R-PTSB | author from finding #75 — phantom-session root-cause + auto-cleanup heuristic | ~2 |
 | 3 | **B-CMWL** | P1 | #86 R-CMWL | `prds/BUG-REPORT-2026-05-27-codex-manager-fixed-wall-pickle-stall.md` | ~4 |
 | 4 | **B-PNTR** | P1 | #77 R-PNTR-DEPS | `prds/p2-remove-non-tmux-pickle-loop.md` (RE-SCOPED 2026-05-30: extract manager template to `_pickle-manager-prompt.md`, then remove bare `/pickle`; schema-neutral). Refinement recommended pre-launch. | ~9 |
@@ -32,7 +32,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 | 6 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | author — verify-command host-tool check (#39) + zsh shell-glob safety (#40) | ~4+4 |
 | 7 | **B-PPCD** | P2 | #85 R-PPCD | author — doc-only: citadel phase list in `pickle-pipeline.md` + `persona.md` (verified still drifted 2026-05-30) | ~1-2 |
 | 8 | **B-ACSG** | P2 | #84 R-ACSG | `prds/BUG-REPORT-2026-05-27-refine-prd-ac-shape-gate-oscillation.md` (4 hypotheses — narrow=matcher, wide=convergence arch) | ~3-8 |
-| 9 | **B-WEDGE** | P2 | #30 R-RSU, #33 R-WMW | `prds/p2-worker-manager-wedge-oversized-ticket-no-artifact-progress.md` (absorbs B-QSRC R-RSU residual; R-QGSK already shipped) | ~5 |
+| 9 | **B-WEDGE** | P2 | #30 R-RSU | R-RSU refinement over-collapse (#33 R-WMW moved to B-WSWA row 1 per overlap rule; absorbs B-QSRC R-RSU residual; R-QGSK already shipped) | ~3 |
 | 10 | **B-MONITOR** | P3 | #29 R-MWCL | author — monitor `inferMonitorMode` szechuan/anatomy fall-through (#27 R-MMRT already closed v1.80.1) | ~4 |
 | 11 | **B-LSOF** | P3 | #37e R-PIWG-5 | author — `lsof` launch-time concurrent-git-access probe | ~2-3 |
 | 12 | **R-PSAI** | P3 | #12 | `prds/p2-pickle-pipeline-no-scope-auto-inference.md` (UX friction; lowest) | ~2 |
@@ -63,7 +63,7 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 | # | Code | Summary | Notes |
 |---|---|---|---|
 | 30 | R-RSU | refinement collapses `composes:` bundle PRDs to N section-umbrellas | R-RSU-1..5; B2-RSU residuals. **B-WEDGE.** (Possibly shares a matcher with #84 — inverse: over-collapse vs under-acceptance.) |
-| 33 | R-WMW | manager wedges on oversized ticket; spawns worker, no artifact progress | `p2-worker-manager-wedge-oversized-ticket-no-artifact-progress.md`. **B-WEDGE.** |
+| 33 | R-WMW | manager wedges on oversized ticket; spawns worker, no artifact progress | `p2-worker-manager-wedge-oversized-ticket-no-artifact-progress.md`. **Owned by B-WSWA** (row 1) — the fix introduces the `worker_artifact_progress` schema field, so it lands with the 4→5 migration. |
 | 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check → silent worker failures | PRD not drafted (~4). **B-GATE.** |
 | 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4). **B-GATE.** |
 | 84 | R-ACSG | AC-shape collapse-or-justify gate oscillates, false-rejects properly-consolidated analyst tickets (smell count 2→9 across 3 attempts, no monotonicity; ~9 worker quotas burned in one incident). Workarounds: table-driven PRD reshape or `--no-refine`. 4 root-cause hypotheses in PRD as a decision tree (H1 matcher-too-literal, H2 cycle-3 oscillation, H3 PRD/ticket conflation, H4 convergence-cost). `prds/BUG-REPORT-2026-05-27-refine-prd-ac-shape-gate-oscillation.md`. Sized ~3-8. **B-ACSG.** |
