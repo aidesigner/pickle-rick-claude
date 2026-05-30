@@ -10,7 +10,6 @@ related:
   - prds/p2-mcp-forwarding-to-workers.md          # R-MFW — MCP forwarding affects whichever backends are wired
   - prds/hermes-integration.md                    # R-HMS — most recent backend addition, closest structural template
   - prds/deepseek-integration.md                  # prior 4th-backend exploration; superseded by this PRD if Grok wins
-  - prds/openrouter-multi-provider-workers.md     # broader multi-provider exploration; this PRD is the narrow Grok cut
 ---
 
 # P2 — Add `grok` backend to the worker/manager dispatch
