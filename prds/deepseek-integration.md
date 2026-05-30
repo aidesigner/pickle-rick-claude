@@ -28,7 +28,7 @@ DeepSeek does not ship a CLI. Three integration shapes were considered:
 - Codex gives one alternative to claude, but the dispatch contract assumes "backend == CLI binary," which doesn't generalize to API-only providers
 - Shape A risks dishonest identity (logs say "claude" while requests hit DeepSeek) unless we explicitly separate `backend` from `cmd`
 
-**Importance**: DeepSeek v4-pro at promo pricing ($0.435/M cache-miss input, $0.87/M output through 2026-05-05) is 5–10× cheaper than Claude Opus for comparable output on coding tasks. A single Pickle epic of 10 tickets shifts from premium-only to a real cost-tier choice.
+**Importance**: DeepSeek's coding models are materially cheaper than premium Claude tiers for comparable output on rote coding tasks. (Specific rates are deliberately not quoted here — they go stale; check DeepSeek's current pricing page for live figures.) Adding the backend turns a Pickle epic from premium-only into a real cost-tier choice.
 
 ## Objective & Scope
 
@@ -244,9 +244,9 @@ if (parsed.teams && (parsed.backend === 'codex' || parsed.backend === 'deepseek'
 - DeepSeek's Anthropic-compat shim at `https://api.deepseek.com/anthropic` mirrors Anthropic's API closely enough that `claude -p` works without prompt-format adaptation. The DeepSeek docs claim this; we accept it on faith and rely on smoke testing to falsify.
 - Stream-json output from the shim is byte-compatible with what `mux-runner.ts:extractAssistantContent()` expects in mode-1. If DeepSeek's shim ever drifts (e.g., omits the `message.content[].text` block shape), output parsing breaks; we accept that risk.
 - `claude` CLI is installed and on PATH for any user selecting `--backend deepseek`. The shim does not replace claude; it redirects it.
-- DeepSeek's automatic KV cache produces meaningful hit rates for our workload (long stable system prompts + appended turns). If cache hit rate is low, costs are higher than projected; metrics will tell us.
+- DeepSeek's automatic KV cache produces meaningful hit rates for our workload (long stable system prompts + appended turns). If cache hit rate is low, costs are higher than expected; users see this in their DeepSeek dashboard (Pickle does not track $/token).
 - Promise tokens (`EPIC_COMPLETED`, `TASK_COMPLETED`, etc.) are reproduced verbatim by deepseek-v4-pro when prompted in the same way. Codex already validated this pattern across model families; deepseek is assumed similar.
-- DeepSeek model identifiers in `ANTHROPIC_MODEL` are passed through opaquely by the shim. We use `'deepseek-v4-pro'` based on current pricing-page listings; if DeepSeek renames, users override via env.
+- DeepSeek model identifiers in `ANTHROPIC_MODEL` are passed through opaquely by the shim. We use `'deepseek-v4-pro'` based on DeepSeek's current model listings; if DeepSeek renames, users override via env.
 - The `--model` flag on `claude` (haiku/sonnet/opus tier) is ignored or harmlessly overridden by the shim when `ANTHROPIC_MODEL` is set. Smoke testing confirms.
 
 ## Risks
@@ -255,7 +255,6 @@ if (parsed.teams && (parsed.backend === 'codex' || parsed.backend === 'deepseek'
 |---|---|---|
 | Shim drift — DeepSeek's `/anthropic` endpoint diverges from Anthropic's response shape, breaking `extractAssistantContent()` | Med | Smoke test on every release; if it breaks, add a deepseek-specific output mode (similar to codex-delimiter mode) |
 | API key in process env leaks into child logs | Low | `claude` CLI does not log env vars; we never write `ANTHROPIC_AUTH_TOKEN` to disk; same exposure as any user running claude with env-based auth |
-| Promo pricing expires 2026-05-05, costs jump 4× on cache miss | Low (tracked but not blocking) | Out of scope for this PRD — Pickle does not track $/token. Users see the change in their DeepSeek dashboard |
 | 10-minute server-side stall before inference starts (documented DeepSeek behavior) | Med | mux-runner already tolerates long-running children; circuit-breaker iteration timeouts cap blast radius |
 | Adaptive rate limiting returns 429s under load | Med | mux-runner retry logic already handles transient failures; if 429s become endemic, add a deepseek-specific backoff |
 | User confuses "claude backend" with "deepseek backend riding claude CLI" and reports a "claude bug" that's actually deepseek | Low | Per-iteration banner in mux-runner explicitly logs `[backend=deepseek]`; jar log + state file agree |
