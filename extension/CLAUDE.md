@@ -18,6 +18,41 @@ Use `## Trap Doors` as the source of truth for the per-file invariant text, race
 
 R-TFP serialization precedent: subprocess-heavy `@tier: fast` tests promoted to `@tier: integration` + added to `tests/integration/.serial-tests.json` to run at `--test-concurrency=1`. Precedent set in v1.76.0 (commit `cf600408`) for B-FLAKE class: `council-publish.test.js`, `mux-runner-claude-max-turns-relaunch.test.js`, `install-script-real.test.js`, `mux-runner.output-stall.test.js`, `check-update.test.js`. R-TFP-C1 (2026-05-28) extends the same pattern to `auto-resume-stop-conditions.test.js` (load-dependent-timeout: auto-resume.sh subprocess starvation at c=8; also covered by R-TSPF-2 trap door) and `microverse.test.js` (subprocess-spawn-timing: spawnSync/execSync orphan-tmp recovery at c=8). R-TFP-C2 (2026-05-28) adds forward-protection: `extension/scripts/audit-subprocess-heavy-tests.sh` flags any new test with a subprocess-heavy spawn + short timeout that lacks serialization (see trap-door entry). R-TFP-C3 (2026-05-28) closes R-TFP with a 3× consecutive regression loop: `extension/scripts/regression-test-fast-integration-3x.sh` (gated by `RUN_REGRESSION_3X=1`, wired as `test:regression-3x`) runs `test:fast` + `test:integration` 3× in sequence at gate concurrency, appending JSONL run records to `~/.claude/pickle-rick/r-tfp-regression-log.jsonl`; 3 consecutive greens are required to move R-TFP from watch-item to closed (see trap-door entry).
 
+## Architectural Vocabulary
+
+Single source of truth for the Pocock LANGUAGE.md vocabulary (`mattpocock/skills:improve-codebase-architecture`). Use these terms in `research_*.md` and `code_review_*.md` phases and in `/death-crystal` reports. Per AC-DC-11 this section is the vocabulary's only home — do NOT add a `CONTEXT.md`.
+
+### Terms (the 8 canonical LANGUAGE.md terms)
+
+- **Module** — anything with an interface and an implementation; deliberately scale-agnostic. _Avoid: component._
+- **Interface** — everything a caller must know to use the module correctly: the type signature plus invariants, ordering constraints, error modes, required configuration, and performance characteristics. _Avoid: API._
+- **Implementation** — the code inside a module; the part the interface hides. _Avoid: unit._
+- **Depth** — the behaviour a caller (or test) can exercise per unit of interface they have to learn; a deep module is a simple interface hiding substantial implementation. _Avoid: equating depth with line count — see "Depth is leverage, not line count" below._
+- **Seam** — a place where you can alter behaviour without editing in that place; where a module's interface lives. _Avoid: boundary._
+- **Adapter** — a concrete thing that satisfies an interface at a seam; names the role (which slot it fills), not the substance. _Avoid: service._
+- **Leverage** — what callers get from depth: more capability per unit of interface they have to learn.
+- **Locality** — what maintainers get from depth: change, bugs, knowledge, and verification concentrate at one place.
+
+### Avoid (banned substitutions)
+
+Never substitute these for the terms above:
+
+- **component** → use **Module**
+- **service** → use **Adapter**
+- **boundary** → use **Seam**
+- **API** → use **Interface**
+
+### Principles
+
+- **Deletion test** — evaluate whether a module earns its existence by imagining its removal; a pure pass-through that hides no complexity fails the test.
+- **Interface-as-test-surface** — callers and tests cross the same seam, so a test that must reach past the interface signals a design problem.
+- **One-adapter-rule** — one adapter means a hypothetical seam; two adapters means a real one. Don't introduce a seam until a second adapter justifies it.
+- **Depth-as-leverage** — measure depth by caller benefit (leverage and locality), not by an implementation-to-interface line ratio.
+
+### Depth is leverage, not line count
+
+Reject the Ousterhout line-ratio reading of "deep module." Depth is not "many implementation lines behind a few interface lines" — it is leverage: how much capability a caller gets per unit of interface they must learn. A short implementation can be deep if it concentrates real decisions; a long one can be shallow if it merely forwards calls.
+
 ## Trap Doors
 
 - `extension/scripts/regression-test-fast-integration-3x.sh` (R-TFP-C3 3× regression loop) — INVARIANT: the script MUST (a) skip with exit 0 when `RUN_REGRESSION_3X` is unset/empty, (b) loop exactly 3 times running `npm run test:fast` then `npm run test:integration` in sequence, (c) exit non-zero immediately on any failure, and (d) append a JSONL record `{"ts","run","status","fast_exit","integration_exit","duration_ms"}` to `~/.claude/pickle-rick/r-tfp-regression-log.jsonl` after each run. BREAKS: removing the skip-guard makes the script run unconditionally and adds ~30-45 min to the test:fast/integration tier; removing the JSONL append loses the consecutive-green count needed to close R-TFP; adding a `test:regression-3x` npm script without the `RUN_REGRESSION_3X` guard causes accidental invocation from `test:expensive`. ENFORCE: extension/tests/regression-test-fast-integration-3x.test.js (covers syntax, executable bit, npm script wiring, skip-guard, loop count, JSONL fields). PATTERN_SHAPE: `RUN_REGRESSION_3X` guard present, `r-tfp-regression-log.jsonl` append present, loop count = 3.
