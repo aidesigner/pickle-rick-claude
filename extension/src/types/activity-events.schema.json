@@ -1322,6 +1322,25 @@
           }
         }
       }
+    },
+    "worker_artifact_progress_zero": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_artifact_progress_zero" },
+        "ts": { "type": "string" },
+        "ticket": { "type": ["string", "null"] },
+        "gate_payload": {
+          "type": "object",
+          "required": ["spawn_count", "last_artifact_count", "zero_progress_count", "observe_k"],
+          "properties": {
+            "spawn_count": { "type": "number" },
+            "last_artifact_count": { "type": "number" },
+            "zero_progress_count": { "type": "number" },
+            "observe_k": { "type": "number" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -1407,6 +1426,7 @@
     { "$ref": "#/definitions/ticket_timeout_progress_extension" },
     { "$ref": "#/definitions/ticket_timeout_halted_no_progress" },
     { "$ref": "#/definitions/graph_preflight_completed" },
-    { "$ref": "#/definitions/graph_preflight_degraded" }
+    { "$ref": "#/definitions/graph_preflight_degraded" },
+    { "$ref": "#/definitions/worker_artifact_progress_zero" }
   ]
 }

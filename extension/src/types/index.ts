@@ -636,6 +636,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'ticket_timeout_halted_no_progress',
   'graph_preflight_completed',
   'graph_preflight_degraded',
+  'worker_artifact_progress_zero',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

@@ -216,6 +216,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'ticket_timeout_halted_no_progress',
         'graph_preflight_completed',
         'graph_preflight_degraded',
+        'worker_artifact_progress_zero',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {

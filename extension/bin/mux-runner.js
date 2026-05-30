@@ -3678,6 +3678,88 @@ export function checkHeadPinMismatch(state, workingDir, sessionDir, statePath, l
     }
 }
 /**
+ * R-WSWA-2 (R-WMW-2): per-ticket artifact-progress tracking + K=3 observability.
+ *
+ * The manager-turn-budget wedge (research→plan loop that never delegates
+ * completion) is silent for ~60+ min because no signal counts how many spawns
+ * produced no new review/conformance artifacts. These helpers snapshot the count
+ * of `code_review_*.md` + `conformance_*.md` around each worker spawn, persist the
+ * delta into `state.worker_artifact_progress[ticketId]` (schema v5, landed in
+ * R-WSWA-1) so it survives a manager relaunch (R-MMTR boundary), and emit
+ * `worker_artifact_progress_zero` once after K consecutive zero-delta spawns.
+ * Observability ONLY — no halt, no action.
+ */
+export const WMW_OBSERVE_K_ENV = 'PICKLE_WMW_OBSERVE_K';
+export const WMW_OBSERVE_K_DEFAULT = 3;
+export function resolveWmwObserveK(env = process.env) {
+    const raw = env[WMW_OBSERVE_K_ENV];
+    if (!raw)
+        return WMW_OBSERVE_K_DEFAULT;
+    const parsed = Number(raw);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : WMW_OBSERVE_K_DEFAULT;
+}
+/** Count the artifact files whose progress R-WMW tracks: code_review_* + conformance_* markdown. */
+export function countWorkerArtifacts(ticketDir) {
+    let n = 0;
+    try {
+        for (const e of fs.readdirSync(ticketDir)) {
+            if (!e.endsWith('.md'))
+                continue;
+            if (e.startsWith('code_review') || e.startsWith('conformance'))
+                n++;
+        }
+    }
+    catch { /* dir missing/unreadable → 0 */ }
+    return n;
+}
+/**
+ * Persist the post-spawn artifact-count delta for one ticket and, on exactly the
+ * K-th consecutive zero-delta spawn, emit `worker_artifact_progress_zero`.
+ * `beforeCount` is the snapshot taken BEFORE the spawn; the AFTER snapshot is read
+ * here. A non-positive delta (no new artifacts) increments `zero_progress_count`;
+ * any forward progress resets it to 0. Firing uses `=== k` so it emits once at the
+ * threshold (not re-spamming at k+1) and re-arms after a reset.
+ */
+export function recordWorkerArtifactProgress(statePath, sessionDir, ticketId, beforeCount, opts = {}) {
+    const k = opts.k ?? resolveWmwObserveK();
+    const afterCount = countWorkerArtifacts(path.join(sessionDir, ticketId));
+    const delta = afterCount - beforeCount;
+    const updated = sm.update(statePath, s => {
+        const map = (s.worker_artifact_progress && typeof s.worker_artifact_progress === 'object')
+            ? s.worker_artifact_progress
+            : (s.worker_artifact_progress = {});
+        const prev = map[ticketId] ?? { spawn_count: 0, last_artifact_count: 0, zero_progress_count: 0 };
+        map[ticketId] = {
+            spawn_count: prev.spawn_count + 1,
+            last_artifact_count: afterCount,
+            zero_progress_count: delta <= 0 ? prev.zero_progress_count + 1 : 0,
+        };
+    });
+    const entry = updated.worker_artifact_progress?.[ticketId]
+        ?? { spawn_count: 1, last_artifact_count: afterCount, zero_progress_count: 0 };
+    const fired = entry.zero_progress_count === k;
+    if (fired) {
+        writeActivityEntry(statePath, {
+            event: 'worker_artifact_progress_zero',
+            ts: new Date().toISOString(),
+            ticket: ticketId,
+            gate_payload: {
+                spawn_count: entry.spawn_count,
+                last_artifact_count: entry.last_artifact_count,
+                zero_progress_count: entry.zero_progress_count,
+                observe_k: k,
+            },
+        });
+        opts.log?.(`[observe] worker_artifact_progress_zero: ticket ${ticketId} produced no new review/conformance artifacts for ${k} consecutive spawns`);
+    }
+    return {
+        spawnCount: entry.spawn_count,
+        lastArtifactCount: entry.last_artifact_count,
+        zeroProgressCount: entry.zero_progress_count,
+        fired,
+    };
+}
+/**
  * R-WSE-2 / R-PIAP-A4: Emit worker_partial_lifecycle_exit when a worker exits
  * mid-lifecycle leaving required artifacts missing. The required set is derived
  * from TIER_LIFECYCLE[tier] (R-PIAP-A1) via requiredTierArtifactPrefixes — never
@@ -4625,8 +4707,19 @@ async function runMuxRunnerMain() {
         }
         const iterWorkingDir = state.working_dir || process.cwd();
         const preIterSha = readHeadCommit(iterWorkingDir);
+        // R-WSWA-2: snapshot the per-ticket review/conformance artifact count BEFORE the
+        // worker spawn; the AFTER snapshot + delta persistence happen once it exits.
+        const apTicketId = state.current_ticket || null;
+        const apBeforeCount = apTicketId ? countWorkerArtifacts(path.join(sessionDir, apTicketId)) : 0;
         const outcome = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
         const result = outcome.completion;
+        // R-WSWA-2: persist the post-spawn artifact-count delta and emit
+        // worker_artifact_progress_zero at exactly K consecutive zero-delta spawns.
+        try {
+            if (apTicketId)
+                recordWorkerArtifactProgress(statePath, sessionDir, apTicketId, apBeforeCount, { iteration, log });
+        }
+        catch { /* best-effort observability — never block iteration on progress tracking */ }
         // R-WSE-2: detect partial lifecycle exit (research-review APPROVED, downstream artifacts missing)
         // R-WSE-3: emit stderr breadcrumb when ticket Failed after research APPROVED
         try {

@@ -225,10 +225,11 @@ test('AC-BPBH-04: LATEST_SCHEMA_VERSION is not bumped by R-OMS', () => {
     // Read compiled index.js directly to ensure no LATEST_SCHEMA_VERSION bump
     const indexPath = path.resolve(__dirname, '../types/index.js');
     const src = fs.readFileSync(indexPath, 'utf-8');
-    // Should still be 4 — R-OMS is explicitly schema-neutral
+    // R-OMS itself is schema-neutral; the global constant later moved to 5 when
+    // R-WSWA-1 (ba276e43) bumped LATEST_SCHEMA_VERSION 4→5 for worker_artifact_progress.
     const m = src.match(/LATEST_SCHEMA_VERSION\s*=\s*(\d+)/);
     assert.ok(m, 'LATEST_SCHEMA_VERSION should be present in types/index.js');
-    assert.equal(Number(m[1]), 4, 'LATEST_SCHEMA_VERSION must remain 4 (R-OMS is schema-neutral)');
+    assert.equal(Number(m[1]), 5, 'LATEST_SCHEMA_VERSION is 5 since R-WSWA-1 (ba276e43); R-OMS added no further bump');
 });
 
 test('AC-BPBH-04: orphan_manager_reaped event is in VALID_ACTIVITY_EVENTS', () => {
