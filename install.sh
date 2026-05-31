@@ -467,6 +467,14 @@ echo "OK modes"
 if [ -d "$SCRIPT_DIR/templates" ]; then
   rsync -a "$SCRIPT_DIR/templates/" "$EXTENSION_ROOT/templates/"
 fi
+# R-PNTR / C-PNTR-CLOSER: the manager-prompt template source lives in extension/templates/
+# (R-PNTR-1, asserted by compose-manager-prompt-from-skill.test.js), but the runtime resolver
+# reads getExtensionRoot()/templates = $EXTENSION_ROOT/templates. Deploy it there explicitly
+# (mirrors the szechuan-sauce-*-principles.md cp below). Without this a fresh install leaves the
+# template only under $EXTENSION_ROOT/extension/templates/ and mux-runner FATALs on launch.
+if [ -f "$SCRIPT_DIR/extension/templates/_pickle-manager-prompt.md" ]; then
+  cp "$SCRIPT_DIR/extension/templates/_pickle-manager-prompt.md" "$EXTENSION_ROOT/templates/_pickle-manager-prompt.md"
+fi
 
 # --- AGENTS ---
 # Subagent definitions for /pickle --teams.
