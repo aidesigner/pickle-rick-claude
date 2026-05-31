@@ -56,7 +56,7 @@ SCOPE: pickle-rick-claude ONLY (working_dir = /Users/gregorydickson/loanlight/pi
 
 Run this checklist each tick:
 
-1. DEMOTE PHANTOMS — scan ~/.local/share/pickle-rick/sessions for R-PTSB phantom sessions (active=true AND pid null/absent AND tmux_mode=false AND iteration=0 AND history empty). Demote each: set active=false, exit_reason='orphan-phantom-demoted-by-babysitter'. Guard on the FULL signature so a real session is never demoted. They block install.sh at finalization.
+1. DEMOTE PHANTOMS — scan ~/.local/share/pickle-rick/sessions for R-PTSB phantom sessions (active=true AND pid null/absent AND tmux_mode=false AND iteration=0 AND history empty). Demote each: set active=false, exit_reason='orphan-phantom-demoted-by-babysitter'. Guard on the FULL signature so a real session is never demoted. They block install.sh at finalization. [R-PTSB-3 runtime safety net: state-manager.ts recoverStaleActiveFlag now auto-demotes pid-null phantoms on every state read; this babysitter scan is defense-in-depth, not the primary mechanism.]
 
 2. CHECK ACTIVE PIPELINE — find live pickle-rick-claude mux-runners + most-recent state.json. If a pipeline is genuinely active and progressing (state.json mtime fresh, iteration advancing), leave it alone, just log status. If wedged (no progress, orphaned/own commit, reset-off-HEAD), check artifact mtimes BEFORE declaring Failed, then apply the documented recovery recipe (ff-only reattach `git merge --ff-only <sha>` or path-scoped `git restore --source <sha>`). Do not escalate spurious Failed flips.
 
