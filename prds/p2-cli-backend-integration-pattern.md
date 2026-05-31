@@ -38,9 +38,10 @@ The standalone grok PRD (R-GBK) explicitly **rejected** generalization (its "Pro
 | **A — Anthropic-compat shim** | Spawn the `claude` binary with `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` overlay; honest identity in state/logs | `deepseek` | **B-DSEK** (separate; cross-referenced, NOT absorbed) |
 | **B — native third-party CLI** | Spawn a provider's own CLI with a `claude -p`-style one-shot mode | `codex`, `hermes`, **`grok`**, **`kimi`** | **R-CBI (this PRD)** |
 | C — native HTTP loop | OpenAI-style `tool_calls` against a raw endpoint | (none) | rejected — largest blast radius |
+| **D — delegated swarm** | A backend's **server-side, opaque** multi-agent swarm runs the whole task; pickle sees only the final synthesis | **kimi (K2.5/K2.6 Agent Swarm)** as a *research/long-horizon* delegate | **separate consideration** (§Native multi-agent) — NOT how a ticket worker runs; a candidate dedicated research stage |
 | — text-only gateway | chat-completions, **no tool use** | ~~openrouter~~ | **deleted 2026-05-30** — useless to a tool-using lifecycle |
 
-R-CBI owns Shape B. Shape A (deepseek) has a genuinely different spawn contract (no third-party binary; env overlay) and stays B-DSEK.
+R-CBI owns Shape B (native CLI as a ticket worker/manager). Shape A (deepseek) has a genuinely different spawn contract (no third-party binary; env overlay) and stays B-DSEK. Shape D (delegated swarm) is a distinct *posture* a Shape-B CLI can be put into — covered as a consideration, not the default ticket-worker path (see §Native multi-agent + INV-SWARM-OFF).
 
 ## The native-CLI-backend contract (defined once)
 
@@ -55,6 +56,7 @@ A CLI qualifies as a Shape-B backend iff it provides all of the following. Each 
 | C5 | **User-config / rule isolation** | (hermes `--ignore-rules --ignore-user-config`) | Pickle MUST isolate the worker from `~/.<tool>/` rule files (FM-4 class) |
 | C6 | **Clean exit** on completion | exit 0, not stream-until-SIGINT | The classifier must distinguish completion from a cap-exit |
 | C7 | **Auth as a precondition**, not code | OAuth/login into the tool's own config dir | No API-key threading through pickle; `which <cli>` preflight only |
+| C8 | **Native multi-agent / swarm surface** + a way to **disable** it | (claude has subagents/teams; pickle governs them itself) | Several Shape-B CLIs ship an internal swarm (see §Native multi-agent); a ticket worker MUST be able to turn it OFF (INV-SWARM-OFF). Measurement records: scale, client- vs server-side, worktree behavior, and the disable flag |
 
 ## Shared cross-cutting invariants (defined once; every instance inherits)
 
@@ -65,6 +67,7 @@ A CLI qualifies as a Shape-B backend iff it provides all of the following. Each 
 - **INV-UNAVAILABLE** — `spawn-morty.ts` runs a `which <cli>` preflight; a missing binary emits the existing `worker_backend_unavailable` activity event `{ backend, reason: 'cli_missing' }` and aborts cleanly (never bubbles an OS exec error into the classifier's hallucination path). Auth state is NOT probed per-spawn — the tool's own first-call stderr is captured into the worker log.
 - **INV-MIGRATE** — `state.<name>_model` and `pickle_settings.default_<name>_model` are additive; `state-manager.ts::migrateState` needs no rename/removal; no `LATEST_SCHEMA_VERSION` bump.
 - **INV-MCP-DEFER** — MCP forwarding is out of scope; each instance inherits the codex-level MCP isolation (none / R-MFW Option-D snapshot) until a per-instance `R-MFW-<name>-followup` lands after both R-MFW and R-CBI ship. The measurement ticket records whether the CLI exposes a `--mcp-config` equivalent so the follow-up has data.
+- **INV-SWARM-OFF** — a ticket worker's backend **internal swarm is OFF by default**. pickle owns the orchestration (its own fan-out, state.json, promise tokens, iteration classifier, circuit-breaker, monitor, `check-scope-diff`); an opaque or self-directed inner swarm violates INV-TRANSPARENT (backend transparency), the one-ticket scope contract, the Git-boundary rules (R-WSRC-GR forbids worker `git worktree`/`checkout`), and observability (the classifier/circuit-breaker can't govern an invisible inner loop). Each instance's measurement (C8) MUST find the disable flag and confirm a ticket worker runs single-agent; if a CLI's swarm is **not** suppressible, that instance ships worker-only with a documented caveat or is dropped. Leveraging a backend swarm for *read-only research* is a separate, opt-in path (Shape D, §Native multi-agent) — never the default ticket worker.
 
 ## Per-instance measurement gate (reusable template — the R-GBK-1 pattern)
 
@@ -73,8 +76,9 @@ Per Working Rule 8 (measure, don't assume): **every instance's first ticket is d
 - Exact stream-json envelope shape — does `extractAssistantContent` need a `<name>`-aware fallback (as R-CCPL-4 added for codex)?
 - Auth-failure stderr text + exit code (so the classifier maps it, not misreads it as a cap-exit).
 - Presence of a `--mcp-config` / `--model` / config-isolation equivalent.
+- **C8 — native multi-agent surface:** does the CLI/model ship an internal swarm/subagent capability? Record scale, client- vs server-side, worktree behavior, and **the exact flag/config to disable it** (so a ticket worker runs single-agent per INV-SWARM-OFF). If not suppressible, note it.
 
-A FAIL on C1/C2/C3/C6 drops or re-scopes that instance; the contract and the other instance are unaffected.
+A FAIL on C1/C2/C3/C6 drops or re-scopes that instance; an un-suppressible swarm (C8) makes the instance worker-only-with-caveat or dropped; the contract and the other instance are unaffected.
 
 ---
 
@@ -93,6 +97,27 @@ Source: `https://github.com/MoonshotAI/kimi-cli`. Confirmed from docs (measureme
 - Real agentic tool use (read/edit code, run shell, web fetch) — clears the tool-use bar OpenRouter failed. Docs pointers: `print-mode.html`, `reference/kimi-command.html`.
 
 `kimi`'s surface looks like the closest structural match to `claude -p` of any instance (stream-json in/out + final-message-only + yolo) — the per-instance wiring may be the smallest of the set, pending measurement.
+
+---
+
+## Native multi-agent (swarm) capability + posture
+
+Every Shape-B candidate ships *some* internal multi-agent capability — but in architecturally opposite ways. This is a governed decision, not a feature to enable by reflex: pickle already owns the swarm layer (refinement team, council fan-out, the native teams/dynamic-workflows in B-DWF). A backend's internal swarm nested inside a pickle *ticket worker* is **nested orchestration** that fights pickle's lifecycle.
+
+| | kimi (K2.5/K2.6) | grok Build | codex |
+|---|---|---|---|
+| Scale | **100 sub-agents / 1.5k tool calls (K2.5) → 300 / 4k steps (K2.6)** | **8 parallel** | **6 parallel, depth 1** |
+| Location | **server-side, opaque** (final output only) | client-side, local | client-side, local |
+| Isolation | model-managed ("Claw Groups") | **one git worktree per sub-agent** | per-role `config.toml` sandbox |
+| Horizon | hours→days (continuous-execution design) | task-scoped | task-scoped |
+| Transparent to pickle? | **no — black box** | yes | yes |
+
+**Why it's OFF by default for ticket workers (INV-SWARM-OFF):**
+- **kimi** — server-side/opaque means pickle's NDJSON classifier, circuit-breaker, and monitor see only the final synthesis; pickle cannot time-box, strike-count, or scope-check an invisible loop. Its multi-hour/multi-day horizon directly detonates per-iteration timeouts and the R-CMWL fixed-wall class.
+- **grok** — one git worktree per sub-agent collides head-on with pickle's own worktree hygiene (`.claude/worktrees/agent-*`) and the Git-boundary trap door (R-WSRC-GR blocks worker `git worktree`/`checkout`).
+- **all** — an autonomous swarm that decides agent count/tools/merge can wander past the one-ticket `check-scope-diff` scope, multiply quota 100–300×, and muddy the `<promise>I AM DONE</promise>` completion contract.
+
+**Where a backend swarm IS useful (Shape D, opt-in):** the **research phase** — read-only, parallelizable, scope-safe. A swarm-backed *research stage* (decompose a codebase-understanding task → many parallel readers → synthesize) is a force-multiplier with low scope-bleed risk, and complements (does not replace) pickle's ticket lifecycle. **kimi's server-side swarm fits this far better than `--backend kimi` ticket workers** — it argues for a dedicated swarm-backed research delegate, evaluated on its own once the Shape-B ticket-worker path is proven. Out of scope for the first R-CBI ship; recorded here so the option isn't lost.
 
 ---
 
@@ -125,11 +150,13 @@ Source: `https://github.com/MoonshotAI/kimi-cli`. Confirmed from docs (measureme
 | AC-CBI-08 | Expensive-tier smoke: a real `<name>` one-shot exits 0 within 60s and echoes a token; **skips gracefully** when the CLI is absent/unauthenticated. | `extension/tests/integration/<name>-smoke.test.js` (forward-created), `RUN_EXPENSIVE_TESTS=1`. | R-CBI-`<name>`-8 |
 | AC-CBI-09 | Schema-neutral: no `LATEST_SCHEMA_VERSION` bump in the bundle diff (additive fields only). | `git diff` on the schema constant = empty. | R-CBI-`<name>`-4 |
 | AC-CBI-10 | Full release gate green. | CLAUDE.md release-gate command, exit 0. | R-CBI-`<name>`-8 |
+| AC-CBI-11 | Ticket worker runs single-agent: the spawn either emits the measured swarm-disable flag or measurement (C8) confirms a single-agent default; no backend internal swarm in a ticket-worker spawn. | `backend-spawn-<name>.test.js` asserts the disable flag in `args` (or documents the confirmed default); measurement file records C8. | R-CBI-`<name>`-3 |
 
 ## Trap doors
 - **R-CBI-EXPLICIT-BRANCH** — the existing `backend-spawn.ts` trap door (explicit `if (backend === 'X')` before default claude; NO registry) is extended to cover each instance; the judge dispatch MUST NOT gain a parallel branch (INV-JUDGE / R-SCJM-5 parity). Enforced by AC-CBI-04/05 + `audit-trap-door-enforcement`.
 - **R-CBI-MEASURE-FIRST** — every instance's source tickets (R-CBI-`<name>`-2..8) block on the measurement deliverable (R-CBI-`<name>`-1); no flag spelling is assumed from training data.
 - **R-CBI-NO-REGISTRY** — R-CBI must NOT introduce a generic runtime backend registry; consolidation is at the PRD/spec layer only (honors the R-GBK over-engineering rejection).
+- **R-CBI-SWARM-OFF** — a ticket worker on any Shape-B backend runs single-agent: `build<Name>WorkerInvocation` MUST emit the measured swarm-disable flag (or rely on a confirmed single-agent default). Enforced by AC-CBI-11 + the measurement deliverable (C8). The opaque/server-side swarm path (Shape D) is never wired as a ticket worker.
 
 ## Non-goals
 - A runtime "any-backend" registry (explicitly rejected — INV-EXPLICIT-BRANCH stands).
@@ -149,6 +176,8 @@ Source: `https://github.com/MoonshotAI/kimi-cli`. Confirmed from docs (measureme
 | 4 | Non-Node host-tool deps (kimi = Python/`uv`; grok binary) | Documented as an operator precondition (like codex); `which` preflight; never bundled. |
 | 5 | Consolidation contradicts the grok PRD's "don't generalize" call | Addressed in §Why: the grok PRD's own 3-PRD threshold is met and R-MBSR was misattributed; code-level registry remains a non-goal so the anti-over-engineering intent is preserved. |
 | 6 | MCP-blind workers (Linear-blindness pathology) | INV-MCP-DEFER; per-instance R-MFW follow-up; operators told grok/kimi inherit codex-level MCP isolation. |
+| 7 | **Nested swarm inside a ticket worker** — opaque inner loop (kimi) defeats observability/time-boxing; grok per-sub-agent worktrees collide with pickle worktree hygiene + R-WSRC-GR; scope-bleed + quota blowup. | INV-SWARM-OFF + R-CBI-SWARM-OFF + AC-CBI-11: ticket workers run single-agent; C8 measurement finds the disable flag; an un-suppressible swarm → worker-only-caveat or drop. |
+| 8 | Leaving Kimi's swarm value unrealized | Recorded as Shape D (opt-in swarm-backed *research* delegate) for separate evaluation after the Shape-B path proves out — not lost, not the default. |
 
 ## Supersession
 This PRD supersedes `prds/p2-grok-backend-integration.md` (R-GBK), which is deleted at authoring with its substance folded into the grok instance + the shared contract/invariants/measurement template. Future Shape-B backends are added as new `instances:` entries here, not as new standalone PRDs.
