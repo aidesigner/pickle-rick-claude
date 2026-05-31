@@ -66,14 +66,14 @@ Some pipelines (citadel + hardening bundle) are codex-required because they exer
 
 ## 9. Iteration-completion reclassifier — detectManagerMaxTurnsExit (R-ICDM-1)
 
-`mux-runner.ts` contains a claude-only reclassification path (line ~1721) that converts `completion: 'continue'` → `completion: 'error'` when `detectManagerMaxTurnsExit(...)` returns `true`. The helper is named for max-turns detection.
+`mux-runner.ts` contains a claude-only reclassification path (line ~2582) that converts `completion: 'continue'` → `completion: 'error'` when `detectManagerMaxTurnsExit(...)` returns `true`. The helper is named for max-turns detection.
 
 ### Which call sites use this helper and why
 
 | Site | File | Purpose | Semantics correct? |
 |---|---|---|---|
-| `~line 1412` | `mux-runner.ts:classifyManagerRelaunchExit` | Determine whether a manager's clean exit was caused by hitting the turn cap, to decide if the manager should be relaunched. | Intended use. Clean exit at `num_turns >= maxTurns` is a legitimate "relaunch" signal. |
-| `~line 1721` | `mux-runner.ts:runIteration` reclassifier | Convert `continue` → `error` when claude finishes cleanly at the turn budget (to drive the relaunch path). | Correct post-R-ICDM-1. Pre-fix: the helper checked only `end_turn + completed + is_error=false`, which matches **every** cleanly-finished claude iteration, causing false reclassification. |
+| `~line 2139` | `mux-runner.ts:classifyManagerRelaunchExit` | Determine whether a manager's clean exit was caused by hitting the turn cap, to decide if the manager should be relaunched. | Intended use. Clean exit at `num_turns >= maxTurns` is a legitimate "relaunch" signal. |
+| `~line 2582` | `mux-runner.ts:runIteration` reclassifier | Convert `continue` → `error` when claude finishes cleanly at the turn budget (to drive the relaunch path). | Correct post-R-ICDM-1. Pre-fix: the helper checked only `end_turn + completed + is_error=false`, which matches **every** cleanly-finished claude iteration, causing false reclassification. |
 
 ### Pre-fix bug (R-ICDM incident)
 
