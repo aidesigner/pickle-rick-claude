@@ -9,7 +9,7 @@
 |---|---|
 | Version (source/deployed) | **v1.89.0** — 2026-05-31 |
 | Latest GitHub release | v1.89.0 (v1.81.1..v1.89.0 all tagged) |
-| Active pipeline | **none** — B-PNTR shipped v1.89.0 (2026-05-31; closer C-PNTR-CLOSER completed by babysitter after the in-pipeline manager stalled mid-close). Next: drain row 4 (B-R-MMTR + B-E2E). |
+| Active pipeline | **B-R-MMTR** (drain row 4) — `prds/p1-bug-fix-bundle-r-mmtr-closeout.md`, launching 2026-05-31. 10 tickets: R-ICDM-2..7 conformance audits (most already shipped) + R-MMTRH heal-script + C-R-MMTR-CLOSER. Schema-neutral. B-PNTR shipped v1.89.0 (babysitter completed the stalled closer). B-E2E follow-on next. |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive:** drain bug bundles before feature epics; P1 > P2 > P3. All feature epics (R-PGI v1.83.0 / R-PIAP v1.84.0 / R-DC v1.85.0) are shipped.
@@ -25,7 +25,8 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 | # | Bundle | Pri | Open findings | PRD / source | Size |
 |---|--------|-----|---------------|--------------|------|
 | ~~3~~ | **B-PNTR** ✅ SHIPPED v1.89.0 | — | #77 closed | `prds/p2-remove-non-tmux-pickle-loop.md` — extracted `_pickle-manager-prompt.md`, removed bare `/pickle`, schema-neutral. Closer caught + fixed a latent FATAL deploy bug (template was deployed one level too deep for the runtime resolver; added explicit install.sh cp). | done |
-| 4 | **B-R-MMTR** + **B-E2E** | P1+P3 | #28 R-ICDM, #19 R-MMTR | author — R-ICDM-2..7 audit + R-MMTRH heal + R-MMTR-7 closer; B-E2E re-attempts force-skipped R-MMTR-6 after | ~6 |
+| 4 | **B-R-MMTR** | P1 | #28 R-ICDM, #19 R-MMTR | `prds/p1-bug-fix-bundle-r-mmtr-closeout.md` (R-ICDM-2..7 conformance audits + R-MMTRH heal-script + R-MMTR-7 closer; schema-neutral). **LAUNCHING 2026-05-31.** | ~10 |
+| 4b | **B-E2E** | P3 | #19 R-MMTR-6 | `prds/p1-mmtr-6-decompose-e2e-into-sub-tickets.md` (decompose force-skipped oversized R-MMTR-6 E2E ticket into 4-5 sub-tickets, then re-attempt). Follow-on AFTER B-R-MMTR. | ~5 |
 | 5 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | author — verify-command host-tool check (#39) + zsh shell-glob safety (#40) | ~4+4 |
 | 6 | **B-PPCD** | P2 | #85 R-PPCD | author — doc-only: citadel phase list in `pickle-pipeline.md` + `persona.md` (verified still drifted 2026-05-30) | ~1-2 |
 | 7 | **B-ACSG** | P2 | #84 R-ACSG | `prds/BUG-REPORT-2026-05-27-refine-prd-ac-shape-gate-oscillation.md` (4 hypotheses — narrow=matcher, wide=convergence arch) | ~3-8 |
