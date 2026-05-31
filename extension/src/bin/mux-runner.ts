@@ -3979,7 +3979,6 @@ function checkAndUpdateCodexManagerNoProgress(
       if (baseline === null) {
         s.codex_manager_consecutive_no_progress = 0;
         s.codex_manager_relaunch_pending_baseline = pendingCount;
-        consecutiveCount = 0;
       } else if (pendingCount >= baseline) {
         consecutiveCount = prior + 1;
         s.codex_manager_consecutive_no_progress = consecutiveCount;
