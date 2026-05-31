@@ -85,6 +85,9 @@ test('mux-runner-state-iteration: StateManager.update persists iteration to stat
     const initialState = {
       schema_version: 1,
       active: true,
+      // Live pid so the R-PTSB-3 phantom-demotion guard does not demote this
+      // active fixture (active+pid=null+tmux=false+iteration=0+empty-history) on read.
+      pid: process.pid,
       working_dir: tmpDir,
       iteration: 0,
       step: 'research',

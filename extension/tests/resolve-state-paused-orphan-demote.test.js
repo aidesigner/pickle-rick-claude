@@ -48,6 +48,9 @@ test('resolve-state.paused-orphan-demote: stale mtime+null pid demotes active se
     fs.writeFileSync(stateFile, JSON.stringify(baseState({
       active: true,
       pid: null,
+      // iteration:1 keeps this fixture off the R-PTSB-3 phantom signature so the
+      // age-gated paused-orphan path (orphan-paused-no-claim) under test fires.
+      iteration: 1,
       working_dir: sessionDir,
       session_dir: sessionDir,
     })));

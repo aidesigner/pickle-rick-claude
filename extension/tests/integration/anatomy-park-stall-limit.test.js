@@ -78,6 +78,10 @@ function makeGitRepo() {
 function makeRunnerState(sessionDir, workingDir) {
   return {
     active: true,
+    // Stamp the live pid so the R-PTSB-3 phantom-demotion guard (active+pid=null+
+    // tmux_mode!=true+iteration=0+empty-history) does not demote this claimed runner
+    // session on read; a real microverse-runner stamps pid=process.pid on claim.
+    pid: process.pid,
     working_dir: workingDir,
     step: 'implement',
     iteration: 0,

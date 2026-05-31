@@ -164,6 +164,9 @@ test('(b2) --paused uses newer recoverable tmp snapshot before orphan demotion',
             active: true,
             pid: null,
             working_dir: process.cwd(),
+            // iteration:1 keeps this snapshot off the R-PTSB-3 phantom signature so the
+            // age-gated paused-orphan path (orphan-paused-no-claim) under test fires.
+            iteration: 1,
         }, 350_000);
         writeDeadSessionMap(dir, path.dirname(statePath));
 

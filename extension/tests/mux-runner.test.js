@@ -2846,6 +2846,9 @@ function runDesyncFixture({ currentTicket, tickets }) {
 
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
             active: true,
+            // Live pid so the R-PTSB-3 phantom-demotion guard does not demote this
+            // active fixture before the runner reconciles ticket desync.
+            pid: process.pid,
             step: 'implement',
             iteration: 0,
             max_iterations: 100,
@@ -2959,6 +2962,9 @@ test('mux-runner: persists iteration, picked ticket, and lifecycle step before m
 
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
             active: true,
+            // Live pid so the R-PTSB-3 phantom-demotion guard does not demote this
+            // active fixture before the runner picks the first ticket.
+            pid: process.pid,
             step: 'implement',
             iteration: 0,
             max_iterations: 100,

@@ -17,6 +17,10 @@ const STOP_HOOK = path.resolve(__dirname, '../hooks/handlers/stop-hook.js');
 function baseState(overrides = {}) {
   return {
     active: true,
+    // Live owning pid so the R-PTSB-3 phantom-demotion guard does not demote
+    // these active manager fixtures on read (which would suppress the lifecycle
+    // activity events under test); demotion tests override pid/active explicitly.
+    pid: process.pid,
     working_dir: process.cwd(),
     step: 'prd',
     iteration: 0,

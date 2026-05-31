@@ -962,31 +962,41 @@ export class StateManager {
   // Recovery: stale active flag
   // -----------------------------------------------------------------------
 
+  /**
+   * Phantom demotion: active=true, pid=null, tmux_mode=false, iteration=0, history=[]
+   * → session was never claimed by any runner; demote immediately, bypassing the 300s age gate.
+   * The FULL conjunction is required; any one of tmux_mode/iteration/history exempts the session.
+   * Returns true iff the session matches the phantom signature (already-demoted or just demoted),
+   * meaning the caller must NOT fall through to the age-gated paused-orphan path.
+   */
+  private demotePhantomSession(statePath: string, state: State): boolean {
+    if (
+      state.tmux_mode === true ||
+      state.iteration !== 0 ||
+      !Array.isArray(state.history) ||
+      state.history.length !== 0
+    ) {
+      return false;
+    }
+    if (hasPhantomDemotion(state.activity)) return true;
+    state.active = false;
+    state.exit_reason = 'orphan_phantom_demoted';
+    state.activity = state.activity ?? [];
+    state.activity.push({
+      event: 'orphan_phantom_demoted',
+      kind: 'orphan_phantom_demoted',
+      ts: new Date().toISOString(),
+    });
+    try { writeStateFile(statePath, state); } catch { /* best-effort */ }
+    return true;
+  }
+
   private recoverStaleActiveFlag(statePath: string, state: State, preMigrationMtimeMs = 0): void {
     if (state.active !== true) return;
 
     if (state.pid === undefined || state.pid === null) {
-      // Phantom demotion: active=true, pid=null, tmux_mode=false, iteration=0, history=[]
-      // → session was never claimed by any runner; demote immediately, bypassing the 300s age gate.
-      // Guard: FULL conjunction required; any one of tmux_mode/iteration/history exempts the session.
-      if (
-        state.tmux_mode !== true &&
-        state.iteration === 0 &&
-        Array.isArray(state.history) &&
-        state.history.length === 0
-      ) {
-        if (hasPhantomDemotion(state.activity)) return;
-        state.active = false;
-        state.exit_reason = 'orphan_phantom_demoted';
-        state.activity = state.activity ?? [];
-        state.activity.push({
-          event: 'orphan_phantom_demoted',
-          kind: 'orphan_phantom_demoted',
-          ts: new Date().toISOString(),
-        });
-        try { writeStateFile(statePath, state); } catch { /* best-effort */ }
-        return;
-      }
+      // Phantom demotion bypasses the 300s age gate; if it claimed the session, stop here.
+      if (this.demotePhantomSession(statePath, state)) return;
 
       // Paused-orphan demotion: no process ever claimed this session (pid=null).
       // If the state file is stale (>5 min), or its mapped owner PID is dead,

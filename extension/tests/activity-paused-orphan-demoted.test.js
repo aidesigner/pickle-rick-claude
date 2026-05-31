@@ -18,7 +18,10 @@ function baseState(overrides = {}) {
     pid: null,
     working_dir: process.cwd(),
     step: 'prd',
-    iteration: 0,
+    // iteration:1 keeps this fixture off the R-PTSB-3 phantom signature
+    // (active+pid=null+tmux=false+iteration=0+empty-history) so the age-gated
+    // paused-orphan demotion path under test fires instead of phantom demotion.
+    iteration: 1,
     max_iterations: 5,
     max_time_minutes: 60,
     worker_timeout_seconds: 1200,

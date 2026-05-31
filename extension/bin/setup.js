@@ -741,6 +741,12 @@ function reconcileTicketStateDesyncOnResume(sessionDir, statePath, currentTicket
 }
 function applyResumeConfig(s, config, fullSessionPath, codexVersionSeen) {
     s.active = !config.pausedMode;
+    // R-PTSB-3: stamp the live owning pid when reactivating so the dead-pid /
+    // pid-null phantom recovery in recoverStaleActiveFlag does not immediately
+    // demote the resumed session — its stored pid belongs to the now-dead
+    // original setup process. Mirrors createInitialState's active-write pid stamp.
+    if (s.active)
+        s.pid = process.pid;
     if (config.resetMode) {
         s.iteration = 0;
         s.start_time_epoch = config.startEpoch;

@@ -202,7 +202,10 @@ describe('AC-PGI-1-3: graph_preflight_completed event schema conformance', () =>
       });
 
       const activityDir = path.join(tmpRoot, 'activity');
-      const dateKey = new Date().toISOString().slice(0, 10);
+      // activity-logger writes filenames using a LOCAL-day key (not UTC); mirror
+      // that here so the assertion does not fail in the evening US / UTC-next-day window.
+      const now = new Date();
+      const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const jsonlPath = path.join(activityDir, `${dateKey}.jsonl`);
 
       assert.ok(fs.existsSync(activityDir), 'activity dir must be created');

@@ -34,6 +34,7 @@
     "orphans_detected",
     "invocation_source",
     "parent_session_hash",
+    "pid",
     "start_commit",
     "pinned_branch",
     "pinned_sha"
@@ -74,6 +75,7 @@
     "orphans_detected": [],
     "invocation_source": "operator",
     "parent_session_hash": null,
+    "pid": 12345,
     "start_commit": "abc123",
     "pinned_branch": "main",
     "pinned_sha": "abc123"

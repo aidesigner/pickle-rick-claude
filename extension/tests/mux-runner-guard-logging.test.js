@@ -81,6 +81,9 @@ function buildSession(tmpRoot) {
         path.join(sessionDir, 'state.json'),
         JSON.stringify({
             active: true,
+            // Live pid so the R-PTSB-3 phantom-demotion guard does not demote
+            // this active fixture on read before the guard-logging path runs.
+            pid: process.pid,
             working_dir: tmpRoot,
             step: 'implement',
             iteration: 0,

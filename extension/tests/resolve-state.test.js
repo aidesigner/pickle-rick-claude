@@ -17,6 +17,10 @@ function tmpDir() {
 function baseState(overrides = {}) {
   return {
     active: true,
+    // Live owning pid so the R-PTSB-3 phantom-demotion guard (active+pid=null+
+    // tmux_mode!=true+iteration=0+empty-history) does not demote default active
+    // fixtures on read; tests that exercise demotion override pid explicitly.
+    pid: process.pid,
     working_dir: process.cwd(),
     step: 'prd',
     iteration: 0,

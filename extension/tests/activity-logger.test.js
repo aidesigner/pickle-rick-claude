@@ -218,6 +218,8 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'graph_preflight_degraded',
         'worker_artifact_progress_zero',
         'worker_auto_skip_oversized',
+        // B-PTSB: R-PTSB-3 pid-null phantom-session demotion on read.
+        'orphan_phantom_demoted',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
