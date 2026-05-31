@@ -11,8 +11,8 @@ function makeExecutableNodeScript(filePath, source) {
 function buildState(sessionDir) {
     return {
         active: true,
-        // Live pid so the R-PTSB-3 phantom-demotion guard does not flip this
-        // active fixture to inactive on read (timeout classifier would return
+        // Live pid so the R-PTSB-3 phantom-demotion guard does not flip this active
+        // fixture to inactive on read (the timeout classifier would then return
         // 'inactive' instead of 'continue').
         pid: process.pid,
         working_dir: sessionDir,
