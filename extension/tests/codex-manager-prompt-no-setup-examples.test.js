@@ -7,10 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { composeManagerPromptFromSkill } from '../services/pickle-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// R-PNTR-5: pickle.md deleted; tests now use the source manager template directly.
-// Source is always present (committed), so no skip guard needed.
+// R-PNTR-5: pickle.md deleted; repointed to committed source template.
 const PICKLE_MD_PATH = path.resolve(__dirname, '../templates/_pickle-manager-prompt.md');
-
 const managerTemplateExists = fs.existsSync(PICKLE_MD_PATH);
 
 function assertNoSetupTaskOutsideFraming(payload) {
