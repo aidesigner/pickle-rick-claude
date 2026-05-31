@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { composeManagerPromptFromSkill, stripStepOneBlock, MANAGER_ROLE_FRAMING_BLOCK } from '../services/pickle-utils.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function makeTempSkill(content) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-skill-'));
@@ -237,4 +240,38 @@ test('composeManagerPromptFromSkill snapshot: claude mode', () => {
     assert.ok(result.includes('Simple body. --resume /session here.'));
     assert.ok(!result.includes('$ARGUMENTS'));
   } finally { cleanup(); }
+});
+
+// --- R-PNTR-TEMPLATE-PARITY: byte-identical parity between _pickle-manager-prompt.md and pickle.md ---
+
+const PICKLE_MD_PATH = path.resolve(__dirname, '../../.claude/commands/pickle.md');
+const PICKLE_TEMPLATE_PATH = path.resolve(__dirname, '../templates/_pickle-manager-prompt.md');
+const PARITY_OPTS = { argumentSubstitution: '--resume /tmp/parity-session' };
+
+test('AC-PNTR-01 / R-PNTR-TEMPLATE-PARITY: _pickle-manager-prompt.md exists and is non-empty', () => {
+  assert.ok(fs.existsSync(PICKLE_TEMPLATE_PATH), '_pickle-manager-prompt.md must exist at extension/templates/');
+  const content = fs.readFileSync(PICKLE_TEMPLATE_PATH, 'utf-8');
+  assert.ok(content.length > 0, '_pickle-manager-prompt.md must be non-empty');
+});
+
+test('AC-PNTR-01 / R-PNTR-TEMPLATE-PARITY: claude backend — byte-identical output', () => {
+  const fromPickleMd = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'claude', PARITY_OPTS);
+  const fromTemplate = composeManagerPromptFromSkill(PICKLE_TEMPLATE_PATH, 'claude', PARITY_OPTS);
+  assert.equal(
+    Buffer.byteLength(fromTemplate, 'utf-8'),
+    Buffer.byteLength(fromPickleMd, 'utf-8'),
+    'byte length must match for claude backend',
+  );
+  assert.strictEqual(fromTemplate, fromPickleMd, 'output must be byte-identical for claude backend');
+});
+
+test('AC-PNTR-01 / R-PNTR-TEMPLATE-PARITY: codex backend — byte-identical output', () => {
+  const fromPickleMd = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', PARITY_OPTS);
+  const fromTemplate = composeManagerPromptFromSkill(PICKLE_TEMPLATE_PATH, 'codex', PARITY_OPTS);
+  assert.equal(
+    Buffer.byteLength(fromTemplate, 'utf-8'),
+    Buffer.byteLength(fromPickleMd, 'utf-8'),
+    'byte length must match for codex backend',
+  );
+  assert.strictEqual(fromTemplate, fromPickleMd, 'output must be byte-identical for codex backend');
 });
