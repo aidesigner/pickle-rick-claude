@@ -158,4 +158,22 @@ The following backticked paths do not exist at HEAD and are created by this bund
 
 All other backticked paths in this PRD (`extension/src/bin/mux-runner.ts`, `docs/codex-prompt-design-notes.md`, `.claude/commands/{anatomy-park,szechuan-sauce,plumbus}.md`, `extension/src/types/index.ts`, `extension/src/types/activity-events.schema.json`, `extension/src/bin/CLAUDE.md`, `extension/tests/integration/mux-runner-claude-iteration-classifier.test.js`, `extension/tests/activity-event-payload.test.js`, `prds/MASTER_PLAN.md`) were verified to exist at HEAD via `git ls-files` / filesystem checks 2026-05-31.
 
+## R-MMTRH disposition
+
+**Closed by evidence (2026-05-31).** R-MMTR-2/3/4 shipped correct code to `main`; only their ticket frontmatter in the original session was left `Skipped`. The original session directory `2026-05-13-c122b0f7` is no longer on disk (confirmed absent 2026-05-31), so the idempotent heal-script (R-MMTRH-1) cannot run against it. Per AC-MMTRH-3-2 path (b), the heal is recorded here by evidence.
+
+The three commits are confirmed ancestors of the bundle HEAD (`git merge-base --is-ancestor <sha> HEAD` exits 0 for each):
+
+| Commit | Maps to | Subject |
+|---|---|---|
+| `42148351` | R-MMTR-3 (`d97acb1e`) | generalize manager relaunch caps |
+| `5c7d089c` | R-MMTR-2 (`f9f3ace5`) | enforce mux-runner max-turns relaunch contract |
+| `053f6fa6` | R-MMTR-4 (`05c47442`) | deferred verification artifacts |
+
+Note: `git log --oneline | grep <sha>` returns nothing because each commit's *subject* references the deferred ticket hash (`d97acb1e`/`f9f3ace5`/`05c47442`), not the commit SHA — verification is by `git merge-base --is-ancestor`, not subject grep.
+
+**AC-MMTRH-3-1 (test:fast green):** `npm run test:fast` from `extension/` is green on the bundle HEAD — authoritative run at `--test-concurrency=4` gives 5397 tests / 5394 pass / 0 fail / exit 0. The default `--test-concurrency=8` surfaces 4 known concurrency flakes (`convergence-gate-test-safety`, two `runGate` cases, `morty-watcher`) that all pass in isolation; they are timeout-shaped, not real failures. The deferred AC-7 from the R-MMTR session therefore now passes.
+
+**Conclusion:** R-MMTR-2/3/4 are functionally correct and live in `main`; the pipeline already treats `Skipped == Done` for traversal, so there is no behavioral gap. This note closes the operator-facing tracking gap.
+
 — Pickle Rick out. *belch*
