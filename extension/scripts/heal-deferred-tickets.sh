@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EXTENSION_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+EXTENSION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 HEALED_REASON="R-MMTRH heal — R-WMW shipped; deferred AC now passes; ticket work was correct all along"
 
@@ -67,7 +66,6 @@ for pair in "$@"; do
   healed_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
   if awk -v healed_at="$healed_at" -v healed_reason="$HEALED_REASON" '
-    BEGIN { fm_count = 0 }
     fm_count == 0 && /^---$/ { fm_count = 1; print; next }
     fm_count == 1 && /^---$/ {
       print "healed_at: " healed_at
