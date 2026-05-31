@@ -4,7 +4,7 @@ Launch a Pickle Rick epic in Zellij with KDL layouts and true context clearing b
 
 ## Step 1: Check Zellij
 
-Run `zellij --version`. If missing: "Install Zellij: `cargo install zellij` or `brew install zellij`, or use /pickle-tmux (tmux) or /pickle (interactive mode) instead." Stop.
+Run `zellij --version`. If missing: "Install Zellij: `cargo install zellij` or `brew install zellij`, or use /pickle-tmux (tmux) instead." Stop.
 
 Parse the version string to verify >= 0.40.0:
 ```bash
@@ -12,7 +12,7 @@ ZELLIJ_RAW=$(zellij --version 2>/dev/null || echo "")
 ZELLIJ_VER=$(echo "$ZELLIJ_RAW" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 if [ -z "$ZELLIJ_VER" ]; then
   echo "Zellij not found. Install: cargo install zellij / brew install zellij"
-  echo "Alternatives: /pickle-tmux (tmux) or /pickle (interactive)"
+  echo "Alternatives: /pickle-tmux (tmux)"
   exit 1
 fi
 IFS='.' read -r ZMJ ZMN ZPT <<< "$ZELLIJ_VER"

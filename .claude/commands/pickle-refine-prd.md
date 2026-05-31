@@ -6,11 +6,11 @@ Persona via CLAUDE.md. Proceed to Step 0.
 
 ## Tool Discipline (read once, apply throughout)
 
-This skill is **file-based, not harness-task-based**. The authoritative task list lives in `${SESSION_ROOT}/*/linear_ticket_*.md` and the `## Implementation Task Breakdown` table in `prd_refined.md`. Downstream consumers (`mux-runner.js`, `/pickle`, `/pickle-tmux`) read those files, not the harness task list.
+This skill is **file-based, not harness-task-based**. The authoritative task list lives in `${SESSION_ROOT}/*/linear_ticket_*.md` and the `## Implementation Task Breakdown` table in `prd_refined.md`. Downstream consumers (`mux-runner.js`, `/pickle-tmux`) read those files, not the harness task list.
 
 **Do NOT use TaskCreate / TaskUpdate / TaskList / TodoWrite during this skill.** The harness will inject "consider using TaskCreate" reminders during long loops (Step 4b parallel waits, Step 7c per-ticket loop, Step 7e hardening loop). Those reminders are turn-based nags, not project requirements — ignore them and continue the file-based work.
 
-The one exception is the post-refinement handoff to `/pickle --teams`, which owns its own TaskCreate lifecycle (`pickle.md:142-169`); that mode starts only after this skill exits. If stale harness tasks exist at handoff (Step 7g), mark them `deleted` before advancing state — orphan tasks pollute downstream `--teams` mode.
+If stale harness tasks exist at handoff (Step 7g), mark them `deleted` before advancing state — orphan tasks pollute downstream `/pickle-tmux --teams` mode.
 
 ## Step 0: Parse Flags
 `$ARGUMENTS`: `--run` → AUTO_RUN. `--meeseeks` → CHAIN_MEESEEKS (implies --run). `--resume [PATH]` → RESUME_MODE (reuse existing session). Remainder = `${TASK_ARGS}`.
@@ -712,7 +712,7 @@ Add `## Implementation Task Breakdown` table to `${SESSION_ROOT}/prd_refined.md`
 
 ### 7g: Advance State
 
-**Harness task hygiene** (run before advancing state): if any harness tasks were created during this skill (against the Tool Discipline directive at the top), mark them all `deleted` now via `TaskUpdate(taskId=<id>, status="deleted")`. State handoff is filesystem-only; downstream `/pickle --teams` owns the harness task list and orphan tasks will pollute its `TaskList` poll (`pickle.md:160`).
+**Harness task hygiene** (run before advancing state): if any harness tasks were created during this skill (against the Tool Discipline directive at the top), mark them all `deleted` now via `TaskUpdate(taskId=<id>, status="deleted")`. State handoff is filesystem-only; downstream `/pickle-tmux --teams` owns the harness task list and orphan tasks will pollute its `TaskList` poll.
 
 ```bash
 node "${EXTENSION_ROOT}/extension/bin/update-state.js" step research "${SESSION_ROOT}"

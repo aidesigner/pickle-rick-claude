@@ -9,4 +9,4 @@ Then inform the user:
 
 "Pickle Rick re-enabled. The stop hook is active again.
 
-Run `/pickle \"your task\"` to start a new loop."
+Run `/pickle-tmux \"your task\"` to start a new loop."

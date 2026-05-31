@@ -46,7 +46,7 @@ node "$HOME/.claude/pickle-rick/extension/bin/worker-setup.js" death-crystal 2>/
 
 Read the output for `SESSION_ROOT`. If no active session is found, print:
 ```
-No active Pickle Rick session found. Start a session first: /pickle or /pickle-tmux
+No active Pickle Rick session found. Start a session first: /pickle-tmux
 ```
 and stop.
 

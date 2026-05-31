@@ -77,7 +77,7 @@ STATE=$SESSION_DIR/state.json
 jq 'del(.judge_backend_resolved)' "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
 
 # 4. Resume
-/pickle --resume
+/pickle-tmux --resume
 ```
 
 > **Note**: Do NOT edit `state.json` while the pipeline is running — the state manager uses atomic tmp-rename writes that will overwrite manual edits. Always stop the pipeline before editing.

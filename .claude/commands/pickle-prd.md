@@ -22,7 +22,7 @@ PAUSED mode — normal chat. Interrogate:
 1. Write PRD to `${SESSION_ROOT}/prd.md` using template below
 2. `node "${EXTENSION_ROOT}/extension/bin/update-state.js" step breakdown "${SESSION_ROOT}"`
 3. Verify `prd.md` exists AND state.json `step: breakdown`. Fail → warn, do NOT recommend --resume.
-4. Handoff: "Run `/pickle --resume ${SESSION_ROOT}` or `/pickle-tmux --resume ${SESSION_ROOT}`."
+4. Handoff: "Run `/pickle-tmux --resume ${SESSION_ROOT}`."
 
 ## PRD Template
 **Spec Precision**: Every requirement MUST be machine-verifiable. The spec IS the review.

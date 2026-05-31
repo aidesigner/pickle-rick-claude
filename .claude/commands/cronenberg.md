@@ -8,7 +8,7 @@ Mutate a request into the correct pipeline shape. Deterministic — same signals
 User explicitly types `/cronenberg`. Never auto-trigger; persona's existing Routing rules are unchanged.
 
 ## When NOT to invoke
-- User already named a skill (`/pickle`, `/pickle-tmux`, `/pickle-pipeline`, `/pickle-microverse`, `/council-of-ricks`, `/citadel`, `/anatomy-park`, `/szechuan-sauce`) — use that directly.
+- User already named a skill (`/pickle-tmux`, `/pickle-pipeline`, `/pickle-microverse`, `/council-of-ricks`, `/citadel`, `/anatomy-park`, `/szechuan-sauce`) — use that directly.
 - One-liner / typo / single-file fix → just do it.
 - Pure question → answer directly.
 
@@ -66,9 +66,9 @@ Record the trigger reason (e.g. `"refine: AC_SHAPE_SMELL"`, `"refine: TICKET_COU
 | `STACK_REVIEW` | `/council-of-ricks` |
 | `MEASURABLE_METRIC` and TASK reads "optimize/improve/reduce X to Y" | `/pickle-microverse` |
 | `MULTI_STAGE` | `/pickle-pipeline` |
-| `INTERACTIVE_HINT` | `/pickle` |
+| `INTERACTIVE_HINT` | `/pickle-tmux` |
 | `TICKET_COUNT ≥ 3` | `/pickle-tmux` |
-| Default | `/pickle` |
+| Default | `/pickle-tmux` |
 
 ## Step 4: Pick Followups
 
@@ -108,11 +108,7 @@ Forward any flag (e.g. --backend codex, --scope branch, --max-iterations 50) by 
 **Default (no `--dry-run`)** — execution order:
 
 1. **Refine pre-pass (when `REFINE_NEEDED = true`)** — invoke `/pickle-refine-prd` in-session and wait for `TASK_COMPLETED`. On failure, stop and report. The refined manifest at `prd_refined.md` / `refinement_manifest.json` is now available to the chosen metaphor.
-2. **Chosen metaphor** — chain behavior depends on which one:
-
-   - **`/pickle` (interactive, in-session)** — invoke and wait for `TASK_COMPLETED`. Then chain followups in-session with `--target <cwd>` + applicable forwarded flags. On any failure, stop and report the failed step.
-
-   - **Tmux-launching metaphors (`/pickle-tmux`, `/pickle-pipeline`, `/pickle-microverse`, `/council-of-ricks`)** — these return `TASK_COMPLETED` immediately after detaching tmux. **Do NOT auto-chain followups** — they would race the in-progress build. Instead: (1) invoke the metaphor, (2) print `"Build launched in detached tmux. Followups will NOT auto-run — they would race the build. After the tmux session finishes, run:"` followed by the followup commands ready to copy, (3) output `<promise>TASK_COMPLETED</promise>`. Note: if refinement ran in step 1, it completed in-session before the tmux launch — so the metaphor sees the refined manifest.
+2. **Chosen metaphor** — all metaphors are tmux-launching. They return `TASK_COMPLETED` immediately after detaching tmux. **Do NOT auto-chain followups** — they would race the in-progress build. Instead: (1) invoke the metaphor, (2) print `"Build launched in detached tmux. Followups will NOT auto-run — they would race the build. After the tmux session finishes, run:"` followed by the followup commands ready to copy, (3) output `<promise>TASK_COMPLETED</promise>`. Note: if refinement ran in step 1, it completed in-session before the tmux launch — so the metaphor sees the refined manifest.
 
 ## Logging
 

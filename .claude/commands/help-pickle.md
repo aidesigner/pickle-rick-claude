@@ -3,11 +3,10 @@ Display the Pickle Rick for Claude Code help documentation.
 Summarize the available commands for the user:
 
 **Loop Commands:**
-- `/pickle <prompt>`: Start autonomous dev loop (Manager Mode)
-- `/pickle-tmux <prompt>`: Context-clearing tmux mode — fresh subprocess per iteration. For long epics (8+ tasks). Requires `tmux`
+- `/pickle-tmux <prompt>`: Start autonomous dev loop (Manager Mode) — fresh subprocess per iteration, context-clearing. Requires `tmux`
 - `/pickle-zellij <prompt>`: Context-clearing Zellij mode — fresh subprocess per iteration via KDL layouts. Same as /pickle-tmux but for Zellij users. Requires Zellij >= 0.40.0
-- `/pickle-prd <prompt>`: Interactive PRD drafting, then resume with `/pickle --resume`
-- `/pickle-refine-prd [path]`: Refine PRD via 3 parallel Morty analysts, decompose into atomic tickets. Resume with `/pickle --resume` or `/pickle-tmux --resume`
+- `/pickle-prd <prompt>`: Interactive PRD drafting, then resume with `/pickle-tmux --resume`
+- `/pickle-refine-prd [path]`: Refine PRD via 3 parallel Morty analysts, decompose into atomic tickets. Resume with `/pickle-tmux --resume`
 - `/pickle-debate "<question>"`: Multi-agent decision debate. Flags: `--personas r,a,i,s`, `--n <2-6>`, `--solo`, `--strict-teams`, `--no-strict-teams`, `--continue`, `--confirm-multi-round`, `--accept-stale`
 - `/pickle-dot [path | inline PRD]`: Convert PRD to strongdm/attractor-compatible DOT digraph
 - `/citadel --prd <path>`: Post-implementation conformance audit against PRD acceptance criteria, branch diff, and trap doors. Flags: `--diff <base..head>`, `--strict`, `--report <path>`, `--print-stubs`
@@ -31,10 +30,10 @@ Summarize the available commands for the user:
 
 **Internal:** `/send-to-morty` — auto-sent to worker subprocesses, not for direct use
 
-**Flags for /pickle:** `--resume [PATH]` | `--max-iterations <N>` (default:500) | `--max-time <M>` (default:off; opt-in) | `--worker-timeout <S>` (default:1200) | `--completion-promise "TEXT"` | `--backend <claude|codex|hermes>` | `--teams` (claude-only; spawns workers via harness Agent teams instead of subprocesses) | `--max-parallel <N>` (default:5; requires `--teams`; v1 ships sequential, this flag is plumbed for the parallel-fan-out follow-up)
+**Flags for /pickle-tmux:** `--resume [PATH]` | `--max-iterations <N>` (default:500) | `--max-time <M>` (default:off; opt-in) | `--worker-timeout <S>` (default:1200) | `--completion-promise "TEXT"` | `--backend <claude|codex|hermes>` | `--teams` (claude-only; spawns workers via harness Agent teams instead of subprocesses) | `--max-parallel <N>` (default:5; requires `--teams`; v1 ships sequential, this flag is plumbed for the parallel-fan-out follow-up)
 
 **Backends:**
-- `--backend <claude|codex|hermes>` accepted by `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, `/szechuan-sauce`
+- `--backend <claude|codex|hermes>` accepted by `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, `/szechuan-sauce`
 - `/council-of-ricks` integrates codex differently: Phase C adversarial subagent runs by default; `--no-codex` disables, `--codex-timeout <sec>` tunes (default 600)
 - `PICKLE_BACKEND=codex` or `PICKLE_BACKEND=hermes` env var — session-independent alternative, persists across commands
 - Precedence: CLI flag > env var > session state > default `claude`

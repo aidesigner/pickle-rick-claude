@@ -27,7 +27,7 @@ To inspect another ref without changing branch state: `git show <ref>:<path>` or
 
 
 ## Step 1: Check tmux
-Run `tmux -V`. If missing: "Install tmux: `brew install tmux` or `apt install tmux`, or use /pickle for interactive mode." Stop.
+Run `tmux -V`. If missing: "Install tmux: `brew install tmux` or `apt install tmux`." Stop.
 
 ## Step 2: Session Setup
 Extract flags from `$ARGUMENTS` (`--resume <path>`, `--max-iterations <N>`, `--backend <claude|codex|hermes>`, etc.). Pass flags before `--task`. Task text goes in `--task "..."`.
