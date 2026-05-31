@@ -24,7 +24,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 
 | # | Bundle | Pri | Open findings | PRD / source | Size |
 |---|--------|-----|---------------|--------------|------|
-| 3 | **B-PNTR** | P1 | #77 R-PNTR-DEPS | `prds/p2-remove-non-tmux-pickle-loop.md` (RE-SCOPED 2026-05-30: extract manager template to `_pickle-manager-prompt.md`, then remove bare `/pickle`; schema-neutral). Refinement recommended pre-launch. | ~9 |
+| 3 | **B-PNTR** | P1 | #77 R-PNTR-DEPS | `prds/p2-remove-non-tmux-pickle-loop.md` (extract `_pickle-manager-prompt.md`, remove bare `/pickle`; schema-neutral). R-PNTR-1..7 Done (session `2026-05-31-30c7524b`); closer pending. | ~1 |
 | 4 | **B-R-MMTR** + **B-E2E** | P1+P3 | #28 R-ICDM, #19 R-MMTR | author — R-ICDM-2..7 audit + R-MMTRH heal + R-MMTR-7 closer; B-E2E re-attempts force-skipped R-MMTR-6 after | ~6 |
 | 5 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | author — verify-command host-tool check (#39) + zsh shell-glob safety (#40) | ~4+4 |
 | 6 | **B-PPCD** | P2 | #85 R-PPCD | author — doc-only: citadel phase list in `pickle-pipeline.md` + `persona.md` (verified still drifted 2026-05-30) | ~1-2 |
@@ -52,7 +52,7 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 |---|---|---|---|
 | 25 | R-CSI | Concurrent claude-session destructive-command interference (3 SIGINT incidents/36h) — DATA LOSS class | `p1-concurrent-claude-session-interference-with-running-pipelines.md`. **Watch-only — external-event-gated:** Phase 1 forensics need a real incident to analyze. Skipped by the drain; surfaces on the next incident. |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
-| 77 | R-PNTR-DEPS | B-PNTR R-PNTR-1 (`d586b545`) wrongly deleted load-bearing `.claude/commands/pickle.md` (read every tmux iteration by mux-runner/pipeline-runner/jar-runner as the manager-prompt template) → `[FATAL] pickle.md not found`. Restored `40f22573`. **RE-SCOPED 2026-05-30** (operator-confirmed): `pickle.md` is dual-purpose (bare-`/pickle` command + manager template). The bundle now **extracts** the manager-lifecycle body to `_pickle-manager-prompt.md` (infra template via the dormant `extensionRoot/templates/` resolver), repoints 3 consumers + the `command_template` default, adds a schema-neutral resume remap, then removes bare `/pickle`. Schema-neutral (dodges #74). PRD updated `prds/p2-remove-non-tmux-pickle-loop.md`, ~9 tickets, refinement recommended. **B-PNTR.** |
+| 77 | R-PNTR-DEPS | B-PNTR R-PNTR-1 (`d586b545`) wrongly deleted load-bearing `.claude/commands/pickle.md` (read every tmux iteration by mux-runner/pipeline-runner/jar-runner as the manager-prompt template) → `[FATAL] pickle.md not found`. Restored `40f22573`. **RE-SCOPED 2026-05-30** (operator-confirmed): `pickle.md` was dual-purpose (bare-`/pickle` command + manager template). **IMPLEMENTED R-PNTR-1..7** (session `2026-05-31-30c7524b`): extracted manager-lifecycle body to `_pickle-manager-prompt.md` (infra template via `extensionRoot/templates/`), repointed 3 consumers + `command_template` default, added schema-neutral resume remap, removed bare `/pickle`. Schema-neutral (dodges #74). Closer pending. **B-PNTR.** |
 
 ### P2
 
@@ -114,8 +114,7 @@ Detail in `extension/CLAUDE.md` + `prds/citadel.md`. Quick form:
 /pickle-metrics                      # token/commit/LOC report
 /pickle-prd                          # interview then PRD
 /pickle-refine-prd <prd>             # 3-cycle decomposition
-/pickle-tmux <prd>                   # 3+ tickets
-/pickle <prd>                        # 1-2 tickets, interactive
+/pickle-tmux <prd>                   # launch ticket pipeline (tmux, all sizes)
 /pickle-pipeline <prd>               # pickle, citadel, anatomy-park, szechuan-sauce
 gh release create vX.Y.Z             # tag + publish
 ```
