@@ -2920,10 +2920,10 @@ export function appendPipelineRunnerMarker(sessionDir: string, message: string):
   } catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
 
-export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally' | 'state_schema_version_ahead' | 'closer_handoff_terminal' | 'manager_handoff_pending' | 'done_without_commit_evidence';
+export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally' | 'state_schema_version_ahead' | 'closer_handoff_terminal' | 'manager_handoff_pending' | 'done_without_commit_evidence' | 'codex_manager_no_progress';
 
 const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat' || r === 'closer_handoff_terminal' || r === 'manager_handoff_pending' || r === 'done_without_commit_evidence';
-const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead' || r === 'done_without_commit_evidence';
+const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead' || r === 'done_without_commit_evidence' || r === 'codex_manager_no_progress';
 
 interface CloserHandoffTracker {
   ticket_id: string;
@@ -3957,6 +3957,46 @@ function readPostIterationState(state: State, ctx: LoopContext): State {
   }
 }
 
+/**
+ * R-CMWL-4: Tracks consecutive zero-progress codex manager relaunch passes.
+ * A pass is zero-progress when the pending ticket count did not decrease since
+ * the last relaunch. Resets to 0 on any pass with progress.
+ * Returns `{ halt: true }` when 2 consecutive zero-progress passes occurred.
+ */
+function checkAndUpdateCodexManagerNoProgress(
+  statePath: string,
+  pendingCount: number,
+  log: (msg: string) => void,
+): { halt: boolean; consecutiveCount: number } {
+  let halt = false;
+  let consecutiveCount = 0;
+  try {
+    sm.update(statePath, (s) => {
+      const baseline = typeof s.codex_manager_relaunch_pending_baseline === 'number'
+        ? s.codex_manager_relaunch_pending_baseline : null;
+      const prior = typeof s.codex_manager_consecutive_no_progress === 'number'
+        ? s.codex_manager_consecutive_no_progress : 0;
+      if (baseline === null) {
+        s.codex_manager_consecutive_no_progress = 0;
+        s.codex_manager_relaunch_pending_baseline = pendingCount;
+        consecutiveCount = 0;
+      } else if (pendingCount >= baseline) {
+        consecutiveCount = prior + 1;
+        s.codex_manager_consecutive_no_progress = consecutiveCount;
+        s.codex_manager_relaunch_pending_baseline = pendingCount;
+      } else {
+        consecutiveCount = 0;
+        s.codex_manager_consecutive_no_progress = 0;
+        s.codex_manager_relaunch_pending_baseline = pendingCount;
+      }
+      halt = consecutiveCount >= 2;
+    });
+  } catch (err) {
+    log(`WARN: failed to update codex no-progress counter: ${safeErrorMessage(err)}`);
+  }
+  return { halt, consecutiveCount };
+}
+
 // eslint-disable-next-line complexity -- HT-1 reviewed: legacy completion branch retained behavior-preserving; pre-existing violation, refactor deferred to a focused PR.
 export async function processCompletionBranch(state: State, result: IterationOutcome['completion'], ctx: LoopContext): Promise<LoopAction> {
   if (result === 'task_completed') return processTaskCompleted(state, ctx);
@@ -3984,6 +4024,14 @@ export async function processCompletionBranch(state: State, result: IterationOut
           return { kind: 'break', reason: 'limit' };
         }
         if (inactiveDecision.shouldRelaunch) {
+          const noProgress = checkAndUpdateCodexManagerNoProgress(ctx.statePath, inactiveDecision.pendingCount, ctx.log);
+          if (noProgress.halt) {
+            ctx.log(`Codex manager made no progress for ${noProgress.consecutiveCount} consecutive relaunch passes — halting with codex_manager_no_progress.`);
+            logActivity({ event: 'codex_manager_no_progress', source: 'pickle', session: path.basename(ctx.sessionDir), iteration: ctx.iteration, backend: resolveBackendFromStateFileWithSource(ctx.statePath).backend, consecutive_count: noProgress.consecutiveCount, pending_count: inactiveDecision.pendingCount });
+            recordExitReason(ctx.statePath, 'codex_manager_no_progress');
+            ctxDeactivate(ctx);
+            return { kind: 'break', reason: 'codex_manager_no_progress' };
+          }
           const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
           ctx.log(
             `${relaunchBackend} manager subprocess exited via ${inactiveExitKind} with ${inactiveDecision.pendingCount} ticket(s) still pending — ` +
@@ -4039,6 +4087,14 @@ export async function processCompletionBranch(state: State, result: IterationOut
         ctx.outcome.exitCode === null
       );
     if (decision.shouldRelaunch && !isGenuineCrashOrSpawnFailure) {
+      const noProgress = checkAndUpdateCodexManagerNoProgress(ctx.statePath, decision.pendingCount, ctx.log);
+      if (noProgress.halt) {
+        ctx.log(`Codex manager made no progress for ${noProgress.consecutiveCount} consecutive relaunch passes — halting with codex_manager_no_progress.`);
+        logActivity({ event: 'codex_manager_no_progress', source: 'pickle', session: path.basename(ctx.sessionDir), iteration: ctx.iteration, backend: resolveBackendFromStateFileWithSource(ctx.statePath).backend, consecutive_count: noProgress.consecutiveCount, pending_count: decision.pendingCount });
+        recordExitReason(ctx.statePath, 'codex_manager_no_progress');
+        ctxDeactivate(ctx);
+        return { kind: 'break', reason: 'codex_manager_no_progress' };
+      }
       const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
       const detail = decision.exitKind === 'other_error'
         ? 'errored'
@@ -5954,6 +6010,16 @@ async function runMuxRunnerMain() {
             break;
           }
           if (inactiveDecision.shouldRelaunch) {
+            const noProgress = checkAndUpdateCodexManagerNoProgress(statePath, inactiveDecision.pendingCount, log);
+            if (noProgress.halt) {
+              log(`Codex manager made no progress for ${noProgress.consecutiveCount} consecutive relaunch passes — halting with codex_manager_no_progress.`);
+              logActivity({ event: 'codex_manager_no_progress', source: 'pickle', session: path.basename(sessionDir), iteration, backend: resolveBackendFromStateFileWithSource(statePath).backend, consecutive_count: noProgress.consecutiveCount, pending_count: inactiveDecision.pendingCount });
+              recordExitReason(statePath, 'codex_manager_no_progress');
+              safeDeactivate(statePath);
+              removeRunnerSessionMapEntry(statePath, log);
+              exitReason = 'codex_manager_no_progress';
+              break;
+            }
             const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
             log(`${relaunchBackend} manager subprocess exited via ${inactiveExitKind} with ${inactiveDecision.pendingCount} ticket(s) still pending — relaunching (count ${inactiveDecision.nextRelaunchCount}/${inactiveDecision.cap}).`);
             recordManagerRelaunch(statePath, sessionDir, inactiveDecision, iteration, log);
@@ -5996,6 +6062,16 @@ async function runMuxRunnerMain() {
           outcome.exitCode === null
         );
       if (relaunchDecision.shouldRelaunch && !isGenuineCrashOrSpawnFailure) {
+        const noProgress = checkAndUpdateCodexManagerNoProgress(statePath, relaunchDecision.pendingCount, log);
+        if (noProgress.halt) {
+          log(`Codex manager made no progress for ${noProgress.consecutiveCount} consecutive relaunch passes — halting with codex_manager_no_progress.`);
+          logActivity({ event: 'codex_manager_no_progress', source: 'pickle', session: path.basename(sessionDir), iteration, backend: resolveBackendFromStateFileWithSource(statePath).backend, consecutive_count: noProgress.consecutiveCount, pending_count: relaunchDecision.pendingCount });
+          recordExitReason(statePath, 'codex_manager_no_progress');
+          safeDeactivate(statePath);
+          removeRunnerSessionMapEntry(statePath, log);
+          exitReason = 'codex_manager_no_progress';
+          break;
+        }
         const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
         const detail = relaunchDecision.exitKind === 'other_error'
           ? 'errored'

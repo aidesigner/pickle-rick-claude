@@ -72,6 +72,10 @@ export interface State {
    * the canonical field on read for one-version backwards compatibility.
    */
   codex_manager_relaunch_count?: number;
+  /** R-CMWL-4 (schema-neutral v5): consecutive zero-progress codex manager relaunch passes. Reset to 0 on any pass with ticket progress. Halt at 2. */
+  codex_manager_consecutive_no_progress?: number;
+  /** R-CMWL-4 (schema-neutral v5): pending ticket count at last codex relaunch — baseline for zero-progress detection. */
+  codex_manager_relaunch_pending_baseline?: number;
   /** Hermes CLI toolsets persisted at setup time and passed to worker/manager spawns. */
   hermes_toolsets?: string[];
   /** Optional Hermes provider override persisted at setup time. */
@@ -639,6 +643,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'graph_preflight_degraded',
   'worker_artifact_progress_zero',
   'worker_auto_skip_oversized',
+  'codex_manager_no_progress',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
@@ -731,6 +736,7 @@ export interface ActivityEvent {
   bytes_dropped?: number;
   relaunch_count?: number;
   pending_count?: number;
+  consecutive_count?: number;
   cap?: number;
   last_ticket_seen?: string | null;
   gate_payload?: ActivityGatePayload;

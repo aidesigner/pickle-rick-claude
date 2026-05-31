@@ -1015,6 +1015,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'worker_artifact_progress_zero',
     'worker_auto_skip_oversized',
     'orphan_phantom_demoted',
+    'codex_manager_no_progress',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

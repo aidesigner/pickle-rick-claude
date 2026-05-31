@@ -856,3 +856,124 @@ test('evaluateCodexManagerRelaunch ignores time_limit when max_time_minutes is m
     assert.equal(noEpoch.reason, 'eligible',
         'no start_time_epoch → time gate inert, eligible falls through');
 });
+
+// ---------------------------------------------------------------------------
+// R-CMWL-4: codex manager no-progress guard.
+// After 2 consecutive zero-progress relaunch passes, the loop must halt with
+// reason='codex_manager_no_progress' instead of relaunching again.
+// ---------------------------------------------------------------------------
+
+test('processCompletionBranch: codex + error + 2 consecutive zero-progress passes → halt codex_manager_no_progress', async () => {
+    const session = makeRelaunchSession({
+        backend: 'codex',
+        priorRelaunchCount: 1,
+        tickets: [
+            { id: 't-pending', status: 'Todo', order: 1 },
+        ],
+    });
+    try {
+        await withDataRoot(session.dataRoot, async () => {
+            // Seed baseline: simulate a prior pass that established the baseline.
+            // pending=1, baseline=1 → this pass also has pending=1 → zero progress.
+            const seed = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            seed.codex_manager_relaunch_pending_baseline = 1;
+            seed.codex_manager_consecutive_no_progress = 1; // already 1 from prior pass
+            fs.writeFileSync(session.statePath, JSON.stringify(seed, null, 2));
+
+            const { ctx } = makeBranchCtx(session, {
+                outcome: { completion: 'error', timedOut: true, exitCode: null, wallSeconds: 14_401 },
+            });
+            const action = await processCompletionBranch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'break',
+                `expected break on 2nd zero-progress pass, got ${action.kind}`);
+            assert.equal(action.reason, 'codex_manager_no_progress',
+                `expected codex_manager_no_progress reason, got ${action.reason}`);
+
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.exit_reason, 'codex_manager_no_progress');
+            assert.equal(persisted.active, false, 'session must be deactivated on halt');
+            assert.equal(persisted.codex_manager_consecutive_no_progress, 2,
+                'counter must be 2 after two zero-progress passes');
+
+            const events = readActivityEvents(session.dataRoot);
+            const noProgressEvents = events.filter(e => e.event === 'codex_manager_no_progress');
+            assert.equal(noProgressEvents.length, 1,
+                `expected 1 codex_manager_no_progress event, got ${noProgressEvents.length}`);
+            assert.equal(noProgressEvents[0].consecutive_count, 2);
+            assert.equal(noProgressEvents[0].pending_count, 1);
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('processCompletionBranch: codex + error + 1 zero-progress then progressing pass → counter resets, relaunch', async () => {
+    const session = makeRelaunchSession({
+        backend: 'codex',
+        priorRelaunchCount: 1,
+        tickets: [
+            { id: 't-done', status: 'Done', order: 1 },
+            { id: 't-pending', status: 'Todo', order: 2 },
+        ],
+    });
+    try {
+        await withDataRoot(session.dataRoot, async () => {
+            // Seed: prior pass had pending=2, counter=1 (zero progress).
+            // Now pending=1 (t-done completed) → progress → counter resets to 0 → relaunch.
+            const seed = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            seed.codex_manager_relaunch_pending_baseline = 2;
+            seed.codex_manager_consecutive_no_progress = 1;
+            fs.writeFileSync(session.statePath, JSON.stringify(seed, null, 2));
+
+            const { ctx } = makeBranchCtx(session, {
+                outcome: { completion: 'error', timedOut: true, exitCode: null, wallSeconds: 14_401 },
+            });
+            const action = await processCompletionBranch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'relaunch',
+                `expected relaunch after progress reset, got ${action.kind} (${action.reason ?? ''})`);
+
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.codex_manager_consecutive_no_progress, 0,
+                'counter must reset to 0 after progressing pass');
+            assert.equal(persisted.codex_manager_relaunch_pending_baseline, 1,
+                'baseline must update to current pending count');
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('processCompletionBranch: codex_manager_no_progress passes schema required-field check', () => {
+    const schemaPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../src/types/activity-events.schema.json');
+    const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf-8'));
+    const def = schema.definitions.codex_manager_no_progress;
+    assert.ok(def, 'activity-events.schema.json must define codex_manager_no_progress');
+    assert.ok(schema.oneOf.some(o => o.$ref === '#/definitions/codex_manager_no_progress'),
+        'activity-events.schema.json oneOf must reference codex_manager_no_progress');
+
+    const required = def.required || [];
+    const payload = {
+        event: 'codex_manager_no_progress',
+        ts: new Date().toISOString(),
+        backend: 'codex',
+        consecutive_count: 2,
+        pending_count: 1,
+        session: 'test-session',
+        iteration: 5,
+        source: 'pickle',
+    };
+    for (const field of required) {
+        assert.ok(field in payload, `schema required field '${field}' must be in payload`);
+    }
+    assert.equal(payload.event, def.properties.event.const, 'event const must match');
+});

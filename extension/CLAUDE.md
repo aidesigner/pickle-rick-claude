@@ -334,6 +334,8 @@ Reject the Ousterhout line-ratio reading of "deep module." Depth is not "many im
 - INVARIANT: `false_epic_completed_ticket` ties false completion counts to the ticket that produced them. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `effort` is the optional codex reasoning-effort value. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `codex_manager_relaunch_count` is capped per state file by defaults. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `codex_manager_consecutive_no_progress` is the R-CMWL-4 schema-neutral counter of consecutive zero-progress codex manager relaunch passes (defaulted to 0 via normalizeV5StateDefaults); resets on any pass with ticket progress; halts at 2. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `codex_manager_relaunch_pending_baseline` is the R-CMWL-4 schema-neutral pending-ticket count stored at the last codex relaunch — the baseline for zero-progress detection; absent on first relaunch. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `hermes_toolsets` is the optional Hermes CLI toolset list passed to worker and manager spawns. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/hermes-spawn.test.js.
 - INVARIANT: `hermes_provider` is the optional Hermes provider override passed to worker and manager spawns. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/hermes-spawn.test.js.
 - INVARIANT: `hermes_model` is the optional Hermes model override passed to worker and manager spawns. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/hermes-spawn.test.js.

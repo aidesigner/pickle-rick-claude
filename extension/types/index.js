@@ -293,6 +293,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'graph_preflight_degraded',
     'worker_artifact_progress_zero',
     'worker_auto_skip_oversized',
+    'codex_manager_no_progress',
 ];
 /** Recoverable reasons a ticket can be flipped to Failed by the auto-skip guard (R-WSWA-3). */
 export const FAILURE_REASONS = ['oversized_no_progress'];

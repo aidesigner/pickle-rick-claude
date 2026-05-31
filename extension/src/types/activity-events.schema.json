@@ -1369,6 +1369,19 @@
         "ts": { "type": "string" },
         "kind": { "type": "string" }
       }
+    },
+    "codex_manager_no_progress": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "codex_manager_no_progress" },
+        "ts": { "type": "string" },
+        "backend": { "$ref": "#/definitions/backendEnum" },
+        "consecutive_count": { "type": "integer", "minimum": 0 },
+        "pending_count": { "type": "integer", "minimum": 0 },
+        "session": { "type": "string" },
+        "iteration": { "type": "integer" }
+      }
     }
   },
   "oneOf": [
@@ -1457,6 +1470,7 @@
     { "$ref": "#/definitions/graph_preflight_degraded" },
     { "$ref": "#/definitions/worker_artifact_progress_zero" },
     { "$ref": "#/definitions/worker_auto_skip_oversized" },
-    { "$ref": "#/definitions/orphan_phantom_demoted" }
+    { "$ref": "#/definitions/orphan_phantom_demoted" },
+    { "$ref": "#/definitions/codex_manager_no_progress" }
   ]
 }
