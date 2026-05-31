@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
-import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, writeStateFile, safeErrorMessage, composeManagerPromptFromSkill } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, writeStateFile, safeErrorMessage, composeManagerPromptFromSkill, resolveCommandTemplate } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason } from '../services/state-manager.js';
 import { State, Defaults, type Backend } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -117,7 +117,7 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
 
   const taskTimeout = loadJarTaskTimeout(extensionRoot, state);
 
-  const templateName = '_pickle-manager-prompt.md';
+  const templateName = resolveCommandTemplate(state.command_template);
   const templatesDir = path.join(extensionRoot, 'templates');
   const commandsDir = path.join(os.homedir(), '.claude/commands');
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call

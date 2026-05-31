@@ -496,12 +496,12 @@ test('setup: --command-template meeseeks.md sets field; ../evil.md is rejected',
     );
 });
 
-test('setup: without meeseeks flags, min_iterations is 0 and command_template is undefined', () => {
+test('setup: without meeseeks flags, min_iterations is 0 and command_template is default', () => {
     const sessionPath = runSetup(['--task', 'default-test']);
     try {
         const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
         assert.equal(state.min_iterations, 0);
-        assert.equal(state.command_template, undefined);
+        assert.equal(state.command_template, '_pickle-manager-prompt.md');
     } finally {
         cleanup(sessionPath);
     }

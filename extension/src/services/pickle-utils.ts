@@ -2783,6 +2783,17 @@ export function stripStepOneBlock(prompt: string): string {
 }
 
 /**
+ * Read-time remap for legacy command_template values. Treats 'pickle.md' as an
+ * alias for '_pickle-manager-prompt.md' so sessions persisted before B-PNTR
+ * resume without FATAL once pickle.md is removed (R-PNTR-5). Value-only — no
+ * schema version change. 'pickle.md' literal is allowed here per R-PNTR-3 + R-PNTR-5.
+ */
+export function resolveCommandTemplate(raw: string | undefined): string {
+  if (!raw || raw === 'pickle.md') return '_pickle-manager-prompt.md'; // R-PNTR-3 legacy remap
+  return raw;
+}
+
+/**
  * HTML-comment framing block injected at the top of codex manager prompts.
  * Mirrors the GIT_BOUNDARY_RULES pattern that codex demonstrably respects.
  */

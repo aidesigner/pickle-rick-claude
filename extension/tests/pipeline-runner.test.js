@@ -1543,7 +1543,7 @@ function writeBaseState(statePath, overrides = {}) {
 }
 
 describe('pickle phase entry', () => {
-  test('overwrites stale command_template = "anatomy-park.md" with "pickle.md"', () => {
+  test('overwrites stale command_template = "anatomy-park.md" with "_pickle-manager-prompt.md"', () => {
     const dir = tmpDir();
     const statePath = path.join(dir, 'state.json');
     writeBaseState(statePath, { command_template: 'anatomy-park.md' });
@@ -1551,12 +1551,12 @@ describe('pickle phase entry', () => {
     enterPicklePhase(dir, statePath, 'claude');
 
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    assert.equal(state.command_template, 'pickle.md');
+    assert.equal(state.command_template, '_pickle-manager-prompt.md');
     assert.equal(state.chain_meeseeks, false);
     fs.rmSync(dir, { recursive: true });
   });
 
-  test('overwrites stale command_template = "szechuan-sauce.md" with "pickle.md"', () => {
+  test('overwrites stale command_template = "szechuan-sauce.md" with "_pickle-manager-prompt.md"', () => {
     const dir = tmpDir();
     const statePath = path.join(dir, 'state.json');
     writeBaseState(statePath, { command_template: 'szechuan-sauce.md' });
@@ -1564,7 +1564,7 @@ describe('pickle phase entry', () => {
     enterPicklePhase(dir, statePath, 'claude');
 
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    assert.equal(state.command_template, 'pickle.md');
+    assert.equal(state.command_template, '_pickle-manager-prompt.md');
     fs.rmSync(dir, { recursive: true });
   });
 
