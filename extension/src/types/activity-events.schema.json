@@ -1360,6 +1360,15 @@
           }
         }
       }
+    },
+    "orphan_phantom_demoted": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "orphan_phantom_demoted" },
+        "ts": { "type": "string" },
+        "kind": { "type": "string" }
+      }
     }
   },
   "oneOf": [
@@ -1447,6 +1456,7 @@
     { "$ref": "#/definitions/graph_preflight_completed" },
     { "$ref": "#/definitions/graph_preflight_degraded" },
     { "$ref": "#/definitions/worker_artifact_progress_zero" },
-    { "$ref": "#/definitions/worker_auto_skip_oversized" }
+    { "$ref": "#/definitions/worker_auto_skip_oversized" },
+    { "$ref": "#/definitions/orphan_phantom_demoted" }
   ]
 }

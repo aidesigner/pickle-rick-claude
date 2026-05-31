@@ -298,6 +298,11 @@ function hasPausedOrphanDemotion(activity: State['activity']): boolean {
     activity.some(a => typeof a === 'object' && a !== null && (a as Record<string, unknown>).kind === 'paused_session_orphan_demoted');
 }
 
+function hasPhantomDemotion(activity: State['activity']): boolean {
+  return Array.isArray(activity) &&
+    activity.some(a => typeof a === 'object' && a !== null && (a as Record<string, unknown>).kind === 'orphan_phantom_demoted');
+}
+
 /**
  * Evaluates whether a paused session qualifies for orphan demotion.
  * Demotion requires BOTH conditions: the state is age-stale (≥5 min untouched)
@@ -961,6 +966,28 @@ export class StateManager {
     if (state.active !== true) return;
 
     if (state.pid === undefined || state.pid === null) {
+      // Phantom demotion: active=true, pid=null, tmux_mode=false, iteration=0, history=[]
+      // → session was never claimed by any runner; demote immediately, bypassing the 300s age gate.
+      // Guard: FULL conjunction required; any one of tmux_mode/iteration/history exempts the session.
+      if (
+        state.tmux_mode !== true &&
+        state.iteration === 0 &&
+        Array.isArray(state.history) &&
+        state.history.length === 0
+      ) {
+        if (hasPhantomDemotion(state.activity)) return;
+        state.active = false;
+        state.exit_reason = 'orphan_phantom_demoted';
+        state.activity = state.activity ?? [];
+        state.activity.push({
+          event: 'orphan_phantom_demoted',
+          kind: 'orphan_phantom_demoted',
+          ts: new Date().toISOString(),
+        });
+        try { writeStateFile(statePath, state); } catch { /* best-effort */ }
+        return;
+      }
+
       // Paused-orphan demotion: no process ever claimed this session (pid=null).
       // If the state file is stale (>5 min), or its mapped owner PID is dead,
       // it will never be claimed — demote.

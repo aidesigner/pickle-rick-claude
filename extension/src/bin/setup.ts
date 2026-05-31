@@ -1062,6 +1062,8 @@ function createInitialState(config: SetupArgs, sessionPath: string, taskStr: str
     parent_session_hash: process.env.PICKLE_PARENT_SESSION_HASH || null,
   };
 
+  if (state.active) state.pid = process.pid;
+
   if (config.explicitFlags.has('max-time')) {
     state.max_time_minutes = config.timeLimit;
   }

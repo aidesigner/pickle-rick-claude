@@ -742,6 +742,11 @@ const EVENT_CASES = [
     },
     drop: 'gate_payload',
   },
+  {
+    type: 'orphan_phantom_demoted',
+    valid: { event: 'orphan_phantom_demoted', ts: TS },
+    drop: 'ts',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -1009,6 +1014,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'graph_preflight_degraded',
     'worker_artifact_progress_zero',
     'worker_auto_skip_oversized',
+    'orphan_phantom_demoted',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

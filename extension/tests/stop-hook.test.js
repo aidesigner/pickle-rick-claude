@@ -19,6 +19,7 @@ const RESOLVE_STATE = path.resolve(__dirname, '../hooks/resolve-state.js');
 function baseState(overrides = {}) {
   return {
     active: true,
+    pid: process.pid, // phantom-demotion guard: pid!=null exempts claimed sessions
     working_dir: process.cwd(),
     step: 'prd',
     iteration: 0,

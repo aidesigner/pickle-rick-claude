@@ -18,7 +18,7 @@ function baseState(sessionDir, overrides = {}) {
     pid: null,
     working_dir: process.cwd(),
     step: 'implement',
-    iteration: 0,
+    iteration: 1, // >0 so phantom-demotion (iteration===0 && history===[]) doesn't fire here
     max_iterations: 5,
     max_time_minutes: 60,
     worker_timeout_seconds: 1200,

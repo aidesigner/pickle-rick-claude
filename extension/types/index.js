@@ -211,6 +211,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'paused_session_orphan_demoted',
     'paused_session_orphan_precleaned',
     'phantom_session_demoted',
+    'orphan_phantom_demoted',
     'worker_spawn_backend_resolved',
     'worker_spawn_backend_override',
     'worker_spawn_backend_mismatch',
