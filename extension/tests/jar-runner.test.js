@@ -22,6 +22,16 @@ function makeTmpRoot() {
     const sentinelDir = path.join(root, 'extension', 'bin');
     fs.mkdirSync(sentinelDir, { recursive: true });
     fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+    // R-PNTR: the bare `/pickle` command + its deployed pickle.md are gone; the
+    // manager-lifecycle body now lives in _pickle-manager-prompt.md, resolved via
+    // getExtensionRoot()/templates. Self-contained so the test no longer depends
+    // on a deployed copy (matches jar-codex.test.js fixture).
+    const templatesDir = path.join(root, 'templates');
+    fs.mkdirSync(templatesDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(templatesDir, '_pickle-manager-prompt.md'),
+        '# Manager Prompt\n\nImplement the ticket.\n',
+    );
     return root;
 }
 

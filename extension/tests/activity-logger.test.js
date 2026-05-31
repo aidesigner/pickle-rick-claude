@@ -223,6 +223,10 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // B-CMWL: R-CMWL-4 manager-level no-progress guard halts infinite
         // codex relaunch after 2 consecutive zero-progress passes.
         'codex_manager_no_progress',
+        // B-PNTR: R-PNTR-3 schema-neutral resume remap emits this when a
+        // resumed session's command_template was the removed bare `/pickle`
+        // (pickle.md) and is remapped to _pickle-manager-prompt.md.
+        'pickle_command_deprecated',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {

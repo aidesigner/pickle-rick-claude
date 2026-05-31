@@ -29,8 +29,10 @@ test('R-CCPM-1b-3: /pickle-tmux codex guidance pins the safe process tree', () =
 });
 
 test('R-CCPM-1b-3: README backend guidance stays aligned with tmux-direct workaround', () => {
+  // R-PNTR: bare `/pickle` removed — README codex guidance now consolidates on
+  // tmux-direct without the legacy "/pickle for short interactive work" line.
   const content = read(README);
-  assert.match(content, /keep `\/pickle` for short interactive work and prefer `\/pickle-tmux` for longer sessions/i);
-  assert.match(content, /safe workaround is tmux-direct/i);
+  assert.match(content, /prefer tmux-direct/i);
+  assert.match(content, /`codex exec` is only a child spawned by mux-runner/i);
   assert.match(content, /Avoid the risky arrangement where a long-lived codex session becomes the parent of mux-runner/i);
 });
