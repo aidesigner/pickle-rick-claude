@@ -7,9 +7,9 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.87.0** — 2026-05-30 |
-| Latest GitHub release | v1.87.0 (v1.81.1..v1.87.0 all tagged) |
-| Active pipeline | **B-CMWL** (session `2026-05-30-6333da9a`) — launched 2026-05-30 (B-PTSB shipped v1.87.0) |
+| Version (source/deployed) | **v1.88.0** — 2026-05-31 |
+| Latest GitHub release | v1.88.0 (v1.81.1..v1.88.0 all tagged) |
+| Active pipeline | none — **B-CMWL** shipped v1.88.0 (session `2026-05-30-6333da9a`); next drain row: B-PNTR |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive:** drain bug bundles before feature epics; P1 > P2 > P3. All feature epics (R-PGI v1.83.0 / R-PIAP v1.84.0 / R-DC v1.85.0) are shipped.
@@ -24,7 +24,6 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 
 | # | Bundle | Pri | Open findings | PRD / source | Size |
 |---|--------|-----|---------------|--------------|------|
-| 2 | **B-CMWL** | P1 | #86 R-CMWL | `prds/p1-bug-fix-bundle-b-cmwl-codex-manager-fixed-wall-2026-05-30.md` (authored 2026-05-30 from BUG-REPORT: codex `Session inactive` exit not classified relaunchable (`mux-runner.ts:2123`); pipeline-runner stamps `phase_incomplete_tickets` w/o progress check (`pipeline-runner.ts:2010`); `assertCleanWorkingTree` bricks relaunch; + no-progress guard. Schema-neutral, MINOR→1.88.0). | ~6 |
 | 3 | **B-PNTR** | P1 | #77 R-PNTR-DEPS | `prds/p2-remove-non-tmux-pickle-loop.md` (RE-SCOPED 2026-05-30: extract manager template to `_pickle-manager-prompt.md`, then remove bare `/pickle`; schema-neutral). Refinement recommended pre-launch. | ~9 |
 | 4 | **B-R-MMTR** + **B-E2E** | P1+P3 | #28 R-ICDM, #19 R-MMTR | author — R-ICDM-2..7 audit + R-MMTRH heal + R-MMTR-7 closer; B-E2E re-attempts force-skipped R-MMTR-6 after | ~6 |
 | 5 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | author — verify-command host-tool check (#39) + zsh shell-glob safety (#40) | ~4+4 |
@@ -54,7 +53,6 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 | 25 | R-CSI | Concurrent claude-session destructive-command interference (3 SIGINT incidents/36h) — DATA LOSS class | `p1-concurrent-claude-session-interference-with-running-pipelines.md`. **Watch-only — external-event-gated:** Phase 1 forensics need a real incident to analyze. Skipped by the drain; surfaces on the next incident. |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
 | 77 | R-PNTR-DEPS | B-PNTR R-PNTR-1 (`d586b545`) wrongly deleted load-bearing `.claude/commands/pickle.md` (read every tmux iteration by mux-runner/pipeline-runner/jar-runner as the manager-prompt template) → `[FATAL] pickle.md not found`. Restored `40f22573`. **RE-SCOPED 2026-05-30** (operator-confirmed): `pickle.md` is dual-purpose (bare-`/pickle` command + manager template). The bundle now **extracts** the manager-lifecycle body to `_pickle-manager-prompt.md` (infra template via the dormant `extensionRoot/templates/` resolver), repoints 3 consumers + the `command_template` default, adds a schema-neutral resume remap, then removes bare `/pickle`. Schema-neutral (dodges #74). PRD updated `prds/p2-remove-non-tmux-pickle-loop.md`, ~9 tickets, refinement recommended. **B-PNTR.** |
-| 86 | R-CMWL | Codex manager exits pickle at a fixed ~60-min wall; `pipeline-runner` treats clean-but-incomplete pickle as fatal (`phase_incomplete_tickets`), stranding the bundle (a 40-ticket bundle needs ~13 relaunches). `--max-time 0` does not lift the 60-min wall. claude backend relaunches at its 400-turn boundary (R-MMTR-3); codex path misclassifies the exit or is overridden by pipeline-runner's incomplete-fatal verdict. Want: turn/progress-based relaunch + stop treating progressing-but-incomplete pickle as fatal + no-progress guard + commit interrupted-ticket work before relaunch (else trips `assertCleanWorkingTree`). `BUG-REPORT-2026-05-27-codex-manager-fixed-wall-pickle-stall.md`. Sized ~4. **B-CMWL.** |
 
 ### P2
 
