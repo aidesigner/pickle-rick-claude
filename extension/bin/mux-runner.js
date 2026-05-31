@@ -1938,7 +1938,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
     }
     if (state.active !== true)
         return { completion: 'inactive', timedOut: false, exitCode: null, wallSeconds: 0 };
-    const templateName = state.command_template || 'pickle.md';
+    const templateName = state.command_template || '_pickle-manager-prompt.md';
     // Validate at read time (not just at setup.ts CLI parse time) — state.json could be tampered with
     if (templateName.includes('/') || templateName.includes('\\') || templateName.includes('..')) {
         throw new Error(`Invalid command_template in state.json: "${templateName}" — must be a plain filename`);
@@ -4485,7 +4485,7 @@ async function runMuxRunnerMain() {
                 break;
             }
         }
-        const templateName = state.command_template || 'pickle.md';
+        const templateName = state.command_template || '_pickle-manager-prompt.md';
         if (templateName !== 'meeseeks.md') {
             correctPhantomDoneTickets({
                 sessionDir,

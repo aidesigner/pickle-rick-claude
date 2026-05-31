@@ -44,7 +44,7 @@ function makeScenarioSession(prefix: string): {
 } {
   const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   fs.mkdirSync(path.join(sessionDir, 'templates'), { recursive: true });
-  fs.writeFileSync(path.join(sessionDir, 'templates', 'pickle.md'), '# Pickle\n\n$ARGUMENTS\n');
+  fs.writeFileSync(path.join(sessionDir, 'templates', '_pickle-manager-prompt.md'), '# Pickle\n\n$ARGUMENTS\n');
   // eslint-disable-next-line pickle/no-raw-state-write -- isolated test fixture bootstrap before any runner lock exists
   fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify(buildState(sessionDir)));
 

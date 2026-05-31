@@ -117,10 +117,16 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
 
   const taskTimeout = loadJarTaskTimeout(extensionRoot, state);
 
-  const picklePromptPath = path.join(os.homedir(), '.claude/commands/pickle.md');
+  const templateName = '_pickle-manager-prompt.md';
+  const templatesDir = path.join(extensionRoot, 'templates');
+  const commandsDir = path.join(os.homedir(), '.claude/commands');
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+  const picklePromptPath = fs.existsSync(path.join(templatesDir, templateName))
+    ? path.join(templatesDir, templateName)
+    : path.join(commandsDir, templateName);
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (!fs.existsSync(picklePromptPath)) {
-    process.stderr.write('jar-runner: pickle.md missing; abort\n');
+    process.stderr.write(`jar-runner: ${templateName} not found in ${templatesDir} or ${commandsDir}. Run install.sh first.\n`);
     process.exit(1);
   }
 

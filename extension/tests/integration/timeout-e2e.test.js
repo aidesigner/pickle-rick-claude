@@ -33,7 +33,7 @@ test('timeout-e2e: manager sleeps 95% of budget, writes artifact, iteration adva
 
         const templatesDir = path.join(base, 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
-        fs.writeFileSync(path.join(templatesDir, 'pickle.md'), 'placeholder');
+        fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), 'placeholder');
 
         const artifactPath = path.join(base, 'artifact.txt');
 
@@ -117,7 +117,7 @@ test('timeout-e2e: session deactivated by subprocess → mux-runner exits cleanl
 
         const templatesDir = path.join(base, 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
-        fs.writeFileSync(path.join(templatesDir, 'pickle.md'), 'placeholder');
+        fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), 'placeholder');
 
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
             active: true,

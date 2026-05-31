@@ -32,7 +32,7 @@ test('FR-B10: fixture manager sleeps 95% of worker_timeout budget, writes artifa
         // Templates dir so runIteration gets past template validation
         const templatesDir = path.join(dir, 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
-        fs.writeFileSync(path.join(templatesDir, 'pickle.md'), 'placeholder');
+        fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), 'placeholder');
 
         // Artifact file the fake claude will write after its sleep
         const artifactPath = path.join(dir, 'artifact.txt');

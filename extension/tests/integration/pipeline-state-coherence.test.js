@@ -28,7 +28,7 @@ function buildSession(tmpRoot) {
     const extDir = path.join(tmpRoot, 'ext');
     const templatesDir = path.join(extDir, 'templates');
     fs.mkdirSync(templatesDir, { recursive: true });
-    fs.writeFileSync(path.join(templatesDir, 'pickle.md'), '# Fixture\n$ARGUMENTS\n');
+    fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), '# Fixture\n$ARGUMENTS\n');
     writeJson(path.join(extDir, 'pickle_settings.json'), {
         default_max_iterations: 3,
         default_max_time_minutes: 720,

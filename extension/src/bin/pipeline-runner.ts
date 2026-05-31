@@ -1056,7 +1056,7 @@ function buildCitadelSzechuanContext(report: CitadelJsonReport | null): string[]
  *      szechuan-sauce and persisted its template. Without re-pinning, mux-runner
  *      would spawn the pickle worker with the wrong prompt — worker runs the
  *      wrong phase, commits with the wrong prefix, emits EPIC_COMPLETED for the
- *      wrong reason. Always overwrite to 'pickle.md' on entry.
+ *      wrong reason. Always overwrite to '_pickle-manager-prompt.md' on entry.
  *   2. Stale phase config files (anatomy-park.json, szechuan-sauce.json) left
  *      in the session dir from a previous run. A worker that scans the session
  *      dir might infer wrong context even with the right template. Remove them.
@@ -1075,7 +1075,7 @@ export function enterPicklePhase(
   // szechuan-sauce run would otherwise misroute the pickle worker.
   sm.update(statePath, (s: State) => {
     s.chain_meeseeks = false;
-    s.command_template = 'pickle.md';
+    s.command_template = '_pickle-manager-prompt.md';
     if (s.backend !== backend) s.backend = backend;
   });
   // Fix B — scrub stale foreign-phase residue left behind by a previous

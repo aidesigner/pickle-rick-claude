@@ -66,7 +66,7 @@ function createSetupConfig() {
         pausedMode: false,
         tmuxMode: false,
         minIterations: 0,
-        commandTemplate: undefined,
+        commandTemplate: '_pickle-manager-prompt.md',
         chainMeeseeks: false,
         backend: undefined,
         workerBackend: undefined,

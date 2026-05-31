@@ -56,7 +56,7 @@ function buildSession(tmpRoot) {
     );
 
     // Minimal template so runIteration can build a prompt without install.sh.
-    fs.writeFileSync(path.join(templatesDir, 'pickle.md'), '# Test\n$ARGUMENTS\n');
+    fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), '# Test\n$ARGUMENTS\n');
 
     const sessionDir = path.join(tmpRoot, 'session');
     fs.mkdirSync(sessionDir, { recursive: true });

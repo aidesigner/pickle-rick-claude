@@ -11,6 +11,7 @@ const COMMANDS_DIR = path.resolve(__dirname, '..', '..', '.claude', 'commands');
 const DEPLOYED_DIR = process.env.HOME ? path.join(process.env.HOME, '.claude', 'commands') : null;
 
 const TEMPLATES = [
+  '_pickle-manager-prompt.md',
   'pickle.md',
   'meeseeks.md',
   'szechuan-sauce.md',

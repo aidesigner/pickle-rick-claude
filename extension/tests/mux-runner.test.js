@@ -628,7 +628,7 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
 
         const templatesDir = path.join(tmpRoot, 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
-        fs.writeFileSync(path.join(templatesDir, 'pickle.md'), '# Pickle\n\nResume: $ARGUMENTS\n');
+        fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), '# Pickle\n\nResume: $ARGUMENTS\n');
         fs.writeFileSync(
             path.join(tmpRoot, 'current_sessions.json'),
             JSON.stringify({ [tmpRoot]: { sessionPath: sessionDir, pid: 12345 } }, null, 2),
@@ -740,7 +740,7 @@ test('mux-runner: SIGTERM shutdown emits signal_received with sender attribution
 
         const templatesDir = path.join(tmpRoot, 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
-        fs.writeFileSync(path.join(templatesDir, 'pickle.md'), '# Pickle\n\nResume: $ARGUMENTS\n');
+        fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), '# Pickle\n\nResume: $ARGUMENTS\n');
         fs.writeFileSync(
             path.join(tmpRoot, 'current_sessions.json'),
             JSON.stringify({ [tmpRoot]: { sessionPath: sessionDir, pid: 12345 } }, null, 2),
@@ -2729,17 +2729,17 @@ function runAndCollectActivity(stateOverrides = {}) {
     const sessionName = `session-${fixtureId}`;
     const sessionDir = path.join(tmpRoot, sessionName);
     fs.mkdirSync(sessionDir, { recursive: true });
-    // Create templates/ and commands/ with a minimal pickle.md so runIteration
-    // gets past template validation and reaches the claude spawn (which then
-    // fails because claude is stripped from PATH). Without this, the runner
+    // Create templates/ and commands/ with a minimal _pickle-manager-prompt.md so
+    // runIteration gets past template validation and reaches the claude spawn (which
+    // then fails because claude is stripped from PATH). Without this, the runner
     // throws on template lookup before logging any iteration events.
-    // Write pickle.md to templates/ (not commands/) — runIteration checks
-    // extensionRoot/templates/ first, then falls back to ~/.claude/commands/.
-    // In CI, ~/.claude/commands/pickle.md doesn't exist, so the template must
+    // Write _pickle-manager-prompt.md to templates/ (not commands/) — runIteration
+    // checks extensionRoot/templates/ first, then falls back to ~/.claude/commands/.
+    // In CI, ~/.claude/commands/_pickle-manager-prompt.md doesn't exist, so the template must
     // be in the EXTENSION_DIR-relative templates/ directory.
     const templatesDir = path.join(tmpRoot, 'templates');
     fs.mkdirSync(templatesDir, { recursive: true });
-    fs.writeFileSync(path.join(templatesDir, 'pickle.md'), 'placeholder');
+    fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), 'placeholder');
     const defaultIteration = fixtureId * 10;
     const mergedState = {
         active: true,
@@ -2838,7 +2838,7 @@ function runDesyncFixture({ currentTicket, tickets }) {
         fs.mkdirSync(sessionDir, { recursive: true });
         const templatesDir = path.join(tmpRoot, 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
-        fs.writeFileSync(path.join(templatesDir, 'pickle.md'), 'placeholder');
+        fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), 'placeholder');
 
         tickets.forEach((ticket, index) => {
             writeMuxTicket(sessionDir, ticket.id, ticket.status, index + 1);
@@ -2944,7 +2944,7 @@ test('mux-runner: persists iteration, picked ticket, and lifecycle step before m
 
         const templatesDir = path.join(tmpRoot, 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
-        fs.writeFileSync(path.join(templatesDir, 'pickle.md'), 'placeholder');
+        fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), 'placeholder');
 
         const ticketId = 'ticket-state-1';
         const ticketDir = path.join(sessionDir, ticketId);
@@ -4334,9 +4334,9 @@ test('mux-runner: template lookup falls back to commands/ when not in templates/
         fs.mkdirSync(templatesDir, { recursive: true });
         fs.mkdirSync(commandsDir, { recursive: true });
 
-        fs.writeFileSync(path.join(commandsDir, 'pickle.md'), 'COMMAND_ONLY');
+        fs.writeFileSync(path.join(commandsDir, '_pickle-manager-prompt.md'), 'COMMAND_ONLY');
 
-        const templateName = 'pickle.md';
+        const templateName = '_pickle-manager-prompt.md';
         const picklePromptPath = fs.existsSync(path.join(templatesDir, templateName))
             ? path.join(templatesDir, templateName)
             : path.join(commandsDir, templateName);

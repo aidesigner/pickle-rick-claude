@@ -161,7 +161,7 @@ test('IterationOutcome: fractional mux max-turn settings fall back before spawni
     const oldBackend = process.env.PICKLE_BACKEND;
     try {
         fs.mkdirSync(path.join(dir, 'templates'), { recursive: true });
-        fs.writeFileSync(path.join(dir, 'templates', 'pickle.md'), '# Pickle\n\n$ARGUMENTS\n');
+        fs.writeFileSync(path.join(dir, 'templates', '_pickle-manager-prompt.md'), '# Pickle\n\n$ARGUMENTS\n');
         fs.writeFileSync(path.join(dir, 'pickle_settings.json'), JSON.stringify({
             default_tmux_max_turns: 1.5,
             default_manager_max_turns: 2.25,

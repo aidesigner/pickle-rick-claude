@@ -269,7 +269,7 @@ describe('pipeline phase config dispatch', () => {
       assert.equal(calls[0].env.PICKLE_BACKEND, 'claude');
       const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
       assert.equal(state.chain_meeseeks, false);
-      assert.equal(state.command_template, 'pickle.md');
+      assert.equal(state.command_template, '_pickle-manager-prompt.md');
     } finally {
       cleanup([repo, sessionDir]);
     }
