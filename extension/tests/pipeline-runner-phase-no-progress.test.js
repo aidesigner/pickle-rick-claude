@@ -183,8 +183,7 @@ test('R-PIPE-2: pickle phase passes when all tickets are Done', async () => {
     writeState(sessionDir, repo, startCommit);
     writePipeline(sessionDir, repo, ['pickle']);
 
-    // All tickets Done — bundle fully resolved (R-PPPA: a leftover Todo would
-    // now stamp phase_incomplete_tickets instead of advancing).
+    // All tickets Done — bundle fully resolved.
     writeTicket(sessionDir, 'aaa11111', 1, 'Done');
     writeTicket(sessionDir, 'bbb22222', 2, 'Done');
 
@@ -226,10 +225,9 @@ test('R-PIPE-2: pickle phase passes when commits landed since start_commit (no D
     writeState(sessionDir, repo, startCommit);
     writePipeline(sessionDir, repo, ['pickle']);
 
-    // No Done tickets; ticket Skipped (terminal, not pending) + worker
-    // committed something after start_commit. commitCount>0 keeps
-    // phase_no_progress from firing; Skipped keeps phase_incomplete_tickets
-    // from firing (R-PPPA — only Todo/In Progress count as unresolved).
+    // No Done tickets; ticket Skipped (terminal, not pending) + worker committed.
+    // commitCount>0 keeps phase_no_progress from firing (R-PIPE-2); Skipped
+    // keeps pendingCount=0 so phase_incomplete_tickets also doesn't fire.
     writeTicket(sessionDir, 'aaa11111', 1, 'Skipped');
 
     __setSpawnRunnerForTests(async () => {
@@ -261,16 +259,19 @@ test('R-PIPE-2: pickle phase passes when commits landed since start_commit (no D
   }
 });
 
-test('R-PPPA: pickle phase clean-exit with N-of-M tickets Done stamps phase_incomplete_tickets', async () => {
+test('R-PPPA / R-CMWL-2: pickle phase with N-of-M tickets Done AND progress continues normally', async () => {
+  // R-CMWL-2: when the just-finished pickle pass made ≥1 Done ticket or ≥1 commit,
+  // maybeStampPhaseIncompleteTickets returns null so the phase completes normally.
+  // The old R-PPPA behavior (stamping phase_incomplete_tickets for this case) is
+  // intentionally replaced by the R-CMWL-1 relaunch path.
   const repo = tmpDir('pipe-pppa-repo-');
   const sessionDir = tmpDir('pipe-pppa-session-');
   try {
     const startCommit = initRepo(repo);
     writeState(sessionDir, repo, startCommit);
-    writePipeline(sessionDir, repo, ['pickle', 'citadel']);
+    writePipeline(sessionDir, repo, ['pickle']);
 
-    // 2 of 5 Done, 3 still Todo — the codex-manager hallucinated EPIC_COMPLETED
-    // and mux-runner exited clean. pipeline-runner must NOT advance to citadel.
+    // 2 of 5 Done, 3 still Todo + a commit landed. Progress was made.
     writeTicket(sessionDir, 'aaa11111', 1, 'Done');
     writeTicket(sessionDir, 'bbb22222', 2, 'Done');
     writeTicket(sessionDir, 'ccc33333', 3, 'Todo');
@@ -278,35 +279,30 @@ test('R-PPPA: pickle phase clean-exit with N-of-M tickets Done stamps phase_inco
     writeTicket(sessionDir, 'eee55555', 5, 'In Progress');
 
     __setSpawnRunnerForTests(async () => {
-      // A worker did land a commit, so phase_no_progress does NOT fire — this
-      // is exactly the N-of-M case that gate misses.
       fs.writeFileSync(path.join(repo, 'partial.ts'), 'export const z = 3;\n');
       git(['add', '.'], repo);
       git(['commit', '-q', '-m', 'partial work'], repo);
       return { exitCode: 0, stdout: '', stderr: '' };
     });
 
-    await captureMainExit(sessionDir, PipelineRunnerExitCode.PhaseIncomplete);
+    // R-CMWL-2: progress (2 Done + 1 commit) → phase_incomplete_tickets must NOT fire.
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Success);
 
     const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
     assert.equal(
       state.exit_reason,
-      'phase_incomplete_tickets',
-      'pipeline-runner must stamp phase_incomplete_tickets when pickle exits clean with unresolved tickets',
+      'completed',
+      'R-CMWL-2: progressing pickle must exit completed, not phase_incomplete_tickets',
     );
 
     const log = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
     assert.ok(
-      /3\/5 tickets remain unresolved/.test(log),
-      `log must describe the incomplete-bundle condition; got:\n${log.split('\n').slice(-10).join('\n')}`,
+      /Phase pickle completed successfully/.test(log),
+      'R-CMWL-2: progressing pickle must log "Phase pickle completed successfully"',
     );
     assert.ok(
-      !/Phase pickle completed successfully/.test(log),
-      'log must NOT claim success on an incomplete bundle',
-    );
-    assert.ok(
-      !/Phase citadel/.test(log),
-      'pipeline must NOT advance to citadel on an incomplete pickle phase',
+      !/phase_incomplete_tickets/.test(log),
+      'R-CMWL-2: phase_incomplete_tickets must NOT appear in log when progress was made',
     );
   } finally {
     __setSpawnRunnerForTests(null);
@@ -691,6 +687,99 @@ test('R-CCR-5: closer-release plan entered on clean non-handoff successful pipel
   } finally {
     __setSpawnRunnerForTests(null);
     __setCloserReleaseActionsForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// R-CMWL-2: post-phase classifier — both branches
+// ---------------------------------------------------------------------------
+
+test('R-CMWL-2 branch 1: pickle with commits-only progress + pending tickets continues normally', async () => {
+  // doneCount=0, commitCount>0, pendingCount>0 — progress via commit only.
+  // Before R-CMWL-2 this stamped phase_incomplete_tickets; after it must exit 0.
+  const repo = tmpDir('pipe-cmwl2-b1-repo-');
+  const sessionDir = tmpDir('pipe-cmwl2-b1-session-');
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle']);
+
+    // All tickets still Todo — no Done yet, but a commit was made (real work happened).
+    writeTicket(sessionDir, 'aaa11111', 1, 'Todo');
+    writeTicket(sessionDir, 'bbb22222', 2, 'Todo');
+    writeTicket(sessionDir, 'ccc33333', 3, 'Todo');
+
+    __setSpawnRunnerForTests(async () => {
+      // Simulate a worker landing a commit without marking any ticket Done yet.
+      fs.writeFileSync(path.join(repo, 'wip.ts'), 'export const wip = 1;\n');
+      git(['add', '.'], repo);
+      git(['commit', '-q', '-m', 'wip: in-flight work'], repo);
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    // R-CMWL-2: commitCount>0 constitutes progress — must NOT stamp phase_incomplete_tickets.
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.Success);
+
+    const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+    assert.equal(
+      state.exit_reason,
+      'completed',
+      'R-CMWL-2: commits-only progress must exit completed, not phase_incomplete_tickets',
+    );
+
+    const log = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+    assert.ok(
+      /Phase pickle completed successfully/.test(log),
+      'R-CMWL-2: commits-only progress must log "Phase pickle completed successfully"',
+    );
+    assert.ok(
+      !/phase_incomplete_tickets/.test(log),
+      'R-CMWL-2: phase_incomplete_tickets must NOT appear when commitCount > 0',
+    );
+  } finally {
+    __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('R-CMWL-2 branch 2: pickle with zero progress + pending tickets stamps terminal reason', async () => {
+  // doneCount=0, commitCount=0, pendingCount>0 — zero progress.
+  // maybeStampPhaseNoProgress fires first → phase_no_progress (terminal).
+  // Confirms the zero-progress branch remains fatal (no regression from R-CMWL-2).
+  const repo = tmpDir('pipe-cmwl2-b2-repo-');
+  const sessionDir = tmpDir('pipe-cmwl2-b2-session-');
+  try {
+    const startCommit = initRepo(repo);
+    writeState(sessionDir, repo, startCommit);
+    writePipeline(sessionDir, repo, ['pickle']);
+
+    writeTicket(sessionDir, 'aaa11111', 1, 'Todo');
+    writeTicket(sessionDir, 'bbb22222', 2, 'Todo');
+    writeTicket(sessionDir, 'ccc33333', 3, 'Todo');
+
+    // Stub exits 0 with no commits and no Done tickets — genuine zero progress.
+    __setSpawnRunnerForTests(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.PhaseIncomplete);
+
+    const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+    // maybeStampPhaseNoProgress fires first for doneCount=0 + commitCount=0.
+    assert.equal(
+      state.exit_reason,
+      'phase_no_progress',
+      'R-CMWL-2 branch 2: zero progress must stamp a terminal reason (phase_no_progress)',
+    );
+
+    const log = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+    assert.ok(
+      !/Phase pickle completed successfully/.test(log),
+      'zero progress must NOT log "Phase pickle completed successfully"',
+    );
+  } finally {
+    __setSpawnRunnerForTests(null);
     fs.rmSync(repo, { recursive: true, force: true });
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }

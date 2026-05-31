@@ -2036,7 +2036,13 @@ function maybeStampPhaseIncompleteTickets(runtime, rawPhase, exitCode, log) {
         return null;
     if (progress.pendingCount === 0)
         return null;
-    log(`Phase ${rawPhase} exited clean but ${progress.pendingCount}/${progress.ticketCount} tickets remain unresolved (${progress.doneCount} Done) — incomplete bundle`);
+    // R-CMWL-2: a pass that shipped ≥1 Done ticket or ≥1 new commit made forward
+    // progress — return null so the R-CMWL-1 relaunch path continues the phase
+    // rather than treating a progressing-but-incomplete bundle as fatal.
+    // Only stamp the terminal reason when the pass made ZERO progress.
+    if (progress.doneCount > 0 || progress.commitCount > 0)
+        return null;
+    log(`Phase ${rawPhase} exited clean but ${progress.pendingCount}/${progress.ticketCount} tickets remain unresolved (${progress.doneCount} Done) — incomplete bundle, no progress this pass`);
     recordExitReason(runtime.statePath, 'phase_incomplete_tickets');
     return { action: 'break', phaseIncomplete: true };
 }
