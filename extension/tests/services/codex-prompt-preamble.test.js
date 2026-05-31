@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const TEMPLATE_PATH = path.join(REPO_ROOT, '.claude', 'commands', 'pickle.md');
+// R-PNTR-5: pickle.md deleted; content lives in the manager template
+const TEMPLATE_PATH = path.join(REPO_ROOT, 'extension', 'templates', '_pickle-manager-prompt.md');
 
 test('template file exists', () => {
   assert.ok(fs.existsSync(TEMPLATE_PATH), `Template not found at ${TEMPLATE_PATH}`);

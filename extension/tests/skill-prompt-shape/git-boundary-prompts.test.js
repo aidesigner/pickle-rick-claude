@@ -10,7 +10,6 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
 
 const COMMAND_FILES = [
-  path.join(repoRoot, '.claude/commands/pickle.md'),
   path.join(repoRoot, '.claude/commands/pickle-tmux.md'),
   path.join(repoRoot, '.claude/commands/anatomy-park.md'),
 ];

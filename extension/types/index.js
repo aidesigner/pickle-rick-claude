@@ -294,6 +294,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'worker_artifact_progress_zero',
     'worker_auto_skip_oversized',
     'codex_manager_no_progress',
+    'pickle_command_deprecated',
 ];
 /** Recoverable reasons a ticket can be flipped to Failed by the auto-skip guard (R-WSWA-3). */
 export const FAILURE_REASONS = ['oversized_no_progress'];

@@ -11,7 +11,6 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PICKLE = path.resolve(__dirname, '..', '..', '.claude', 'commands', 'pickle.md');
 const PICKLE_TMUX = path.resolve(__dirname, '..', '..', '.claude', 'commands', 'pickle-tmux.md');
 const README = path.resolve(__dirname, '..', '..', 'README.md');
 
@@ -19,12 +18,8 @@ function read(p) {
   return fs.readFileSync(p, 'utf-8');
 }
 
-test('R-CCPM-1b-3: /pickle codex guidance recommends /pickle-tmux for longer codex sessions', () => {
-  const content = read(PICKLE);
-  assert.match(content, /prefer `\/pickle-tmux` for anything likely to run longer than about 30 minutes/i);
-  assert.match(content, /safe codex workflow is tmux-direct/i);
-  assert.match(content, /Do NOT run a long codex-backed pipeline in the risky "codex is the parent of mux-runner" arrangement\./);
-});
+// R-PNTR-5: .claude/commands/pickle.md is deleted; the /pickle codex guidance
+// test is removed. Codex process-tree guidance now lives exclusively in pickle-tmux.md.
 
 test('R-CCPM-1b-3: /pickle-tmux codex guidance pins the safe process tree', () => {
   const content = read(PICKLE_TMUX);

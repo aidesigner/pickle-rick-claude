@@ -6,21 +6,22 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PICKLE_MD = path.resolve(__dirname, '../../.claude/commands/pickle.md');
+// R-PNTR-5: pickle.md deleted; teams-mode content lives in the manager template
+const PICKLE_MD = path.resolve(__dirname, '../templates/_pickle-manager-prompt.md');
 
 const text = fs.readFileSync(PICKLE_MD, 'utf-8');
 
-test('pickle.md: contains teams_mode branch selector', () => {
+test('manager-template: contains teams_mode branch selector', () => {
     assert.match(text, /teams_mode/, 'pickle.md should branch on state.teams_mode');
 });
 
-test('pickle.md: references TeamCreate, TeamDelete, and Agent primitives', () => {
+test('manager-template: references TeamCreate, TeamDelete, and Agent primitives', () => {
     assert.match(text, /TeamCreate/, 'should call TeamCreate');
     assert.match(text, /TeamDelete/, 'should call TeamDelete');
     assert.match(text, /\bAgent\b/, 'should mention the Agent tool');
 });
 
-test('pickle.md: dispatches all six phase subagents', () => {
+test('manager-template: dispatches all six phase subagents', () => {
     for (const subagent of [
         'morty-phase-researcher',
         'morty-phase-planner',
@@ -33,7 +34,7 @@ test('pickle.md: dispatches all six phase subagents', () => {
     }
 });
 
-test('pickle.md: preflights phase persona config and installed agent files', () => {
+test('manager-template: preflights phase persona config and installed agent files', () => {
     const phaseStart = text.indexOf('## Phase 3.B');
     const preflight = text.indexOf('**Phase dispatch preflight**', phaseStart);
     const spawn = text.indexOf('3. **Spawn**: make six distinct sequential `Agent` calls', phaseStart);
@@ -47,7 +48,7 @@ test('pickle.md: preflights phase persona config and installed agent files', () 
     assert.match(text.slice(preflight, spawn), /bash install\.sh && \/pickle-retry T<id>/);
 });
 
-test('pickle.md: phase Agent calls are ordered before validation', () => {
+test('manager-template: phase Agent calls are ordered before validation', () => {
     const phaseStart = text.indexOf('## Phase 3.B');
     const validate = text.indexOf('validate-teams-ticket', phaseStart);
     let cursor = phaseStart;
@@ -60,15 +61,15 @@ test('pickle.md: phase Agent calls are ordered before validation', () => {
     }
 });
 
-test('pickle.md: drives completion via TaskUpdate notifications', () => {
+test('manager-template: drives completion via TaskUpdate notifications', () => {
     assert.match(text, /TaskUpdate/, 'should mention TaskUpdate completion signal');
 });
 
-test('pickle.md: invokes validate-teams-ticket validator', () => {
+test('manager-template: invokes validate-teams-ticket validator', () => {
     assert.match(text, /validate-teams-ticket/, 'should invoke the validator CLI');
 });
 
-test('pickle.md: teams brief injects project context before lifecycle guidance', () => {
+test('manager-template: teams brief injects project context before lifecycle guidance', () => {
     const phaseStart = text.indexOf('## Phase 3.B');
     const contextPath = text.indexOf('${SESSION_ROOT}/project-context.md', phaseStart);
     const contextBlock = text.indexOf('## Project Context', phaseStart);
@@ -80,11 +81,11 @@ test('pickle.md: teams brief injects project context before lifecycle guidance',
     assert.ok(placement > contextBlock, 'teams brief should require placement before lifecycle guidance');
 });
 
-test('pickle.md: legacy spawn-morty.js path remains for non-teams mode', () => {
+test('manager-template: legacy spawn-morty.js path remains for non-teams mode', () => {
     assert.match(text, /spawn-morty\.js/, 'legacy spawn-morty.js path should remain');
 });
 
-test('pickle.md: under 300 lines', () => {
+test('manager-template: under 300 lines', () => {
     const lines = text.split('\n').length;
-    assert.ok(lines < 300, `pickle.md is ${lines} lines, must stay under 300`);
+    assert.ok(lines < 300, `_pickle-manager-prompt.md is ${lines} lines, must stay under 300`);
 });

@@ -1382,6 +1382,14 @@
         "session": { "type": "string" },
         "iteration": { "type": "integer" }
       }
+    },
+    "pickle_command_deprecated": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "pickle_command_deprecated" },
+        "ts": { "type": "string" }
+      }
     }
   },
   "oneOf": [
@@ -1471,6 +1479,7 @@
     { "$ref": "#/definitions/worker_artifact_progress_zero" },
     { "$ref": "#/definitions/worker_auto_skip_oversized" },
     { "$ref": "#/definitions/orphan_phantom_demoted" },
-    { "$ref": "#/definitions/codex_manager_no_progress" }
+    { "$ref": "#/definitions/codex_manager_no_progress" },
+    { "$ref": "#/definitions/pickle_command_deprecated" }
   ]
 }

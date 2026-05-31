@@ -24,7 +24,8 @@ test('phase persona feature flag baseline exists and is strong enough to flip on
 });
 
 test('phase persona feature flag contract is represented in teams-mode prompt', () => {
-  const pickleMd = fs.readFileSync(path.resolve(EXTENSION_ROOT, '..', '.claude', 'commands', 'pickle.md'), 'utf-8');
+  // R-PNTR-5: pickle.md deleted; content lives in the manager template
+  const pickleMd = fs.readFileSync(path.resolve(EXTENSION_ROOT, 'templates', '_pickle-manager-prompt.md'), 'utf-8');
 
   assert.match(pickleMd, /PICKLE_PHASE_PERSONAS=on/);
   assert.match(pickleMd, /phase_personas_enabled === true/);

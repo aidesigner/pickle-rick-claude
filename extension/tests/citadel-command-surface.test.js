@@ -20,7 +20,8 @@ function readRepoFile(filename) {
 
 const citadel = readCommand('citadel.md');
 const helpPickle = readCommand('help-pickle.md');
-const pickle = readCommand('pickle.md');
+// R-PNTR-5: pickle.md deleted; teams mode content lives in the manager template
+const pickle = fs.readFileSync(path.resolve(__dirname, '../../extension/templates/_pickle-manager-prompt.md'), 'utf8');
 const cronenberg = readCommand('cronenberg.md');
 const readme = readRepoFile('README.md');
 const commandReference = readRepoFile('COMMANDS.md');

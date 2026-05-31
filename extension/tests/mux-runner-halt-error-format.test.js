@@ -25,9 +25,9 @@ function run(args, extDir) {
   });
 }
 
-test('command docs surface Skip-flag overrides in /pickle, /pickle-tmux, and /pickle-pipeline', () => {
+test('command docs surface Skip-flag overrides in /pickle-tmux and /pickle-pipeline', () => {
+  // R-PNTR-5: pickle.md deleted; skip-flag docs now required only in pickle-tmux and pickle-pipeline
   for (const relPath of [
-    '.claude/commands/pickle.md',
     '.claude/commands/pickle-tmux.md',
     '.claude/commands/pickle-pipeline.md',
   ]) {
