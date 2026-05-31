@@ -24,7 +24,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 
 | # | Bundle | Pri | Open findings | PRD / source | Size |
 |---|--------|-----|---------------|--------------|------|
-| 2 | **B-CMWL** | P1 | #86 R-CMWL | `prds/BUG-REPORT-2026-05-27-codex-manager-fixed-wall-pickle-stall.md` | ~4 |
+| 2 | **B-CMWL** | P1 | #86 R-CMWL | `prds/p1-bug-fix-bundle-b-cmwl-codex-manager-fixed-wall-2026-05-30.md` (authored 2026-05-30 from BUG-REPORT: codex `Session inactive` exit not classified relaunchable (`mux-runner.ts:2123`); pipeline-runner stamps `phase_incomplete_tickets` w/o progress check (`pipeline-runner.ts:2010`); `assertCleanWorkingTree` bricks relaunch; + no-progress guard. Schema-neutral, MINOR→1.88.0). | ~6 |
 | 3 | **B-PNTR** | P1 | #77 R-PNTR-DEPS | `prds/p2-remove-non-tmux-pickle-loop.md` (RE-SCOPED 2026-05-30: extract manager template to `_pickle-manager-prompt.md`, then remove bare `/pickle`; schema-neutral). Refinement recommended pre-launch. | ~9 |
 | 4 | **B-R-MMTR** + **B-E2E** | P1+P3 | #28 R-ICDM, #19 R-MMTR | author — R-ICDM-2..7 audit + R-MMTRH heal + R-MMTR-7 closer; B-E2E re-attempts force-skipped R-MMTR-6 after | ~6 |
 | 5 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | author — verify-command host-tool check (#39) + zsh shell-glob safety (#40) | ~4+4 |
