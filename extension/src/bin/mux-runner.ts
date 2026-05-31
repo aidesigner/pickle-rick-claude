@@ -5375,7 +5375,14 @@ async function runMuxRunnerMain() {
     // worker spawn; the AFTER snapshot + delta persistence happen once it exits.
     const apTicketId = state.current_ticket || null;
     const apBeforeCount = apTicketId ? countWorkerArtifacts(path.join(sessionDir, apTicketId)) : 0;
-    const outcome = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
+    const outcome = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel).catch(
+      (err: unknown): Awaited<ReturnType<typeof runIteration>> => {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`runIteration threw (treating as spawn error): ${msg}`);
+        process.stderr.write(`[mux-runner] runIteration threw: ${msg}\n`);
+        return { completion: 'error', timedOut: false, exitCode: null, wallSeconds: 0 } as Awaited<ReturnType<typeof runIteration>>;
+      }
+    );
     const result = outcome.completion;
 
     // R-WSWA-2: persist the post-spawn artifact-count delta and emit

@@ -629,6 +629,8 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
         const templatesDir = path.join(tmpRoot, 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
         fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), '# Pickle\n\nResume: $ARGUMENTS\n');
+        // Sentinel so getExtensionRoot() accepts EXTENSION_DIR=tmpRoot and finds the template above.
+        fs.writeFileSync(path.join(tmpRoot, '.pickle-install-root'), '');
         fs.writeFileSync(
             path.join(tmpRoot, 'current_sessions.json'),
             JSON.stringify({ [tmpRoot]: { sessionPath: sessionDir, pid: 12345 } }, null, 2),
@@ -741,6 +743,8 @@ test('mux-runner: SIGTERM shutdown emits signal_received with sender attribution
         const templatesDir = path.join(tmpRoot, 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
         fs.writeFileSync(path.join(templatesDir, '_pickle-manager-prompt.md'), '# Pickle\n\nResume: $ARGUMENTS\n');
+        // Sentinel so getExtensionRoot() accepts EXTENSION_DIR=tmpRoot and finds the template above.
+        fs.writeFileSync(path.join(tmpRoot, '.pickle-install-root'), '');
         fs.writeFileSync(
             path.join(tmpRoot, 'current_sessions.json'),
             JSON.stringify({ [tmpRoot]: { sessionPath: sessionDir, pid: 12345 } }, null, 2),
