@@ -18,7 +18,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { execFileSync, spawn, type ChildProcess } from 'child_process';
+import { execFileSync, spawn, spawnSync, type ChildProcess } from 'child_process';
 import type { Backend, State } from '../types/index.js';
 import { BACKENDS, MICROVERSE_FATAL_REASONS, PipelineRunnerExitCode, isMicroverseFailureExit, type MicroverseExitReason, type MicroverseFatalReason } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
@@ -390,6 +390,70 @@ export function assertCleanWorkingTree(workingDir: string, ignoreDirtyPaths?: st
   throw new Error(
     `Working tree at ${workingDir} is dirty${suffix}. Dirty files:\n${blockingPaths.join('\n')}\nCommit, stash, or discard changes before starting the pipeline.`,
   );
+}
+
+/**
+ * At a manager-boundary relaunch (state.manager_relaunch_count > 0), the
+ * in-flight ticket's interrupted worker may have left uncommitted partial
+ * changes. This resets ONLY the blocking dirty paths (those assertCleanWorkingTree
+ * would reject) — exempted paths (prds/, docs/, allowlist) are never touched.
+ *
+ * Since the pipeline requires a clean tree at first launch, all blocking dirty
+ * files at a relaunch boundary MUST be from the interrupted worker, so resetting
+ * them is safe and path-scoped to the in-flight ticket's work.
+ */
+export function resetInterruptedTicketWorkForRelaunch(
+  workingDir: string,
+  ignoreDirtyPaths: string[] | undefined,
+  log: (msg: string) => void,
+): void {
+  const blockingPaths = allowedDirtyPathsForLaunch(workingDir, ignoreDirtyPaths);
+  if (blockingPaths.length === 0) return;
+  log(`[relaunch-reset] Resetting ${blockingPaths.length} dirty blocking file(s) from interrupted in-flight ticket`);
+
+  // Unstage any staged changes so the post-reset status parse is accurate.
+  spawnSync('git', ['reset', 'HEAD', '--', ...blockingPaths], {
+    cwd: workingDir,
+    encoding: 'utf-8',
+    timeout: 30_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  // Re-enumerate post-reset status to split tracked vs untracked.
+  const statusResult = spawnSync('git', ['status', '--porcelain', '-z', '--', ...blockingPaths], {
+    cwd: workingDir,
+    encoding: 'utf-8',
+    timeout: 30_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const trackedPaths: string[] = [];
+  const untrackedPaths: string[] = [];
+  const tokens = (statusResult.stdout || '').split('\0').filter((t) => t.length > 0);
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.length < 4) continue;
+    const xy = token.slice(0, 2);
+    const filePath = token.slice(3);
+    if (xy[0] === 'R' || xy[0] === 'C' || xy[1] === 'R' || xy[1] === 'C') i++;
+    if (xy === '??') { untrackedPaths.push(filePath); }
+    else { trackedPaths.push(filePath); }
+  }
+
+  if (trackedPaths.length > 0) {
+    spawnSync('git', ['checkout', '--', ...trackedPaths], {
+      cwd: workingDir,
+      encoding: 'utf-8',
+      timeout: 30_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  }
+
+  for (const relPath of untrackedPaths) {
+    try { fs.unlinkSync(path.join(workingDir, relPath)); } catch { /* best effort */ }
+  }
+
+  log(`[relaunch-reset] Done: ${trackedPaths.length} tracked restored, ${untrackedPaths.length} untracked removed`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2186,6 +2250,12 @@ function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: stri
   }
 
   const { backend, phaseEnv } = resolvePipelineBackend(statePath, state, config, sessionDir, log);
+  // At manager-boundary relaunch, reset dirty files left by the interrupted
+  // in-flight ticket so the subsequent assertCleanWorkingTree does not throw.
+  const relaunchCount = typeof state.manager_relaunch_count === 'number' ? state.manager_relaunch_count : 0;
+  if (relaunchCount > 0) {
+    resetInterruptedTicketWorkForRelaunch(workingDir, config.ignore_dirty_paths, log);
+  }
   assertCleanWorkingTree(workingDir, config.ignore_dirty_paths);
   setupRuntimeScope(sessionDir, workingDir, config.target || workingDir, opts, pipelineRaw, log);
 
