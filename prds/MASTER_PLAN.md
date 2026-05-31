@@ -7,9 +7,9 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.86.0** — 2026-05-30 |
-| Latest GitHub release | v1.86.0 (v1.81.1..v1.86.0 all tagged) |
-| Active pipeline | **B-PTSB** (session `2026-05-30-eb1b157a`) — launched 2026-05-30 |
+| Version (source/deployed) | **v1.87.0** — 2026-05-30 |
+| Latest GitHub release | v1.87.0 (v1.81.1..v1.87.0 all tagged) |
+| Active pipeline | _none_ — **B-PTSB shipped v1.87.0** (session `2026-05-30-eb1b157a`) |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive:** drain bug bundles before feature epics; P1 > P2 > P3. All feature epics (R-PGI v1.83.0 / R-PIAP v1.84.0 / R-DC v1.85.0) are shipped.
@@ -24,7 +24,6 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 
 | # | Bundle | Pri | Open findings | PRD / source | Size |
 |---|--------|-----|---------------|--------------|------|
-| 1 | **B-PTSB** | P1 | #75 R-PTSB | `prds/p1-bug-fix-bundle-b-ptsb-phantom-session-leak-2026-05-30.md` (authored 2026-05-30: root cause = `setup-teams.test.js` `runSetup` invokes `setup.js` w/o `PICKLE_DATA_ROOT` sandbox → fixture-prompt phantoms leak into the real data root; + `setup.ts:1029` active=true/pid=null; + `state-manager.ts:469` age-gate blind spot). Schema-neutral. | ~4 |
 | 2 | **B-CMWL** | P1 | #86 R-CMWL | `prds/BUG-REPORT-2026-05-27-codex-manager-fixed-wall-pickle-stall.md` | ~4 |
 | 3 | **B-PNTR** | P1 | #77 R-PNTR-DEPS | `prds/p2-remove-non-tmux-pickle-loop.md` (RE-SCOPED 2026-05-30: extract manager template to `_pickle-manager-prompt.md`, then remove bare `/pickle`; schema-neutral). Refinement recommended pre-launch. | ~9 |
 | 4 | **B-R-MMTR** + **B-E2E** | P1+P3 | #28 R-ICDM, #19 R-MMTR | author — R-ICDM-2..7 audit + R-MMTRH heal + R-MMTR-7 closer; B-E2E re-attempts force-skipped R-MMTR-6 after | ~6 |
@@ -54,7 +53,6 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 |---|---|---|---|
 | 25 | R-CSI | Concurrent claude-session destructive-command interference (3 SIGINT incidents/36h) — DATA LOSS class | `p1-concurrent-claude-session-interference-with-running-pipelines.md`. **Watch-only — external-event-gated:** Phase 1 forensics need a real incident to analyze. Skipped by the drain; surfaces on the next incident. |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
-| 75 | R-PTSB | Phantom teams-base "default-off" sessions recur (`original_prompt: "default-off"/"teams-base"/"effort-medium-test"` + `tmux_mode:false` + `iteration:0` + `history:[]`). Block `install.sh` until cancelled. Hypothesis: teams-mode worker subagent init writes a placeholder session via `setup.js` without spawning tmux. Babysitter band-aids by demoting each tick (see `prds/babysitter.md` step 1) — this finding is the real root-cause fix. Sized ~2 (root-cause + auto-cleanup). **B-PTSB.** |
 | 77 | R-PNTR-DEPS | B-PNTR R-PNTR-1 (`d586b545`) wrongly deleted load-bearing `.claude/commands/pickle.md` (read every tmux iteration by mux-runner/pipeline-runner/jar-runner as the manager-prompt template) → `[FATAL] pickle.md not found`. Restored `40f22573`. **RE-SCOPED 2026-05-30** (operator-confirmed): `pickle.md` is dual-purpose (bare-`/pickle` command + manager template). The bundle now **extracts** the manager-lifecycle body to `_pickle-manager-prompt.md` (infra template via the dormant `extensionRoot/templates/` resolver), repoints 3 consumers + the `command_template` default, adds a schema-neutral resume remap, then removes bare `/pickle`. Schema-neutral (dodges #74). PRD updated `prds/p2-remove-non-tmux-pickle-loop.md`, ~9 tickets, refinement recommended. **B-PNTR.** |
 | 86 | R-CMWL | Codex manager exits pickle at a fixed ~60-min wall; `pipeline-runner` treats clean-but-incomplete pickle as fatal (`phase_incomplete_tickets`), stranding the bundle (a 40-ticket bundle needs ~13 relaunches). `--max-time 0` does not lift the 60-min wall. claude backend relaunches at its 400-turn boundary (R-MMTR-3); codex path misclassifies the exit or is overridden by pipeline-runner's incomplete-fatal verdict. Want: turn/progress-based relaunch + stop treating progressing-but-incomplete pickle as fatal + no-progress guard + commit interrupted-ticket work before relaunch (else trips `assertCleanWorkingTree`). `BUG-REPORT-2026-05-27-codex-manager-fixed-wall-pickle-stall.md`. Sized ~4. **B-CMWL.** |
 
