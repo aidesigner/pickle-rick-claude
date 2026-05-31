@@ -2,16 +2,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { composeManagerPromptFromSkill } from '../services/pickle-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PICKLE_MD_PATH = path.join(os.homedir(), '.claude/commands/pickle.md');
+// R-PNTR-5: pickle.md deleted; tests now use the source manager template directly.
+// Source is always present (committed), so no skip guard needed.
+const PICKLE_MD_PATH = path.resolve(__dirname, '../templates/_pickle-manager-prompt.md');
 
-// Skip all tests if pickle.md is not deployed (CI without install.sh)
-const pickleExists = fs.existsSync(PICKLE_MD_PATH);
+const managerTemplateExists = fs.existsSync(PICKLE_MD_PATH);
 
 function assertNoSetupTaskOutsideFraming(payload) {
   // Locate end of framing block (if any) then check remainder for setup.js --task
@@ -24,7 +24,7 @@ function assertNoSetupTaskOutsideFraming(payload) {
 }
 
 // --- mux-runner surface: codex ---
-test('codex-manager-prompt-no-setup-examples: codex mux payload has framing markers', { skip: !pickleExists }, () => {
+test('codex-manager-prompt-no-setup-examples: codex mux payload has framing markers', { skip: !managerTemplateExists }, () => {
   const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', {
     argumentSubstitution: '--resume /fake/session',
   });
@@ -32,14 +32,14 @@ test('codex-manager-prompt-no-setup-examples: codex mux payload has framing mark
   assert.ok(payload.includes('<!-- END MANAGER_ROLE_FRAMING -->'), 'missing END marker');
 });
 
-test('codex-manager-prompt-no-setup-examples: codex mux payload has zero setup.js --task outside markers', { skip: !pickleExists }, () => {
+test('codex-manager-prompt-no-setup-examples: codex mux payload has zero setup.js --task outside markers', { skip: !managerTemplateExists }, () => {
   const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', {
     argumentSubstitution: '--resume /fake/session',
   });
   assertNoSetupTaskOutsideFraming(payload);
 });
 
-test('codex-manager-prompt-no-setup-examples: codex payload includes mux no-signal and no-bypass guardrails', { skip: !pickleExists }, () => {
+test('codex-manager-prompt-no-setup-examples: codex payload includes mux no-signal and no-bypass guardrails', { skip: !managerTemplateExists }, () => {
   const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', {
     argumentSubstitution: '--resume /fake/session',
   });
@@ -49,14 +49,14 @@ test('codex-manager-prompt-no-setup-examples: codex payload includes mux no-sign
 });
 
 // --- jar-runner surface: codex ---
-test('codex-manager-prompt-no-setup-examples: codex jar payload has framing markers', { skip: !pickleExists }, () => {
+test('codex-manager-prompt-no-setup-examples: codex jar payload has framing markers', { skip: !managerTemplateExists }, () => {
   const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', {
     argumentSubstitution: '--resume /fake/session',
   });
   assert.ok(payload.includes('<!-- BEGIN MANAGER_ROLE_FRAMING -->'), 'missing BEGIN marker');
 });
 
-test('codex-manager-prompt-no-setup-examples: codex jar payload has zero setup.js --task outside markers', { skip: !pickleExists }, () => {
+test('codex-manager-prompt-no-setup-examples: codex jar payload has zero setup.js --task outside markers', { skip: !managerTemplateExists }, () => {
   const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', {
     argumentSubstitution: '--resume /fake/session',
   });
@@ -64,7 +64,7 @@ test('codex-manager-prompt-no-setup-examples: codex jar payload has zero setup.j
 });
 
 // --- claude mode: no framing ---
-test('codex-manager-prompt-no-setup-examples: claude mux payload has NO framing markers', { skip: !pickleExists }, () => {
+test('codex-manager-prompt-no-setup-examples: claude mux payload has NO framing markers', { skip: !managerTemplateExists }, () => {
   const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'claude', {
     argumentSubstitution: '--resume /fake/session',
   });
@@ -72,49 +72,53 @@ test('codex-manager-prompt-no-setup-examples: claude mux payload has NO framing 
   assert.ok(!payload.includes('END MANAGER_ROLE_FRAMING'), 'unexpected END marker in claude mode');
 });
 
-test('codex-manager-prompt-no-setup-examples: claude jar payload has NO framing markers', { skip: !pickleExists }, () => {
+test('codex-manager-prompt-no-setup-examples: claude jar payload has NO framing markers', { skip: !managerTemplateExists }, () => {
   const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'claude', {
     argumentSubstitution: '--resume /fake/session',
   });
   assert.ok(!payload.includes('BEGIN MANAGER_ROLE_FRAMING'), 'unexpected BEGIN marker in claude mode');
 });
 
-// --- Byte inequality: composed payload differs from on-disk file ---
-test('codex-manager-prompt-no-setup-examples: codex composed payload differs from on-disk pickle.md', { skip: !pickleExists }, () => {
+// --- Backend differentiation: codex and claude payloads must differ from each other ---
+// Note: codex backend adds framing markers; claude backend returns the template as-is
+// (no $ARGUMENTS or ## SETUP in _pickle-manager-prompt.md — it is already post-strip).
+test('codex-manager-prompt-no-setup-examples: codex composed payload differs from on-disk manager template', { skip: !managerTemplateExists }, () => {
   const onDisk = fs.readFileSync(PICKLE_MD_PATH, 'utf-8');
   const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', {
     argumentSubstitution: '--resume /fake/session',
   });
-  assert.notEqual(payload, onDisk, 'composed payload should differ from raw pickle.md (transforms must have run)');
+  assert.notEqual(payload, onDisk, 'codex payload should differ from raw template (framing markers added)');
 });
 
-test('codex-manager-prompt-no-setup-examples: claude composed payload differs from on-disk pickle.md', { skip: !pickleExists }, () => {
-  const onDisk = fs.readFileSync(PICKLE_MD_PATH, 'utf-8');
-  const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'claude', {
+test('codex-manager-prompt-no-setup-examples: codex and claude payloads differ (backend-specific transforms)', { skip: !managerTemplateExists }, () => {
+  const codexPayload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', {
     argumentSubstitution: '--resume /fake/session',
   });
-  assert.notEqual(payload, onDisk, 'composed payload should differ from raw pickle.md (transforms must have run)');
+  const claudePayload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'claude', {
+    argumentSubstitution: '--resume /fake/session',
+  });
+  assert.notEqual(codexPayload, claudePayload, 'codex and claude payloads must differ (codex adds framing)');
 });
 
 // --- Step 1 Initialization block stripped ---
-test('codex-manager-prompt-no-setup-examples: codex payload has no # Step 1 Initialization heading', { skip: !pickleExists }, () => {
+test('codex-manager-prompt-no-setup-examples: codex payload has no # Step 1 Initialization heading', { skip: !managerTemplateExists }, () => {
   const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', {
     argumentSubstitution: '--resume /fake/session',
   });
   assert.ok(!payload.includes('# Step 1: Initialization'), '# Step 1: Initialization should be stripped');
 });
 
-test('codex-manager-prompt-no-setup-examples: claude payload has no # Step 1 Initialization heading', { skip: !pickleExists }, () => {
+test('codex-manager-prompt-no-setup-examples: claude payload has no # Step 1 Initialization heading', { skip: !managerTemplateExists }, () => {
   const payload = composeManagerPromptFromSkill(PICKLE_MD_PATH, 'claude', {
     argumentSubstitution: '--resume /fake/session',
   });
   assert.ok(!payload.includes('# Step 1: Initialization'), '# Step 1: Initialization should be stripped');
 });
 
-// --- pickle.md on disk untouched ---
-test('codex-manager-prompt-no-setup-examples: pickle.md on disk is not modified by compose', { skip: !pickleExists }, () => {
+// --- manager template on disk untouched ---
+test('codex-manager-prompt-no-setup-examples: manager template on disk is not modified by compose', { skip: !managerTemplateExists }, () => {
   const beforeStat = fs.statSync(PICKLE_MD_PATH);
   composeManagerPromptFromSkill(PICKLE_MD_PATH, 'codex', { argumentSubstitution: '--resume /s' });
   const afterStat = fs.statSync(PICKLE_MD_PATH);
-  assert.equal(beforeStat.mtimeMs, afterStat.mtimeMs, 'pickle.md mtime should not change');
+  assert.equal(beforeStat.mtimeMs, afterStat.mtimeMs, 'manager template mtime should not change');
 });

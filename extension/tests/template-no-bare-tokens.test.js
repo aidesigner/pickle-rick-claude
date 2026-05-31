@@ -12,7 +12,6 @@ const DEPLOYED_DIR = process.env.HOME ? path.join(process.env.HOME, '.claude', '
 
 const TEMPLATES = [
   '_pickle-manager-prompt.md',
-  'pickle.md',
   'meeseeks.md',
   'szechuan-sauce.md',
   'pickle-microverse.md',

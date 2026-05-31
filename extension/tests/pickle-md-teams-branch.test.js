@@ -12,7 +12,7 @@ const PICKLE_MD = path.resolve(__dirname, '../templates/_pickle-manager-prompt.m
 const text = fs.readFileSync(PICKLE_MD, 'utf-8');
 
 test('manager-template: contains teams_mode branch selector', () => {
-    assert.match(text, /teams_mode/, 'pickle.md should branch on state.teams_mode');
+    assert.match(text, /teams_mode/, 'manager template should branch on state.teams_mode');
 });
 
 test('manager-template: references TeamCreate, TeamDelete, and Agent primitives', () => {

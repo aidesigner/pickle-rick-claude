@@ -899,13 +899,13 @@ test('mux-runner: stall detection works with string state.iteration', () => {
             working_dir: tmpRoot,
         }, null, 2));
 
-        // Create pickle.md so runIteration doesn't bail on missing file
+        // Require _pickle-manager-prompt.md to run — runIteration needs the manager template
         const claudeDir = path.join(os.homedir(), '.claude', 'commands');
-        const picklePromptPath = path.join(claudeDir, 'pickle.md');
-        const hasPickleMd = fs.existsSync(picklePromptPath);
+        const managerPromptPath = path.join(claudeDir, '_pickle-manager-prompt.md');
+        const hasManagerPrompt = fs.existsSync(managerPromptPath);
 
-        if (!hasPickleMd) {
-            // Skip test if pickle.md isn't installed — can't test runIteration
+        if (!hasManagerPrompt) {
+            // Skip test if _pickle-manager-prompt.md isn't installed — can't test runIteration
             return;
         }
 
