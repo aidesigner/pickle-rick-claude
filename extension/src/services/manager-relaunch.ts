@@ -12,6 +12,7 @@ const sm = new StateManager();
 
 export type ManagerRelaunchExitKind =
   | 'codex_4h_hang_guard'
+  | 'codex_session_inactive'
   | 'claude_max_turns'
   | 'other_error';
 
@@ -214,7 +215,7 @@ export function recordManagerRelaunch(
   }
 
   if (sessionDir && iteration !== undefined) {
-    if (decision?.exitKind === 'claude_max_turns') {
+    if (decision?.exitKind === 'claude_max_turns' || decision?.exitKind === 'codex_session_inactive') {
       logActivity({
         event: 'manager_max_turns_relaunch',
         source: 'pickle',

@@ -2097,6 +2097,15 @@ export function detectManagerMaxTurnsExit(managerResult: IterationOutcome, logFi
   return eventTurns >= maxTurns;
 }
 
+export function detectManagerInactiveExit(outcome: IterationOutcome | undefined): boolean {
+  return (
+    outcome !== undefined &&
+    outcome.completion === 'inactive' &&
+    outcome.timedOut === false &&
+    outcome.exitCode === null
+  );
+}
+
 function emitMaxTurnsClassifiedEvent(
   sessionDir: string,
   iterationNum: number,
@@ -2132,6 +2141,9 @@ export function classifyManagerRelaunchExit(
   }
   if (backend === 'codex' && outcome?.timedOut === true) {
     return 'codex_4h_hang_guard';
+  }
+  if (backend === 'codex' && detectManagerInactiveExit(outcome)) {
+    return 'codex_session_inactive';
   }
   return 'other_error';
 }
@@ -3950,6 +3962,38 @@ export async function processCompletionBranch(state: State, result: IterationOut
   if (result === 'task_completed') return processTaskCompleted(state, ctx);
   if (result === 'review_clean') return processReviewClean(ctx);
   if (result === 'inactive') {
+    if (detectManagerInactiveExit(ctx.outcome)) {
+      let postState: State = state;
+      try { postState = ctxReadState(ctx); } catch { /* fall back to pre-iteration state */ }
+      const inactiveExitKind = classifyManagerRelaunchExit(
+        postState,
+        ctx.outcome,
+        ctx.iterLogFile || path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`),
+        ctx.maxTurns ?? null,
+      );
+      if (inactiveExitKind === 'codex_session_inactive') {
+        const inactiveDecision = evaluateManagerRelaunch(
+          postState,
+          collectTickets(ctx.sessionDir),
+          ctx.cbState ?? null,
+          inactiveExitKind,
+        );
+        if (inactiveDecision.reason === 'time_limit') {
+          ctx.log('Time limit reached. Exiting.');
+          finalizeTerminalState(ctx.statePath, { step: 'completed', runnerIteration: ctx.iteration, exitReason: 'limit' });
+          return { kind: 'break', reason: 'limit' };
+        }
+        if (inactiveDecision.shouldRelaunch) {
+          const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
+          ctx.log(
+            `${relaunchBackend} manager subprocess exited via ${inactiveExitKind} with ${inactiveDecision.pendingCount} ticket(s) still pending — ` +
+            `relaunching (count ${inactiveDecision.nextRelaunchCount}/${inactiveDecision.cap}).`,
+          );
+          recordManagerRelaunch(ctx.statePath, ctx.sessionDir, inactiveDecision, ctx.iteration, ctx.log);
+          return { kind: 'relaunch', relaunchCount: inactiveDecision.nextRelaunchCount, pendingTickets: inactiveDecision.pendingCount, resetStall: true };
+        }
+      }
+    }
     ctx.log('Session deactivated. Exiting loop.');
     return { kind: 'break', reason: 'cancelled' };
   }
@@ -5896,8 +5940,32 @@ async function runMuxRunnerMain() {
         exitReason = 'success';
         break;
       }
-    } else if (result === 'inactive') { log('Session deactivated. Exiting loop.'); exitReason = 'cancelled'; break; }
-    else if (result === 'error') {
+    } else if (result === 'inactive') {
+      if (detectManagerInactiveExit(outcome)) {
+        let postState: State = state;
+        try { postState = readRunnerState(statePath); } catch { /* fall back */ }
+        const inactiveExitKind = classifyManagerRelaunchExit(postState, outcome, iterLogFile, runnerMaxTurns);
+        if (inactiveExitKind === 'codex_session_inactive') {
+          const inactiveDecision = evaluateManagerRelaunch(postState, collectTickets(sessionDir), cbState, inactiveExitKind);
+          if (inactiveDecision.reason === 'time_limit') {
+            log('Time limit reached. Exiting.');
+            finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
+            exitReason = 'limit';
+            break;
+          }
+          if (inactiveDecision.shouldRelaunch) {
+            const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
+            log(`${relaunchBackend} manager subprocess exited via ${inactiveExitKind} with ${inactiveDecision.pendingCount} ticket(s) still pending — relaunching (count ${inactiveDecision.nextRelaunchCount}/${inactiveDecision.cap}).`);
+            recordManagerRelaunch(statePath, sessionDir, inactiveDecision, iteration, log);
+            lastStateIteration = -1;
+            stallCount = 0;
+            await sleep(1000);
+            continue;
+          }
+        }
+      }
+      log('Session deactivated. Exiting loop.'); exitReason = 'cancelled'; break;
+    } else if (result === 'error') {
       // Codex tmux_mode runs ONE long-lived manager subprocess that loops
       // across many tickets internally. The 4h hang-guard SIGTERMs it with
       // `{ completion: 'error', timedOut: true }`. Treating that as terminal

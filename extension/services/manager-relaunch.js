@@ -142,7 +142,7 @@ export function recordManagerRelaunch(statePath, sessionDir, decision, iteration
         log(`WARN: failed to persist manager_relaunch_count: ${safeErrorMessage(err)}`);
     }
     if (sessionDir && iteration !== undefined) {
-        if (decision?.exitKind === 'claude_max_turns') {
+        if (decision?.exitKind === 'claude_max_turns' || decision?.exitKind === 'codex_session_inactive') {
             logActivity({
                 event: 'manager_max_turns_relaunch',
                 source: 'pickle',
