@@ -1092,7 +1092,28 @@ export function handleResumeSession(args) {
     const session = resumeSession(args);
     return { sessionRoot: session.sessionRoot, state: session.state };
 }
+/**
+ * R-PNTR-4: the in-session (non-tmux) `/pickle` build loop is removed. It ran the
+ * lifecycle INSIDE the parent claude session (stop-hook driven, no true `/clear`
+ * between iterations) and degraded on long epics. A NEW build session MUST run
+ * under tmux (`/pickle-tmux`, true per-iteration isolation). `--paused` prep
+ * sessions (pickle-prd / pickle-refine-prd / portal-gun) and `--resume` are exempt
+ * — they are inactive or re-enter an existing session, not a fresh in-session loop.
+ * In-session Teams Mode (`/pickle --teams`) migrates to `/pickle-tmux --teams`.
+ */
+function assertTmuxBuildLoopRequired(config) {
+    if (config.tmuxMode || config.pausedMode)
+        return;
+    if (config.teamsMode) {
+        die('/pickle --teams (in-session Teams Mode) was removed. ' +
+            'Use /pickle-tmux --teams to run Teams Mode under tmux (morty-phase-* subagents preserved).');
+    }
+    die('The in-session /pickle build loop was removed (no /clear between iterations). ' +
+        'Use /pickle-tmux <args> for the build loop, /pickle-refine-prd for refinement, ' +
+        'or /pickle-pipeline for the full pipeline.');
+}
 export function initializeNewSession(args) {
+    assertTmuxBuildLoopRequired(args);
     const paths = buildSetupPaths();
     ensureCoreDirectories(paths);
     const taskStr = resolveTask(args);

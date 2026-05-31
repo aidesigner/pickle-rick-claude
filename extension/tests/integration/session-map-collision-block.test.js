@@ -30,8 +30,15 @@ function readCollisionEvents(dataRoot) {
     .filter((e) => e.event === 'session_map_collision_blocked');
 }
 
+// R-PNTR-4: a new build session must run under tmux; default these collision
+// tests onto --tmux unless they already select a mode (--tmux/--paused/--resume).
+function withTmuxDefault(args) {
+  const hasMode = args.some((a) => a === '--tmux' || a === '--paused' || a === '--resume');
+  return hasMode ? args : ['--tmux', ...args];
+}
+
 function spawnSetup(args, env, cwd) {
-  return spawnSync(process.execPath, [SETUP_JS, ...args], {
+  return spawnSync(process.execPath, [SETUP_JS, ...withTmuxDefault(args)], {
     cwd: cwd ?? process.cwd(),
     env: { ...process.env, FORCE_COLOR: '0', ...env },
     encoding: 'utf-8',

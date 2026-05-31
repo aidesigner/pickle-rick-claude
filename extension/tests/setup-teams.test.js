@@ -85,16 +85,20 @@ function makeCodexSmokeEnv() {
     };
 }
 
-test('setup --teams: writes teams_mode=true to state.json', () => {
-    const sessionPath = runSetup(['--teams', '--task', 'teams-flag']);
+// R-PNTR-4: Teams Mode runs under tmux — `--teams` is always passed with `--tmux`
+// (`/pickle-tmux --teams`). Bare `--teams` (in-session) is rejected; see the
+// rejection cases below.
+test('setup --tmux --teams: writes teams_mode=true to state.json', () => {
+    const sessionPath = runSetup(['--tmux', '--teams', '--task', 'teams-flag']);
     try {
         const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
         assert.equal(state.teams_mode, true);
+        assert.equal(state.tmux_mode, true);
     } finally { cleanup(sessionPath); }
 });
 
-test('setup --teams --max-parallel 7: persists max_parallel as 7', () => {
-    const sessionPath = runSetup(['--teams', '--max-parallel', '7', '--task', 'mp-7']);
+test('setup --tmux --teams --max-parallel 7: persists max_parallel as 7', () => {
+    const sessionPath = runSetup(['--tmux', '--teams', '--max-parallel', '7', '--task', 'mp-7']);
     try {
         const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
         assert.equal(state.teams_mode, true);
@@ -102,12 +106,24 @@ test('setup --teams --max-parallel 7: persists max_parallel as 7', () => {
     } finally { cleanup(sessionPath); }
 });
 
-test('setup --teams without --max-parallel: defaults max_parallel to 5', () => {
-    const sessionPath = runSetup(['--teams', '--task', 'mp-default']);
+test('setup --tmux --teams without --max-parallel: defaults max_parallel to 5', () => {
+    const sessionPath = runSetup(['--tmux', '--teams', '--task', 'mp-default']);
     try {
         const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
         assert.equal(state.max_parallel, 5);
     } finally { cleanup(sessionPath); }
+});
+
+test('setup --teams without --tmux: rejected with /pickle-tmux --teams migration hint', () => {
+    const r = runSetupExpectFail(['--teams', '--task', 'in-session-teams']);
+    assert.notEqual(r.code, 0, 'bare --teams must exit non-zero');
+    assert.match(r.stderr, /pickle-tmux --teams/);
+});
+
+test('setup non-tmux build session (bare --task): rejected with /pickle-tmux migration hint', () => {
+    const r = runSetupExpectFail(['--task', 'in-session-build-loop']);
+    assert.notEqual(r.code, 0, 'bare non-tmux build session must exit non-zero');
+    assert.match(r.stderr, /pickle-tmux/);
 });
 
 test('setup --teams --max-parallel 0: rejects with non-zero exit', () => {
@@ -134,8 +150,8 @@ test('setup --teams --backend hermes: rejects with non-zero exit', () => {
     assert.match(r.stderr, /hermes|claude/i);
 });
 
-test('setup without --teams: teams_mode is falsy in state.json', () => {
-    const sessionPath = runSetup(['--task', 'default-off']);
+test('setup --tmux without --teams: teams_mode is falsy in state.json', () => {
+    const sessionPath = runSetup(['--tmux', '--task', 'default-off']);
     try {
         const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
         assert.ok(!state.teams_mode, 'teams_mode should be undefined or false');
@@ -143,8 +159,8 @@ test('setup without --teams: teams_mode is falsy in state.json', () => {
     } finally { cleanup(sessionPath); }
 });
 
-test('setup --teams --resume: preserves teams_mode and max_parallel', () => {
-    const sessionPath = runSetup(['--teams', '--max-parallel', '8', '--task', 'resume-teams']);
+test('setup --tmux --teams --resume: preserves teams_mode and max_parallel', () => {
+    const sessionPath = runSetup(['--tmux', '--teams', '--max-parallel', '8', '--task', 'resume-teams']);
     try {
         const statePath = path.join(sessionPath, 'state.json');
         let state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
@@ -162,7 +178,7 @@ test('setup --teams --resume: preserves teams_mode and max_parallel', () => {
 
 test('setup --resume + --teams against codex session: rejects, leaves state unchanged', () => {
     const codexEnv = makeCodexSmokeEnv();
-    const sessionPath = runSetup(['--backend', 'codex', '--task', 'codex-base'], codexEnv.env);
+    const sessionPath = runSetup(['--tmux', '--backend', 'codex', '--task', 'codex-base'], codexEnv.env);
     try {
         const statePath = path.join(sessionPath, 'state.json');
         const before = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
@@ -182,7 +198,7 @@ test('setup --resume + --teams against codex session: rejects, leaves state unch
 });
 
 test('setup --resume + --backend codex against teams session: rejects, leaves state unchanged', () => {
-    const sessionPath = runSetup(['--teams', '--task', 'teams-base']);
+    const sessionPath = runSetup(['--tmux', '--teams', '--task', 'teams-base']);
     try {
         const statePath = path.join(sessionPath, 'state.json');
         const before = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
@@ -227,7 +243,7 @@ test('setup --teams --max-parallel abc: rejects (NaN string)', () => {
 // not into the operator's production session dir.
 test('runSetup sandbox: session written to tmp PICKLE_DATA_ROOT, not default data root', () => {
     const defaultDataRoot = path.join(os.homedir(), '.local', 'share', 'pickle-rick');
-    const sessionPath = runSetup(['--task', 'ptsb1-sandbox-regression']);
+    const sessionPath = runSetup(['--tmux', '--task', 'ptsb1-sandbox-regression']);
     try {
         assert.ok(
             !sessionPath.startsWith(defaultDataRoot),

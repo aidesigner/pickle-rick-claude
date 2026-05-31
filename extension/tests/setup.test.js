@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArguments, initializeNewSession, evaluateLaunchSizing, countManifestTickets } from '../bin/setup.js';
 import { compatibleCodexVersion, codexVersionLine } from './__helpers__/codex-shim.js';
@@ -37,11 +37,22 @@ function sleepSync(ms) {
     Atomics.wait(buf, 0, 0, ms);
 }
 
+// R-PNTR-4: the in-session (non-tmux) `/pickle` build loop was removed — a new build
+// session MUST run under tmux. These setup-family tests exercise non-build-loop
+// concerns (budgets, effort, backends, resume, pruning), so default them onto
+// `--tmux` unless the call already selects a session mode (`--tmux`/`--paused`/
+// `--resume`). The removed bare-`/pickle` rejection itself is covered explicitly by
+// the dedicated rejection tests below and by tests/integration/pntr-teams-tmux.test.js.
+function withTmuxDefault(args) {
+    const hasMode = args.some(a => a === '--tmux' || a === '--paused' || a === '--resume');
+    return hasMode ? args : ['--tmux', ...args];
+}
+
 function runSetup(args) {
     const deadline = Date.now() + 30_000;
     for (;;) {
         try {
-            const output = execFileSync(process.execPath, [SETUP, ...args], {
+            const output = execFileSync(process.execPath, [SETUP, ...withTmuxDefault(args)], {
                 encoding: 'utf-8',
                 // Fall back to DATA_ROOT when no PICKLE_DATA_ROOT is already set on the
                 // test process — prevents sessions from landing in the production data dir.
@@ -62,7 +73,7 @@ function runSetup(args) {
 }
 
 function runSetupWithEnv(args, extraEnv) {
-    return execFileSync(process.execPath, [SETUP, ...args], {
+    return execFileSync(process.execPath, [SETUP, ...withTmuxDefault(args)], {
         encoding: 'utf-8',
         env: { ...process.env, FORCE_COLOR: '0', ...extraEnv },
     });
@@ -114,6 +125,7 @@ test('setup initializeNewSession: state field set matches schema fixture', () =>
 
     try {
         const args = parseArguments([
+            '--tmux',
             '--command-template',
             'pickle.md',
             '--backend',
@@ -147,7 +159,7 @@ test('backend.hermes-accepted: setup persists --backend hermes to state', () => 
     process.env.PICKLE_DATA_ROOT = dataRoot;
 
     try {
-        const args = parseArguments(['--backend', 'hermes', '--task', 'hermes backend identity']);
+        const args = parseArguments(['--tmux', '--backend', 'hermes', '--task', 'hermes backend identity']);
         const session = initializeNewSession(args);
         const persisted = JSON.parse(fs.readFileSync(path.join(session.sessionRoot, 'state.json'), 'utf-8'));
 
@@ -180,7 +192,7 @@ test('worker-backend: setup persists --worker-backend codex to state', () => {
     process.env.PICKLE_DATA_ROOT = dataRoot;
 
     try {
-        const args = parseArguments(['--backend', 'claude', '--worker-backend', 'codex', '--task', 'worker backend identity']);
+        const args = parseArguments(['--tmux', '--backend', 'claude', '--worker-backend', 'codex', '--task', 'worker backend identity']);
         const session = initializeNewSession(args);
         const persisted = JSON.parse(fs.readFileSync(path.join(session.sessionRoot, 'state.json'), 'utf-8'));
 
@@ -216,6 +228,7 @@ test('worker-backend: --resume with explicit --worker-backend overrides stored w
 
     try {
         const sessionPath = runSetupWithEnv([
+            '--tmux',
             '--backend', 'claude',
             '--worker-backend', 'codex',
             '--task', 'resume worker backend override',
@@ -292,7 +305,7 @@ test('setup initializeNewSession: session id uses local day, not UTC day', () =>
     process.env.PICKLE_DATA_ROOT = dataRoot;
 
     try {
-        const args = parseArguments(['--task', 'local day setup regression']);
+        const args = parseArguments(['--tmux', '--task', 'local day setup regression']);
         let session;
         withTimezone('America/Chicago', () => {
             mock.timers.enable({ apis: ['Date'], now: new Date('2026-04-29T01:30:00.000Z') });
@@ -327,14 +340,16 @@ test('setup: --tmux sets tmux_mode: true in state.json', () => {
     }
 });
 
-test('setup: without --tmux, tmux_mode is false in state.json', () => {
-    const sessionPath = runSetup(['--task', 'no-tmux-test']);
-    try {
-        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
-        assert.equal(state.tmux_mode, false);
-    } finally {
-        cleanup(sessionPath);
-    }
+test('setup: bare non-tmux build session is rejected (R-PNTR-4 — in-session loop removed)', () => {
+    // The historical non-tmux build-loop path (tmux_mode:false, active:true) was
+    // removed. A bare `setup.js --task ...` (no --tmux/--paused/--resume) must hard
+    // error with a /pickle-tmux migration hint instead of creating an in-session loop.
+    const result = spawnSync(process.execPath, [SETUP, '--task', 'no-tmux-test', '--no-graph'], {
+        encoding: 'utf-8',
+        env: { ...process.env, FORCE_COLOR: '0', PICKLE_DATA_ROOT: process.env.PICKLE_DATA_ROOT ?? DATA_ROOT },
+    });
+    assert.notEqual(result.status, 0, 'bare non-tmux build session must exit non-zero');
+    assert.match(result.stderr, /pickle-tmux/, 'must point operators to /pickle-tmux');
 });
 
 test('setup: --tmux does not affect other state fields', () => {
@@ -719,7 +734,7 @@ test('setup: --resume preserves max_time_minutes=0 (unlimited) without falling b
 });
 
 test('setup: new session with max_time=0 shows ∞ in panel output', () => {
-    const output = execFileSync(process.execPath, [SETUP, '--max-time', '0', '--task', 'display-infinity-test'], {
+    const output = execFileSync(process.execPath, [SETUP, '--tmux', '--max-time', '0', '--task', 'display-infinity-test'], {
         encoding: 'utf-8',
         env: { ...process.env, FORCE_COLOR: '0' },
     });

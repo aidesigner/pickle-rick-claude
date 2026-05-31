@@ -153,7 +153,7 @@ test('mega bundle Hermes identity carries through state, activity log, and metri
   const previousDataRoot = process.env.PICKLE_DATA_ROOT;
   try {
     process.env.PICKLE_DATA_ROOT = root;
-    const session = initializeNewSession(parseArguments(['--backend', 'hermes', '--task', 'hermes flow fixture']));
+    const session = initializeNewSession(parseArguments(['--tmux', '--backend', 'hermes', '--task', 'hermes flow fixture']));
     assert.equal(session.state.backend, 'hermes');
 
     const activityEntries = readActivityEntries(root);

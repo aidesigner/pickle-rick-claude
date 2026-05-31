@@ -1,5 +1,6 @@
 {
   "entries": [
+    "tests/integration/pntr-teams-tmux.test.js",
     "tests/integration/spawn-morty-backend-resolution.test.js",
     "tests/integration/spawn-morty-actual-session-bug.test.js",
     "tests/integration/process-cleanup.test.js",

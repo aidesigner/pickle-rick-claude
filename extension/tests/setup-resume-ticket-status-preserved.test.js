@@ -10,9 +10,15 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SETUP = path.resolve(__dirname, '../bin/setup.js');
 
+// R-PNTR-4: the in-session (non-tmux) `/pickle` build loop was removed — a new
+// build session MUST run under tmux. This test exercises resume status gating, so
+// inject `--tmux` for new-session creates unless the call already selects a session
+// mode (`--tmux`/`--paused`/`--resume`).
 function run(args, dataRoot, { allowFail = false } = {}) {
+    const hasMode = args.some(a => a === '--tmux' || a === '--paused' || a === '--resume');
+    const finalArgs = hasMode ? args : ['--tmux', ...args];
     try {
-        return execFileSync(process.execPath, [SETUP, ...args], {
+        return execFileSync(process.execPath, [SETUP, ...finalArgs], {
             encoding: 'utf-8',
             env: { ...process.env, FORCE_COLOR: '0', PICKLE_DATA_ROOT: dataRoot },
         });

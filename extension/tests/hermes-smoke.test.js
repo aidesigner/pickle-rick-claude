@@ -28,7 +28,7 @@ function withDataRoot(fn) {
 
 test('hermes-smoke: setup persists hermes backend identity', () => {
     withDataRoot(() => {
-        const args = parseArguments(['--backend', 'hermes', '--task', 'hermes backend identity']);
+        const args = parseArguments(['--tmux', '--backend', 'hermes', '--task', 'hermes backend identity']);
         const session = initializeNewSession(args);
         const persisted = JSON.parse(fs.readFileSync(path.join(session.sessionRoot, 'state.json'), 'utf-8'));
 

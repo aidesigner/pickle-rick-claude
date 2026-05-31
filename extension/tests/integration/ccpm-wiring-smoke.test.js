@@ -157,7 +157,7 @@ test('ccpm-wh1: (c) R-CCPM-4 — alive-PID collision blocks setup.js + emits ses
       JSON.stringify({ [cwd]: { sessionPath: parentSessionPath, pid: process.pid } }),
     );
 
-    const result = spawnSync(process.execPath, [SETUP_JS, '--task', 'orphan attempt'], {
+    const result = spawnSync(process.execPath, [SETUP_JS, '--tmux', '--task', 'orphan attempt'], {
       cwd,
       env: { ...process.env, FORCE_COLOR: '0', PICKLE_DATA_ROOT: dataRoot },
       encoding: 'utf-8',

@@ -84,7 +84,7 @@ Sit back. Rick handles the rest.
 
 > **Mode choice** — `/pickle` for short epics (1–7 iterations, full keyboard access); `/pickle-tmux` for long epics (8+) where each iteration spawns a fresh Claude subprocess with a clean context window.
 
-> **Worker-spawn mechanism** — `/pickle --teams` swaps the per-ticket `claude -p` subprocess for a harness-native subagent on a team (`TeamCreate` + `Agent` + `TaskUpdate`). Same 8-phase lifecycle, same artifact contract, no token-sniffing log heuristics — cleaner completion signals and stricter artifact validation. Claude backend only; the default subprocess path is required for the codex backend and for everything that runs through `mux-runner` (`/pickle-tmux`, `/pickle-zellij`, `/pickle-microverse`, `/pickle-pipeline`). See [Agent Teams Mode](#agent-teams) below.
+> **Worker-spawn mechanism** — `/pickle-tmux --teams` swaps the per-ticket `claude -p` subprocess for a harness-native subagent on a team (`TeamCreate` + `Agent` + `TaskUpdate`), running under tmux. Same 8-phase lifecycle, same artifact contract, no token-sniffing log heuristics — cleaner completion signals and stricter artifact validation. Claude backend only (codex+teams rejected at setup); the default subprocess path remains for `/pickle-tmux` without `--teams`, `/pickle-zellij`, `/pickle-microverse`, and `/pickle-pipeline`. See [Agent Teams Mode](#agent-teams) below.
 
 > **Backend choice** — append `--backend codex` or `--backend hermes` (or export `PICKLE_BACKEND=codex` / `PICKLE_BACKEND=hermes`) to route worker/manager spawns through another backend instead of `claude`. See [Backends](#backends) below for precedence and examples.
 
@@ -130,17 +130,17 @@ PICKLE_BACKEND=codex /pickle-tmux "refactor the auth middleware"
 /pickle-tmux --backend codex --effort high "build the caching layer"
 ```
 
-<a id="agent-teams"></a>**Agent Teams mode** *(v1.55+, claude backend only)* — `/pickle --teams` switches Phase 3 from spawning per-ticket `claude -p` subprocesses to spawning subagents on a harness-native team. Each ticket runs as a `morty-implementer` agent (`Agent` tool with `team_name` + `subagent_type`) that signals completion via `TaskUpdate(status="completed")` instead of the legacy `<promise>I AM DONE</promise>` token + log-size check. Manager-side validation switches to a strict all-of artifact check (`validate-teams-ticket.js`): every required prefix (`research_*.md`, `plan_*.md`, `conformance_*.md`, `code_review_*.md`) must have a matching file or the ticket is marked Failed. The flag is persisted in `state.json` and survives resume.
+<a id="agent-teams"></a>**Agent Teams mode** *(claude backend only)* — `/pickle-tmux --teams` switches Phase 3 from spawning per-ticket `claude -p` subprocesses to spawning subagents on a harness-native team, **under tmux** (true `/clear` between iterations). `--teams` is passed together with `--tmux`, so the session is created with `tmux_mode: true` and `teams_mode: true`; the bare in-session `/pickle --teams` path was removed (R-PNTR-4). Each ticket dispatches the six `morty-phase-*` subagents (`Agent` tool with `team_name` + `subagent_type`); the final phase signals completion via `TaskUpdate(status="completed")` instead of the legacy `<promise>I AM DONE</promise>` token + log-size check. Manager-side validation is a strict all-of artifact check (`validate-teams-ticket.js`): every required prefix (`research_*.md`, `plan_*.md`, `conformance_*.md`, `code_review_*.md`) must have a matching file or the ticket is marked Failed. The flag is persisted in `state.json` and survives resume.
 
 ```bash
-/pickle --teams "add a /healthz endpoint"
-/pickle --teams --max-parallel 10 "build the caching layer"   # plumbed; v1 sequential
-/pickle --resume                                              # teams_mode survives resume
+/pickle-tmux --teams "add a /healthz endpoint"
+/pickle-tmux --teams --max-parallel 10 "build the caching layer"   # plumbed; v1 sequential
+/pickle-tmux --resume                                              # teams_mode survives resume
 ```
 
-Subagent definitions live at `~/.claude/agents/morty-implementer.md` (8-phase implementation lifecycle) and `~/.claude/agents/morty-reviewer.md` (4-phase review lifecycle). Both are deployed by `install.sh`. v1 always dispatches `morty-implementer`; review-group dispatch via `morty-reviewer` is a follow-up — see the [PRD](prds/pickle-agent-teams.md) for the v1 boundary. Legacy subprocess path is untouched and remains the default — passing no `--teams` flag preserves byte-for-byte v1.54 behavior.
+Subagent definitions live at `~/.claude/agents/morty-implementer.md` (8-phase implementation lifecycle), `~/.claude/agents/morty-reviewer.md` (4-phase review lifecycle), and the six `~/.claude/agents/morty-phase-*.md` phase teammates. All are deployed by `install.sh`. See the [PRD](prds/pickle-agent-teams.md) for the v1 boundary. The default subprocess path is untouched — passing no `--teams` flag preserves the legacy `mux-runner` spawn loop.
 
-When NOT to use: codex backend (rejected at setup), `/pickle-tmux` / `/pickle-zellij` / `/pickle-microverse` / `/pickle-pipeline` (out of scope for v1; legacy spawn only). When to use: epics where you want clean bidirectional comms with the worker, native completion notifications, and the strictest artifact gate available.
+When NOT to use: codex/hermes backend (codex+teams rejected at setup); `/pickle-zellij` / `/pickle-microverse` / `/pickle-pipeline` (legacy spawn only). When to use: epics where you want clean bidirectional comms with the worker, native completion notifications, and the strictest artifact gate available.
 
 ### Step 5 (Optional): Cleanup
 

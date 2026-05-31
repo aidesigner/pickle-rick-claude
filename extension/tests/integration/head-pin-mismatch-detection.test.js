@@ -60,7 +60,7 @@ test('head-pin-mismatch: bootstrap captures pinned_branch and pinned_sha (AC-PIW
   try {
     makeGitRepo(repoDir);
 
-    const output = execFileSync(process.execPath, [SETUP_BIN, 'head-pin test prompt'], {
+    const output = execFileSync(process.execPath, [SETUP_BIN, '--tmux', 'head-pin test prompt'], {
       cwd: repoDir,
       encoding: 'utf-8',
       env: { ...process.env, FORCE_COLOR: '0', PICKLE_DATA_ROOT: dataDir },

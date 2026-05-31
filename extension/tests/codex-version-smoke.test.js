@@ -58,7 +58,7 @@ test('codex backend records compatible codex --version output', () => {
   makeCodexShim(shimDir, `echo "${compatibleLine}"`);
 
   try {
-    const output = runSetup(['--backend', 'codex', '--task', 'codex smoke pass'], setupEnv(dataRoot, shimDir));
+    const output = runSetup(['--tmux', '--backend', 'codex', '--task', 'codex smoke pass'], setupEnv(dataRoot, shimDir));
     const state = readState(parseSessionRoot(output));
 
     assert.equal(state.backend, 'codex');
@@ -75,7 +75,7 @@ test('codex backend rejects incompatible codex --version output', () => {
   makeCodexShim(shimDir, `echo "${codexVersionLine(incompatibleCodexVersion())}"`);
 
   try {
-    const result = spawnSync(process.execPath, [setupBin, '--backend', 'codex', '--task', 'codex smoke mismatch'], {
+    const result = spawnSync(process.execPath, [setupBin, '--tmux', '--backend', 'codex', '--task', 'codex smoke mismatch'], {
       cwd: repoRoot,
       encoding: 'utf-8',
       env: setupEnv(dataRoot, shimDir),
@@ -96,7 +96,7 @@ test('default backend skips codex version smoke check', () => {
   makeCodexShim(shimDir, 'echo "codex shim should not run" >&2\nexit 70');
 
   try {
-    const output = runSetup(['--task', 'default backend skip'], setupEnv(dataRoot, shimDir));
+    const output = runSetup(['--tmux', '--task', 'default backend skip'], setupEnv(dataRoot, shimDir));
     const state = readState(parseSessionRoot(output));
 
     assert.equal(state.backend, undefined);
