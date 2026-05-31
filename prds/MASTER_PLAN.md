@@ -9,7 +9,7 @@
 |---|---|
 | Version (source/deployed) | **v1.87.0** — 2026-05-30 |
 | Latest GitHub release | v1.87.0 (v1.81.1..v1.87.0 all tagged) |
-| Active pipeline | _none_ — **B-PTSB shipped v1.87.0** (session `2026-05-30-eb1b157a`) |
+| Active pipeline | **B-CMWL** (session `2026-05-30-6333da9a`) — launched 2026-05-30 (B-PTSB shipped v1.87.0) |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive:** drain bug bundles before feature epics; P1 > P2 > P3. All feature epics (R-PGI v1.83.0 / R-PIAP v1.84.0 / R-DC v1.85.0) are shipped.
