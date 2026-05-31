@@ -53,7 +53,7 @@ function makeFixture(id, status, completionCommit) {
     fs.mkdirSync(ticketDir, { recursive: true });
     const ticketFile = path.join(ticketDir, `linear_ticket_${id}.md`);
     fs.writeFileSync(ticketFile, makeTicketContent(id, status, completionCommit));
-    return { sessionDir, ticketDir, ticketFile };
+    return { sessionDir, ticketFile };
 }
 
 function runHeal(sessionDir, pairs, extraEnv = {}) {
@@ -83,23 +83,11 @@ test('heal-script: flips Skipped+completion_commit ticket to Done', () => {
     assert.equal(result.status, 0, `heal-script exited non-zero:\n${result.stderr}`);
 
     const healed = fs.readFileSync(ticketFile, 'utf8');
-
-    // status flipped to Done
     assert.match(healed, /^status: "Done"/m, 'status must be "Done"');
-
-    // completion_commit preserved
     assert.match(healed, new RegExp(`completion_commit: ${commit}`), 'completion_commit must be preserved');
-
-    // healed_at injected (ISO-like timestamp)
     assert.match(healed, /^healed_at: \d{4}-\d{2}-\d{2}T/m, 'healed_at must be injected');
-
-    // DEFERRED line removed
     assert.doesNotMatch(healed, /^# DEFERRED:/m, '# DEFERRED: line must be removed');
-
-    // Body text preserved
     assert.match(healed, /Some body text\./, 'body text must be preserved');
-
-    // stdout contains [healed]
     assert.match(result.stdout + result.stderr, /\[healed\]/, 'output must contain [healed]');
 });
 
