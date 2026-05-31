@@ -83,7 +83,7 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 
 ### Deferred future epics (not in drain scope until activated)
 
-- **Integrations:** `hermes-integration.md` (P2 ready) — (`deepseek-integration.md` promoted to drain row 13 / **B-DSEK** on 2026-05-30; `openrouter-multi-provider-workers.md` deleted 2026-05-30 — text-only workers with no tool use are useless to the lifecycle without a tool proxy)
+- **Integrations:** `hermes-integration.md` (P2 ready); `p2-cli-backend-integration-pattern.md` (**R-CBI / B-CBI** — one contract for native-CLI Shape-B backends; instances **grok + kimi**; supersedes the standalone grok PRD; filed 2026-05-31) — (`deepseek-integration.md` → drain **B-DSEK** [Shape-A shim, separate]; `openrouter-multi-provider-workers.md` deleted 2026-05-30 — text-only, no tool use)
 - **Refactor:** `god-functions-remediation-phase-2.md` (27 carve-outs)
 - **Methodology PRDs:** `portal-gun.md`, `pickle-debate.md`, `pickle-microverse.md`
 - **Design docs (no ship target):** `citadel.md`, `pickle-dot-codegen-builder.md`, `council-of-ricks-catalog-mode-and-publish-fixes.md`, `plumbus-generative-audit-frames.md`, `pickle-agent-teams.md`, `smart-iteration-handoff.md`, `tool-error-retry-tracking.md`
