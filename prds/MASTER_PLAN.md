@@ -7,9 +7,9 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.88.0** — 2026-05-31 |
-| Latest GitHub release | v1.88.0 (v1.81.1..v1.88.0 all tagged) |
-| Active pipeline | **B-PNTR** (session `2026-05-31-30c7524b`) — launched 2026-05-31, no refinement (PRD has decomposable AC-PNTR-01..09; refinement skipped to avoid open B-ACSG oscillation on an already-consolidated PRD). B-CMWL shipped v1.88.0. |
+| Version (source/deployed) | **v1.89.0** — 2026-05-31 |
+| Latest GitHub release | v1.89.0 (v1.81.1..v1.89.0 all tagged) |
+| Active pipeline | **none** — B-PNTR shipped v1.89.0 (2026-05-31; closer C-PNTR-CLOSER completed by babysitter after the in-pipeline manager stalled mid-close). Next: drain row 4 (B-R-MMTR + B-E2E). |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive:** drain bug bundles before feature epics; P1 > P2 > P3. All feature epics (R-PGI v1.83.0 / R-PIAP v1.84.0 / R-DC v1.85.0) are shipped.
@@ -24,7 +24,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 
 | # | Bundle | Pri | Open findings | PRD / source | Size |
 |---|--------|-----|---------------|--------------|------|
-| 3 | **B-PNTR** | P1 | #77 R-PNTR-DEPS | `prds/p2-remove-non-tmux-pickle-loop.md` (extract `_pickle-manager-prompt.md`, remove bare `/pickle`; schema-neutral). R-PNTR-1..7 Done (session `2026-05-31-30c7524b`); closer pending. | ~1 |
+| ~~3~~ | **B-PNTR** ✅ SHIPPED v1.89.0 | — | #77 closed | `prds/p2-remove-non-tmux-pickle-loop.md` — extracted `_pickle-manager-prompt.md`, removed bare `/pickle`, schema-neutral. Closer caught + fixed a latent FATAL deploy bug (template was deployed one level too deep for the runtime resolver; added explicit install.sh cp). | done |
 | 4 | **B-R-MMTR** + **B-E2E** | P1+P3 | #28 R-ICDM, #19 R-MMTR | author — R-ICDM-2..7 audit + R-MMTRH heal + R-MMTR-7 closer; B-E2E re-attempts force-skipped R-MMTR-6 after | ~6 |
 | 5 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | author — verify-command host-tool check (#39) + zsh shell-glob safety (#40) | ~4+4 |
 | 6 | **B-PPCD** | P2 | #85 R-PPCD | author — doc-only: citadel phase list in `pickle-pipeline.md` + `persona.md` (verified still drifted 2026-05-30) | ~1-2 |
@@ -52,7 +52,7 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 |---|---|---|---|
 | 25 | R-CSI | Concurrent claude-session destructive-command interference (3 SIGINT incidents/36h) — DATA LOSS class | `p1-concurrent-claude-session-interference-with-running-pipelines.md`. **Watch-only — external-event-gated:** Phase 1 forensics need a real incident to analyze. Skipped by the drain; surfaces on the next incident. |
 | 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
-| 77 | R-PNTR-DEPS | B-PNTR R-PNTR-1 (`d586b545`) wrongly deleted load-bearing `.claude/commands/pickle.md` (read every tmux iteration by mux-runner/pipeline-runner/jar-runner as the manager-prompt template) → `[FATAL] pickle.md not found`. Restored `40f22573`. **RE-SCOPED 2026-05-30** (operator-confirmed): `pickle.md` was dual-purpose (bare-`/pickle` command + manager template). **IMPLEMENTED R-PNTR-1..7** (session `2026-05-31-30c7524b`): extracted manager-lifecycle body to `_pickle-manager-prompt.md` (infra template via `extensionRoot/templates/`), repointed 3 consumers + `command_template` default, added schema-neutral resume remap, removed bare `/pickle`. Schema-neutral (dodges #74). Closer pending. **B-PNTR.** |
+| 77 | R-PNTR-DEPS | B-PNTR R-PNTR-1 (`d586b545`) wrongly deleted load-bearing `.claude/commands/pickle.md` (read every tmux iteration by mux-runner/pipeline-runner/jar-runner as the manager-prompt template) → `[FATAL] pickle.md not found`. Restored `40f22573`. **RE-SCOPED 2026-05-30** (operator-confirmed): `pickle.md` was dual-purpose (bare-`/pickle` command + manager template). **IMPLEMENTED R-PNTR-1..7** (session `2026-05-31-30c7524b`): extracted manager-lifecycle body to `_pickle-manager-prompt.md` (infra template via `extensionRoot/templates/`), repointed 3 consumers + `command_template` default, added schema-neutral resume remap, removed bare `/pickle`. Schema-neutral (dodges #74). **CLOSED — SHIPPED v1.89.0 (2026-05-31).** Closer (completed by babysitter) caught a latent FATAL: install.sh deployed the template to `$EXTENSION_ROOT/extension/templates/` but the runtime resolver reads `getExtensionRoot()/templates` = `$EXTENSION_ROOT/templates/`; added an explicit cp so fresh installs no longer FATAL. **B-PNTR.** |
 
 ### P2
 
