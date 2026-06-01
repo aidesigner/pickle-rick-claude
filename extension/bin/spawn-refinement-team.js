@@ -248,6 +248,7 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`session_map_collision_blocked\` | \`existing_session_path\`, \`existing_pid\`, \`attempted_session_path\`, \`attempted_pid\`, \`cwd\` | session-map collision guard (R-CCPM-4) |
 | \`pickle_command_deprecated\` | (none beyond event+ts) | pickle-deprecated.js bare-/pickle invocation |
 | \`ac_shape_gate_bypassed\` | \`gate_payload.reason\` | spawn-refinement-team AC-shape gate bypass path |
+| \`refinement_over_collapse_detected\` | \`gate_payload.composed_count\`, \`gate_payload.ticket_count\`, \`gate_payload.sources_with_atomic_section\` | spawn-refinement-team post-decomp bundle-of-bundles over-collapse guard |
 
 When writing ACs that assert event emission, include the full event name and required payload fields. Do NOT invent event names — use only the names listed here or already present in \`extension/src/types/index.ts:VALID_ACTIVITY_EVENTS\`.`;
 export const PATH_VERIFICATION_PROMPT_SECTION = `## Path Verification & Forward-reference hygiene
@@ -1901,6 +1902,46 @@ export function scanAnalystOutputsForUnverifiedPaths(refinementDir, workingDir) 
     }
     return warnings;
 }
+export function detectBundleOfBundlesOverCollapse(prdPath, manifest) {
+    try {
+        if (!fs.existsSync(prdPath))
+            return { detected: false };
+        const content = fs.readFileSync(prdPath, 'utf-8');
+        const frontmatter = parseFrontmatter(content);
+        const composedPaths = composedPrdPaths(frontmatter);
+        // (a) parent PRD must declare composes: with >= 2 entries
+        if (composedPaths.length < 2)
+            return { detected: false };
+        // (b) >= 1 composed source must carry ## Atomic decomposition or ## Atomic tickets
+        const sourcesWithAtomicSection = [];
+        for (const composedPath of composedPaths) {
+            const resolved = resolvePeerPrdPath(prdPath, composedPath);
+            if (!resolved)
+                continue;
+            try {
+                const sourceContent = fs.readFileSync(resolved, 'utf-8');
+                if (/^##\s+(Atomic decomposition|Atomic tickets)\s*$/im.test(sourceContent)) {
+                    sourcesWithAtomicSection.push(composedPath);
+                }
+            }
+            catch { /* skip unreadable source */ }
+        }
+        if (sourcesWithAtomicSection.length === 0)
+            return { detected: false };
+        // (c) manifest collapsed to <= one ticket per composed source
+        if (manifest.tickets.length > composedPaths.length)
+            return { detected: false };
+        return {
+            detected: true,
+            composedCount: composedPaths.length,
+            ticketCount: manifest.tickets.length,
+            sourcesWithAtomicSection,
+        };
+    }
+    catch {
+        return { detected: false };
+    }
+}
 async function main() {
     const args = parseAndValidateArgs(process.argv.slice(2));
     const settings = loadRefinementSettings();
@@ -1920,6 +1961,34 @@ async function main() {
         process.stderr.write(`[pickle-rick] analyst_path_not_verified count=${analystPathWarnings.length} (see refinement_manifest.json ticket_quality_warnings)\n`);
     }
     const manifest = buildRefinementManifest(args, cycleResults, combinedWarnings.length > 0 ? combinedWarnings : undefined);
+    try {
+        const overCollapseResult = detectBundleOfBundlesOverCollapse(args.prdPath, manifest);
+        if (overCollapseResult.detected) {
+            const overCollapseWarning = {
+                ticket_id: '',
+                defect_class: 'bundle_of_bundles_over_collapse',
+                evidence: `composed_sources=${overCollapseResult.composedCount} tickets=${overCollapseResult.ticketCount} atomic_sources=${overCollapseResult.sourcesWithAtomicSection.join(',')}`,
+                source: 'post-decomp',
+                file_line: null,
+            };
+            manifest.ticket_quality_warnings = [...(manifest.ticket_quality_warnings ?? []), overCollapseWarning];
+            process.stderr.write(`[pickle-rick] refinement_over_collapse_detected: ${overCollapseResult.ticketCount} tickets <= ${overCollapseResult.composedCount} composed sources (${overCollapseResult.sourcesWithAtomicSection.join(', ')} have atomic sections)\n`);
+            const statePath = path.join(args.sessionDir, 'state.json');
+            try {
+                writeActivityEntry(statePath, {
+                    event: 'refinement_over_collapse_detected',
+                    ts: new Date().toISOString(),
+                    gate_payload: {
+                        composed_count: overCollapseResult.composedCount,
+                        ticket_count: overCollapseResult.ticketCount,
+                        sources_with_atomic_section: overCollapseResult.sourcesWithAtomicSection,
+                    },
+                });
+            }
+            catch { /* best-effort telemetry */ }
+        }
+    }
+    catch { /* guard must never throw or change exit code */ }
     await writeManifestAtomic(manifestPath, manifest);
     const symbolAudit = await writeSymbolAudit(cycleResults.refinementDir, prdContent, runtime.workingDir, manifest, args.prdPath);
     const symbolAuditStatus = runSymbolAuditEnforcement(symbolAudit);

@@ -1405,6 +1405,22 @@
         "event": { "type": "string", "const": "pickle_command_deprecated" },
         "ts": { "type": "string" }
       }
+    },
+    "refinement_over_collapse_detected": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "refinement_over_collapse_detected" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "properties": {
+            "composed_count": { "type": "integer", "minimum": 0 },
+            "ticket_count": { "type": "integer", "minimum": 0 },
+            "sources_with_atomic_section": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -1496,6 +1512,7 @@
     { "$ref": "#/definitions/worker_auto_skip_oversized" },
     { "$ref": "#/definitions/orphan_phantom_demoted" },
     { "$ref": "#/definitions/codex_manager_no_progress" },
-    { "$ref": "#/definitions/pickle_command_deprecated" }
+    { "$ref": "#/definitions/pickle_command_deprecated" },
+    { "$ref": "#/definitions/refinement_over_collapse_detected" }
   ]
 }

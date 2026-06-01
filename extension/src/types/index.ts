@@ -646,6 +646,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'worker_auto_skip_oversized',
   'codex_manager_no_progress',
   'pickle_command_deprecated',
+  'refinement_over_collapse_detected',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
