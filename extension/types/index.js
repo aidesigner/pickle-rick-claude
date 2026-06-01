@@ -218,6 +218,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'subtool_backend_override',
     'pipeline_auto_resumed',
     'smoke_gate_bypassed',
+    'ac_shape_gate_bypassed',
     'tsc_gate_failed',
     'tsc_gate_override_used',
     'tsc_gate_override_consumed',

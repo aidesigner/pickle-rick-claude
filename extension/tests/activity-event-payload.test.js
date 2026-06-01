@@ -298,6 +298,11 @@ const EVENT_CASES = [
     drop: 'reason',
   },
   {
+    type: 'ac_shape_gate_bypassed',
+    valid: { event: 'ac_shape_gate_bypassed', ts: TS, gate_payload: { reason: 'operator: analyst tickets verified correct' } },
+    drop: 'gate_payload',
+  },
+  {
     type: 'tsc_gate_failed',
     valid: {
       event: 'tsc_gate_failed',
@@ -950,6 +955,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'ticket_audit_failed',
     'ticket_audit_manual_edit',
     'smoke_gate_bypassed',
+    'ac_shape_gate_bypassed',
     'tsc_gate_failed',
     'tsc_gate_override_used',
     'tsc_gate_override_consumed',

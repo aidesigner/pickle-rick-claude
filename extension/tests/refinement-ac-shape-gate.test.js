@@ -1,9 +1,19 @@
 // @tier: fast
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const BIN = path.resolve(__dirname, '../bin/spawn-refinement-team.js');
 
 const {
   evaluateAcShapeEnforcement,
+  evaluateAcShapeAdvisory,
+  runAcShapeEnforcement,
   isParametrizedTicket,
 } = await import('../bin/spawn-refinement-team.js');
 
@@ -178,4 +188,168 @@ test('AC-ACSG-1c: PICKLE_AC_GATE_DEBUG appears in spawn-refinement-team.ts sourc
     if (line.includes('PICKLE_AC_GATE_DEBUG')) count++;
   }
   assert.ok(count >= 1, `PICKLE_AC_GATE_DEBUG must appear at least once in spawn-refinement-team.ts (found ${count} times)`);
+});
+
+// AC-ACSG-2a: correctly-consolidated tickets produce no normative violation; advisory channel non-empty
+
+test('AC-ACSG-2a: correctly-consolidated tickets pass normative gate; prd_advisory_shape_concerns surfaces advisory warning', () => {
+  const manifest = {
+    ac_shape_smells: [{ ac_id: 'AC-ADV', ticket_ids: ['T1'] }],
+    tickets: [{
+      id: 'T1',
+      title: 'All handlers validate permissions',
+      source_ac_ids: ['AC-ADV'],
+      acceptance_test: 'describe.each([["getA"], ["getB"]]) validates each handler',
+    }],
+    prd_advisory_shape_concerns: [
+      'AC-ADV: operator PRD prose enumerated per-row sub-items; analyst correctly consolidated into parametrized ticket T1',
+    ],
+  };
+
+  const violations = evaluateAcShapeEnforcement(manifest);
+  assert.deepEqual(violations, [], 'correctly-consolidated tickets must produce no normative violations');
+
+  const advisory = evaluateAcShapeAdvisory(manifest);
+  assert.ok(advisory.length > 0, 'advisory channel must be non-empty when prd_advisory_shape_concerns is present');
+  assert.ok(typeof advisory[0] === 'string' && advisory[0].length > 0, 'advisory warning must be a non-empty string');
+});
+
+test('AC-ACSG-2a: empty prd_advisory_shape_concerns yields empty advisory channel', () => {
+  const manifest = { prd_advisory_shape_concerns: [] };
+  assert.deepEqual(evaluateAcShapeAdvisory(manifest), []);
+});
+
+test('AC-ACSG-2a: absent prd_advisory_shape_concerns yields empty advisory channel', () => {
+  const manifest = {};
+  assert.deepEqual(evaluateAcShapeAdvisory(manifest), []);
+});
+
+// AC-ACSG-2b: --skip-ac-shape-gate bypass + event registration
+
+test('AC-ACSG-2b: runAcShapeEnforcement with skipAcShapeGate returns 0 on otherwise-violating manifest', () => {
+  const violatingManifest = {
+    ac_shape_smells: [{ ac_id: 'AC-X', ticket_ids: ['T1'] }],
+    tickets: [{
+      id: 'T1',
+      title: 'Handler validates',
+      source_ac_ids: ['AC-X'],
+      acceptance_test: 'getA returns 200',
+    }],
+    prd_advisory_shape_concerns: [],
+  };
+
+  const withoutSkip = runAcShapeEnforcement(violatingManifest);
+  assert.equal(withoutSkip, 2, 'manifest with normative violation should return 2 without skip');
+
+  const withSkip = runAcShapeEnforcement(violatingManifest, { skipAcShapeGate: 'operator: analyst tickets verified correct' });
+  assert.equal(withSkip, 0, '--skip-ac-shape-gate with reason must short-circuit to 0');
+});
+
+test('AC-ACSG-2b: --skip-ac-shape-gate emits ac_shape_gate_bypassed activity event to state.json', () => {
+  const violatingManifest = {
+    ac_shape_smells: [{ ac_id: 'AC-X', ticket_ids: ['T1'] }],
+    tickets: [{
+      id: 'T1',
+      title: 'Handler validates',
+      source_ac_ids: ['AC-X'],
+      acceptance_test: 'getA returns 200',
+    }],
+    prd_advisory_shape_concerns: [],
+  };
+
+  const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'acsg2b-')));
+  const statePath = path.join(sessionDir, 'state.json');
+  fs.writeFileSync(statePath, JSON.stringify({
+    schema_version: 5,
+    active: false,
+    session_dir: sessionDir,
+    working_dir: sessionDir,
+    iteration: 0,
+    max_iterations: 15,
+    worker_timeout_seconds: 3600,
+    start_time_epoch: 0,
+    backend: 'claude',
+    step: 'prd',
+    history: [],
+    activity: [],
+    started_at: new Date().toISOString(),
+    worker_artifact_progress: {},
+  }));
+  try {
+    runAcShapeEnforcement(violatingManifest, {
+      sessionDir,
+      skipAcShapeGate: 'operator: analyst tickets verified correct',
+    });
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    const events = (state.activity ?? []).filter((e) => e.event === 'ac_shape_gate_bypassed');
+    assert.equal(events.length, 1, 'exactly one ac_shape_gate_bypassed event must be emitted');
+    assert.equal(events[0].gate_payload.reason, 'operator: analyst tickets verified correct', 'event must carry the reason');
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('AC-ACSG-2b: --skip-ac-shape-gate without reason exits 64', () => {
+  const result = spawnSync(process.execPath, [BIN, '--skip-ac-shape-gate'], {
+    encoding: 'utf-8',
+    timeout: 10_000,
+  });
+  assert.equal(result.status, 64, '--skip-ac-shape-gate without reason must exit 64');
+  assert.match(result.stderr, /--skip-ac-shape-gate requires a non-empty reason/, 'stderr must explain the requirement');
+});
+
+test('AC-ACSG-2b: --skip-ac-shape-gate with --prefixed next arg exits 64', () => {
+  const result = spawnSync(process.execPath, [BIN, '--skip-ac-shape-gate', '--next-flag'], {
+    encoding: 'utf-8',
+    timeout: 10_000,
+  });
+  assert.equal(result.status, 64, '--skip-ac-shape-gate followed by a flag must exit 64');
+});
+
+test('AC-ACSG-2b: ac_shape_gate_bypassed appears in all 4 required touchpoints', () => {
+  const root = path.resolve(__dirname, '../..');
+  const files = [
+    path.join(root, 'extension/src/types/index.ts'),
+    path.join(root, 'extension/types/index.js'),
+    path.join(root, 'extension/src/types/activity-events.schema.json'),
+    path.join(root, 'extension/src/bin/spawn-refinement-team.ts'),
+  ];
+  for (const file of files) {
+    const content = fs.readFileSync(file, 'utf-8');
+    assert.ok(
+      content.includes('ac_shape_gate_bypassed'),
+      `ac_shape_gate_bypassed must appear in ${path.relative(root, file)}`,
+    );
+  }
+});
+
+// AC-ACSG-2c: actionable error names ac_id+ticket AND includes fix template or override path
+
+test('AC-ACSG-2c: violation stderr contains ac_id+ticket and describe.each or --skip-ac-shape-gate', () => {
+  const manifest = {
+    ac_shape_smells: [{ ac_id: 'AC-ERR', ticket_ids: ['T1'] }],
+    tickets: [{
+      id: 'T1',
+      title: 'Handler validates',
+      source_ac_ids: ['AC-ERR'],
+      acceptance_test: 'getA returns 200',
+    }],
+    prd_advisory_shape_concerns: [],
+  };
+
+  const stderrLines = [];
+  const origWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk, ...args) => {
+    stderrLines.push(typeof chunk === 'string' ? chunk : chunk.toString());
+    return true;
+  };
+  try {
+    runAcShapeEnforcement(manifest);
+  } finally {
+    process.stderr.write = origWrite;
+  }
+
+  const output = stderrLines.join('');
+  assert.match(output, /AC-ERR.*ticket/, 'output must name the failing ac_id (AC-ERR) and include "ticket"');
+  assert.match(output, /describe\.each\(\[|--skip-ac-shape-gate/, 'output must contain describe.each([ fix template OR --skip-ac-shape-gate override path');
 });

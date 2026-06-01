@@ -297,6 +297,21 @@
         "reason": { "type": "string" }
       }
     },
+    "ac_shape_gate_bypassed": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "ac_shape_gate_bypassed" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["reason"],
+          "properties": {
+            "reason": { "type": "string" }
+          }
+        }
+      }
+    },
     "tsc_gate_failed": {
       "type": "object",
       "required": ["event", "ts", "reason", "gate_payload"],
@@ -1409,6 +1424,7 @@
     { "$ref": "#/definitions/ticket_audit_failed" },
     { "$ref": "#/definitions/ticket_audit_manual_edit" },
     { "$ref": "#/definitions/smoke_gate_bypassed" },
+    { "$ref": "#/definitions/ac_shape_gate_bypassed" },
     { "$ref": "#/definitions/tsc_gate_failed" },
     { "$ref": "#/definitions/tsc_gate_override_used" },
     { "$ref": "#/definitions/tsc_gate_override_consumed" },

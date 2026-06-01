@@ -1017,7 +1017,7 @@ process.exit(0);
         );
 
         assert.strictEqual(result.status, 2);
-        assert.match(result.stderr, /AC-shape collapse-or-justify gate failed/);
+        assert.match(result.stderr, /AC shape gate FAILED/);
 
         const manifest = JSON.parse(fs.readFileSync(path.join(tmp, 'refinement_manifest.json'), 'utf-8'));
         assert.ok(manifest.ac_shape_smells.length >= 1);

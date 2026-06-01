@@ -282,6 +282,7 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`orphan_session_detected\` | \`orphan_session_path\`, \`orphan_started_at\`, \`parent_session_hash\`, \`orphan_pid\` | session-map orphan detection (R-CCPM-3) |
 | \`session_map_collision_blocked\` | \`existing_session_path\`, \`existing_pid\`, \`attempted_session_path\`, \`attempted_pid\`, \`cwd\` | session-map collision guard (R-CCPM-4) |
 | \`pickle_command_deprecated\` | (none beyond event+ts) | pickle-deprecated.js bare-/pickle invocation |
+| \`ac_shape_gate_bypassed\` | \`gate_payload.reason\` | spawn-refinement-team AC-shape gate bypass path |
 
 When writing ACs that assert event emission, include the full event name and required payload fields. Do NOT invent event names — use only the names listed here or already present in \`extension/src/types/index.ts:VALID_ACTIVITY_EVENTS\`.`;
 
@@ -320,6 +321,7 @@ export interface RefinementArgs {
   cycles?: number;
   maxTurns?: number;
   noGraph?: boolean;
+  skipAcShapeGate?: string;
 }
 
 export interface RefinementSettings {
@@ -382,6 +384,7 @@ export interface RefinementManifest {
   ac_shape_smells: AcShapeSmell[];
   tickets: RefinementTicketManifestEntry[];
   ticket_quality_warnings?: TicketQualityWarning[];
+  prd_advisory_shape_concerns?: string[];
   workers: {
     role: RoleId;
     success: boolean;
@@ -908,7 +911,24 @@ function parseTimeoutFlag(argv: string[]): number | undefined {
   return parsePositiveFlag(argv, timeoutIndex, '--timeout');
 }
 
+const SKIP_AC_SHAPE_GATE_USAGE_MSG =
+  '--skip-ac-shape-gate requires a non-empty reason argument (e.g. --skip-ac-shape-gate "operator: analyst tickets verified correct")';
+const SKIP_AC_SHAPE_GATE_EXIT_CODE = 64;
+
+function parseSkipAcShapeGate(argv: string[]): string | undefined {
+  const idx = argv.indexOf('--skip-ac-shape-gate');
+  if (idx < 0) return undefined;
+  const raw = argv[idx + 1];
+  if (raw === undefined || raw.startsWith('--') || raw.trim() === '') {
+    process.stderr.write(`${SKIP_AC_SHAPE_GATE_USAGE_MSG}\n`);
+    process.exit(SKIP_AC_SHAPE_GATE_EXIT_CODE);
+  }
+  return raw;
+}
+
 export function parseAndValidateArgs(argv: string[]): RefinementArgs {
+  const skipAcShapeGate = parseSkipAcShapeGate(argv);
+
   const prdIndex = argv.indexOf('--prd');
   const sessionIndex = argv.indexOf('--session-dir');
   const prdPath = prdIndex !== -1 ? argv[prdIndex + 1] : undefined;
@@ -930,6 +950,7 @@ export function parseAndValidateArgs(argv: string[]): RefinementArgs {
     cycles: parsePositiveFlag(argv, argv.indexOf('--cycles'), '--cycles'),
     maxTurns: parsePositiveFlag(argv, argv.indexOf('--max-turns'), '--max-turns'),
     noGraph: argv.includes('--no-graph'),
+    skipAcShapeGate,
   };
 }
 
@@ -1607,14 +1628,50 @@ export function evaluateAcShapeEnforcement(manifest: Pick<RefinementManifest, 'a
   return violations;
 }
 
-function runAcShapeEnforcement(manifest: RefinementManifest): number {
+export function evaluateAcShapeAdvisory(manifest: Pick<RefinementManifest, 'prd_advisory_shape_concerns'>): string[] {
+  return manifest.prd_advisory_shape_concerns ?? [];
+}
+
+export function runAcShapeEnforcement(
+  manifest: RefinementManifest,
+  opts?: { sessionDir?: string; skipAcShapeGate?: string },
+): number {
+  if (opts?.skipAcShapeGate !== undefined) {
+    const reason = opts.skipAcShapeGate;
+    process.stderr.write(`[pickle-rick] ac-shape gate bypassed: ${reason}\n`);
+    const statePath = opts.sessionDir ? path.join(opts.sessionDir, 'state.json') : undefined;
+    if (statePath) {
+      try {
+        writeActivityEntry(statePath, {
+          event: 'ac_shape_gate_bypassed',
+          ts: new Date().toISOString(),
+          gate_payload: { reason },
+        });
+      } catch { /* best-effort telemetry */ }
+    }
+    return 0;
+  }
+
+  const advisoryWarnings = evaluateAcShapeAdvisory(manifest);
+  for (const warning of advisoryWarnings) {
+    process.stderr.write(`[pickle-rick] [advisory] ac-shape: ${warning}\n`);
+  }
+
   const violations = evaluateAcShapeEnforcement(manifest);
   if (violations.length === 0) return 0;
-  process.stderr.write('[pickle-rick] AC-shape collapse-or-justify gate failed.\n');
-  process.stderr.write('[pickle-rick] Rewrite each AC as one invariant-shaped acceptance criterion, or add // JUSTIFICATION: blocks to every intentionally split ticket.\n');
+
+  process.stderr.write('[pickle-rick] AC shape gate FAILED — the following ac_ids have ticket shape violations:\n');
   for (const violation of violations) {
-    const tickets = violation.ticket_ids.length > 0 ? ` tickets=${violation.ticket_ids.join(',')}` : '';
-    process.stderr.write(`[pickle-rick] ${violation.ac_id}: ${violation.reason}${tickets}\n`);
+    const ticketList = violation.ticket_ids.length > 0 ? violation.ticket_ids.join(', ') : '(none)';
+    process.stderr.write(`[pickle-rick] ${violation.ac_id} ticket=${ticketList}: ${violation.reason}\n`);
+    if (violation.ticket_ids.length !== 1) {
+      process.stderr.write('[pickle-rick]   Fix: add // JUSTIFICATION: to each split ticket explaining the split rationale\n');
+    } else {
+      process.stderr.write('[pickle-rick]   Fix: rewrite ticket to use universal quantifier title AND describe.each([\n');
+      process.stderr.write('[pickle-rick]     title: "All <entities> <condition>"\n');
+      process.stderr.write("[pickle-rick]     acceptance_test: \"describe.each([['input1'], ['input2']])(...)\"\n");
+    }
+    process.stderr.write(`[pickle-rick]   Override: --skip-ac-shape-gate "<reason>"\n`);
   }
   return 2;
 }
@@ -2153,7 +2210,7 @@ async function main() {
   const symbolAudit = await writeSymbolAudit(cycleResults.refinementDir, prdContent, runtime.workingDir, manifest, args.prdPath);
   const symbolAuditStatus = runSymbolAuditEnforcement(symbolAudit);
   if (symbolAuditStatus !== 0) process.exit(symbolAuditStatus);
-  const acShapeStatus = runAcShapeEnforcement(manifest);
+  const acShapeStatus = runAcShapeEnforcement(manifest, { sessionDir: args.sessionDir, skipAcShapeGate: args.skipAcShapeGate });
   if (acShapeStatus !== 0) process.exit(acShapeStatus);
   const postRefinementGate = runAcPhaseGate({
     sessionDir: args.sessionDir,
