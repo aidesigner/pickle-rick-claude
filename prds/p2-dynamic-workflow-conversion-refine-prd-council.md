@@ -1,6 +1,6 @@
 ---
 title: P2 — Convert `/pickle-refine-prd` and `/council-of-ricks` fan-out cores to Claude Code Dynamic Workflows
-status: Researched + refined — not yet drain-slotted (P2; operator to slot per §Proposed drain-queue placement)
+status: Implementing — R-DWF-1 spike PASSED 2026-06-01 (verdict PROCEED, prds/research/dwf-spike-findings.md); R-DWF-2..6 active. Allowlist additions (§"Why Bash ran without allowlist entries") are a deployment-time operator decision on global settings.json — documented, NOT a code blocker. codex-companion.mjs not deployed (F1) is R-DWF-4 scope.
 filed: 2026-05-30
 refined: 2026-05-30
 priority: P2
@@ -196,9 +196,9 @@ return await agent(synthesisPrompt(bc, codex, round, sessionFiles), { label: 'sy
 
 ## Atomic ticket scope
 
-> **R-DWF-1 is a hard gate.** R-DWF-2 (WS-A) and R-DWF-4 (WS-B) are mutually independent and may run in parallel, but neither starts until R-DWF-1's findings are reviewed and the bundle is confirmed viable.
+> **R-DWF-1 (hard gate) is ✅ COMPLETE — spike PASSED 2026-06-01 (verdict PROCEED, all 6 probes PASS; `prds/research/dwf-spike-findings.md`). GATE CLEARED.** R-DWF-2 (WS-A) and R-DWF-4 (WS-B) are now ACTIVE and mutually independent (may run in parallel). **Do NOT re-run R-DWF-1** — its deliverable is committed. Active implementation tickets: R-DWF-2, R-DWF-3 (soak-gated), R-DWF-4, R-DWF-5, R-DWF-6.
 
-### R-DWF-1 — Gating spike: prove workflow agents run headless under the allowlist + batch correctly *(BLOCKER — do first)*
+### R-DWF-1 — ✅ COMPLETE (spike PASSED 2026-06-01, PROCEED) — Gating spike: prove workflow agents run headless under the allowlist + batch correctly
 Build a throwaway (un-shipped) workflow exercising the riskiest capabilities **headless and against the real session-dir path** (a scratch-dir/interactive pass would falsely greenlight — the production runs are `claude -p` with no human approver):
 - **artifact-write** (formality): an agent writes `refinement/analysis_<role>.md` + `refinement_manifest.json` under a real session dir; assert no `config-protection.ts` block.
 - **gate-bin-shell** (THE gate): an agent shells `check-readiness.js`, `gitnexus analyze`, `node codex-companion.mjs adversarial-review` (or `--help`), and `gt`/`gh` **headless** under `acceptEdits` + the user's allowlist; record each as PASS (ran) / FAIL (denied/hung). Document the exact allowlist entries required.
