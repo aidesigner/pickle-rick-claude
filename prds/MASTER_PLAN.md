@@ -9,7 +9,7 @@
 |---|---|
 | Version (source/deployed) | **v1.89.3** — 2026-05-31 |
 | Latest GitHub release | v1.89.3 (v1.81.1..v1.89.3 all tagged) |
-| Active pipeline | **none** — B-PPCD shipped v1.89.3 (#85 closed). Next: **B-ACSG** (drain row 7, P2) — `prds/BUG-REPORT-2026-05-27-refine-prd-ac-shape-gate-oscillation.md`. |
+| Active pipeline | **B-ACSG** (drain row 7, P2) — `prds/p2-bug-fix-bundle-b-acsg-ac-shape-gate.md`, launching 2026-05-31. NARROW H1+H3 fix to the refine-prd AC-shape gate (`spawn-refinement-team.ts`): loosen field-bound matcher + `PICKLE_AC_GATE_DEBUG`, decouple PRD-advisory/ticket-normative + `--skip-ac-shape-gate`, LOA-727 regression fixture. 5 tickets, schema-neutral (PATCH → v1.89.4). B-PPCD shipped v1.89.3. |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive:** drain bug bundles before feature epics; P1 > P2 > P3. All feature epics (R-PGI v1.83.0 / R-PIAP v1.84.0 / R-DC v1.85.0) are shipped.
@@ -29,7 +29,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 | 4b | **B-E2E** | P3 | #19 R-MMTR-6 | `prds/p1-mmtr-6-decompose-e2e-into-sub-tickets.md` (decompose force-skipped oversized R-MMTR-6 E2E ticket into 4-5 sub-tickets, then re-attempt). Follow-on AFTER B-R-MMTR. | ~5 |
 | ~~5~~ | **B-GATE** ✅ SHIPPED v1.89.2 | — | #39 + #40 closed | `prds/p2-bug-fix-bundle-b-gate-verify-command-safety.md` — host-tool preflight (#39) + zsh shell-glob safety (#40) via shared `verify-command-safety.ts` wired into `ac-phase-gate.ts`/`convergence-gate.ts`, forward-protection lint, trap-door pins. Schema-neutral. Closer (this session) fix-forwarded a `containsUnquotedGlobHazard` eslint-complexity error and stripped a worker-hallucinated `Resolves: prds/p1-vsge.md` trailer from the R-VSGE-2 commit that failed audit-fix-commits. | done |
 | ~~6~~ | **B-PPCD** ✅ SHIPPED v1.89.3 | — | #85 closed | `prds/p2-bug-fix-bundle-b-ppcd-pipeline-citadel-phase-list-drift.md` (doc-only: citadel-omitting 3-phase claim → real 4-phase in `pickle-pipeline.md` + `persona.md`; schema-neutral). Closer (babysitter) reconciled two `pickle-pipeline-skill.test.js` pins coupled to the old wording: trimmed line-1 description to ≤80 chars (kept citadel) and updated the Step 4 `--skip-*` regex to the 4-flag form. | done |
-| 7 | **B-ACSG** | P2 | #84 R-ACSG | `prds/BUG-REPORT-2026-05-27-refine-prd-ac-shape-gate-oscillation.md` (4 hypotheses — narrow=matcher, wide=convergence arch) | ~3-8 |
+| 7 | **B-ACSG** | P2 | #84 R-ACSG | `prds/p2-bug-fix-bundle-b-acsg-ac-shape-gate.md` (NARROW H1+H3: loosen field-bound matcher + debug flag, PRD-advisory/ticket-normative decouple + skip flag, LOA-727 regression; schema-neutral). Source: `BUG-REPORT-2026-05-27-…`. **LAUNCHING 2026-05-31.** | ~5 |
 | 8 | **B-WEDGE** | P2 | #30 R-RSU | R-RSU refinement over-collapse (#33 R-WMW shipped with B-WSWA v1.86.0 per overlap rule; absorbs B-QSRC R-RSU residual; R-QGSK already shipped) | ~3 |
 | 9 | **B-MONITOR** | P3 | #29 R-MWCL | author — monitor `inferMonitorMode` szechuan/anatomy fall-through (#27 R-MMRT already closed v1.80.1) | ~4 |
 | 10 | **B-LSOF** | P3 | #37e R-PIWG-5 | author — `lsof` launch-time concurrent-git-access probe | ~2-3 |
