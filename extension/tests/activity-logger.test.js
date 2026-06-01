@@ -230,6 +230,10 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // B-ACSG: R-ACSG-2 emits this when the AC-shape enforcement gate is
         // bypassed via --skip-ac-shape-gate <reason>.
         'ac_shape_gate_bypassed',
+        // B-WEDGE: R-RSU-2 emits this from the emission-time over-collapse
+        // guard when a bundle-of-bundles PRD is collapsed to <= one ticket
+        // per composed source despite atomic-decomposition sections.
+        'refinement_over_collapse_detected',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {

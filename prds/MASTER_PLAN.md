@@ -7,9 +7,9 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.89.4** — 2026-06-01 |
-| Latest GitHub release | v1.89.4 (v1.81.1..v1.89.4 all tagged) |
-| Active pipeline | **B-WEDGE** (drain row 8, P2, #30 R-RSU) — `prds/p2-bug-fix-bundle-b-wedge-rsu.md`, launching 2026-06-01. Refinement over-collapse fix: analyst-prompt bundle-of-bundles fan-out guidance + non-throwing over-collapse guard + event + regression. Verified INDEPENDENT of B-ACSG (R-RSU = emission granularity; R-ACSG = post-emission gate). 5 tickets, schema-neutral (PATCH → v1.89.5). B-ACSG shipped v1.89.4. |
+| Version (source/deployed) | **v1.89.5** — 2026-06-01 |
+| Latest GitHub release | v1.89.5 (v1.81.1..v1.89.5 all tagged) |
+| Active pipeline | **(idle)** — B-WEDGE shipped v1.89.5 (2026-06-01). Next: drain top non-blocked Drain-Queue row. |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive:** drain bug bundles before feature epics; P1 > P2 > P3. All feature epics (R-PGI v1.83.0 / R-PIAP v1.84.0 / R-DC v1.85.0) are shipped.
@@ -30,7 +30,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 | ~~5~~ | **B-GATE** ✅ SHIPPED v1.89.2 | — | #39 + #40 closed | `prds/p2-bug-fix-bundle-b-gate-verify-command-safety.md` — host-tool preflight (#39) + zsh shell-glob safety (#40) via shared `verify-command-safety.ts` wired into `ac-phase-gate.ts`/`convergence-gate.ts`, forward-protection lint, trap-door pins. Schema-neutral. Closer (this session) fix-forwarded a `containsUnquotedGlobHazard` eslint-complexity error and stripped a worker-hallucinated `Resolves: prds/p1-vsge.md` trailer from the R-VSGE-2 commit that failed audit-fix-commits. | done |
 | ~~6~~ | **B-PPCD** ✅ SHIPPED v1.89.3 | — | #85 closed | `prds/p2-bug-fix-bundle-b-ppcd-pipeline-citadel-phase-list-drift.md` (doc-only: citadel-omitting 3-phase claim → real 4-phase in `pickle-pipeline.md` + `persona.md`; schema-neutral). Closer (babysitter) reconciled two `pickle-pipeline-skill.test.js` pins coupled to the old wording: trimmed line-1 description to ≤80 chars (kept citadel) and updated the Step 4 `--skip-*` regex to the 4-flag form. | done |
 | ~~7~~ | **B-ACSG** ✅ SHIPPED v1.89.4 | — | #84 closed | `prds/p2-bug-fix-bundle-b-acsg-ac-shape-gate.md` (NARROW H1+H3: loosen field-bound matcher + `PICKLE_AC_GATE_DEBUG`, PRD-advisory/ticket-normative decouple + `--skip-ac-shape-gate`, LOA-727 regression fixture + monotonicity + negative-corpus, trap-door pin; schema-neutral). Closer (babysitter, this session) ff-reattached an orphaned R-ACSG-3 commit (spurious worker Failed-flip), fix-forwarded a missing `ac_shape_gate_bypassed` entry in `activity-logger.test.js`'s expected-events list, and ran the full gate (fast/integration-serial/expensive all green). | done |
-| 8 | **B-WEDGE** | P2 | #30 R-RSU | `prds/p2-bug-fix-bundle-b-wedge-rsu.md` (refinement over-collapse: analyst-prompt fan-out guidance + non-throwing over-collapse guard + regression; schema-neutral). Source: `p2-pickle-refine-section-umbrella-granularity-bug.md`. INDEPENDENT of B-ACSG. **LAUNCHING 2026-06-01.** | ~5 |
+| 8 | **B-WEDGE** | P2 | #30 R-RSU | `prds/p2-bug-fix-bundle-b-wedge-rsu.md` (refinement over-collapse: analyst-prompt fan-out guidance + non-throwing over-collapse guard + regression; schema-neutral). Source: `p2-pickle-refine-section-umbrella-granularity-bug.md`. INDEPENDENT of B-ACSG. **SHIPPED v1.89.5 (2026-06-01).** | ~5 |
 | 9 | **B-MONITOR** | P3 | #29 R-MWCL | author — monitor `inferMonitorMode` szechuan/anatomy fall-through (#27 R-MMRT already closed v1.80.1) | ~4 |
 | 10 | **B-LSOF** | P3 | #37e R-PIWG-5 | author — `lsof` launch-time concurrent-git-access probe | ~2-3 |
 | 11 | **R-PSAI** | P3 | #12 | `prds/p2-pickle-pipeline-no-scope-auto-inference.md` (UX friction; lowest) | ~2 |
@@ -59,7 +59,6 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 
 | # | Code | Summary | Notes |
 |---|---|---|---|
-| 30 | R-RSU | refinement collapses `composes:` bundle PRDs to N section-umbrellas | R-RSU-1..5; B2-RSU residuals. **B-WEDGE.** (Possibly shares a matcher with #84 — inverse: over-collapse vs under-acceptance.) |
 | ~~39~~ | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check → silent worker failures | **CLOSED — SHIPPED v1.89.2 (B-GATE).** `detectMissingTools` + `NON_GUARANTEED_TOOLS` in `verify-command-safety.ts`, wired as a preflight short-circuit into `runCriterion` (ac-phase-gate) + `runCheckCommand` (convergence-gate); regression tests + trap-door pins present. |
 | ~~40~~ | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | **CLOSED — SHIPPED v1.89.2 (B-GATE).** String-form AC commands run glob-safe (argv-form or `set -f`, no bare `shell: true`); `containsUnquotedGlobHazard` predicate + forward-protection lint + regression tests + trap-door pins present. |
 | ~~84~~ | R-ACSG | AC-shape collapse-or-justify gate oscillates, false-rejects properly-consolidated analyst tickets (smell count 2→9 across 3 attempts, no monotonicity; ~9 worker quotas burned in one incident). **CLOSED — SHIPPED v1.89.4 (B-ACSG).** NARROW H1+H3 fix: loosened the field-bound matcher to read joined `title`+`acceptance_test`+`justification` text + `PICKLE_AC_GATE_DEBUG` tracing (R-ACSG-1); decoupled PRD-advisory vs ticket-normative channels + `--skip-ac-shape-gate <reason>` escape hatch with actionable per-violation errors (R-ACSG-2); LOA-727 regression fixture + same-input monotonicity + negative-corpus no-regression tests (R-ACSG-3); trap-door pin (R-ACSG-TD). H2 cycle-3 freeze + H4 convergence-cost remain out of scope (not reproduced). |

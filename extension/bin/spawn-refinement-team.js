@@ -406,6 +406,19 @@ export function checkAnalystOutputPaths(content, workingDir) {
     }
     return warnings;
 }
+/**
+ * Assemble the shared analyst prompt-guidance sections in their canonical order.
+ * Extracted from buildWorkerPrompt to keep that function under the line ceiling;
+ * the `\n` join reproduces the original inline template byte-for-byte.
+ */
+function buildPromptGuidanceSections(graphResult) {
+    return [
+        buildTierClassificationSection(graphResult),
+        AC_SHAPE_PROMPT_SECTION,
+        PATH_VERIFICATION_PROMPT_SECTION,
+        BUNDLE_OF_BUNDLES_FANOUT_SECTION,
+    ].join('\n');
+}
 export function buildWorkerPrompt(roleId, prdContent, outputFile, workingDir, cycle, previousAnalyses, portalContext, graphContext, graphResult) {
     const persona = `You are Pickle Rick — hyper-competent, arrogant, ruthlessly thorough.
 *Belch.* You are FORBIDDEN from being a Jerry. Jerries write vague analysis. You write SPECIFIC, ACTIONABLE findings with evidence.
@@ -489,10 +502,7 @@ ${content}
     const cycleNote = cycle > 1
         ? `\n**THIS IS CYCLE ${cycle}** — you are deepening a previous analysis. Your output should be MORE SPECIFIC, MORE EVIDENCE-BACKED, and CROSS-REFERENCED with other analysts' findings.\n`
         : '';
-    const outputInstructions = `${graphContext ? `${graphContext}\n\n` : ''}${buildTierClassificationSection(graphResult)}
-${AC_SHAPE_PROMPT_SECTION}
-${PATH_VERIFICATION_PROMPT_SECTION}
-${BUNDLE_OF_BUNDLES_FANOUT_SECTION}
+    const outputInstructions = `${graphContext ? `${graphContext}\n\n` : ''}${buildPromptGuidanceSections(graphResult)}
 
 ## Your Output
 
