@@ -353,3 +353,87 @@ test('AC-ACSG-2c: violation stderr contains ac_id+ticket and describe.each or --
   assert.match(output, /AC-ERR.*ticket/, 'output must name the failing ac_id (AC-ERR) and include "ticket"');
   assert.match(output, /describe\.each\(\[|--skip-ac-shape-gate/, 'output must contain describe.each([ fix template OR --skip-ac-shape-gate override path');
 });
+
+// AC-ACSG-3a: LOA-727 attempt-2 regression fixture — loosened gate accepts the shape
+
+test('AC-ACSG-3a: LOA-727 attempt-2 fixture accepted (or clear-error per R-ACSG-2c)', () => {
+  const fixturePath = path.resolve(__dirname, 'fixtures/ac-shape-gate/loa-727-attempt2-manifest.json');
+  assert.ok(fs.existsSync(fixturePath), 'fixture file must exist at extension/tests/fixtures/ac-shape-gate/loa-727-attempt2-manifest.json');
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
+  const violations = evaluateAcShapeEnforcement(fixture);
+  if (violations.length > 0) {
+    // R-ACSG-2c: if still rejected, error must be actionable — names ac_id+ticket and includes fix template
+    const stderrLines = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...args) => {
+      stderrLines.push(typeof chunk === 'string' ? chunk : chunk.toString());
+      return true;
+    };
+    try {
+      runAcShapeEnforcement(fixture);
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    const output = stderrLines.join('');
+    assert.match(output, /LOA-727-AC-1.*ticket/, 'if rejected, error must name ac_id and "ticket"');
+    assert.match(output, /describe\.each\(\[|--skip-ac-shape-gate/, 'if rejected, error must include fix template or override path');
+  } else {
+    assert.deepEqual(violations, [], 'LOA-727 attempt-2 fixture must be accepted by the loosened gate');
+  }
+});
+
+// AC-ACSG-3b: monotonicity — two evaluations on same fixture produce identical results
+
+test('AC-ACSG-3b: evaluateAcShapeEnforcement is deterministic — same result on two calls', () => {
+  const fixturePath = path.resolve(__dirname, 'fixtures/ac-shape-gate/loa-727-attempt2-manifest.json');
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
+  const run1 = evaluateAcShapeEnforcement(fixture);
+  const run2 = evaluateAcShapeEnforcement(fixture);
+  assert.strictEqual(run1.length, run2.length, 'violation count must be identical across two evaluations');
+  assert.strictEqual(
+    JSON.stringify(run1.map((v) => v.ac_id).sort()),
+    JSON.stringify(run2.map((v) => v.ac_id).sort()),
+    'violation ac_id set must be identical across two evaluations',
+  );
+});
+
+// AC-ACSG-3c: negative corpus — genuinely-enumerated ACs still produce violations
+
+test('AC-ACSG-3c: single truly-enumerated ticket (no quantifier, no describe.each) produces >= 1 violation', () => {
+  const violations = evaluateAcShapeEnforcement({
+    ac_shape_smells: [{ ac_id: 'AC-NEG-1', ticket_ids: ['T-NEG-1'] }],
+    tickets: [{
+      id: 'T-NEG-1',
+      title: 'Handler validates permissions',
+      source_ac_ids: ['AC-NEG-1'],
+      acceptance_test: 'getA returns 200',
+    }],
+  });
+  assert.ok(violations.length >= 1, 'truly-enumerated single ticket must produce at least one violation');
+});
+
+test('AC-ACSG-3c: multi-ticket split with one empty justification produces >= 1 violation', () => {
+  const violations = evaluateAcShapeEnforcement({
+    ac_shape_smells: [{ ac_id: 'AC-NEG-2', ticket_ids: ['T-NEG-2A', 'T-NEG-2B'] }],
+    tickets: [
+      {
+        id: 'T-NEG-2A',
+        title: 'Handler getA validates permissions',
+        source_ac_ids: ['AC-NEG-2'],
+        acceptance_test: 'getA returns 200',
+        justification: 'covers getA path only',
+      },
+      {
+        id: 'T-NEG-2B',
+        title: 'Handler getB validates permissions',
+        source_ac_ids: ['AC-NEG-2'],
+        acceptance_test: 'getB returns 200',
+        // no justification — unjustified split
+      },
+    ],
+  });
+  assert.ok(violations.length >= 1, 'multi-ticket split with one empty justification must produce at least one violation');
+  const unjustifiedViolation = violations.find((v) => v.ac_id === 'AC-NEG-2');
+  assert.ok(unjustifiedViolation, 'violation must reference AC-NEG-2');
+  assert.ok(unjustifiedViolation.ticket_ids.includes('T-NEG-2B'), 'violation must identify the unjustified ticket T-NEG-2B');
+});

@@ -1,0 +1,16 @@
+{
+  "ac_shape_smells": [
+    {
+      "ac_id": "LOA-727-AC-1",
+      "ticket_ids": ["LOA-727-T1"]
+    }
+  ],
+  "tickets": [
+    {
+      "id": "LOA-727-T1",
+      "title": "All handlers validate permissions",
+      "source_ac_ids": ["LOA-727-AC-1"],
+      "acceptance_test": "describe.each([['getA'], ['getB'], ['getC']]) validates each handler"
+    }
+  ]
+}
