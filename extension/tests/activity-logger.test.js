@@ -227,6 +227,9 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // resumed session's command_template was the removed bare `/pickle`
         // (pickle.md) and is remapped to _pickle-manager-prompt.md.
         'pickle_command_deprecated',
+        // B-ACSG: R-ACSG-2 emits this when the AC-shape enforcement gate is
+        // bypassed via --skip-ac-shape-gate <reason>.
+        'ac_shape_gate_bypassed',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
