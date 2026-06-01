@@ -46,3 +46,25 @@ export function detectMissingTools(
     .filter((c) => NON_GUARANTEED_TOOLS.has(c))
     .filter((c) => !resolver(c));
 }
+
+export function containsUnquotedGlobHazard(command: string): boolean {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (inSingle) {
+      if (ch === "'") inSingle = false;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '\\' && i + 1 < command.length) { i++; continue; }
+      if (ch === '"') inDouble = false;
+      continue;
+    }
+    if (ch === "'") { inSingle = true; continue; }
+    if (ch === '"') { inDouble = true; continue; }
+    if (ch === '\\' && i + 1 < command.length) { i++; continue; }
+    if (ch === '*' || ch === '?' || ch === '[' || ch === '{') return true;
+  }
+  return false;
+}

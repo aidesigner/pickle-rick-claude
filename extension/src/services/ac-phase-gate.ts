@@ -113,6 +113,49 @@ function shouldEvaluate(criterion: AcPhaseCriterion, evaluationPhase: AcEvaluati
   return !criterion.phase || criterion.phase === pipelinePhase;
 }
 
+const SHELL_REQUIRES_RE = /[|&;<>$`(]/;
+
+function requiresShell(command: string): boolean {
+  return SHELL_REQUIRES_RE.test(command);
+}
+
+function tokenizeCommand(command: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (inSingle) {
+      if (ch === "'") { inSingle = false; } else { current += ch; }
+    } else if (inDouble) {
+      if (ch === '\\' && i + 1 < command.length) { current += command[++i]; }
+      else if (ch === '"') { inDouble = false; }
+      else { current += ch; }
+    } else if (ch === "'") {
+      inSingle = true;
+    } else if (ch === '"') {
+      inDouble = true;
+    } else if (ch === '\\' && i + 1 < command.length) {
+      current += command[++i];
+    } else if (/\s/.test(ch)) {
+      if (current) { tokens.push(current); current = ''; }
+    } else {
+      current += ch;
+    }
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+function runStringCommand(command: string, cwd: string, timeout: number) {
+  if (requiresShell(command)) {
+    return spawnSync('/bin/sh', ['-c', 'set -f; ' + command], { cwd, encoding: 'utf-8' as const, timeout });
+  }
+  const [bin, ...args] = tokenizeCommand(command);
+  return spawnSync(bin, args, { cwd, encoding: 'utf-8' as const, timeout });
+}
+
 function runBuiltinCriterion(criterion: AcPhaseCriterion, sessionDir: string): AcPhaseGateFailure | null {
   if (criterion.id !== 'AC-BUNDLE-03') return null;
 
@@ -138,7 +181,7 @@ function runCriterion(criterion: AcPhaseCriterion, cwd: string, sessionDir: stri
   const timeout = criterion.timeout_ms ?? DEFAULT_COMMAND_TIMEOUT_MS;
   const result = Array.isArray(criterion.command)
     ? spawnSync(criterion.command[0], criterion.command.slice(1), { cwd: commandCwd, encoding: 'utf-8', timeout })
-    : spawnSync(criterion.command, { cwd: commandCwd, encoding: 'utf-8', shell: true, timeout });
+    : runStringCommand(criterion.command, commandCwd, timeout);
   if (result.error) {
     return { id: criterion.id, reason: safeErrorMessage(result.error) };
   }
