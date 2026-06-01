@@ -129,6 +129,39 @@ test('warnIfCodexRequested: stays silent when neither state nor env asks for cod
     assert.strictEqual(warnings.length, 0, `no warning expected, got: ${JSON.stringify(captured)}`);
 });
 
+test('invariant: PICKLE_REFINEMENT_LOCK=1 forces claude even when state.backend is deepseek', () => {
+    const sessionDir = mkTmp();
+    try {
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ backend: 'deepseek', active: true }),
+        );
+        const prevEnv = process.env.PICKLE_BACKEND;
+        const prevLock = process.env.PICKLE_REFINEMENT_LOCK;
+        process.env.PICKLE_BACKEND = 'deepseek';
+        process.env.PICKLE_REFINEMENT_LOCK = '1';
+        try {
+            const inv = buildRefinementWorkerInvocation({
+                prompt: 'refine with deepseek lock',
+                addDirs: [sessionDir],
+                maxTurns: 5,
+            });
+            assert.strictEqual(inv.cmd, 'claude');
+            assert.strictEqual(inv.backend, 'claude');
+            const env = buildRefinementEnv({ ...process.env });
+            assert.strictEqual(env.PICKLE_BACKEND, 'claude');
+            assert.strictEqual(env.PICKLE_REFINEMENT_LOCK, '1');
+        } finally {
+            if (prevEnv === undefined) delete process.env.PICKLE_BACKEND;
+            else process.env.PICKLE_BACKEND = prevEnv;
+            if (prevLock === undefined) delete process.env.PICKLE_REFINEMENT_LOCK;
+            else process.env.PICKLE_REFINEMENT_LOCK = prevLock;
+        }
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
 // Regression guard — the load-bearing assertion the feature exists to protect.
 // If PICKLE_BACKEND=codex AND state.backend=codex, the refinement spawn
 // invocation MUST still be claude. Anything else means codex has leaked into

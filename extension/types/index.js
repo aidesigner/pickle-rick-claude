@@ -5,7 +5,7 @@
  * hallucination loop.
  */
 export const FALSE_EPIC_THRESHOLD = 3;
-export const BACKENDS = ['claude', 'codex', 'hermes'];
+export const BACKENDS = ['claude', 'codex', 'hermes', 'deepseek'];
 export const STATE_MANAGER_DEFAULTS = {
     maxLockRetries: 10,
     baseLockDelayMs: 100,

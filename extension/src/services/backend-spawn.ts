@@ -94,6 +94,7 @@ export interface SpawnInvocation {
   cmd: string;
   args: string[];
   backend: Backend;
+  env?: Record<string, string>;
 }
 
 export function isBackend(value: unknown): value is Backend {
@@ -324,12 +325,14 @@ export function resolveBackendFromStateFile(statePath: string): Backend {
 export function buildWorkerInvocation(backend: Backend, opts: WorkerInvocationOptions): SpawnInvocation {
   if (backend === 'codex') return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model, opts.effort);
   if (backend === 'hermes') return buildHermesWorkerInvocation(opts);
+  if (backend === 'deepseek') return buildDeepseekWorkerInvocation(opts);
   return buildClaudeWorkerInvocation(opts);
 }
 
 export function buildManagerInvocation(backend: Backend, opts: ManagerInvocationOptions): SpawnInvocation {
   if (backend === 'codex') return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model);
   if (backend === 'hermes') return buildHermesWorkerInvocation(opts);
+  if (backend === 'deepseek') return buildDeepseekManagerInvocation(opts);
   return buildClaudeManagerInvocation(opts);
 }
 
@@ -394,6 +397,31 @@ function buildCodexInvocation(prompt: string, addDirs: string[], model?: string,
   return { cmd: 'codex', args, backend: 'codex' };
 }
 
+function buildDeepseekEnvOverlay(): Record<string, string> {
+  const key = process.env.DEEPSEEK_API_KEY;
+  if (!key) throw new Error('DEEPSEEK_API_KEY is not set — cannot build DeepSeek invocation');
+  return {
+    ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
+    ANTHROPIC_AUTH_TOKEN: key,
+    ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL ?? 'deepseek-v4-pro',
+  };
+}
+
+function buildDeepseekWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvocation {
+  const base = buildClaudeWorkerInvocation(opts);
+  return { ...base, backend: 'deepseek', env: buildDeepseekEnvOverlay() };
+}
+
+function buildDeepseekManagerInvocation(opts: ManagerInvocationOptions): SpawnInvocation {
+  const base = buildClaudeManagerInvocation(opts);
+  return { ...base, backend: 'deepseek', env: buildDeepseekEnvOverlay() };
+}
+
+function buildDeepseekJudgeInvocation(opts: JudgeInvocationOptions): SpawnInvocation {
+  const base = buildClaudeJudgeInvocation(opts);
+  return { ...base, backend: 'deepseek', env: buildDeepseekEnvOverlay() };
+}
+
 function buildHermesWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvocation {
   const args: string[] = [
     'chat',
@@ -433,6 +461,7 @@ function buildHermesWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvoca
  */
 export function buildJudgeInvocation(backend: Backend, opts: JudgeInvocationOptions): SpawnInvocation {
   if (backend === 'codex') return buildCodexJudgeInvocation(opts);
+  if (backend === 'deepseek') return buildDeepseekJudgeInvocation(opts);
   return buildClaudeJudgeInvocation(opts);
 }
 

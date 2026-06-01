@@ -157,11 +157,11 @@ export interface State {
  */
 export const FALSE_EPIC_THRESHOLD = 3;
 
-export type Backend = 'claude' | 'codex' | 'hermes';
+export type Backend = 'claude' | 'codex' | 'hermes' | 'deepseek';
 export type BackendResolutionSource = 'state' | 'env' | 'settings' | 'default' | 'refinement-lock' | 'cli-flag-override';
 export type WorkerBackendResolutionSource = 'worker_backend' | 'backend' | 'env_lock';
 
-export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'hermes'] as const;
+export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'hermes', 'deepseek'] as const;
 
 export interface ProjectContext {
   project_context_path: string;

@@ -7,6 +7,7 @@ import * as path from 'path';
 import {
     buildWorkerInvocation,
     buildManagerInvocation,
+    buildJudgeInvocation,
     resolveBackend,
     resolveBackendFromStateFile,
     resolveBackendFromStateFileWithSource,
@@ -549,4 +550,133 @@ test('buildWorkerInvocation(claude): does NOT emit any effort/reasoning flag whe
     assert.equal(invUnset.args.includes('-c'), false);
     assert.equal(invUnset.args.includes('--reasoning-effort'), false);
     assert.equal(invUnset.args.includes('--append-system-prompt'), false);
+});
+
+// --- deepseek backend ---
+
+function withDeepseekKey(key, fn) {
+    const prev = process.env.DEEPSEEK_API_KEY;
+    if (key === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = key;
+    try {
+        return fn();
+    } finally {
+        if (prev === undefined) delete process.env.DEEPSEEK_API_KEY;
+        else process.env.DEEPSEEK_API_KEY = prev;
+    }
+}
+
+test('deepseek backend: isBackend returns true', () => {
+    assert.equal(isBackend('deepseek'), true);
+});
+
+test('deepseek backend: resolveBackend returns deepseek from state', () => {
+    withUnsetBackendEnv(() => {
+        assert.equal(resolveBackend({ backend: 'deepseek' }), 'deepseek');
+    });
+});
+
+test('deepseek backend: resolveBackend returns deepseek from PICKLE_BACKEND env', () => {
+    const prev = process.env.PICKLE_BACKEND;
+    process.env.PICKLE_BACKEND = 'deepseek';
+    try {
+        assert.equal(resolveBackend({}), 'deepseek');
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_BACKEND;
+        else process.env.PICKLE_BACKEND = prev;
+    }
+});
+
+test('deepseek backend: buildWorkerInvocation returns claude cmd with deepseek backend and env overlay', () => {
+    const dir = mkTmpDir('bs-ds-');
+    withDeepseekKey('test-ds-key-1234', () => {
+        const inv = buildWorkerInvocation('deepseek', {
+            prompt: 'hello deepseek',
+            addDirs: [dir],
+        });
+        assert.equal(inv.cmd, 'claude');
+        assert.equal(inv.backend, 'deepseek');
+        assert.ok(inv.args.includes('--dangerously-skip-permissions'));
+        assert.ok(inv.args.includes('-p'));
+        assert.equal(inv.args[inv.args.length - 1], 'hello deepseek');
+        assert.ok(inv.env != null, 'env overlay must be present');
+        assert.equal(inv.env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
+        assert.equal(inv.env.ANTHROPIC_AUTH_TOKEN, 'test-ds-key-1234');
+        assert.ok(typeof inv.env.ANTHROPIC_MODEL === 'string' && inv.env.ANTHROPIC_MODEL.length > 0);
+    });
+});
+
+test('deepseek backend: buildWorkerInvocation uses ANTHROPIC_MODEL env when set', () => {
+    const prevModel = process.env.ANTHROPIC_MODEL;
+    process.env.ANTHROPIC_MODEL = 'deepseek-r2';
+    withDeepseekKey('test-key', () => {
+        const inv = buildWorkerInvocation('deepseek', { prompt: 'x', addDirs: [] });
+        assert.equal(inv.env.ANTHROPIC_MODEL, 'deepseek-r2');
+    });
+    if (prevModel === undefined) delete process.env.ANTHROPIC_MODEL;
+    else process.env.ANTHROPIC_MODEL = prevModel;
+});
+
+test('deepseek backend: buildWorkerInvocation defaults ANTHROPIC_MODEL to deepseek-v4-pro', () => {
+    const prevModel = process.env.ANTHROPIC_MODEL;
+    delete process.env.ANTHROPIC_MODEL;
+    withDeepseekKey('test-key', () => {
+        const inv = buildWorkerInvocation('deepseek', { prompt: 'x', addDirs: [] });
+        assert.equal(inv.env.ANTHROPIC_MODEL, 'deepseek-v4-pro');
+    });
+    if (prevModel === undefined) delete process.env.ANTHROPIC_MODEL;
+    else process.env.ANTHROPIC_MODEL = prevModel;
+});
+
+test('deepseek backend: buildWorkerInvocation throws when DEEPSEEK_API_KEY unset', () => {
+    withDeepseekKey(undefined, () => {
+        assert.throws(
+            () => buildWorkerInvocation('deepseek', { prompt: 'x', addDirs: [] }),
+            /DEEPSEEK_API_KEY/,
+        );
+    });
+});
+
+test('deepseek backend: buildManagerInvocation returns claude cmd with deepseek backend and env overlay', () => {
+    withDeepseekKey('mgr-key', () => {
+        const inv = buildManagerInvocation('deepseek', {
+            prompt: 'manage deepseek',
+            addDirs: [],
+        });
+        assert.equal(inv.cmd, 'claude');
+        assert.equal(inv.backend, 'deepseek');
+        assert.ok(inv.env != null);
+        assert.equal(inv.env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
+        assert.equal(inv.env.ANTHROPIC_AUTH_TOKEN, 'mgr-key');
+    });
+});
+
+test('deepseek backend: buildJudgeInvocation retains read-only sandbox and carries env overlay', () => {
+    withDeepseekKey('judge-key', () => {
+        const inv = buildJudgeInvocation('deepseek', {
+            prompt: 'judge this',
+            addDirs: [],
+        });
+        assert.equal(inv.cmd, 'claude');
+        assert.equal(inv.backend, 'deepseek');
+        // Read-only sandbox contract must be preserved
+        assert.ok(inv.args.includes('--allowedTools'), 'judge must have --allowedTools');
+        const toolsIdx = inv.args.indexOf('--allowedTools');
+        assert.equal(inv.args[toolsIdx + 1], 'Read,Glob,Grep');
+        assert.ok(inv.args.includes('--no-session-persistence'), 'judge must have --no-session-persistence');
+        // Env overlay must be present
+        assert.ok(inv.env != null);
+        assert.equal(inv.env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
+        assert.equal(inv.env.ANTHROPIC_AUTH_TOKEN, 'judge-key');
+    });
+});
+
+test('NFR: claude worker invocation has no env field (zero pollution)', () => {
+    const inv = buildWorkerInvocation('claude', { prompt: 'x', addDirs: [] });
+    assert.equal(inv.env, undefined, 'claude invocation must not carry env overlay');
+});
+
+test('NFR: codex worker invocation has no env field (zero pollution)', () => {
+    const inv = buildWorkerInvocation('codex', { prompt: 'x', addDirs: [] });
+    assert.equal(inv.env, undefined, 'codex invocation must not carry env overlay');
 });
