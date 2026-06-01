@@ -240,6 +240,22 @@ export function resolvePassModelOverride(overrides: Record<string, string>, pass
   return overrides[String(pass)];
 }
 
+// Resolve the codex model for a remediator spawn. Preserves the legacy fallback:
+// if the state file is missing/unreadable and the backend is still codex, use the
+// caller-provided fallback model defaults (R-XBL-2). Non-codex backends → undefined.
+function resolveRemediatorCodexModel(
+  execBackend: Backend,
+  sessionDir: string,
+  remediatorState: State | null,
+): string | undefined {
+  if (execBackend !== 'codex') return undefined;
+  try {
+    return resolveCodexModel(getExtensionRoot(), remediatorState ?? sm.read(path.join(sessionDir, 'state.json')));
+  } catch {
+    return resolveCodexModel(getExtensionRoot(), null);
+  }
+}
+
 export async function runRemediatorForIteration(
   gateResult: GateResult,
   sessionDir: string,
@@ -293,21 +309,10 @@ export async function runRemediatorForIteration(
   // PICKLE_REFINEMENT_LOCK=1 still wins via resolveWorkerBackendFromState.
   const execBackend = workerBackendResolution.backend;
 
-  // Preserve the legacy fallback behavior for codex model resolution: if the
-  // state file is missing/unreadable and the backend is still codex, use the
-  // caller-provided fallback model defaults.
   // Plumb codex model so remediator spawns honor `default_codex_model` /
-  // `state.codex_model` instead of falling back to the codex CLI compiled-in
-  // default. Other backends ignore the field.
-  let codexModel: string | undefined;
-  if (execBackend === 'codex') {
-    try {
-      const extRoot = getExtensionRoot();
-      codexModel = resolveCodexModel(extRoot, remediatorState ?? sm.read(path.join(sessionDir, 'state.json')));
-    } catch {
-      codexModel = resolveCodexModel(getExtensionRoot(), null);
-    }
-  }
+  // `state.codex_model` instead of the codex CLI compiled-in default. Other
+  // backends ignore the field. (Fallback logic in resolveRemediatorCodexModel.)
+  const codexModel = resolveRemediatorCodexModel(execBackend, sessionDir, remediatorState);
   const invocation = buildWorkerInvocation(execBackend, {
     prompt: briefContent,
     addDirs: [workingDir],
