@@ -74,6 +74,46 @@ Extract `SESSION_ROOT`. Save original path as `<PRD_PATH>`. `cp "<PRD_PATH>" "${
 
 ## Step 4: Deploy Refinement Team
 
+### 4-route: Kill-switch (`PICKLE_REFINE_WORKFLOW`)
+
+Read `PICKLE_REFINE_WORKFLOW` from the environment to pick the refinement engine:
+
+- `off`, empty, or **unset** → **legacy subprocess path** (Steps 4a–4c below, unchanged). This is the
+  default until the R-DWF-3 soak passes — production refinements stay on the proven path.
+- `on` / `1` / `workflow` → **Dynamic Workflow path** (Step 4-WF below). Opt-in for the
+  workflow-backed analyst fan-out.
+
+> The workflow path requires Dynamic Workflows enabled in the runtime (`/config`). If workflows are
+> unavailable, fall back to the legacy path regardless of the flag.
+
+### 4-WF: Launch the analyst-fan-out workflow (workflow path only)
+
+Launch the Dynamic Workflow at `.claude/workflows/refine-analyze.js` via the Workflow tool with:
+
+```
+args = {
+  prdPath:       "${SESSION_ROOT}/prd.md",   // absolute
+  sessionDir:    "${SESSION_ROOT}",          // absolute
+  workingDir:    "<repo working dir>",        // absolute
+  refinementDir: "${SESSION_ROOT}/refinement",
+  cycles:        3,                            // or --cycles override
+  maxTurns:      100                           // or --max-turns override
+}
+```
+
+The workflow runs the 3-role × N-cycle analyst fan-out (cross-cycle context flows through script
+variables — no `analysis_*.md` disk round-trip) and a synthesis agent that writes `prd_refined.md`
+and `refinement_manifest.json` to `${SESSION_ROOT}` and returns:
+
+```
+{ sessionDir, refinementDir, manifestPath, manifest, analyses, allSuccess }
+```
+
+**Consume the returned `manifest` / `manifestPath` directly** in place of the legacy `MANIFEST=` /
+`REFINEMENT_DIR=` stdout parse. Then skip Steps 4a–4c and go to Step 5 (the manifest and
+`prd_refined.md` already exist on disk — Step 6's synthesis was done by the workflow's synthesis
+agent on this path).
+
 ### 4a: Monitor (if tmux)
 ```bash
 REFINE_HASH="$(basename "${SESSION_ROOT}" | sed 's/.*\(.\{8\}\)$/\1/')"
@@ -97,7 +137,9 @@ tmux kill-session -t "refine-${REFINE_HASH}" 2>/dev/null || true
 ```
 
 ## Step 5: Audit Reports
-Read `${SESSION_ROOT}/refinement_manifest.json`. Warn on failed workers, continue with available `analysis_*.md` + original PRD.
+Read `${SESSION_ROOT}/refinement_manifest.json` (on the workflow path this is the file the synthesis
+agent wrote; the returned `manifest` object mirrors it). Warn on failed workers, continue with
+available `analysis_*.md` + original PRD.
 
 If `spawn-refinement-team.js` exits `2` with an AC-shape collapse-or-justify failure, stop and fix the PRD/ticket shape before continuing:
 - Rewrite the smelly AC as one invariant-shaped acceptance criterion using a universal quantifier such as "all", "every", or "for any"; then rerun refinement.
@@ -108,7 +150,11 @@ The manifest now carries:
 - `tickets[].justification?`: required when a smelly AC intentionally fans out into multiple tickets.
 
 ## Step 6: Synthesize Refined PRD
-Write `${SESSION_ROOT}/prd_refined.md`. Rules:
+
+> **Workflow path:** `prd_refined.md` was already written by the workflow's synthesis agent in
+> Step 4-WF. Verify it exists and is non-empty, then continue to Step 7. Do NOT re-synthesize.
+
+**Legacy path:** Write `${SESSION_ROOT}/prd_refined.md`. Rules:
 1. Preserve structure, additive over rewriting
 2. Attribute: `*(refined: [source])*`
 3. P0 gaps first, P1 next, P2 optional
