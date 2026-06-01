@@ -41,8 +41,8 @@ function parseBackend(value: string): Backend {
 function loadSchemaDefinitions(): Record<string, ActivitySchemaDefinition> {
   if (schemaDefinitionsCache) return schemaDefinitionsCache;
   const candidates = [
-    new URL('../activity-events.schema.json', import.meta.url),
     new URL('../src/types/activity-events.schema.json', import.meta.url),
+    new URL('../activity-events.schema.json', import.meta.url),
   ];
   for (const candidate of candidates) {
     try {

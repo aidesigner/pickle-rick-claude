@@ -327,6 +327,14 @@ rsync -a --delete --delete-excluded \
   --exclude='package-lock.json' \
   "$SCRIPT_DIR/extension/" "$EXTENSION_ROOT/extension/"
 
+# Deploy real schema bytes to deployed extension root, overwriting the $ref stub (R-LASP-1-CC).
+# install.sh excludes src/ from rsync, so the real 57KB schema must be copied explicitly.
+_schema_src="$SCRIPT_DIR/extension/src/types/activity-events.schema.json"
+if [ -f "$_schema_src" ]; then
+  echo "📋 Deploying activity-events schema…"
+  cp "$_schema_src" "$EXTENSION_ROOT/extension/activity-events.schema.json"
+fi
+
 # --- POST-RSYNC MD5 PARITY PROBE (R-ITS-2) ---
 # Verifies source-built and deployed copies of the 5 most-trafficked compiled
 # JS files are byte-identical after rsync. Mismatch → exit 1 with diff list.
