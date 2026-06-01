@@ -474,7 +474,7 @@ async function runCheckCommand(
   const args = parts.slice(1);
   const missingBin = detectMissingTools([bin]);
   if (missingBin.length > 0) {
-    return Promise.resolve({ stdout: '', stderr: `tool not installed: ${bin}`, exitCode: 1 });
+    return { stdout: '', stderr: `tool not installed: ${bin}`, exitCode: 1 };
   }
   return await new Promise<CheckResult>((resolve, reject) => {
     const controller = new AbortController();
