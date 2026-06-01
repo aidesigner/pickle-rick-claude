@@ -7,9 +7,9 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.89.0** — 2026-05-31 |
-| Latest GitHub release | v1.89.0 (v1.81.1..v1.89.0 all tagged) |
-| Active pipeline | **B-R-MMTR** (drain row 4) — `prds/p1-bug-fix-bundle-r-mmtr-closeout.md`, launching 2026-05-31. 10 tickets: R-ICDM-2..7 conformance audits (most already shipped) + R-MMTRH heal-script + C-R-MMTR-CLOSER. Schema-neutral. B-PNTR shipped v1.89.0 (babysitter completed the stalled closer). B-E2E follow-on next. |
+| Version (source/deployed) | **v1.89.1** — 2026-05-31 |
+| Latest GitHub release | v1.89.1 (v1.81.1..v1.89.1 all tagged) |
+| Active pipeline | **none** — B-R-MMTR shipped v1.89.1 (babysitter completed the closer after it halted clean on a release-gate blocker: commit 273a2d68 carried spurious reliability-bundle trailers failing audit-fix-commits; worker-blocked by R-WSRC-GR history-rewrite ban; babysitter stripped them via filter-branch on the unpushed range). Next: drain row 4b (B-E2E). |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive:** drain bug bundles before feature epics; P1 > P2 > P3. All feature epics (R-PGI v1.83.0 / R-PIAP v1.84.0 / R-DC v1.85.0) are shipped.
@@ -25,7 +25,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 | # | Bundle | Pri | Open findings | PRD / source | Size |
 |---|--------|-----|---------------|--------------|------|
 | ~~3~~ | **B-PNTR** ✅ SHIPPED v1.89.0 | — | #77 closed | `prds/p2-remove-non-tmux-pickle-loop.md` — extracted `_pickle-manager-prompt.md`, removed bare `/pickle`, schema-neutral. Closer caught + fixed a latent FATAL deploy bug (template was deployed one level too deep for the runtime resolver; added explicit install.sh cp). | done |
-| 4 | **B-R-MMTR** | P1 | #28 R-ICDM, #19 R-MMTR | `prds/p1-bug-fix-bundle-r-mmtr-closeout.md` (R-ICDM-2..7 conformance audits + R-MMTRH heal-script + R-MMTR-7 closer; schema-neutral). **LAUNCHING 2026-05-31.** | ~10 |
+| ~~4~~ | **B-R-MMTR** ✅ SHIPPED v1.89.1 | — | #28 + #19 closed | `prds/p1-bug-fix-bundle-r-mmtr-closeout.md` — R-ICDM-2..7 conformance audits (already-shipped intactness confirmed) + R-MMTRH heal-script + closer. Schema-neutral. Closer (babysitter-completed) stripped a spurious reliability trailer from 273a2d68 that failed audit-fix-commits. | done |
 | 4b | **B-E2E** | P3 | #19 R-MMTR-6 | `prds/p1-mmtr-6-decompose-e2e-into-sub-tickets.md` (decompose force-skipped oversized R-MMTR-6 E2E ticket into 4-5 sub-tickets, then re-attempt). Follow-on AFTER B-R-MMTR. | ~5 |
 | 5 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | author — verify-command host-tool check (#39) + zsh shell-glob safety (#40) | ~4+4 |
 | 6 | **B-PPCD** | P2 | #85 R-PPCD | author — doc-only: citadel phase list in `pickle-pipeline.md` + `persona.md` (verified still drifted 2026-05-30) | ~1-2 |
@@ -52,7 +52,7 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 | # | Code | Summary | Notes |
 |---|---|---|---|
 | 25 | R-CSI | Concurrent claude-session destructive-command interference (3 SIGINT incidents/36h) — DATA LOSS class | `p1-concurrent-claude-session-interference-with-running-pipelines.md`. **Watch-only — external-event-gated:** Phase 1 forensics need a real incident to analyze. Skipped by the drain; surfaces on the next incident. |
-| 28 | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | R-ICDM-1 shipped; R-ICDM-2..7 audit. **B-R-MMTR.** |
+| ~~28~~ | R-ICDM | claude iteration classifier `detectManagerMaxTurnsExit` misuse — manager loop control regression | **CLOSED — SHIPPED v1.89.1 (B-R-MMTR).** R-ICDM-1 shipped; R-ICDM-2..7 conformance audits confirmed the fix intact at HEAD (reclassifier ternary, template relaxation, regression test, trap-door, event all present). |
 | 77 | R-PNTR-DEPS | B-PNTR R-PNTR-1 (`d586b545`) wrongly deleted load-bearing `.claude/commands/pickle.md` (read every tmux iteration by mux-runner/pipeline-runner/jar-runner as the manager-prompt template) → `[FATAL] pickle.md not found`. Restored `40f22573`. **RE-SCOPED 2026-05-30** (operator-confirmed): `pickle.md` was dual-purpose (bare-`/pickle` command + manager template). **IMPLEMENTED R-PNTR-1..7** (session `2026-05-31-30c7524b`): extracted manager-lifecycle body to `_pickle-manager-prompt.md` (infra template via `extensionRoot/templates/`), repointed 3 consumers + `command_template` default, added schema-neutral resume remap, removed bare `/pickle`. Schema-neutral (dodges #74). **CLOSED — SHIPPED v1.89.0 (2026-05-31).** Closer (completed by babysitter) caught a latent FATAL: install.sh deployed the template to `$EXTENSION_ROOT/extension/templates/` but the runtime resolver reads `getExtensionRoot()/templates` = `$EXTENSION_ROOT/templates/`; added an explicit cp so fresh installs no longer FATAL. **B-PNTR.** |
 
 ### P2
@@ -70,7 +70,7 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 | # | Code | Summary | Notes |
 |---|---|---|---|
 | 12 | R-PSAI | `/pickle-pipeline` ignores branch/subset signals in operator kickoff | `p2-pickle-pipeline-no-scope-auto-inference.md`. (Demoted P2→P3: operator can pass `--scope`.) |
-| 19 | R-MMTR | claude manager max-turns family closeout pending | R-MMTR-1/5 shipped; 2/3/4 Skipped+commit; 6 force-skipped; 7 closer pending. **B-R-MMTR / B-E2E.** |
+| ~~19~~ | R-MMTR | claude manager max-turns family closeout pending | **CLOSED — SHIPPED v1.89.1 (B-R-MMTR).** R-MMTR-1/5 shipped; 2/3/4 healed close-by-evidence (commits in main); 7 closer ran (babysitter). Residual R-MMTR-6 oversized E2E ticket → **B-E2E** row 4b follow-on. |
 | 29 | R-MWCL | monitor `inferMonitorMode` falls through to `'pickle'` for szechuan/anatomy | R-MWCL-1 shipped; 3..7 residual. **B-MONITOR** (#27 R-MMRT half already closed v1.80.1). |
 | 37e | R-PIWG-5 | git-isolation residual: `lsof` launch-time concurrent-access probe | **B-LSOF** (~2-3). |
 | 87 | R-LASP | Deployed `bin/log-activity.js:36` resolves the activity schema via `new URL('../src/types/activity-events.schema.json', import.meta.url)` → `~/.claude/pickle-rick/extension/src/types/…` which `install.sh` does NOT create; the schema is deployed to `extension/` root (`~/.claude/pickle-rick/extension/activity-events.schema.json`). Result: `log-activity.js` CLI logs `Failed to load activity schema: ENOENT` and degrades (fail-open, validation skipped). **Regression surfaced after v1.86.0 install (2026-05-30)** — worked earlier same session. Fix: align `log-activity.js` (TS source) schema resolution with `install.sh`'s deploy target (read from `extension/` root, with a `src/types/` fallback for the in-repo case), + a deploy-parity test. P3 (tooling, fail-open; pipelines unaffected — runtime logging uses compiled `state-manager.js`). Author bundle **B-LASP** (~2). |
