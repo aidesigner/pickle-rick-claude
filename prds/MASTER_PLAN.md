@@ -9,7 +9,7 @@
 |---|---|
 | Version (source/deployed) | **v1.89.1** — 2026-05-31 |
 | Latest GitHub release | v1.89.1 (v1.81.1..v1.89.1 all tagged) |
-| Active pipeline | **none** — B-R-MMTR shipped v1.89.1 (babysitter completed the closer after it halted clean on a release-gate blocker: commit 273a2d68 carried spurious reliability-bundle trailers failing audit-fix-commits; worker-blocked by R-WSRC-GR history-rewrite ban; babysitter stripped them via filter-branch on the unpushed range). Next: drain row 4b (B-E2E). |
+| Active pipeline | **B-GATE** (drain row 5, P2) — `prds/p2-bug-fix-bundle-b-gate-verify-command-safety.md`, launching 2026-05-31. 8 tickets: R-PVTA-1/2/3 (host-tool preflight) + R-VSGE-1/2/3 (zsh shell-glob safety) + R-GATE-TD + closer. Schema-neutral (PATCH → v1.89.2). B-R-MMTR shipped v1.89.1. B-E2E (P3) deferred below B-GATE per P1>P2>P3. |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive:** drain bug bundles before feature epics; P1 > P2 > P3. All feature epics (R-PGI v1.83.0 / R-PIAP v1.84.0 / R-DC v1.85.0) are shipped.
@@ -27,7 +27,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 | ~~3~~ | **B-PNTR** ✅ SHIPPED v1.89.0 | — | #77 closed | `prds/p2-remove-non-tmux-pickle-loop.md` — extracted `_pickle-manager-prompt.md`, removed bare `/pickle`, schema-neutral. Closer caught + fixed a latent FATAL deploy bug (template was deployed one level too deep for the runtime resolver; added explicit install.sh cp). | done |
 | ~~4~~ | **B-R-MMTR** ✅ SHIPPED v1.89.1 | — | #28 + #19 closed | `prds/p1-bug-fix-bundle-r-mmtr-closeout.md` — R-ICDM-2..7 conformance audits (already-shipped intactness confirmed) + R-MMTRH heal-script + closer. Schema-neutral. Closer (babysitter-completed) stripped a spurious reliability trailer from 273a2d68 that failed audit-fix-commits. | done |
 | 4b | **B-E2E** | P3 | #19 R-MMTR-6 | `prds/p1-mmtr-6-decompose-e2e-into-sub-tickets.md` (decompose force-skipped oversized R-MMTR-6 E2E ticket into 4-5 sub-tickets, then re-attempt). Follow-on AFTER B-R-MMTR. | ~5 |
-| 5 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | author — verify-command host-tool check (#39) + zsh shell-glob safety (#40) | ~4+4 |
+| 5 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | `prds/p2-bug-fix-bundle-b-gate-verify-command-safety.md` (host-tool preflight #39 + zsh shell-glob safety #40 in `ac-phase-gate.ts`/`convergence-gate.ts`; schema-neutral). **LAUNCHING 2026-05-31.** | ~8 |
 | 6 | **B-PPCD** | P2 | #85 R-PPCD | author — doc-only: citadel phase list in `pickle-pipeline.md` + `persona.md` (verified still drifted 2026-05-30) | ~1-2 |
 | 7 | **B-ACSG** | P2 | #84 R-ACSG | `prds/BUG-REPORT-2026-05-27-refine-prd-ac-shape-gate-oscillation.md` (4 hypotheses — narrow=matcher, wide=convergence arch) | ~3-8 |
 | 8 | **B-WEDGE** | P2 | #30 R-RSU | R-RSU refinement over-collapse (#33 R-WMW shipped with B-WSWA v1.86.0 per overlap rule; absorbs B-QSRC R-RSU residual; R-QGSK already shipped) | ~3 |
