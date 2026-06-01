@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { execFileSync, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { printMinimalPanel, getDataRoot, withRetryLock, findSessionPathForCwd, safeErrorMessage } from '../services/pickle-utils.js';
+import { lookupCommandForPid } from '../services/git-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { LockError } from '../types/index.js';
 import { readRecoverableJsonObject } from '../services/recoverable-json.js';
@@ -138,15 +139,6 @@ function probeLockHolder(lockPath: string): { pid: number; command: string } | n
 
   // Neither tool answered confidently. Refuse cleanup conservatively.
   return { pid: -1, command: 'probe-unavailable' };
-}
-
-function lookupCommandForPid(pid: number): string | null {
-  try {
-    const out = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf-8', timeout: 5_000 });
-    return out.trim() || null;
-  } catch {
-    return null;
-  }
 }
 
 export function cancelSession(cwd: string) {

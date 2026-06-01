@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { runCmd, extractFrontmatter, formatLocalDateKey } from './pickle-utils.js';
 import { syncLinearTicketStatus } from './linear-integration.js';
 export function runGit(cmd, cwd, check = true) {
@@ -269,4 +269,65 @@ export function getDiffFiles(base, head, repoRoot) {
  */
 export function getMergeBase(ref1, ref2, repoRoot) {
     return runGit(['merge-base', ref1, ref2], repoRoot).trim();
+}
+/**
+ * Shared spawn primitive: look up the command name for a running PID via
+ * `ps -p <pid> -o comm=`. Returns the trimmed command string or null on error.
+ * Every subprocess carries a finite positive timeout (trap-door convention).
+ */
+export function lookupCommandForPid(pid) {
+    try {
+        const out = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf-8', timeout: 5_000 });
+        return out.trim() || null;
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Advisory probe for live concurrent git access on `repoRoot`.
+ *
+ * Strategy:
+ *   1. `lsof -t <repoRoot>/.git/index.lock` — POSIX standard, returns PID list
+ *      on stdout.
+ *   2. Fall back to `pgrep -f 'git -C <repoRoot>'` — looser match.
+ *   3. If neither tool answers confidently, returns `null` (FAIL-OPEN) — the
+ *      launch probe treats probe-tool absence as "no confident holder detected".
+ *
+ * This is the advisory counterpart to `cancel.ts:probeLockHolder`, which uses
+ * the same spawn pattern but fails CLOSED (returns a synthetic holder when both
+ * tools are unavailable, to protect the destructive unlink path).
+ */
+export function probeConcurrentGitAccess(repoRoot) {
+    const lockPath = path.join(repoRoot, '.git', 'index.lock');
+    const lsof = spawnSync('lsof', ['-t', lockPath], { encoding: 'utf-8', timeout: 5_000 });
+    if (lsof.status === 0 && typeof lsof.stdout === 'string') {
+        const pids = lsof.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+        if (pids.length > 0) {
+            const pidNum = Number.parseInt(pids[0], 10);
+            if (Number.isFinite(pidNum)) {
+                return { pid: pidNum, command: lookupCommandForPid(pidNum) ?? 'unknown' };
+            }
+        }
+        // lsof exited 0 with empty stdout — no holder
+        return null;
+    }
+    if (lsof.status === 1) {
+        // lsof exits 1 when no process holds the file — confirmed no holder
+        return null;
+    }
+    // lsof unavailable or errored — fall back to pgrep
+    const pgrep = spawnSync('pgrep', ['-f', `git -C ${repoRoot}`], { encoding: 'utf-8', timeout: 5_000 });
+    if (pgrep.status === 0 && typeof pgrep.stdout === 'string') {
+        const pid = Number.parseInt(pgrep.stdout.split('\n')[0]?.trim() ?? '', 10);
+        if (Number.isFinite(pid)) {
+            return { pid, command: lookupCommandForPid(pid) ?? 'unknown' };
+        }
+    }
+    if (pgrep.status === 1) {
+        // pgrep exits 1 when no matches — confirmed no holder
+        return null;
+    }
+    // Neither tool answered confidently — fail OPEN (advisory: no holder assumed)
+    return null;
 }

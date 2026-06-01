@@ -47,7 +47,7 @@ Machine-maintained export index for the `services/` subsystem. The audit script 
 - `council-fanout.ts` -> `StackTier`, `SubagentSpec`, `planFanOut`
 - `council-schema.ts` -> `BranchEntry`, `CodexBranchResult`, `CodexVerdictValue`, `CouncilSchemaError`, `Directive`, `Finding`, `KNOWN_CATEGORIES`, `KnownCategory`, `StackOverview`, `SubagentPayload`, `TrapDoor`, `validateDirective`, `validateSubagentPayload`
 - `dot-builder.ts` -> `BUILD_ERROR_CODES`, `BuildError`, `BuildErrorCode`, `BuildResult`, `BuildResultNs`, `BuilderSpec`, `BuilderSpecNs`, `DefenseMatrix`, `DefenseMatrixNs`, `Diagnostic`, `DiagnosticNs`, `DotBuilder`, `MicroverseOpts`, `MicroverseOptsNs`, `PhaseSpec`, `PhaseSpecNs`, `StylesheetConfig`, `StylesheetConfigNs`, `ValidationResult`, `ValidationResultNs`, `WorkspaceOpts`, `WorkspaceOptsNs`, `_parseConvergenceSpec`, `_parsePhases`
-- `git-utils.ts` -> `DiffEntry`, `DiffStatus`, `TicketFrontmatterPatch`, `getBranchName`, `getDiffFiles`, `getGithubUser`, `getHeadBranch`, `getHeadSha`, `getMergeBase`, `isGitIgnoredPath`, `isWorkingTreeDirty`, `listWorkingTreeDirtyPaths`, `resetToSha`, `runGit`, `updateTicketFrontmatter`, `updateTicketStatus`
+- `git-utils.ts` -> `ConcurrentGitHolder`, `DiffEntry`, `DiffStatus`, `TicketFrontmatterPatch`, `getBranchName`, `getDiffFiles`, `getGithubUser`, `getHeadBranch`, `getHeadSha`, `getMergeBase`, `isGitIgnoredPath`, `isWorkingTreeDirty`, `listWorkingTreeDirtyPaths`, `lookupCommandForPid`, `probeConcurrentGitAccess`, `resetToSha`, `runGit`, `updateTicketFrontmatter`, `updateTicketStatus`
 - `jar-utils.ts` -> `addToJar`
 - `judge-spawn-env.ts` -> `JudgeBackend`, `buildJudgeSpawnEnv`, `getJudgeEnvForAttempt`
 - `linear-integration.ts` -> `emitBundleLinearComments`, `syncLinearTicketStatus`
