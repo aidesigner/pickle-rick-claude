@@ -7,6 +7,7 @@ import { LockError, type ActivityEventType, type GateResult, type GateMode, type
 import { withLock } from './state-manager.js';
 import { readRecoverableJsonObject } from './microverse-state.js';
 import { writeStateFile } from './pickle-utils.js';
+import { detectMissingTools } from './verify-command-safety.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -471,6 +472,10 @@ async function runCheckCommand(
   }
   const bin = parts[0]!;
   const args = parts.slice(1);
+  const missingBin = detectMissingTools([bin]);
+  if (missingBin.length > 0) {
+    return Promise.resolve({ stdout: '', stderr: `tool not installed: ${bin}`, exitCode: 1 });
+  }
   return await new Promise<CheckResult>((resolve, reject) => {
     const controller = new AbortController();
     const timeoutHandle = setTimeout(() => {

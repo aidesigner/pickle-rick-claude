@@ -4,6 +4,7 @@ import { spawnSync } from 'child_process';
 import { isRecord } from '../lib/is-record.js';
 import { auditCodexManagerRelaunchCaps } from './bundle-state-integrity.js';
 import { safeErrorMessage } from './pickle-utils.js';
+import { detectMissingTools } from './verify-command-safety.js';
 
 export const AC_PHASE_MANIFEST = 'ac-phase-manifest.json';
 const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
@@ -128,6 +129,10 @@ function runCriterion(criterion: AcPhaseCriterion, cwd: string, sessionDir: stri
   const builtinFailure = runBuiltinCriterion(criterion, sessionDir);
   if (builtinFailure) return builtinFailure;
   if (!criterion.command) return null;
+  const missing = detectMissingTools(criterion.command);
+  if (missing.length > 0) {
+    return { id: criterion.id, reason: `tool not installed: ${missing.join(', ')} — install the tool or rewrite the AC with POSIX equivalents` };
+  }
   const expected = criterion.expected_exit_code ?? 0;
   const commandCwd = criterion.cwd ?? cwd;
   const timeout = criterion.timeout_ms ?? DEFAULT_COMMAND_TIMEOUT_MS;
