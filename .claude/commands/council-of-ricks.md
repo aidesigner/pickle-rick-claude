@@ -333,7 +333,24 @@ On any per-branch timeout / non-zero exit / empty output: record the failure for
 
 ### Step 15: Fan-Out Orchestration
 
-The main agent (you) executes one round like this:
+**Kill-switch — Dynamic Workflow path (`PICKLE_COUNCIL_WORKFLOW`).** If the env var `PICKLE_COUNCIL_WORKFLOW` is set to any non-empty value, run this round's Phases A–D as a **single top-level Dynamic Workflow** instead of the manual `Agent` fan-out below, then resume at Step 16. Otherwise (flag unset — the default) run the legacy manual fan-out in steps 1–6 below, unchanged.
+
+When the flag is set:
+1. Invoke the **Workflow tool** as an **independent top-level run** — call `Workflow({ name: 'council-round', args: {...} })` directly. Do **NOT** wrap it in a nested `workflow()` call from inside another script: nesting shares the parent's 1000-agent counter, while an independent top-level invocation resets it (one fresh 1000-agent budget per round — required for `xxl` stacks whose sharded fan-out can reach ~91 specs/round).
+2. Pass `args` with: `branches` (tip→trunk, from `council-stack.json`), `stackTier`, `codexEnabled` (= `codex_enabled`), `hasMigrationJournal` (true iff `db/migrations/meta/_journal.json` exists), `round` (= current iteration `N`), and `sessionFiles` with ABSOLUTE paths:
+   - `principlesPath` = `<SESSION_ROOT>/council-principles.md`
+   - `claudeRulesPath` = `<SESSION_ROOT>/council-claude-rules.json`
+   - `stackPath` = `<SESSION_ROOT>/council-stack.json`
+   - `historicalBriefPath` = `<SESSION_ROOT>/round-<N>/historical-brief.md`
+   - `directivePath` = `<SESSION_ROOT>/council-directive.json`
+   - `summaryPath` = `<SESSION_ROOT>/council-of-ricks-summary.md`
+   - `codexDir` = `<SESSION_ROOT>/codex`
+   - `codexCompanionPath` = `codex_companion_path` from `council-stack.json`
+3. The workflow runs Phase A (historical brief) → Phase B/C judges (read-only `Explore` agents, sharded per `planFanOut`; the runtime queues any fan-out beyond the `min(16,cores−2)` cap and the script `log()`s a batched-sweeps notice so the round never claims a single simultaneous wave) → optional Phase C codex sweep → Phase D synthesis. Its return value is the only thing that lands back in context:
+   `{ round, summary, directive, directive_path, issue_counts, codex_verdicts }`.
+4. Consume the return: the workflow already wrote `council-directive.json` (atomic) and appended the `## Round <N>: …` record to `council-of-ricks-summary.md`. Use the returned `summary` (the round header line) and `issue_counts` for the Step 16 approval gate, and `directive` / `directive_path` as the round's directive. Then proceed to **Step 16 (unchanged)** and **Step 17 / Step 17.7 (unchanged)** — the workflow does NOT publish; Step 17.7 still runs the publisher exactly once at session end.
+
+Legacy manual fan-out (flag unset) — the main agent (you) executes one round like this:
 
 1. **Phase A** — compute the historical brief yourself, write to `<SESSION_ROOT>/round-<N>/historical-brief.md`. No subagent.
 2. **Phases B + C** — in ONE `Agent` tool-call message, spawn all subagents concurrently:

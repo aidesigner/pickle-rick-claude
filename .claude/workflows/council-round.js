@@ -57,6 +57,14 @@ const UNCONDITIONAL_B_CATEGORIES = [
 // Mirror of council-fanout.ts:27.
 const SHARDED_TIERS = ['l', 'xl', 'xxl'];
 
+// Documented concurrency ceiling for a workflow `parallel()` wave: min(16, cores−2)
+// (PRD p2-dynamic-workflow-conversion §"Concurrency cap"). The RUNTIME enforces the actual
+// per-machine cap (= min(16, cores−2)) and transparently queues excess thunks across sweeps;
+// this script body has no Node/OS access so it cannot read the core count. `16` is the upper
+// bound, so `specs.length > 16` is a GUARANTEED-capped fan-out on every machine — the honest
+// trigger for the sharded-tier batching announcement below (R-DWF-5 / AC-DWF-05).
+const MAX_FANOUT_CONCURRENCY = 16;
+
 // In-script JSON-Schema (draft-07) literal mirroring council-schema.ts SubagentPayload
 // (:79-87) + validateSubagentPayload (:288-317). It accepts EXACTLY the payload set the
 // TS validator accepts (round-trip parity, R-DWF-SCHEMA-PARITY):
@@ -349,19 +357,28 @@ phase('B-categories');
 // codexEnabled:false → planner emits only B + C_correctness; the codex sweep is the separate
 // gated agent below, so C_codex is never double-counted.
 const specs = planFanOut({ stackTier, branches, codexEnabled: false, hasMigrationJournal });
-const bc = (
-  await parallel(
-    specs.map((s) => () =>
-      agent(subagentPrompt(s, brief, sessionFiles, round), {
-        label: `${s.category}:${s.branch ?? 'stack'}`,
-        phase: s.category.startsWith('C') ? 'C-branches' : 'B-categories',
-        schema: SUBAGENT_PAYLOAD_SCHEMA,
-        agentType: 'Explore', // read-only judge — no repo Edit/Write (R-DWF-NO-REPO-EDIT)
-      })),
-  )
-).filter(Boolean);
+// Sharded l/xl/xxl fan-outs (up to ~91 specs) exceed the concurrency ceiling; the runtime queues
+// the overflow across multiple sweeps. Announce it so the round summary never carries the false
+// "all specs ran in one simultaneous wave" semantics (R-DWF-5 / AC-DWF-05). Capping NEVER drops a
+// spec — every queued thunk still runs and returns — so this is a wall-time notice, not a failure.
+if (specs.length > MAX_FANOUT_CONCURRENCY) {
+  const sweeps = Math.ceil(specs.length / MAX_FANOUT_CONCURRENCY);
+  log(`round ${round}: ${specs.length} specs exceed the ${MAX_FANOUT_CONCURRENCY}-agent concurrency cap `
+    + `(min(16,cores−2)); the runtime queues them across ≥${sweeps} batched sweeps — NOT a single `
+    + 'simultaneous wave');
+}
+const bcAll = await parallel(
+  specs.map((s) => () =>
+    agent(subagentPrompt(s, brief, sessionFiles, round), {
+      label: `${s.category}:${s.branch ?? 'stack'}`,
+      phase: s.category.startsWith('C') ? 'C-branches' : 'B-categories',
+      schema: SUBAGENT_PAYLOAD_SCHEMA,
+      agentType: 'Explore', // read-only judge — no repo Edit/Write (R-DWF-NO-REPO-EDIT)
+    })),
+);
+const bc = bcAll.filter(Boolean);
 if (bc.length < specs.length) {
-  log(`round ${round}: ${specs.length - bc.length} of ${specs.length} specs failed/capped`);
+  log(`round ${round}: ${specs.length - bc.length} of ${specs.length} specs returned null (failed/skipped); directive will be incomplete`);
 }
 
 let codex = null;

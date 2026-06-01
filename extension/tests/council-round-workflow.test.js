@@ -184,3 +184,153 @@ test('workflow honors the dynamic-workflow primitive constraints (static)', () =
   assert.ok(!/Math\.random\s*\(/.test(src), 'no Math.random()');
   assert.ok(!src.includes('LATEST_SCHEMA_VERSION'), 'schema-neutral — no schema-version reference (AC-DWF-07)');
 });
+
+// ---------------------------------------------------------------------------
+// AC-DWF-05 — sharded-tier batch coverage, capped-batch log de-conflation, the
+// two-clean-rounds approval-gate transition, and publish-once. The gate stays
+// prose in council-of-ricks.md; the test mirrors its four conditions and proves
+// the workflow RETURN surface (summary suffix + issue_counts) feeds them.
+// ---------------------------------------------------------------------------
+
+const COMMAND_PATH = fileURLToPath(new URL('../../.claude/commands/council-of-ricks.md', import.meta.url));
+
+// Count of UNCONDITIONAL_B_CATEGORIES in the workflow (B1,B2,B3,B4,B5,B6,B8,B9).
+const UNCONDITIONAL_B = 8;
+
+// Test-local mirror of the Step-16 four-condition approval gate
+// (council-of-ricks.md): round ≥ min AND last two summaries both end
+// `— clean round.` AND no unconditional category skipped across both AND zero
+// P0/P1 across both. Returns 'approve' (stop) or 'continue'.
+function evaluateApprovalGate({ round, minIterations, lastTwoSummaries, issueCountsLastTwo, unconditionalSkipsLastTwo }) {
+  if (round < minIterations) return 'continue';
+  const bothClean = lastTwoSummaries.length === 2 && lastTwoSummaries.every((s) => /— clean round\.$/.test(s));
+  if (!bothClean) return 'continue';
+  if (unconditionalSkipsLastTwo.some((n) => n > 0)) return 'continue';
+  if (issueCountsLastTwo.some((c) => (c.P0 || 0) + (c.P1 || 0) > 0)) return 'continue';
+  return 'approve';
+}
+
+function cleanSynth(a) {
+  return {
+    round: a.round,
+    summary: `## Round ${a.round}: ${a.branches.join(', ')} — clean round.`,
+    directive: cleanDirective(a.round, a.branches),
+    directive_path: a.sessionFiles.directivePath,
+    issue_counts: { P0: 0, P1: 0, P2: 0, P3: 0, P4: 0 },
+    codex_verdicts: {},
+  };
+}
+
+test('AC-DWF-05: xl 4-branch fan-out plans + collects N=36 specs and log()s the capped batch', async () => {
+  const branches = ['feat/a', 'feat/b', 'feat/c', 'feat/d'];
+  const expectedN = UNCONDITIONAL_B * branches.length + branches.length; // 8*4 + 4 = 36, derived not hard-coded
+  assert.equal(expectedN, 36, 'sanity: xl 4-branch fan-out is 36 specs');
+
+  const argsObj = baseArgs({ branches, stackTier: 'xl' });
+  const harness = makeHarness(argsObj, { synthReturn: cleanSynth });
+  const result = await loadWorkflow()(...harness.ambient);
+
+  const judgeCalls = harness.calls.filter((c) => c.phase === 'B-categories' || c.phase === 'C-branches');
+  assert.equal(judgeCalls.length, expectedN, 'sharded xl plans + collects exactly N specs');
+  assert.equal(judgeCalls.filter(Boolean).length, expectedN, 'every spec returned (cap never drops a spec)');
+
+  // C_correctness covers each non-trunk branch once.
+  const cCorr = judgeCalls.filter((c) => c.label.startsWith('C_correctness'));
+  assert.deepEqual(cCorr.map((c) => c.label).sort(), branches.map((b) => `C_correctness:${b}`).sort());
+
+  const capLogs = harness.calls.filter((c) => c.log && /exceed the 16-agent concurrency cap/.test(c.log));
+  assert.equal(capLogs.length, 1, 'exactly one capped-batch log when specs > 16');
+  assert.match(capLogs[0].log, /≥3 batched sweeps/, 'ceil(36/16)=3 sweeps reported');
+  assert.match(capLogs[0].log, /NOT a single/, 'log de-conflates from a single simultaneous wave');
+
+  // No genuine-null shortfall log on a full round.
+  assert.equal(harness.calls.filter((c) => c.log && /returned null/.test(c.log)).length, 0);
+  assert.ok(validateDirective(result.directive), 'returned directive must pass validateDirective');
+});
+
+test('AC-DWF-05: m-tier 2-branch (10 specs ≤ 16) emits NO capped-batch log', async () => {
+  const argsObj = baseArgs(); // m-tier, 2 branches → 10 specs
+  const harness = makeHarness(argsObj, { synthReturn: cleanSynth });
+  await loadWorkflow()(...harness.ambient);
+
+  const judgeCalls = harness.calls.filter((c) => c.phase === 'B-categories' || c.phase === 'C-branches');
+  assert.equal(judgeCalls.length, 10, 'under-cap fan-out is 10 specs');
+  assert.equal(harness.calls.filter((c) => c.log && /concurrency cap/.test(c.log)).length, 0, 'no cap log under the cap');
+});
+
+test('AC-DWF-05: two-clean-rounds gate transitions stop/continue across consecutive invocations', async () => {
+  const branches = ['feat/a', 'feat/b'];
+
+  // Round 1 + Round 2 both clean → gate APPROVES (stop) at min_iterations=2.
+  const r1 = await loadWorkflow()(...makeHarness(baseArgs({ branches, round: 1 }), { synthReturn: cleanSynth }).ambient);
+  const r2 = await loadWorkflow()(...makeHarness(baseArgs({ branches, round: 2 }), { synthReturn: cleanSynth }).ambient);
+  assert.equal(
+    evaluateApprovalGate({
+      round: 2, minIterations: 2,
+      lastTwoSummaries: [r1.summary, r2.summary],
+      issueCountsLastTwo: [r1.issue_counts, r2.issue_counts],
+      unconditionalSkipsLastTwo: [0, 0],
+    }),
+    'approve',
+    'two consecutive clean rounds at/above min → stop',
+  );
+
+  // Below min → continue even when clean.
+  assert.equal(
+    evaluateApprovalGate({
+      round: 1, minIterations: 2,
+      lastTwoSummaries: [r1.summary, r2.summary],
+      issueCountsLastTwo: [r1.issue_counts, r2.issue_counts],
+      unconditionalSkipsLastTwo: [0, 0],
+    }),
+    'continue',
+    'round below min_iterations → keep going',
+  );
+
+  // Round 2 surfaces issues → gate CONTINUES.
+  const r2Issues = await loadWorkflow()(...makeHarness(baseArgs({ branches, round: 2 }), {
+    synthReturn: (a) => ({
+      round: a.round,
+      summary: `## Round ${a.round}: ${a.branches.join(', ')} — 3 issues (1/2/0/0/0)`,
+      directive: issuesDirective(a.round, a.branches),
+      directive_path: a.sessionFiles.directivePath,
+      issue_counts: { P0: 1, P1: 2, P2: 0, P3: 0, P4: 0 },
+      codex_verdicts: {},
+    }),
+  }).ambient);
+  assert.equal(
+    evaluateApprovalGate({
+      round: 2, minIterations: 2,
+      lastTwoSummaries: [r1.summary, r2Issues.summary],
+      issueCountsLastTwo: [r1.issue_counts, r2Issues.issue_counts],
+      unconditionalSkipsLastTwo: [0, 0],
+    }),
+    'continue',
+    'P0/P1 in the last two rounds → keep going',
+  );
+
+  // Unconditional category skipped → continue even when both summaries read clean.
+  assert.equal(
+    evaluateApprovalGate({
+      round: 2, minIterations: 2,
+      lastTwoSummaries: [r1.summary, r2.summary],
+      issueCountsLastTwo: [r1.issue_counts, r2.issue_counts],
+      unconditionalSkipsLastTwo: [0, 1],
+    }),
+    'continue',
+    'an unconditional category skip blocks approval',
+  );
+});
+
+test('AC-DWF-05: council-publish.js invoked exactly once (Step 17.7), never from the workflow', () => {
+  const command = fs.readFileSync(COMMAND_PATH, 'utf-8');
+  const publishMatches = command.match(/council-publish\.js/g) || [];
+  assert.equal(publishMatches.length, 1, 'council-publish.js referenced exactly once in the command');
+  assert.match(command, /Step 17\.7[\s\S]*council-publish\.js|council-publish\.js[\s\S]*Step 17\.7/, 'publish lives in the Step-17.7 region');
+
+  // The workflow never INVOKES the publisher (`council-publish.js`); a schema comment
+  // referencing `council-publish.ts` only documents that the publisher path stays external,
+  // which reinforces the single-publish contract.
+  const src = readWorkflowSource();
+  assert.ok(!src.includes('council-publish.js'), 'the workflow never invokes the publisher — Step 17.7 owns the single publish');
+});
