@@ -976,6 +976,17 @@ const AC_SHAPE_SECTION_RE = /^##+\s+ac_shape_smells\s*$/im;
 const UNIVERSAL_QUANTIFIER_RE = /\b(?:all|every|for any|each)\b/i;
 const JUSTIFICATION_RE = /\/\/\s*JUSTIFICATION:/i;
 const DESCRIBE_EACH_RE = /describe\.each\s*\(\s*\[/s;
+// PICKLE_AC_GATE_DEBUG=1 enables per-matcher stderr tracing for smell→ticket evaluation
+function ticketShapeText(ticket) {
+    return [ticket.title, ticket.acceptance_test, ticket.justification]
+        .filter((s) => Boolean(s))
+        .join(' ');
+}
+function acDebugMatcher(regex, field, value, matched) {
+    if (process.env.PICKLE_AC_GATE_DEBUG !== '1')
+        return;
+    process.stderr.write(`matcher: regex=${regex.source}, field=${field}, value=${value}, result=${matched ? 'match' : 'no-match'}\n`);
+}
 function asString(value) {
     return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
@@ -1269,10 +1280,25 @@ export function enrichManifestTicketsFromSourcePrds(prdPath, tickets) {
     });
 }
 function hasJustificationBlock(ticket) {
-    return ticket.justification !== undefined && JUSTIFICATION_RE.test(ticket.justification);
+    const j = ticket.justification;
+    if (j === undefined || j.trim() === '')
+        return false;
+    const sigilMatch = JUSTIFICATION_RE.test(j);
+    acDebugMatcher(JUSTIFICATION_RE, 'justification', j, sigilMatch);
+    if (sigilMatch)
+        return true;
+    const NON_EMPTY_RE = /\S/;
+    const proseMatch = NON_EMPTY_RE.test(j);
+    acDebugMatcher(NON_EMPTY_RE, 'justification', j, proseMatch);
+    return proseMatch;
 }
-function isParametrizedTicket(ticket) {
-    return UNIVERSAL_QUANTIFIER_RE.test(ticket.title) && DESCRIBE_EACH_RE.test(ticket.acceptance_test ?? '');
+export function isParametrizedTicket(ticket) {
+    const text = ticketShapeText(ticket);
+    const hasQuantifier = UNIVERSAL_QUANTIFIER_RE.test(text);
+    acDebugMatcher(UNIVERSAL_QUANTIFIER_RE, 'joined', text, hasQuantifier);
+    const hasDescribeEach = DESCRIBE_EACH_RE.test(text);
+    acDebugMatcher(DESCRIBE_EACH_RE, 'joined', text, hasDescribeEach);
+    return hasQuantifier && hasDescribeEach;
 }
 export function evaluateAcShapeEnforcement(manifest) {
     const violations = [];
