@@ -228,9 +228,9 @@ describe('pickle-pipeline Step 4 — pipeline.json key emission', () => {
     assert.match(step4Body, /`backend`[^.]*omit the key entirely otherwise/i);
   });
 
-  test('--skip-anatomy / --skip-szechuan remove phases from pipeline array', () => {
+  test('--skip-citadel / --skip-anatomy / --skip-szechuan remove phases from pipeline array', () => {
     const step4Body = skill.slice(STEP4_START, skill.indexOf('## Step 5'));
-    assert.match(step4Body, /Remove entries if\s+`?--skip-anatomy`?\s+or\s+`?--skip-szechuan`?\s+were passed/);
+    assert.match(step4Body, /Remove entries if\s+`?--skip-citadel`?,\s+`?--skip-anatomy`?,\s+or\s+`?--skip-szechuan`?\s+were passed/);
   });
 });
 

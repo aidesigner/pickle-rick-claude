@@ -1,4 +1,4 @@
-Full pipeline orchestrator: pickle-tmux build, citadel, anatomy-park, szechuan-sauce.
+Full pipeline: pickle-tmux build, citadel, anatomy-park, szechuan-sauce.
 
 # /pickle-pipeline
 
