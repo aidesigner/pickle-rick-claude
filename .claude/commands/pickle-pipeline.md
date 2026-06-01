@@ -1,8 +1,8 @@
-Full pipeline orchestrator: pickle-tmux build, anatomy-park, szechuan-sauce.
+Full pipeline orchestrator: pickle-tmux build, citadel, anatomy-park, szechuan-sauce.
 
 # /pickle-pipeline
 
-You are launching the **full pipeline** — build it, inspect every organ, then clean the slop. Three phases, one tmux session, zero hand-holding between phases.
+You are launching the **full pipeline** — build it, citadel-review it, inspect every organ, then clean the slop. Four phases, one tmux session, zero hand-holding between phases.
 
 ## When to invoke this skill
 - User lists 2+ pipeline stages in one request ("refine then build then szechuan", "build, review, deslop")
@@ -10,7 +10,7 @@ You are launching the **full pipeline** — build it, inspect every organ, then 
 - User asks for a not-yet-started feature AND mentions verification/cleanup phases
 - User says "use codex" / "--backend codex" alongside multiple stages → still this skill, append `--backend codex`
 
-Step 0 (below) handles refinement automatically when triggered. Do NOT pre-invoke `/pickle-refine-prd` — this skill drives it. The runtime orchestrator (`pipeline-runner.js`) only runs build → anatomy-park → szechuan-sauce; refinement happens in Step 0 of THIS skill prompt, before tmux launches.
+Step 0 (below) handles refinement automatically when triggered. Do NOT pre-invoke `/pickle-refine-prd` — this skill drives it. The runtime orchestrator (`pipeline-runner.js`) only runs build → citadel → anatomy-park → szechuan-sauce; refinement happens in Step 0 of THIS skill prompt, before tmux launches.
 
 ## When NOT to invoke
 - User explicitly names ONE stage (`/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`) — use that skill directly
@@ -48,7 +48,7 @@ For paths 1 and 2 (no session yet), skip both checks above and proceed directly 
 
 **0c — Run `/pickle-refine-prd` inline.** Invoke the skill in the current Claude session, passing the resolved PRD path as `${TASK_ARGS}`. Do **NOT** pass `--backend` to the refine skill — refine pins itself to claude regardless. Wait for `<promise>TASK_COMPLETED</promise>` from the refine skill. The refine skill's Step 3 sets a `${SESSION_ROOT}` variable which remains in scope after refine returns — Step 3 of THIS skill reuses that same variable via `--resume "${SESSION_ROOT}"` instead of creating a fresh session. Set a marker `SESSION_INITIALIZED=true` for Step 3 to branch on.
 
-Pipeline phases (pickle, anatomy-park, szechuan-sauce) honor whatever `--backend` was passed to this skill; only refinement is pinned to claude.
+Pipeline phases (pickle, citadel, anatomy-park, szechuan-sauce) honor whatever `--backend` was passed to this skill; only refinement is pinned to claude.
 
 **Note on interactive gating:** `/pickle-refine-prd` Step 2c may pause and interview the user when PRD verification quality is PARTIAL or MISSING. The pipeline blocks until the interview completes. Pass a verification-ready PRD upfront to keep the run autonomous.
 
@@ -194,14 +194,14 @@ Append `--backend <BACKEND>` only when the flag was passed. Extract `SESSION_ROO
 
 ## Step 4: Create pipeline.json
 
-Build the phases array. Default: `["pickle", "anatomy-park", "szechuan-sauce"]`. Remove entries if `--skip-anatomy` or `--skip-szechuan` were passed.
+Build the phases array. Default: `["pickle", "citadel", "anatomy-park", "szechuan-sauce"]`. Remove entries if `--skip-citadel`, `--skip-anatomy`, or `--skip-szechuan` were passed.
 
 Write `${SESSION_ROOT}/pipeline.json` with the required keys below. Append the optional keys ONLY when the corresponding flag was passed — do NOT emit placeholders or empty strings for unset values.
 
 Required shape (example shown with `--backend codex`):
 ```json
 {
-  "phases": ["pickle", "anatomy-park", "szechuan-sauce"],
+  "phases": ["pickle", "citadel", "anatomy-park", "szechuan-sauce"],
   "target": "<TARGET_ABSOLUTE_PATH>",
   "anatomy_stall_limit": <AP_STALL>,
   "szechuan_stall_limit": <SZ_STALL>,
@@ -274,7 +274,7 @@ Determine SCOPE_DISPLAY from the final resolved scope:
 
 Print:
 ```
-Full Pipeline — Build → Review → Deslop
+Full Pipeline — Build → Citadel → Review → Deslop
 
 Task: <TASK>
 Target: <TARGET>
