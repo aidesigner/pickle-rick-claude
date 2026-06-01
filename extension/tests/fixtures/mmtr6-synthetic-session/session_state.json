@@ -1,0 +1,19 @@
+{
+  "active": true,
+  "backend": "claude",
+  "working_dir": "/FIXTURE_WORKING_DIR",
+  "step": "implement",
+  "iteration": 3,
+  "max_iterations": 20,
+  "max_time_minutes": 60,
+  "worker_timeout_seconds": 1200,
+  "start_time_epoch": 0,
+  "completion_promise": null,
+  "original_prompt": "mux-runner relaunch regression fixture",
+  "current_ticket": "f0000011",
+  "history": [],
+  "started_at": "2026-06-01T00:00:00.000Z",
+  "session_dir": "/FIXTURE_SESSION_DIR",
+  "schema_version": 1,
+  "manager_relaunch_count": 0
+}
