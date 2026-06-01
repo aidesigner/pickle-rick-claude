@@ -622,6 +622,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'head_mismatch_detected',
   'stale_index_lock_cleaned',
   'stale_index_lock_held_by_live_process',
+  'concurrent_git_access_detected',
   'setup_resume_chdir_applied',
   'ticket_runnability_resolved',
   'codex_manager_self_bootstrap_attempted',

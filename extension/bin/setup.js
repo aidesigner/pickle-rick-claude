@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { printMinimalPanel, Style, TICKET_TIER_BUDGETS, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus } from '../services/pickle-utils.js';
-import { getHeadSha, getHeadBranch } from '../services/git-utils.js';
+import { getHeadSha, getHeadBranch, probeConcurrentGitAccess } from '../services/git-utils.js';
 import { LockError, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
 import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive, readMappedPid } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
@@ -1058,6 +1058,25 @@ function createSession(config, paths, taskStr) {
             session: sessionId,
             backend: state.backend || 'claude',
         });
+    }
+    if (!config.pausedMode) {
+        try {
+            const holder = probeConcurrentGitAccess(process.cwd());
+            if (holder) {
+                process.stderr.write(`[pickle] WARNING: concurrent git access detected — pid=${holder.pid} command=${holder.command}\n`);
+                logActivity({
+                    event: 'concurrent_git_access_detected',
+                    source: 'pickle',
+                    session: sessionId,
+                    gate_payload: {
+                        repo_root: process.cwd(),
+                        holder_pid: holder.pid,
+                        holder_command: holder.command,
+                    },
+                });
+            }
+        }
+        catch { /* advisory — never block launch */ }
     }
     return { sessionRoot: fullSessionPath, state };
 }

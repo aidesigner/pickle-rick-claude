@@ -1029,6 +1029,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'codex_manager_no_progress',
     'pickle_command_deprecated',
     'refinement_over_collapse_detected',
+    'concurrent_git_access_detected',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

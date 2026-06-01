@@ -1421,6 +1421,24 @@
           }
         }
       }
+    },
+    "concurrent_git_access_detected": {
+      "type": "object",
+      "required": ["event", "ts", "session", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "concurrent_git_access_detected" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["repo_root", "holder_pid", "holder_command"],
+          "properties": {
+            "repo_root": { "type": "string" },
+            "holder_pid": { "type": "integer" },
+            "holder_command": { "type": "string" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -1513,6 +1531,7 @@
     { "$ref": "#/definitions/orphan_phantom_demoted" },
     { "$ref": "#/definitions/codex_manager_no_progress" },
     { "$ref": "#/definitions/pickle_command_deprecated" },
-    { "$ref": "#/definitions/refinement_over_collapse_detected" }
+    { "$ref": "#/definitions/refinement_over_collapse_detected" },
+    { "$ref": "#/definitions/concurrent_git_access_detected" }
   ]
 }

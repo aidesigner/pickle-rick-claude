@@ -234,6 +234,9 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // guard when a bundle-of-bundles PRD is collapsed to <= one ticket
         // per composed source despite atomic-decomposition sections.
         'refinement_over_collapse_detected',
+        // R-PIWG-5.2: advisory launch-time probe emits this when another git
+        // process is detected touching the repo at session bootstrap.
+        'concurrent_git_access_detected',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {

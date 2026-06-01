@@ -274,6 +274,7 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`head_mismatch_detected\` | \`gate_payload.pinned_branch\`, \`gate_payload.observed_branch\`, \`gate_payload.pinned_sha\`, \`gate_payload.observed_sha\`, \`gate_payload.detected_at_phase\` | mux-runner checkHeadPinMismatch path |
 | \`stale_index_lock_cleaned\` | \`gate_payload.path\`, \`gate_payload.mtime\`, \`gate_payload.age_seconds\` | cancel.ts cleanupStaleIndexLock |
 | \`stale_index_lock_held_by_live_process\` | \`gate_payload.path\`, \`gate_payload.mtime\`, \`gate_payload.age_seconds\`, \`gate_payload.holder_pid\`, \`gate_payload.holder_command\` | cancel.ts cleanupStaleIndexLock |
+| \`concurrent_git_access_detected\` | \`gate_payload.repo_root\`, \`gate_payload.holder_pid\`, \`gate_payload.holder_command\` | setup.ts new-session bootstrap advisory probe |
 | \`setup_resume_chdir_applied\` | \`gate_payload.from\`, \`gate_payload.to\` | setup.ts validateResumeCompatibility cross-cwd path |
 | \`ticket_runnability_resolved\` | \`ticket_id\`, \`gate_payload.frontmatter_status\`, \`gate_payload.runnable\`, \`gate_payload.reason\` | mux-runner per-iteration ticket-selection path |
 | \`codex_manager_self_bootstrap_attempted\` | \`ticket\`, \`attempted_argv\`, \`iteration\`, \`action_taken\` | codex-manager self-bootstrap guard (R-CCPM-1) |
