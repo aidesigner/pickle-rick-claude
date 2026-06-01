@@ -167,6 +167,7 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...backendEnvOverrides(backend),
+    ...(invocation.env ?? {}),
     PICKLE_STATE_FILE: statePath,
     PYTHONUNBUFFERED: '1',
   };

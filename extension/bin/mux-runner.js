@@ -2036,6 +2036,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
         ...process.env,
         ...runtimeOverrides.envOverrides,
         ...backendEnvOverrides(backend),
+        ...(invocation.env ?? {}),
         PICKLE_STATE_FILE: statePath,
         PYTHONUNBUFFERED: '1',
     };

@@ -172,7 +172,7 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
             cwd: workingDir,
             timeout: remediatorTimeoutS * 1000,
             stdio: 'pipe',
-            env: { ...process.env, ...runtimeOverrides.workerEnvOverrides, ...backendEnvOverrides(execBackend) },
+            env: { ...process.env, ...runtimeOverrides.workerEnvOverrides, ...backendEnvOverrides(execBackend), ...(invocation.env ?? {}) },
         });
     }
     catch (err) {

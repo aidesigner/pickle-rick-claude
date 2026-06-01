@@ -821,6 +821,86 @@ test('spawn-morty.hermes-missing: missing binary exits 127 and logs event', () =
     }
 });
 
+function writeDeepseekClaudeShim(shimDir, logPath, ticketDir) {
+    fs.mkdirSync(shimDir, { recursive: true });
+    const shimPath = path.join(shimDir, 'claude');
+    fs.writeFileSync(shimPath, `#!/usr/bin/env node
+const fs = require('fs');
+fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify({
+  argv: process.argv.slice(2),
+  cwd: process.cwd(),
+  pickle_backend: process.env.PICKLE_BACKEND || null,
+  anthropic_base_url: process.env.ANTHROPIC_BASE_URL || null,
+  anthropic_auth_token: process.env.ANTHROPIC_AUTH_TOKEN || null,
+  anthropic_model: process.env.ANTHROPIC_MODEL || null,
+}, null, 2));
+fs.writeFileSync(${JSON.stringify(path.join(ticketDir, 'conformance_2026-05-03.md'))}, 'ALL_PASS\\n');
+console.log('DeepSeek worker completed with enough output for validation. '.repeat(8));
+console.log('<promise>I AM DONE</promise>');
+process.exit(0);
+`);
+    fs.chmodSync(shimPath, 0o755);
+    return shimPath;
+}
+
+function makeDeepseekHarness(tmpDir, ticketId, state = {}) {
+    writeExtensionSentinel(tmpDir);
+    const sessionDir = path.join(tmpDir, 'session');
+    const ticketDir = path.join(sessionDir, ticketId);
+    const repoDir = path.join(tmpDir, 'repo');
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.mkdirSync(repoDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+        active: true,
+        backend: 'deepseek',
+        working_dir: repoDir,
+        iteration: 1,
+        max_iterations: 5,
+        schema_version: 1,
+        ...state,
+    }));
+    return { sessionDir, ticketDir, repoDir };
+}
+
+test('spawn-morty.deepseek: env overlay reaches child and PICKLE_BACKEND stays deepseek', () => {
+    const tmpDir = makeTmpDir();
+    const ticketId = 'ticket-deepseek-env';
+    try {
+        const harness = makeDeepseekHarness(tmpDir, ticketId);
+        const shimDir = path.join(tmpDir, 'bin');
+        const shimLog = path.join(tmpDir, 'deepseek-invocation.json');
+        writeDeepseekClaudeShim(shimDir, shimLog, harness.ticketDir);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the deepseek thing',
+            '--ticket-id', ticketId,
+            '--ticket-path', harness.ticketDir,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+                DEEPSEEK_API_KEY: 'test-deepseek-key-12345',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        assert.equal(result.status, 0, `expected successful deepseek shim worker, got: ${result.stdout + result.stderr}`);
+        assert.ok(fs.existsSync(shimLog), 'deepseek claude shim should be invoked');
+        const invocation = JSON.parse(fs.readFileSync(shimLog, 'utf-8'));
+        assert.equal(invocation.cwd, harness.repoDir);
+        assert.equal(invocation.pickle_backend, 'deepseek', 'PICKLE_BACKEND must stay deepseek (not clobbered by env overlay)');
+        assert.equal(invocation.anthropic_base_url, 'https://api.deepseek.com/anthropic', 'ANTHROPIC_BASE_URL from invocation.env overlay must reach child');
+        assert.equal(invocation.anthropic_auth_token, 'test-deepseek-key-12345', 'ANTHROPIC_AUTH_TOKEN from invocation.env overlay must equal DEEPSEEK_API_KEY');
+        assert.ok(invocation.anthropic_model, 'ANTHROPIC_MODEL from invocation.env overlay must be set');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('spawn-morty: recovers orphan tmp session timeout before printing worker budget', () => {
     const tmpDir = makeTmpDir();
     try {

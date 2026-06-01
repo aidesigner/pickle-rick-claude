@@ -1817,7 +1817,7 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
   });
   try { updateTicketStatus(ticketId, 'In Progress', sessionRoot); } catch { /* best-effort */ }
   sessionLog.on('error', err => console.error(`${Style.RED}❌ Log stream error: ${safeErrorMessage(err)}${Style.RESET}`));
-  const env: NodeJS.ProcessEnv = { ...process.env, ...backendEnvOverrides(args.backend), PICKLE_STATE_FILE: ctx.timeoutStatePath || ctx.workerStatePath, PICKLE_ROLE: 'worker', PYTHONUNBUFFERED: '1' };
+  const env: NodeJS.ProcessEnv = { ...process.env, ...backendEnvOverrides(args.backend), ...(invocation.env ?? {}), PICKLE_STATE_FILE: ctx.timeoutStatePath || ctx.workerStatePath, PICKLE_ROLE: 'worker', PYTHONUNBUFFERED: '1' };
   delete env['CLAUDECODE'];
   const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: ['inherit', 'pipe', 'pipe'] });
   proc.stdout?.pipe(sessionLog, { end: false });
