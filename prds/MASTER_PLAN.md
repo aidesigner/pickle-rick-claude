@@ -7,9 +7,9 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.89.1** — 2026-05-31 |
-| Latest GitHub release | v1.89.1 (v1.81.1..v1.89.1 all tagged) |
-| Active pipeline | **B-GATE** (drain row 5, P2) — `prds/p2-bug-fix-bundle-b-gate-verify-command-safety.md`, launching 2026-05-31. 8 tickets: R-PVTA-1/2/3 (host-tool preflight) + R-VSGE-1/2/3 (zsh shell-glob safety) + R-GATE-TD + closer. Schema-neutral (PATCH → v1.89.2). B-R-MMTR shipped v1.89.1. B-E2E (P3) deferred below B-GATE per P1>P2>P3. |
+| Version (source/deployed) | **v1.89.2** — 2026-05-31 |
+| Latest GitHub release | v1.89.2 (v1.81.1..v1.89.2 all tagged) |
+| Active pipeline | **None (idle)** — B-GATE shipped v1.89.2 (#39 R-PVTA + #40 R-VSGE closed). Next in drain: B-E2E (P3) / feature epics per P1>P2>P3. |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive:** drain bug bundles before feature epics; P1 > P2 > P3. All feature epics (R-PGI v1.83.0 / R-PIAP v1.84.0 / R-DC v1.85.0) are shipped.
@@ -27,7 +27,7 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 | ~~3~~ | **B-PNTR** ✅ SHIPPED v1.89.0 | — | #77 closed | `prds/p2-remove-non-tmux-pickle-loop.md` — extracted `_pickle-manager-prompt.md`, removed bare `/pickle`, schema-neutral. Closer caught + fixed a latent FATAL deploy bug (template was deployed one level too deep for the runtime resolver; added explicit install.sh cp). | done |
 | ~~4~~ | **B-R-MMTR** ✅ SHIPPED v1.89.1 | — | #28 + #19 closed | `prds/p1-bug-fix-bundle-r-mmtr-closeout.md` — R-ICDM-2..7 conformance audits (already-shipped intactness confirmed) + R-MMTRH heal-script + closer. Schema-neutral. Closer (babysitter-completed) stripped a spurious reliability trailer from 273a2d68 that failed audit-fix-commits. | done |
 | 4b | **B-E2E** | P3 | #19 R-MMTR-6 | `prds/p1-mmtr-6-decompose-e2e-into-sub-tickets.md` (decompose force-skipped oversized R-MMTR-6 E2E ticket into 4-5 sub-tickets, then re-attempt). Follow-on AFTER B-R-MMTR. | ~5 |
-| 5 | **B-GATE** | P2 | #39 R-PVTA, #40 R-VSGE | `prds/p2-bug-fix-bundle-b-gate-verify-command-safety.md` (host-tool preflight #39 + zsh shell-glob safety #40 in `ac-phase-gate.ts`/`convergence-gate.ts`; schema-neutral). **LAUNCHING 2026-05-31.** | ~8 |
+| ~~5~~ | **B-GATE** ✅ SHIPPED v1.89.2 | — | #39 + #40 closed | `prds/p2-bug-fix-bundle-b-gate-verify-command-safety.md` — host-tool preflight (#39) + zsh shell-glob safety (#40) via shared `verify-command-safety.ts` wired into `ac-phase-gate.ts`/`convergence-gate.ts`, forward-protection lint, trap-door pins. Schema-neutral. Closer (this session) fix-forwarded a `containsUnquotedGlobHazard` eslint-complexity error and stripped a worker-hallucinated `Resolves: prds/p1-vsge.md` trailer from the R-VSGE-2 commit that failed audit-fix-commits. | done |
 | 6 | **B-PPCD** | P2 | #85 R-PPCD | author — doc-only: citadel phase list in `pickle-pipeline.md` + `persona.md` (verified still drifted 2026-05-30) | ~1-2 |
 | 7 | **B-ACSG** | P2 | #84 R-ACSG | `prds/BUG-REPORT-2026-05-27-refine-prd-ac-shape-gate-oscillation.md` (4 hypotheses — narrow=matcher, wide=convergence arch) | ~3-8 |
 | 8 | **B-WEDGE** | P2 | #30 R-RSU | R-RSU refinement over-collapse (#33 R-WMW shipped with B-WSWA v1.86.0 per overlap rule; absorbs B-QSRC R-RSU residual; R-QGSK already shipped) | ~3 |
@@ -60,8 +60,8 @@ Open only — closed-finding detail in `MASTER_PLAN-archive.md`. Priority: **P1*
 | # | Code | Summary | Notes |
 |---|---|---|---|
 | 30 | R-RSU | refinement collapses `composes:` bundle PRDs to N section-umbrellas | R-RSU-1..5; B2-RSU residuals. **B-WEDGE.** (Possibly shares a matcher with #84 — inverse: over-collapse vs under-acceptance.) |
-| 39 | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check → silent worker failures | PRD not drafted (~4). **B-GATE.** |
-| 40 | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | PRD not drafted (~4). **B-GATE.** |
+| ~~39~~ | R-PVTA | verification commands use `rg`/`fd`/`bat`/`jq` without host-tool check → silent worker failures | **CLOSED — SHIPPED v1.89.2 (B-GATE).** `detectMissingTools` + `NON_GUARANTEED_TOOLS` in `verify-command-safety.ts`, wired as a preflight short-circuit into `runCriterion` (ac-phase-gate) + `runCheckCommand` (convergence-gate); regression tests + trap-door pins present. |
+| ~~40~~ | R-VSGE | verification commands with shell-special chars error under zsh glob expansion | **CLOSED — SHIPPED v1.89.2 (B-GATE).** String-form AC commands run glob-safe (argv-form or `set -f`, no bare `shell: true`); `containsUnquotedGlobHazard` predicate + forward-protection lint + regression tests + trap-door pins present. |
 | 84 | R-ACSG | AC-shape collapse-or-justify gate oscillates, false-rejects properly-consolidated analyst tickets (smell count 2→9 across 3 attempts, no monotonicity; ~9 worker quotas burned in one incident). Workarounds: table-driven PRD reshape or `--no-refine`. 4 root-cause hypotheses in PRD as a decision tree (H1 matcher-too-literal, H2 cycle-3 oscillation, H3 PRD/ticket conflation, H4 convergence-cost). `prds/BUG-REPORT-2026-05-27-refine-prd-ac-shape-gate-oscillation.md`. Sized ~3-8. **B-ACSG.** |
 | 85 | R-PPCD | `/pickle-pipeline` skill prompt + `persona.md` routing omit citadel and assert a false phase list ("only runs build → anatomy-park → szechuan-sauce"). Real order is 4-phase pickle → citadel → anatomy-park → szechuan-sauce (`pipeline-runner.ts:normalizePipelinePhases` auto-splices citadel). Doc-only drift but misleads planning. Fix: `pickle-pipeline.md` (header, line-13 claim, Step 4 default array + template, Step 8 report) + `persona.md` routing line (edit source per [[feedback_persona_source_of_truth]], config-protected) + `bash install.sh`. Sized ~1-2. **B-PPCD.** |
 
