@@ -153,11 +153,15 @@ Four options for polishing the result.
 /pickle-pipeline "refine the prd then build the caching layer"        # Auto-inferred from prose
 /pickle-pipeline --refine "build the caching layer"                   # Explicit force, prose silent
 /pickle-pipeline --no-refine "refine the prd first then ship X"       # Suppress auto-inferred refinement
+/pickle-pipeline "build feature/payment-api"                          # Branch named → scope prompt fires (Step 0.6)
+/pickle-pipeline --scope branch "build feature/payment-api"           # Explicit scope, skips the prompt
 /pickle-pipeline --skip-anatomy "refactor auth"                       # Skip deep review
 /pickle-pipeline --target src/services "add retry logic"              # Scope review phases
 ```
 
 The auto-refine trigger fires on `refine-prd` / `prd refinement`, on `refine`/`refinement`/`decompose` near `prd` or `first` (within 40 chars), or on workflow ordering like `refine then build`. Bare `refine the dropdown UX` won't trigger — use `--refine` to force, `--no-refine` to suppress. Refinement always uses the `claude` backend regardless of `--backend` (refinement is planning, not implementation). Fails fast if no `prd.md` exists in cwd or session — run `/pickle-prd` first.
+
+**Scope auto-inference (Step 0.6)** — naming a branch (`feature/x`, `fix/y`, `on branch <name>`), saying "API-only" / "backend only" / "no cross-repo", or being on a non-default branch with commits ahead all trigger a scope confirmation prompt before the pipeline launches. Scope is **never silently applied** — you are always asked. Use `--scope branch` to bypass the prompt. See `PRD_GUIDE.md § Pipeline Scope` for full details and mid-flight recovery.
 
 **Citadel** — audits the implemented branch against the PRD before deeper review phases. It reads PRD acceptance criteria, interface contracts, changed files, trap-door notes, and sibling phase artifacts when present. Findings are grouped by audit surface: PRD coverage, endpoint contract drift, trap-door enforcement, sibling route divergence, state-machine drift, frontend prop drift, cross-phase findings, and diff hygiene.
 
