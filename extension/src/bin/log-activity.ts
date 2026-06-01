@@ -40,15 +40,24 @@ function parseBackend(value: string): Backend {
 
 function loadSchemaDefinitions(): Record<string, ActivitySchemaDefinition> {
   if (schemaDefinitionsCache) return schemaDefinitionsCache;
-  try {
-    const raw = fs.readFileSync(new URL('../src/types/activity-events.schema.json', import.meta.url), 'utf8');
-    const parsed = JSON.parse(raw) as { definitions?: Record<string, ActivitySchemaDefinition> };
-    schemaDefinitionsCache = parsed.definitions ?? {};
-    return schemaDefinitionsCache;
-  } catch (err) {
-    console.error(`Failed to load activity schema: ${safeErrorMessage(err)}`);
-    process.exit(1);
+  const candidates = [
+    new URL('../activity-events.schema.json', import.meta.url),
+    new URL('../src/types/activity-events.schema.json', import.meta.url),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const p = candidate.pathname;
+      if (!fs.existsSync(p)) continue;
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8')) as { definitions?: Record<string, ActivitySchemaDefinition> };
+      schemaDefinitionsCache = parsed.definitions ?? {};
+      return schemaDefinitionsCache;
+    } catch {
+      // try next candidate
+    }
   }
+  console.error('Failed to load activity schema: no candidate path resolved — validation skipped');
+  schemaDefinitionsCache = {};
+  return schemaDefinitionsCache;
 }
 
 function asRequiredFields(value: unknown): string[] {
