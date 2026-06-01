@@ -264,6 +264,19 @@ export const PATH_VERIFICATION_PROMPT_SECTION = `## Path Verification & Forward-
 4. **Backtick discipline** — Backtick a path/symbol ONLY when (a) the path check above confirms it exists at HEAD, OR (b) the symbol resolves at HEAD, OR (c) it carries a valid forward-reference annotation. Never backtick stdlib/external-package imports or refs that do not yet exist.
 
 Consult the per-requirement disposition table at \`extension/src/data/bundle-disposition-2026-05-04.json\` (R-BUNDLE-DISPO-1) when citing paths — requirements with disposition \`DROP\` or \`REGRESSION-TEST-ONLY\` must not drive new file creation.`;
+export const BUNDLE_OF_BUNDLES_FANOUT_SECTION = `## Bundle-of-bundles fan-out
+
+When the PRD frontmatter declares a \`composes:\` field, this PRD is a **bundle-of-bundles**: it composes one or more source PRDs, each of which may already carry its own atomic ticket decomposition.
+
+**If a composed source PRD contains a \`## Atomic decomposition\` or \`## Atomic tickets\` section**, you MUST emit **one ticket per R-code** listed in that section — do NOT collapse multiple R-codes from one source into a single umbrella ticket, and do NOT invent R-codes that are not explicitly listed in the source.
+
+Rules:
+1. Scan every source PRD listed under \`composes:\`.
+2. For each source that has a \`## Atomic decomposition\` or \`## Atomic tickets\` section, read the R-code list (e.g., \`R-FOO-1\`, \`R-FOO-2\`, …).
+3. Emit one ticket per atomic R-code. The ticket title must reference the R-code directly.
+4. If a source PRD has no atomic section, treat it as a single work item (one ticket for that source).
+5. Never merge R-codes from the same source into one ticket.
+6. Never create tickets for R-codes that do not appear in any source PRD.`;
 const WORKER_ROLES = [
     { id: 'requirements' },
     { id: 'codebase' },
@@ -478,6 +491,7 @@ ${content}
     const outputInstructions = `${graphContext ? `${graphContext}\n\n` : ''}${buildTierClassificationSection(graphResult)}
 ${AC_SHAPE_PROMPT_SECTION}
 ${PATH_VERIFICATION_PROMPT_SECTION}
+${BUNDLE_OF_BUNDLES_FANOUT_SECTION}
 
 ## Your Output
 
