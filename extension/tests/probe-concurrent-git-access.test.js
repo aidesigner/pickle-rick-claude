@@ -7,7 +7,6 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { probeConcurrentGitAccess } from '../services/git-utils.js';
 import { cleanupStaleIndexLock } from '../bin/cancel.js';
@@ -21,7 +20,7 @@ const GIT_UTILS_SRC = path.resolve(__dirname, '../src/services/git-utils.ts');
 // ---------------------------------------------------------------------------
 
 test('probeConcurrentGitAccess: every spawnSync/execFileSync call in function body has timeout option', () => {
-    const source = readFileSync(GIT_UTILS_SRC, 'utf8');
+    const source = fs.readFileSync(GIT_UTILS_SRC, 'utf8');
 
     // Extract everything from the function declaration to its closing brace.
     // The function is the last export in the file, so we match from declaration
