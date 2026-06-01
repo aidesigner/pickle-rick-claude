@@ -15,7 +15,7 @@ function resolvesOnPath(bin: string): boolean {
       const stat = fs.statSync(full);
       if (stat.isFile() && (stat.mode & 0o111) !== 0) return true;
     } catch {
-      // not found in this dir
+      // intentional no-op: ENOENT / permission error means binary absent in this dir
     }
   }
   return false;
