@@ -221,6 +221,46 @@ test('worker-backend.invalid: setup rejects unknown --worker-backend with exit 1
     );
 });
 
+test('setup rejects deepseek without API key', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-deepseek-key-data-'));
+    const env = { ...process.env };
+    delete env.DEEPSEEK_API_KEY;
+    env.PICKLE_DATA_ROOT = dataRoot;
+    env.FORCE_COLOR = '0';
+
+    try {
+        assert.throws(
+            () => execFileSync(process.execPath, [SETUP, '--tmux', '--backend', 'deepseek', '--task', 'deepseek api key test'], {
+                encoding: 'utf-8',
+                env,
+            }),
+            error => {
+                assert.equal(error.status, 1);
+                assert.match(String(error.stderr), /DEEPSEEK_API_KEY/);
+                const sessionsRoot = path.join(dataRoot, 'sessions');
+                const entries = fs.existsSync(sessionsRoot) ? fs.readdirSync(sessionsRoot) : [];
+                assert.equal(entries.length, 0, 'no session dir should be created on deepseek key failure');
+                return true;
+            },
+        );
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('setup rejects --teams + deepseek', () => {
+    assert.throws(
+        () => runSetupWithEnv(['--tmux', '--teams', '--backend', 'deepseek', '--task', 'teams deepseek conflict'], {
+            DEEPSEEK_API_KEY: 'dummy-key-for-teams-test',
+        }),
+        error => {
+            assert.equal(error.status, 1);
+            assert.match(String(error.stderr), /--teams is incompatible with --backend deepseek/i);
+            return true;
+        },
+    );
+});
+
 test('worker-backend: --resume with explicit --worker-backend overrides stored worker_backend', () => {
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-resume-worker-backend-data-'));
     const previousDataRoot = process.env.PICKLE_DATA_ROOT;

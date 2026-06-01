@@ -30,7 +30,7 @@ To inspect another ref without changing branch state: `git show <ref>:<path>` or
 Run `tmux -V`. If missing: "Install tmux: `brew install tmux` or `apt install tmux`." Stop.
 
 ## Step 2: Session Setup
-Extract flags from `$ARGUMENTS` (`--resume <path>`, `--max-iterations <N>`, `--backend <claude|codex|hermes>`, etc.). Pass flags before `--task`. Task text goes in `--task "..."`.
+Extract flags from `$ARGUMENTS` (`--resume <path>`, `--max-iterations <N>`, `--backend <claude|codex|hermes|deepseek>`, etc.). Pass flags before `--task`. Task text goes in `--task "..."`.
 
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux <FLAGS> --task "<TASK_TEXT>"
@@ -38,7 +38,7 @@ node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux <FLAGS> --task "<
 No flags: `setup.js --tmux --task "$ARGUMENTS"`.
 Resume example: `setup.js --tmux --resume /sessions/057f0263` (no --task needed).
 Flags+task example: `setup.js --tmux --max-iterations 10 --task "refactor auth"`
-Backend example: `setup.js --tmux --backend codex --task "refactor auth"` routes worker/manager spawns through `codex exec`; `setup.js --tmux --backend hermes --task "scaffold CLI smoke tests"` routes through `hermes chat -q`. Backend persists in `state.json` and survives resume.
+Backend example: `setup.js --tmux --backend codex --task "refactor auth"` routes worker/manager spawns through `codex exec`; `setup.js --tmux --backend hermes --task "scaffold CLI smoke tests"` routes through `hermes chat -q`; `setup.js --tmux --backend deepseek --task "refactor auth"` routes through the DeepSeek API (requires `DEEPSEEK_API_KEY`; uses `ANTHROPIC_MODEL` if set, else defaults to `deepseek-v4-pro`). Backend persists in `state.json` and survives resume.
 Teams example: `setup.js --tmux --teams --max-parallel 5 --task "refactor auth"` runs **Teams Mode under tmux** (see below). `--teams` is always passed together with `--tmux`; the in-session `/pickle --teams` build loop was removed.
 
 Extract `SESSION_ROOT=<path>` and `working_dir` from output.
@@ -51,8 +51,7 @@ jointly, so the session is created with `tmux_mode: true` **and** `teams_mode: t
 `/pickle --teams` (in-session) path was removed in R-PNTR-4; `setup.js` rejects a `--teams` invocation that
 lacks `--tmux` with a migration hint.
 
-- **Claude backend only.** `setup.js` rejects `--teams --backend codex` / `--backend hermes` (codex+teams
-  conflict, preserved). The codex/hermes safe path is the default `mux-runner` subprocess loop.
+- **Claude backend only.** `setup.js` rejects `--teams --backend codex` / `--backend hermes` / `--backend deepseek` (all non-claude backends incompatible with teams). The codex/hermes/deepseek safe path is the default `mux-runner` subprocess loop.
 - **`--max-parallel <N>`** (requires `--teams`) caps worker concurrency; defaults to 5.
 - **Orchestration.** Under tmux, `mux-runner` spawns the manager with the manager-lifecycle template
   (`_pickle-manager-prompt.md`), whose **Phase 3.B — Teams Mode** block fires when `state.teams_mode === true`.

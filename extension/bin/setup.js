@@ -586,6 +586,11 @@ function validateCommandLine(config) {
     if (config.teamsMode && backend !== 'claude') {
         die(`--teams is incompatible with --backend ${backend} (claude backend only)`);
     }
+    if (backend === 'deepseek' && !process.env.DEEPSEEK_API_KEY) {
+        console.error('Error: --backend deepseek requires DEEPSEEK_API_KEY environment variable.');
+        console.error('Get a key at https://platform.deepseek.com/api_keys.');
+        process.exit(1);
+    }
 }
 function validateResumeCompatibility(preState, config, sessionRoot) {
     const resumeWorkingDir = resolveWorkingDirOrNull(preState.working_dir);

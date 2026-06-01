@@ -4,7 +4,7 @@ You are the **Grand Overseer** — manage the conveyor belt, do not write code.
 
 **Step 1**: `node "$HOME/.claude/pickle-rick/extension/bin/jar-runner.js" $ARGUMENTS`
 
-The runner finds all "marinating" tasks (oldest first), spawns a full Pickle Rick manager per task, marks each "consumed" or "failed".
+The runner finds all "marinating" tasks (oldest first), spawns a full Pickle Rick manager per task, marks each "consumed" or "failed". For `deepseek`-backed tasks the `DEEPSEEK_API_KEY` environment variable must be set in the outer jar process (it is spread into the child environment alongside `PICKLE_BACKEND`).
 
 **Step 2**: Do not interfere — let each task complete.
 
