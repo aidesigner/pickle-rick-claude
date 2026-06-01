@@ -41,6 +41,7 @@ export function detectMissingTools(command, opts) {
         .filter((c) => NON_GUARANTEED_TOOLS.has(c))
         .filter((c) => !resolver(c));
 }
+const GLOB_HAZARD_CHARS = new Set(['*', '?', '[', '{']);
 export function containsUnquotedGlobHazard(command) {
     let inSingle = false;
     let inDouble = false;
@@ -72,7 +73,7 @@ export function containsUnquotedGlobHazard(command) {
             i++;
             continue;
         }
-        if (ch === '*' || ch === '?' || ch === '[' || ch === '{')
+        if (GLOB_HAZARD_CHARS.has(ch))
             return true;
     }
     return false;
