@@ -299,6 +299,7 @@ export function lookupCommandForPid(pid) {
  * tools are unavailable, to protect the destructive unlink path).
  */
 export function probeConcurrentGitAccess(repoRoot) {
+    // TRAP DOOR: probeConcurrentGitAccess advisory-probe — warn+event, never a hard launch block; every subprocess timeout is finite
     const lockPath = path.join(repoRoot, '.git', 'index.lock');
     const lsof = spawnSync('lsof', ['-t', lockPath], { encoding: 'utf-8', timeout: 5_000 });
     if (lsof.status === 0 && typeof lsof.stdout === 'string') {
