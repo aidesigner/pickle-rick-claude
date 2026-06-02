@@ -128,6 +128,7 @@ export interface RunContext {
   rateLimitWaitMs?: number;
   resetRateLimitCounter?: boolean;
   rateLimitExitReason?: 'stopped' | 'limit_reached';
+  postConvergenceDeferralCount?: number;
 }
 
 interface RunStartup {
@@ -392,6 +393,8 @@ export interface PerIterationGateDeps {
 
 const PER_ITERATION_GATE_CHECKS: Array<'typecheck' | 'lint' | 'tests'> = ['typecheck', 'lint', 'tests'];
 const GIT_TEMP_CHECKOUT_TIMEOUT_MS = 10_000;
+// R-APXG-3: how many consecutive gate-deferred-convergence iterations before force-exiting
+const POST_CONVERGENCE_GATE_DEFERRAL_LIMIT = 3;
 
 function getGitRestoreArgs(workingDir: string): string[] {
   const headSha = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -3294,6 +3297,24 @@ async function handleWorkerMode(
   if (workerResult.converged) {
     ctx.log(`Converged (worker-managed: ${workerResult.reason})`);
     return 'converged';
+  }
+  // R-APXG-3: convergence was signaled but the gate deferred it — trust the worker after
+  // POST_CONVERGENCE_GATE_DEFERRAL_LIMIT consecutive deferrals to prevent an infinite loop.
+  const GATE_DEFERRED_REASON = 'per-iteration gate left unresolved regressions';
+  if (workerResult.reason === GATE_DEFERRED_REASON) {
+    ctx.postConvergenceDeferralCount = (ctx.postConvergenceDeferralCount ?? 0) + 1;
+    if (ctx.postConvergenceDeferralCount >= POST_CONVERGENCE_GATE_DEFERRAL_LIMIT) {
+      ctx.log(
+        `[R-APXG-3] Post-convergence gate deferred ${ctx.postConvergenceDeferralCount} consecutive time(s) ` +
+        `(limit=${POST_CONVERGENCE_GATE_DEFERRAL_LIMIT}); convergence signal trusted — exiting cleanly`,
+      );
+      return 'converged';
+    }
+    ctx.log(
+      `[R-APXG-3] Post-convergence gate deferral ${ctx.postConvergenceDeferralCount}/${POST_CONVERGENCE_GATE_DEFERRAL_LIMIT} — retrying`,
+    );
+  } else {
+    ctx.postConvergenceDeferralCount = 0;
   }
   const stallCounter = workerResult.currentMv.convergence?.stall_counter;
   const stallLimit = workerResult.currentMv.convergence?.stall_limit;
