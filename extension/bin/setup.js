@@ -36,16 +36,8 @@ function extractTicketIdFromPrompt(prompt) {
     return match ? match[1] : null;
 }
 const MCP_SNAPSHOT_REFRESH_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24h
-/**
- * R-MFW-4 (Option D, FR-4): write a setup-time snapshot of MCP server data
- * into `${sessionRoot}/mcp-context/<server>.json` for each server in
- * `snapshotServers`. Gracefully no-ops when `snapshotServers` is empty or
- * `mcpConfigPath` is undefined. On `--resume`, refreshes only snapshots older
- * than 24 h.
- *
- * `fetchFn` is injectable for testing; the default caller in `main()` passes
- * `async () => null` (no-op production default).
- */
+// R-MFW-4 (Option D, FR-4): write mcp-context/<server>.json at session init.
+// No-ops when servers is empty or mcpConfigPath is undefined.
 export async function runMcpSnapshot(sessionRoot, snapshotServers, mcpConfigPath, originalPrompt, fetchFn, isResume = false) {
     if (snapshotServers.length === 0)
         return;
@@ -60,14 +52,11 @@ export async function runMcpSnapshot(sessionRoot, snapshotServers, mcpConfigPath
             continue;
         const snapshotPath = path.join(mcpContextDir, 'linear-ticket.json');
         if (fs.existsSync(snapshotPath)) {
-            if (isResume) {
-                const ageMs = Date.now() - fs.statSync(snapshotPath).mtimeMs;
-                if (ageMs < MCP_SNAPSHOT_REFRESH_THRESHOLD_MS)
-                    continue;
-            }
-            else {
+            if (!isResume)
                 continue;
-            }
+            const ageMs = Date.now() - fs.statSync(snapshotPath).mtimeMs;
+            if (ageMs < MCP_SNAPSHOT_REFRESH_THRESHOLD_MS)
+                continue;
         }
         let data;
         try {
@@ -85,7 +74,7 @@ export async function runMcpSnapshot(sessionRoot, snapshotServers, mcpConfigPath
             fs.writeFileSync(snapshotPath, JSON.stringify(data, null, 2));
         }
         catch {
-            /* best-effort — never block session launch */
+            /* best-effort */
         }
     }
 }

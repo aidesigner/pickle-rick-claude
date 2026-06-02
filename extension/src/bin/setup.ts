@@ -86,11 +86,7 @@ const DEFAULT_THROUGHPUT_BASELINES: Record<string, number> = {
   hermes: 4.5,
 };
 
-/**
- * Injectable fetch function for MCP snapshot (R-MFW-4).
- * Receives the server name and extracted ticket ID; returns data to snapshot
- * or null to skip. Tests stub this; production default is a no-op.
- */
+// R-MFW-4: injectable fetch type — tests stub, main() passes no-op `async () => null`
 export type McpSnapshotFetchFn = (
   server: string,
   ticketId: string
@@ -103,16 +99,8 @@ function extractTicketIdFromPrompt(prompt: string): string | null {
 
 const MCP_SNAPSHOT_REFRESH_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24h
 
-/**
- * R-MFW-4 (Option D, FR-4): write a setup-time snapshot of MCP server data
- * into `${sessionRoot}/mcp-context/<server>.json` for each server in
- * `snapshotServers`. Gracefully no-ops when `snapshotServers` is empty or
- * `mcpConfigPath` is undefined. On `--resume`, refreshes only snapshots older
- * than 24 h.
- *
- * `fetchFn` is injectable for testing; the default caller in `main()` passes
- * `async () => null` (no-op production default).
- */
+// R-MFW-4 (Option D, FR-4): write mcp-context/<server>.json at session init.
+// No-ops when servers is empty or mcpConfigPath is undefined.
 export async function runMcpSnapshot(
   sessionRoot: string,
   snapshotServers: string[],
@@ -134,12 +122,9 @@ export async function runMcpSnapshot(
 
     const snapshotPath = path.join(mcpContextDir, 'linear-ticket.json');
     if (fs.existsSync(snapshotPath)) {
-      if (isResume) {
-        const ageMs = Date.now() - fs.statSync(snapshotPath).mtimeMs;
-        if (ageMs < MCP_SNAPSHOT_REFRESH_THRESHOLD_MS) continue;
-      } else {
-        continue;
-      }
+      if (!isResume) continue;
+      const ageMs = Date.now() - fs.statSync(snapshotPath).mtimeMs;
+      if (ageMs < MCP_SNAPSHOT_REFRESH_THRESHOLD_MS) continue;
     }
 
     let data: Record<string, unknown> | null;
@@ -156,7 +141,7 @@ export async function runMcpSnapshot(
     try {
       fs.writeFileSync(snapshotPath, JSON.stringify(data, null, 2));
     } catch {
-      /* best-effort — never block session launch */
+      /* best-effort */
     }
   }
 }
