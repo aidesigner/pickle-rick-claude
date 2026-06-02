@@ -10,6 +10,7 @@ import {
   getDataRoot,
   safeErrorMessage,
   classifyTicketTier,
+  loadPickleSettingsBag,
   type TicketClassifierInfo,
   type TicketComplexityTier,
   VALID_TICKET_COMPLEXITY_TIERS,
@@ -62,10 +63,12 @@ export function buildRefinementWorkerInvocation(opts: {
   addDirs: string[];
   maxTurns: number;
   backend?: Backend;
+  settingsBag?: { worker_mcp_config_path?: string | null };
 }): SpawnInvocation {
   const invocation = buildWorkerInvocation(opts.backend ?? REFINEMENT_BACKEND, {
     prompt: opts.prompt,
     addDirs: opts.addDirs,
+    settingsBag: opts.settingsBag,
   });
   // buildWorkerInvocation doesn't take max-turns for workers; splice it in
   // before the `-p <prompt>` trailer so the flag applies to the claude CLI.
@@ -821,6 +824,7 @@ function spawnWorker(
     addDirs: includes,
     maxTurns,
     backend: REFINEMENT_BACKEND,
+    settingsBag: loadPickleSettingsBag() ?? undefined,
   });
 
   const env = buildRefinementEnv(process.env);

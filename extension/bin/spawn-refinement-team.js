@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, classifyTicketTier, VALID_TICKET_COMPLEXITY_TIERS, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, classifyTicketTier, loadPickleSettingsBag, VALID_TICKET_COMPLEXITY_TIERS, } from '../services/pickle-utils.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { buildWorkerInvocation, isBackend } from '../services/backend-spawn.js';
 import { PromiseTokens, hasToken, Defaults, VALID_ACTIVITY_EVENTS, PipelineRunnerExitCode } from '../types/index.js';
@@ -45,6 +45,7 @@ export function buildRefinementWorkerInvocation(opts) {
     const invocation = buildWorkerInvocation(opts.backend ?? REFINEMENT_BACKEND, {
         prompt: opts.prompt,
         addDirs: opts.addDirs,
+        settingsBag: opts.settingsBag,
     });
     // buildWorkerInvocation doesn't take max-turns for workers; splice it in
     // before the `-p <prompt>` trailer so the flag applies to the claude CLI.
@@ -601,6 +602,7 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
         addDirs: includes,
         maxTurns,
         backend: REFINEMENT_BACKEND,
+        settingsBag: loadPickleSettingsBag() ?? undefined,
     });
     const env = buildRefinementEnv(process.env);
     const proc = spawn(invocation.cmd, invocation.args, {
