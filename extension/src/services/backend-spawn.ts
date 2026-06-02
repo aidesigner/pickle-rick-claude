@@ -71,6 +71,8 @@ export interface WorkerInvocationOptions {
   maxTurns?: number;
   /** Inline JSON or file path for claude --mcp-config (claude backend only). */
   mcpConfig?: string;
+  /** Operator-supplied settings subset used by the MCP-config resolver as override (precedence 1). */
+  settingsBag?: { worker_mcp_config_path?: string | null };
 }
 
 export interface ManagerInvocationOptions {
@@ -82,6 +84,10 @@ export interface ManagerInvocationOptions {
   noSessionPersistence?: boolean;
   toolsets?: string[];
   provider?: string;
+  /** File path for claude --mcp-config; if unset the MCP-config resolver runs (settingsBag → ~/.claude.json → omit). */
+  mcpConfig?: string;
+  /** Operator-supplied settings subset used by the MCP-config resolver as override (precedence 1). */
+  settingsBag?: { worker_mcp_config_path?: string | null };
 }
 
 export interface JudgeInvocationOptions {
@@ -323,6 +329,25 @@ export function resolveBackendFromStateFile(statePath: string): Backend {
   return resolveBackendFromStateFileWithSource(statePath).backend;
 }
 
+/**
+ * Shared MCP-config resolver — precedence:
+ *   1. settingsBag.worker_mcp_config_path (operator override via pickle_settings)
+ *   2. ~/.claude.json if present (default user MCP config)
+ *   3. undefined — omit --mcp-config entirely (INV-MCP-OPT-IN)
+ *
+ * `homeDir` defaults to `os.homedir()` and is exposed for testing only.
+ */
+export function resolveMcpConfigPath(
+  settingsBag?: { worker_mcp_config_path?: string | null },
+  homeDir?: string
+): string | undefined {
+  const override = settingsBag?.worker_mcp_config_path;
+  if (typeof override === 'string' && override.trim()) return override.trim();
+  const claudeJson = path.join(homeDir ?? os.homedir(), '.claude.json');
+  if (existsSilently(claudeJson)) return claudeJson;
+  return undefined;
+}
+
 export function buildWorkerInvocation(backend: Backend, opts: WorkerInvocationOptions): SpawnInvocation {
   if (backend === 'codex') return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model, opts.effort);
   if (backend === 'hermes') return buildHermesWorkerInvocation(opts);
@@ -352,7 +377,8 @@ function buildClaudeWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvoca
     args.push('--output-format', opts.outputFormat);
   }
   if (opts.model) args.push('--model', opts.model);
-  if (opts.mcpConfig) args.push('--mcp-config', opts.mcpConfig);
+  const mcpCfg = opts.mcpConfig ?? resolveMcpConfigPath(opts.settingsBag);
+  if (mcpCfg) args.push('--mcp-config', mcpCfg);
   // NOTE: claude CLI has no public reasoning-effort flag for `claude -p`; opts.effort
   // is intentionally ignored here. Don't inject --append-system-prompt or env vars
   // as a workaround — the value still survives in state.json for future logging/use.
@@ -371,6 +397,8 @@ function buildClaudeManagerInvocation(opts: ManagerInvocationOptions): SpawnInvo
     args.push('--max-turns', String(opts.maxTurns));
   }
   if (opts.model) args.push('--model', opts.model);
+  const mcpCfg = opts.mcpConfig ?? resolveMcpConfigPath(opts.settingsBag);
+  if (mcpCfg) args.push('--mcp-config', mcpCfg);
   args.push('-p', opts.prompt);
   return { cmd: 'claude', args, backend: 'claude' };
 }

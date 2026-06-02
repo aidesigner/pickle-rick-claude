@@ -252,6 +252,23 @@ export function resolveWorkerBackendFromStateFile(statePath) {
 export function resolveBackendFromStateFile(statePath) {
     return resolveBackendFromStateFileWithSource(statePath).backend;
 }
+/**
+ * Shared MCP-config resolver — precedence:
+ *   1. settingsBag.worker_mcp_config_path (operator override via pickle_settings)
+ *   2. ~/.claude.json if present (default user MCP config)
+ *   3. undefined — omit --mcp-config entirely (INV-MCP-OPT-IN)
+ *
+ * `homeDir` defaults to `os.homedir()` and is exposed for testing only.
+ */
+export function resolveMcpConfigPath(settingsBag, homeDir) {
+    const override = settingsBag?.worker_mcp_config_path;
+    if (typeof override === 'string' && override.trim())
+        return override.trim();
+    const claudeJson = path.join(homeDir ?? os.homedir(), '.claude.json');
+    if (existsSilently(claudeJson))
+        return claudeJson;
+    return undefined;
+}
 export function buildWorkerInvocation(backend, opts) {
     if (backend === 'codex')
         return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model, opts.effort);
@@ -291,8 +308,9 @@ function buildClaudeWorkerInvocation(opts) {
     }
     if (opts.model)
         args.push('--model', opts.model);
-    if (opts.mcpConfig)
-        args.push('--mcp-config', opts.mcpConfig);
+    const mcpCfg = opts.mcpConfig ?? resolveMcpConfigPath(opts.settingsBag);
+    if (mcpCfg)
+        args.push('--mcp-config', mcpCfg);
     // NOTE: claude CLI has no public reasoning-effort flag for `claude -p`; opts.effort
     // is intentionally ignored here. Don't inject --append-system-prompt or env vars
     // as a workaround — the value still survives in state.json for future logging/use.
@@ -314,6 +332,9 @@ function buildClaudeManagerInvocation(opts) {
     }
     if (opts.model)
         args.push('--model', opts.model);
+    const mcpCfg = opts.mcpConfig ?? resolveMcpConfigPath(opts.settingsBag);
+    if (mcpCfg)
+        args.push('--mcp-config', mcpCfg);
     args.push('-p', opts.prompt);
     return { cmd: 'claude', args, backend: 'claude' };
 }
