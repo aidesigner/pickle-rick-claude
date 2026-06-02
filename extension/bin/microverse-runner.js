@@ -1945,7 +1945,8 @@ export function preflightAutoCommit(workingDir, log, allowedPaths) {
     if (dirtyPaths.length === 0)
         return;
     if (!fs.existsSync(path.join(workingDir, '.git'))) {
-        log('ERROR: Working tree is dirty and not a git repository. Aborting.');
+        log('ERROR: Working tree is dirty — uncommitted in-scope changes detected. Aborting.');
+        log('ERROR: No .git repository found at working directory. Cannot auto-commit.');
         throw new Error('Working tree is dirty — not a git repo, cannot auto-commit');
     }
     log('Working tree is dirty — auto-committing before microverse start');

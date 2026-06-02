@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { execFileSync } from 'child_process';
 import { resolveScope, ScopeError } from '../services/scope-resolver.js';
 const USAGE = 'Usage: resolve-scope --scope <flag> --session-root <path> [--scope-base <ref>] [--target <path>]';
 function parseFlag(args, flag) {
@@ -6,6 +7,21 @@ function parseFlag(args, flag) {
     if (idx === -1 || idx + 1 >= args.length)
         return undefined;
     return args[idx + 1];
+}
+// `paths:<glob>` is always resolved against the git repository toplevel so the
+// same --scope value produces identical allowed_paths regardless of which
+// working_dir invoked this CLI (R-RSBI-2).
+function resolveRepoRoot(cwd) {
+    try {
+        return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+            cwd,
+            encoding: 'utf-8',
+            timeout: 5000,
+        }).trim();
+    }
+    catch {
+        return cwd;
+    }
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'resolve-scope.js') {
     const args = process.argv.slice(2);
@@ -27,7 +43,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'resolve-scope.js') {
             scopeBase,
             target,
             sessionRoot,
-            repoRoot: process.cwd(),
+            repoRoot: resolveRepoRoot(process.cwd()),
         });
     }
     catch (err) {
