@@ -326,6 +326,7 @@ export function buildWorkerInvocation(backend: Backend, opts: WorkerInvocationOp
   if (backend === 'codex') return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model, opts.effort);
   if (backend === 'hermes') return buildHermesWorkerInvocation(opts);
   if (backend === 'deepseek') return buildDeepseekWorkerInvocation(opts);
+  if (backend === 'grok') return buildGrokWorkerInvocation(opts);
   return buildClaudeWorkerInvocation(opts);
 }
 
@@ -333,6 +334,7 @@ export function buildManagerInvocation(backend: Backend, opts: ManagerInvocation
   if (backend === 'codex') return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model);
   if (backend === 'hermes') return buildHermesWorkerInvocation(opts);
   if (backend === 'deepseek') return buildDeepseekManagerInvocation(opts);
+  if (backend === 'grok') return buildGrokWorkerInvocation(opts);
   return buildClaudeManagerInvocation(opts);
 }
 
@@ -395,6 +397,13 @@ function buildCodexInvocation(prompt: string, addDirs: string[], model?: string,
   if (effort) args.push('-c', `reasoning.effort=${effort}`);
   args.push('--', prompt);
   return { cmd: 'codex', args, backend: 'codex' };
+}
+
+function buildGrokWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvocation {
+  const args: string[] = ['--no-subagents'];
+  if (opts.model?.trim()) args.push('--model', opts.model.trim());
+  args.push('-p', opts.prompt);
+  return { cmd: 'grok', args, backend: 'grok' };
 }
 
 function buildDeepseekEnvOverlay(): Record<string, string> {

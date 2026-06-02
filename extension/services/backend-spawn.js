@@ -258,6 +258,8 @@ export function buildWorkerInvocation(backend, opts) {
         return buildHermesWorkerInvocation(opts);
     if (backend === 'deepseek')
         return buildDeepseekWorkerInvocation(opts);
+    if (backend === 'grok')
+        return buildGrokWorkerInvocation(opts);
     return buildClaudeWorkerInvocation(opts);
 }
 export function buildManagerInvocation(backend, opts) {
@@ -267,6 +269,8 @@ export function buildManagerInvocation(backend, opts) {
         return buildHermesWorkerInvocation(opts);
     if (backend === 'deepseek')
         return buildDeepseekManagerInvocation(opts);
+    if (backend === 'grok')
+        return buildGrokWorkerInvocation(opts);
     return buildClaudeManagerInvocation(opts);
 }
 function buildClaudeWorkerInvocation(opts) {
@@ -336,6 +340,13 @@ function buildCodexInvocation(prompt, addDirs, model, effort) {
         args.push('-c', `reasoning.effort=${effort}`);
     args.push('--', prompt);
     return { cmd: 'codex', args, backend: 'codex' };
+}
+function buildGrokWorkerInvocation(opts) {
+    const args = ['--no-subagents'];
+    if (opts.model?.trim())
+        args.push('--model', opts.model.trim());
+    args.push('-p', opts.prompt);
+    return { cmd: 'grok', args, backend: 'grok' };
 }
 function buildDeepseekEnvOverlay() {
     const key = process.env.DEEPSEEK_API_KEY;

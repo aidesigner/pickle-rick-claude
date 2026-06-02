@@ -318,7 +318,7 @@ export function parseBackendOverrideArg(argv) {
         return null;
     const value = requireFlagValue(argv, idx);
     if (!isBackend(value)) {
-        die(`Error: --backend must be one of claude, codex, hermes (got ${JSON.stringify(value)}).`);
+        die(`Error: --backend must be one of claude, codex, hermes, grok (got ${JSON.stringify(value)}).`);
     }
     return value;
 }
@@ -1421,9 +1421,17 @@ export function resolveCodexModel(extensionRoot, state) {
     catch { /* settings missing or unreadable: codex CLI default */ }
     return undefined;
 }
+function resolveGrokModel(state) {
+    const m = state?.grok_model;
+    if (typeof m === 'string' && m.trim().length > 0)
+        return m.trim();
+    return undefined;
+}
 function resolveWorkerModel(backend, extensionRoot, sessionRoot, ticketInfo, state) {
     if (backend === 'codex')
         return resolveCodexModel(extensionRoot, state);
+    if (backend === 'grok')
+        return resolveGrokModel(state);
     if (backend !== 'claude')
         return undefined;
     let enableComplexityTiers = true;
@@ -1618,10 +1626,19 @@ export async function runWorkerProcess(ctx) {
             spawnErrorHandled = true;
             clearLifecycleTimers();
             const errorCode = err.code;
-            const exitCode = (args.backend === 'hermes' && errorCode === 'ENOENT') ? 127 : 1;
+            const exitCode = ((args.backend === 'hermes' || args.backend === 'grok') && errorCode === 'ENOENT') ? 127 : 1;
             if (args.backend === 'hermes' && errorCode === 'ENOENT') {
                 sessionLog.write(JSON.stringify({
                     event: 'hermes_binary_missing',
+                    ts: new Date().toISOString(),
+                    ticket: ticketId,
+                    backend: args.backend,
+                    command: invocation.cmd,
+                }) + '\n');
+            }
+            if (args.backend === 'grok' && errorCode === 'ENOENT') {
+                sessionLog.write(JSON.stringify({
+                    event: 'grok_binary_missing',
                     ts: new Date().toISOString(),
                     ticket: ticketId,
                     backend: args.backend,

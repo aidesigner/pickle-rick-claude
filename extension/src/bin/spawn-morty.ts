@@ -412,7 +412,7 @@ export function parseBackendOverrideArg(argv: string[]): Backend | null {
   if (idx === -1) return null;
   const value = requireFlagValue(argv, idx);
   if (!isBackend(value)) {
-    die(`Error: --backend must be one of claude, codex, hermes (got ${JSON.stringify(value)}).`);
+    die(`Error: --backend must be one of claude, codex, hermes, grok (got ${JSON.stringify(value)}).`);
   }
   return value;
 }
@@ -1666,6 +1666,12 @@ export function resolveCodexModel(extensionRoot: string, state: State | null): s
   return undefined;
 }
 
+function resolveGrokModel(state: State | null): string | undefined {
+  const m = (state as (State & Record<string, unknown>) | null)?.grok_model;
+  if (typeof m === 'string' && m.trim().length > 0) return m.trim();
+  return undefined;
+}
+
 function resolveWorkerModel(
   backend: Backend,
   extensionRoot: string,
@@ -1674,6 +1680,7 @@ function resolveWorkerModel(
   state: State | null
 ): string | undefined {
   if (backend === 'codex') return resolveCodexModel(extensionRoot, state);
+  if (backend === 'grok') return resolveGrokModel(state);
   if (backend !== 'claude') return undefined;
   let enableComplexityTiers = true;
   try {
@@ -1866,10 +1873,19 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
       spawnErrorHandled = true;
       clearLifecycleTimers();
       const errorCode = (err as NodeJS.ErrnoException).code;
-      const exitCode = (args.backend === 'hermes' && errorCode === 'ENOENT') ? 127 : 1;
+      const exitCode = ((args.backend === 'hermes' || args.backend === 'grok') && errorCode === 'ENOENT') ? 127 : 1;
       if (args.backend === 'hermes' && errorCode === 'ENOENT') {
         sessionLog.write(JSON.stringify({
           event: 'hermes_binary_missing',
+          ts: new Date().toISOString(),
+          ticket: ticketId,
+          backend: args.backend,
+          command: invocation.cmd,
+        }) + '\n');
+      }
+      if (args.backend === 'grok' && errorCode === 'ENOENT') {
+        sessionLog.write(JSON.stringify({
+          event: 'grok_binary_missing',
           ts: new Date().toISOString(),
           ticket: ticketId,
           backend: args.backend,
