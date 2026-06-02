@@ -7,9 +7,9 @@
 
 | Item | Value |
 |---|---|
-| Version (source/deployed) | **v1.92.0** — 2026-06-01 |
+| Version (source/deployed) | **v1.92.1** — 2026-06-02 |
 | Latest GitHub release | v1.90.1 (v1.81.1..v1.90.1 all tagged) |
-| Active pipeline | **none — MASTER PLAN DRAINED.** B-DWF-2 ⏸️ SHELVED (row 13): its hard-gate soak surfaced a real workflow bug (ManifestSchema `format:date-time` rejected by Workflow-runtime AJV) → **FIXED standalone in `e1c322f2`** (landed on main; improves the opt-in workflow); the post-fix re-soak got all 3 analysts green but stalled on undefined synthesis input paths (soak-harness wiring). Retiring the safe-default legacy refinement path is low-value + not justified on a soak that can't cleanly validate → shelved, legacy path retained (zero regression). **11 releases shipped this session (v1.89.0–v1.92.0); 2 stale findings closed; 1 workflow bug fixed standalone.** Residue = NON-actionable: B-DWF-2 (needs a reliable soak harness before re-attempt) + #25 R-CSI (external-event-gated forensics). |
+| Active pipeline | **none — MASTER PLAN DRAINED.** B-DWF-2 ⏸️ SHELVED (row 13): its hard-gate soak surfaced a real workflow bug (ManifestSchema `format:date-time` rejected by Workflow-runtime AJV) → **FIXED standalone in `e1c322f2`** (landed on main; improves the opt-in workflow); the post-fix re-soak got all 3 analysts green but stalled on undefined synthesis input paths (soak-harness invoked the workflow without `args` — workflow code is correct). Retiring the safe-default legacy refinement path is low-value + not justified on a soak that can't cleanly validate → shelved, legacy path retained (zero regression). The soak's findings were converted to shipped hardening: **v1.92.1** tags the date-time fix + a fail-fast arg-validation guard in `refine-analyze.js`. **12 releases shipped this session (v1.89.0–v1.92.1); 2 stale findings closed; 1 workflow bug found+fixed via soak.** Residue = NON-actionable: B-DWF-2 (needs a reliable soak harness that passes `args` before re-attempt) + #25 R-CSI (external-event-gated forensics). |
 | Codex backend | `gpt-5.4` |
 
 **Priority directive:** drain bug bundles before feature epics; P1 > P2 > P3. All feature epics (R-PGI v1.83.0 / R-PIAP v1.84.0 / R-DC v1.85.0) are shipped.
