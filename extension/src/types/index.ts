@@ -652,6 +652,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'codex_manager_no_progress',
   'pickle_command_deprecated',
   'refinement_over_collapse_detected',
+  'worker_mcp_config_resolved',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

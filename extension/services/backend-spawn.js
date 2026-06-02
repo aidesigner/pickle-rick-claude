@@ -4,6 +4,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { BACKENDS } from '../types/index.js';
 import { StateManager } from './state-manager.js';
+import { logActivity } from './activity-logger.js';
 /**
  * R-WSRC-4 — Test-harness sandbox assertion.
  *
@@ -269,6 +270,36 @@ export function resolveMcpConfigPath(settingsBag, homeDir) {
         return claudeJson;
     return undefined;
 }
+function emitMcpConfigResolved(settingsBag, homeDir) {
+    try {
+        const override = settingsBag?.worker_mcp_config_path;
+        let mcp_config_path;
+        let precedence_layer;
+        if (typeof override === 'string' && override.trim()) {
+            mcp_config_path = override.trim();
+            precedence_layer = 'settings_override';
+        }
+        else {
+            const claudeJson = path.join(homeDir ?? os.homedir(), '.claude.json');
+            if (existsSilently(claudeJson)) {
+                mcp_config_path = claudeJson;
+                precedence_layer = 'claude_json_fallback';
+            }
+            else {
+                mcp_config_path = null;
+                precedence_layer = 'omitted';
+            }
+        }
+        logActivity({
+            event: 'worker_mcp_config_resolved',
+            source: 'pickle',
+            gate_payload: { mcp_config_path, precedence_layer },
+        });
+    }
+    catch {
+        // best-effort: never block spawn on activity log failure
+    }
+}
 export function buildWorkerInvocation(backend, opts) {
     if (backend === 'codex')
         return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model, opts.effort);
@@ -298,6 +329,7 @@ export function buildManagerInvocation(backend, opts) {
 function buildClaudeWorkerInvocation(opts) {
     // R-WSRC-4: test-harness sandbox assertion. No-op unless PICKLE_TEST_MODE=1.
     assertAddDirsUnderTmpdirIfTestMode(opts.addDirs);
+    emitMcpConfigResolved(opts.settingsBag);
     const args = ['--dangerously-skip-permissions'];
     for (const dir of opts.addDirs) {
         if (dir && existsSilently(dir))
@@ -318,6 +350,7 @@ function buildClaudeWorkerInvocation(opts) {
     return { cmd: 'claude', args, backend: 'claude' };
 }
 function buildClaudeManagerInvocation(opts) {
+    emitMcpConfigResolved(opts.settingsBag);
     const args = ['--dangerously-skip-permissions'];
     for (const dir of opts.addDirs) {
         if (dir)

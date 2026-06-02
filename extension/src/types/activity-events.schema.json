@@ -1439,6 +1439,25 @@
           }
         }
       }
+    },
+    "worker_mcp_config_resolved": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_mcp_config_resolved" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["precedence_layer"],
+          "properties": {
+            "mcp_config_path": { "type": ["string", "null"] },
+            "precedence_layer": {
+              "type": "string",
+              "enum": ["settings_override", "claude_json_fallback", "omitted"]
+            }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -1532,6 +1551,7 @@
     { "$ref": "#/definitions/codex_manager_no_progress" },
     { "$ref": "#/definitions/pickle_command_deprecated" },
     { "$ref": "#/definitions/refinement_over_collapse_detected" },
-    { "$ref": "#/definitions/concurrent_git_access_detected" }
+    { "$ref": "#/definitions/concurrent_git_access_detected" },
+    { "$ref": "#/definitions/worker_mcp_config_resolved" }
   ]
 }

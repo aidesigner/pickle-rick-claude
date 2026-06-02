@@ -211,3 +211,105 @@ test('buildManagerInvocation(claude): --mcp-config placed before -p prompt trail
     assert.ok(mcpIdx >= 0);
     assert.ok(mcpIdx < pIdx, '--mcp-config must precede -p');
 });
+
+// --- AC-MFW-6: worker_mcp_config_resolved event emission ---
+
+function readActivityEvents(dataRoot) {
+    const activityDir = path.join(dataRoot, 'activity');
+    if (!fs.existsSync(activityDir)) return [];
+    const files = fs.readdirSync(activityDir);
+    const events = [];
+    for (const file of files) {
+        const lines = fs.readFileSync(path.join(activityDir, file), 'utf8')
+            .split('\n').filter(Boolean);
+        for (const line of lines) {
+            try { events.push(JSON.parse(line)); } catch { /* skip malformed */ }
+        }
+    }
+    return events;
+}
+
+test('AC-MFW-6: buildWorkerInvocation(claude) emits worker_mcp_config_resolved once (settings_override)', () => {
+    const tmpDataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mfw6-wrk-'));
+    const origDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = tmpDataRoot;
+    try {
+        buildWorkerInvocation('claude', {
+            prompt: 'test',
+            addDirs: [],
+            settingsBag: { worker_mcp_config_path: '/custom/mcp.json' },
+        });
+        const events = readActivityEvents(tmpDataRoot).filter(e => e.event === 'worker_mcp_config_resolved');
+        assert.equal(events.length, 1, 'exactly one worker_mcp_config_resolved event per spawn');
+        assert.equal(events[0].gate_payload.precedence_layer, 'settings_override');
+        assert.equal(events[0].gate_payload.mcp_config_path, '/custom/mcp.json');
+    } finally {
+        process.env.PICKLE_DATA_ROOT = origDataRoot;
+        if (origDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        fs.rmSync(tmpDataRoot, { recursive: true, force: true });
+    }
+});
+
+test('AC-MFW-6: buildWorkerInvocation(claude) emits worker_mcp_config_resolved once (omitted)', () => {
+    const tmpDataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mfw6-wrk-omit-'));
+    const tmpHome = mkTmpHome('mfw6-wrk-home');
+    // No .claude.json in tmpHome — ensures omitted path
+    const origDataRoot = process.env.PICKLE_DATA_ROOT;
+    const origHome = process.env.HOME;
+    process.env.PICKLE_DATA_ROOT = tmpDataRoot;
+    // We can't inject homeDir into buildWorkerInvocation, but if HOME is set to
+    // a directory without .claude.json the resolver falls through to 'omitted'.
+    // Only override HOME when the real ~/.claude.json doesn't exist.
+    const realClaudeJson = path.join(os.homedir(), '.claude.json');
+    const overrideHome = !fs.existsSync(realClaudeJson);
+    if (overrideHome) process.env.HOME = tmpHome;
+    try {
+        buildWorkerInvocation('claude', {
+            prompt: 'test',
+            addDirs: [],
+            settingsBag: {},
+        });
+        const events = readActivityEvents(tmpDataRoot).filter(e => e.event === 'worker_mcp_config_resolved');
+        assert.equal(events.length, 1, 'exactly one worker_mcp_config_resolved event per spawn');
+        if (overrideHome) {
+            assert.equal(events[0].gate_payload.precedence_layer, 'omitted');
+            assert.equal(events[0].gate_payload.mcp_config_path, null);
+        } else {
+            // Real ~/.claude.json exists — layer will be claude_json_fallback
+            assert.ok(
+                ['omitted', 'claude_json_fallback'].includes(events[0].gate_payload.precedence_layer),
+                `precedence_layer should be omitted or claude_json_fallback, got ${events[0].gate_payload.precedence_layer}`,
+            );
+        }
+    } finally {
+        process.env.PICKLE_DATA_ROOT = origDataRoot;
+        if (origDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        if (overrideHome) {
+            process.env.HOME = origHome;
+            if (origHome === undefined) delete process.env.HOME;
+        }
+        fs.rmSync(tmpDataRoot, { recursive: true, force: true });
+        cleanDir(tmpHome);
+    }
+});
+
+test('AC-MFW-6: buildManagerInvocation(claude) emits worker_mcp_config_resolved once (settings_override)', () => {
+    const tmpDataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mfw6-mgr-'));
+    const origDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = tmpDataRoot;
+    try {
+        buildManagerInvocation('claude', {
+            prompt: 'manage',
+            addDirs: [],
+            settingsBag: { worker_mcp_config_path: '/mgr/mcp.json' },
+        });
+        const events = readActivityEvents(tmpDataRoot).filter(e => e.event === 'worker_mcp_config_resolved');
+        assert.equal(events.length, 1, 'exactly one worker_mcp_config_resolved event per manager spawn');
+        assert.equal(events[0].gate_payload.precedence_layer, 'settings_override');
+        assert.equal(events[0].gate_payload.mcp_config_path, '/mgr/mcp.json');
+    } finally {
+        process.env.PICKLE_DATA_ROOT = origDataRoot;
+        if (origDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        fs.rmSync(tmpDataRoot, { recursive: true, force: true });
+    }
+});

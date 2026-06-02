@@ -757,6 +757,15 @@ const EVENT_CASES = [
     valid: { event: 'pickle_command_deprecated', ts: TS },
     drop: 'ts',
   },
+  {
+    type: 'worker_mcp_config_resolved',
+    valid: {
+      event: 'worker_mcp_config_resolved',
+      ts: TS,
+      gate_payload: { mcp_config_path: '/ops/mcp.json', precedence_layer: 'settings_override' },
+    },
+    drop: 'gate_payload',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -1030,6 +1039,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'pickle_command_deprecated',
     'refinement_over_collapse_detected',
     'concurrent_git_access_detected',
+    'worker_mcp_config_resolved',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.
@@ -1089,5 +1099,40 @@ test('activity-event-payload: tier_diff_envelope_exceeded registered in VALID_AC
   assert.ok(
     VALID_ACTIVITY_EVENTS.includes('tier_diff_envelope_exceeded'),
     'tier_diff_envelope_exceeded must be present in VALID_ACTIVITY_EVENTS',
+  );
+});
+
+// AC-MFW-6: worker_mcp_config_resolved schema tests
+test('activity-event-payload: worker_mcp_config_resolved validates well-formed payload (settings_override)', () => {
+  const result = validate({
+    event: 'worker_mcp_config_resolved',
+    ts: TS,
+    gate_payload: { mcp_config_path: '/ops/mcp.json', precedence_layer: 'settings_override' },
+  }, 'worker_mcp_config_resolved');
+  assert.equal(result.valid, true, `worker_mcp_config_resolved: ${result.error}`);
+});
+
+test('activity-event-payload: worker_mcp_config_resolved validates omitted case (null path)', () => {
+  const result = validate({
+    event: 'worker_mcp_config_resolved',
+    ts: TS,
+    gate_payload: { mcp_config_path: null, precedence_layer: 'omitted' },
+  }, 'worker_mcp_config_resolved');
+  assert.equal(result.valid, true, `worker_mcp_config_resolved omitted: ${result.error}`);
+});
+
+test('activity-event-payload: worker_mcp_config_resolved rejects unknown precedence_layer', () => {
+  const result = validate({
+    event: 'worker_mcp_config_resolved',
+    ts: TS,
+    gate_payload: { mcp_config_path: null, precedence_layer: 'explicit_override' },
+  }, 'worker_mcp_config_resolved');
+  assert.equal(result.valid, false, 'unknown precedence_layer should fail');
+});
+
+test('activity-event-payload: worker_mcp_config_resolved registered in VALID_ACTIVITY_EVENTS', () => {
+  assert.ok(
+    VALID_ACTIVITY_EVENTS.includes('worker_mcp_config_resolved'),
+    'worker_mcp_config_resolved must be present in VALID_ACTIVITY_EVENTS',
   );
 });
