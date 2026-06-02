@@ -343,6 +343,8 @@ Reject the Ousterhout line-ratio reading of "deep module." Depth is not "many im
 - INVARIANT: `hermes_model` is the optional Hermes model override passed to worker and manager spawns. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/hermes-spawn.test.js.
 - INVARIANT: `hermes_max_turns` is the optional positive Hermes max-turns override passed to worker and manager spawns. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/hermes-spawn.test.js.
 - INVARIANT: `codex_model` is the optional Codex model override passed to worker and manager spawns; falls back to `pickle_settings.default_codex_model`. ENFORCE: extension/tests/spawn-morty.test.js.
+- INVARIANT: `grok_model` is the optional grok model override resolved by `resolveGrokModel` and passed to worker and manager spawns; absent yields the grok CLI default. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/grok-backend.test.js.
+- INVARIANT: `kimi_model` is the optional kimi model override resolved by `resolveKimiModel` and passed to worker and manager spawns; absent yields the kimi CLI default. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/kimi-backend.test.js.
 - INVARIANT: `archaeology` is nullable project-context metadata. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `tickets_version` increments when course correction changes ticket state. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `last_course_correction` stores nullable metadata for the latest applied correction. ENFORCE: extension/tests/state-field-invariants.test.js.
