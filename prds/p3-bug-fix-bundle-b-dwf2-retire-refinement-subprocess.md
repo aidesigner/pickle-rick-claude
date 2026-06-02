@@ -1,7 +1,8 @@
 ---
 title: P3 feature bundle — B-DWF-2 — soak + retire legacy refinement subprocess
-status: Shelved
-shelved_reason: "R-DWF-3-SOAK FAIL — ManifestSchema format:date-time rejected by workflow runtime AJV; fix required before retry. See prds/research/dwf-soak-findings.md."
+status: In Progress
+retry_reason: "Re-activated 2026-06-01 — blocking ManifestSchema date-time→minLength fix landed in commit e1c322f2 (.claude/workflows/refine-analyze.js). Re-running R-DWF-3-SOAK gate; a fresh soak FAIL re-shelves per AC-SOAK-3."
+prior_shelved_reason: "R-DWF-3-SOAK FAIL — ManifestSchema format:date-time rejected by workflow runtime AJV; fix required before retry. See prds/research/dwf-soak-findings.md."
 shelved_date: 2026-06-01
 filed: 2026-06-01
 priority: P3
