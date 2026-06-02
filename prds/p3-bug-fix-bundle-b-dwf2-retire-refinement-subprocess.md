@@ -1,6 +1,8 @@
 ---
 title: P3 feature bundle — B-DWF-2 — soak + retire legacy refinement subprocess
-status: Draft
+status: Shelved
+shelved_reason: "R-DWF-3-SOAK FAIL — ManifestSchema format:date-time rejected by workflow runtime AJV; fix required before retry. See prds/research/dwf-soak-findings.md."
+shelved_date: 2026-06-01
 filed: 2026-06-01
 priority: P3
 type: bug-bundle
