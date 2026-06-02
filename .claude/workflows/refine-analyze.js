@@ -233,7 +233,17 @@ const {
   refinementDir = `${sessionDir}/refinement`,
   cycles = 3,
   maxTurns = 100,
-} = args;
+} = args ?? {};
+
+// Fail-fast on missing required inputs. Without this guard, undefined prdPath /
+// sessionDir flow into agent prompts ("Original PRD: undefined", manifest path
+// "undefined/refinement_manifest.json") and the run stalls without producing a
+// manifest (B-DWF-2 soak: a missing-args invocation hung ~34 min). A clear throw
+// surfaces the caller's wiring bug immediately instead.
+const _missing = ['prdPath', 'sessionDir', 'workingDir'].filter((k) => !{ prdPath, sessionDir, workingDir }[k]);
+if (_missing.length > 0) {
+  throw new Error(`refine-analyze workflow: missing required args [${_missing.join(', ')}]. The launcher must pass args={prdPath, sessionDir, workingDir[, refinementDir, cycles, maxTurns]}.`);
+}
 
 let prior = null;
 let analyses = [];
