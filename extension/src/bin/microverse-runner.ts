@@ -3266,6 +3266,34 @@ function autoRescueDirtyTree(ctx: RunContext): void {
   }
 }
 
+// R-APXG-3: convergence was signaled but the gate deferred it — trust the worker after
+// POST_CONVERGENCE_GATE_DEFERRAL_LIMIT consecutive deferrals to prevent an infinite loop.
+// Extracted from handleWorkerMode (R-APXG-3 closer fix-forward) to keep that function's
+// cyclomatic complexity under the eslint ceiling. Returns 'converged' once the bound is hit,
+// otherwise null (keep iterating); resets the counter on any non-deferral reason.
+function handlePostConvergenceGateDeferral(
+  workerResult: { reason: string },
+  ctx: RunContext,
+): ExitReason | null {
+  const GATE_DEFERRED_REASON = 'per-iteration gate left unresolved regressions';
+  if (workerResult.reason !== GATE_DEFERRED_REASON) {
+    ctx.postConvergenceDeferralCount = 0;
+    return null;
+  }
+  ctx.postConvergenceDeferralCount = (ctx.postConvergenceDeferralCount ?? 0) + 1;
+  if (ctx.postConvergenceDeferralCount >= POST_CONVERGENCE_GATE_DEFERRAL_LIMIT) {
+    ctx.log(
+      `[R-APXG-3] Post-convergence gate deferred ${ctx.postConvergenceDeferralCount} consecutive time(s) ` +
+      `(limit=${POST_CONVERGENCE_GATE_DEFERRAL_LIMIT}); convergence signal trusted — exiting cleanly`,
+    );
+    return 'converged';
+  }
+  ctx.log(
+    `[R-APXG-3] Post-convergence gate deferral ${ctx.postConvergenceDeferralCount}/${POST_CONVERGENCE_GATE_DEFERRAL_LIMIT} — retrying`,
+  );
+  return null;
+}
+
 async function handleWorkerMode(
   state: MicroverseState,
   ctx: RunContext,
@@ -3298,23 +3326,9 @@ async function handleWorkerMode(
     ctx.log(`Converged (worker-managed: ${workerResult.reason})`);
     return 'converged';
   }
-  // R-APXG-3: convergence was signaled but the gate deferred it — trust the worker after
-  // POST_CONVERGENCE_GATE_DEFERRAL_LIMIT consecutive deferrals to prevent an infinite loop.
-  const GATE_DEFERRED_REASON = 'per-iteration gate left unresolved regressions';
-  if (workerResult.reason === GATE_DEFERRED_REASON) {
-    ctx.postConvergenceDeferralCount = (ctx.postConvergenceDeferralCount ?? 0) + 1;
-    if (ctx.postConvergenceDeferralCount >= POST_CONVERGENCE_GATE_DEFERRAL_LIMIT) {
-      ctx.log(
-        `[R-APXG-3] Post-convergence gate deferred ${ctx.postConvergenceDeferralCount} consecutive time(s) ` +
-        `(limit=${POST_CONVERGENCE_GATE_DEFERRAL_LIMIT}); convergence signal trusted — exiting cleanly`,
-      );
-      return 'converged';
-    }
-    ctx.log(
-      `[R-APXG-3] Post-convergence gate deferral ${ctx.postConvergenceDeferralCount}/${POST_CONVERGENCE_GATE_DEFERRAL_LIMIT} — retrying`,
-    );
-  } else {
-    ctx.postConvergenceDeferralCount = 0;
+  const deferralExit = handlePostConvergenceGateDeferral(workerResult, ctx);
+  if (deferralExit) {
+    return deferralExit;
   }
   const stallCounter = workerResult.currentMv.convergence?.stall_counter;
   const stallLimit = workerResult.currentMv.convergence?.stall_limit;
