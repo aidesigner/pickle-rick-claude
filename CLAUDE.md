@@ -81,6 +81,15 @@ Before creating a release, run the full lint and test gate from `extension/`: `n
 | types/index.js | Shared types: State, errors (StateError/LockError/TransactionError), PromiseTokens, activity events |
 | meeseeks.md | Setup + per-pass review template |
 
+## Settings (pickle_settings.json)
+
+Operator-configured fields in the source `pickle_settings.json` (deployed via `bash install.sh`).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `worker_mcp_config_path` | `string \| null` | `null` | Path to an operator-curated subset MCP config for worker/manager subprocesses (e.g. read-only Linear; omit write-capable servers). `null` = no MCP forwarding. |
+| `worker_mcp_snapshot_servers` | `string[]` | `[]` | Server names (from `worker_mcp_config_path`) to snapshot at session setup time. Empty = none snapshotted. |
+
 ## Environment Variables
 
 | Variable | Values | Effect |

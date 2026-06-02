@@ -850,6 +850,8 @@ export interface PickleSettings {
   pipeline_continue_on_phase_fail?: boolean;
   worker_gate_tier?: 'narrow' | 'fast' | 'full';
   worker_test_gate_timeout_ms?: number;
+  worker_mcp_config_path?: string | null;
+  worker_mcp_snapshot_servers?: string[];
   [key: string]: unknown;
 }
 

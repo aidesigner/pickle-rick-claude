@@ -50,6 +50,10 @@
     "5": "opus"
   },
   "max_opus_passes": 3,
+  "worker_mcp_config_path": null,
+  "_worker_mcp_config_path_doc": "Optional path to an operator-curated subset MCP config (e.g. read-only Linear; omit write-capable servers). Null = no MCP forwarding.",
+  "worker_mcp_snapshot_servers": [],
+  "_worker_mcp_snapshot_servers_doc": "Servers to snapshot at session setup time. Subset of server names in worker_mcp_config_path. Default empty = none snapshotted.",
   "auto_update_enabled": false,
   "update_check_interval_hours": 24,
   "enable_task_notes": true,
