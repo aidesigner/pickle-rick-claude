@@ -31,7 +31,7 @@ import {
   findLastAcceptedEntry,
   updateViolationLedger,
 } from '../services/microverse-state.js';
-import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
+import { getHeadSha, resetToSha, isWorkingTreeDirty, listWorkingTreeDirtyPaths } from '../services/git-utils.js';
 import {
   writeStateFile,
   getExtensionRoot,
@@ -64,7 +64,7 @@ import {
   recordManagerRelaunch,
 } from '../services/manager-relaunch.js';
 import { logActivity } from '../services/activity-logger.js';
-import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate } from '../services/convergence-gate.js';
+import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate, filterByScope } from '../services/convergence-gate.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 
 type ExitReason = MicroverseExitReason;
@@ -2582,9 +2582,26 @@ function resetStoppedMicroverseState(state: MicroverseState, sessionDir: string,
   writeMicroverseState(sessionDir, state);
 }
 
-export function preflightAutoCommit(workingDir: string, log: (msg: string) => void): void {
+function stageSpecificPaths(workingDir: string, paths: string[]): void {
+  for (const p of paths) {
+    execFileSync('git', ['add', '--', p], {
+      cwd: workingDir,
+      timeout: 30_000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  }
+}
+
+export function preflightAutoCommit(workingDir: string, log: (msg: string) => void, allowedPaths?: string[]): void {
   const PREFLIGHT_DIRT_EXCLUDES = ['prds', 'docs'];
-  if (!isWorkingTreeDirty(workingDir, PREFLIGHT_DIRT_EXCLUDES)) return;
+  const allDirtyPaths = listWorkingTreeDirtyPaths(workingDir, PREFLIGHT_DIRT_EXCLUDES);
+  // When scope is specified via allowed_paths, restrict dirtiness evaluation to in-scope files only.
+  // Out-of-scope changes must NOT abort the run and must NOT be committed (no scope leak).
+  const isScoped = allowedPaths != null && allowedPaths.length > 0;
+  const dirtyPaths = isScoped
+    ? filterByScope(allDirtyPaths, { scope: 'full', allowedPaths })
+    : allDirtyPaths;
+  if (dirtyPaths.length === 0) return;
   if (!fs.existsSync(path.join(workingDir, '.git'))) {
     log('ERROR: Working tree is dirty and not a git repository. Aborting.');
     throw new Error('Working tree is dirty — not a git repo, cannot auto-commit');
@@ -2592,7 +2609,11 @@ export function preflightAutoCommit(workingDir: string, log: (msg: string) => vo
   log('Working tree is dirty — auto-committing before microverse start');
   const stagedSnapshot = captureCachedDiffPatch(workingDir);
   try {
-    stageAutoCommitPaths(workingDir, PREFLIGHT_DIRT_EXCLUDES);
+    if (isScoped) {
+      stageSpecificPaths(workingDir, dirtyPaths);
+    } else {
+      stageAutoCommitPaths(workingDir, PREFLIGHT_DIRT_EXCLUDES);
+    }
     execFileSync('git', ['commit', '-m', 'microverse: auto-commit dirty tree before start'], { cwd: workingDir, timeout: 30_000 });
     log(`Auto-committed pre-flight: ${getHeadSha(workingDir)}`);
   } catch (commitErr) {
@@ -3747,7 +3768,7 @@ function initializeMicroverseRun(sessionDir: string): RunStartup {
 
   resetStoppedMicroverseState(mvState, sessionDir, log);
   const workingDir = state.working_dir || process.cwd();
-  preflightAutoCommit(workingDir, log);
+  preflightAutoCommit(workingDir, log, mvState.allowed_paths);
   ensureRunnerStateActive(statePath);
   installShutdownHandlers(sessionDir, statePath, log);
 
