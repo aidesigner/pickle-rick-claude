@@ -84,6 +84,8 @@ export interface State {
   hermes_model?: string;
   /** Optional Grok model override (e.g. `grok-build`). Resolution: `state.grok_model` → undefined (grok CLI default). */
   grok_model?: string;
+  /** Optional kimi model override. Resolution: `state.kimi_model` → undefined (kimi CLI default). */
+  kimi_model?: string;
   /**
    * Optional codex model override (e.g. `gpt-5.3-codex-spark`).
    * Resolution precedence (see `resolveCodexModel` in `bin/spawn-morty.ts`):
@@ -159,11 +161,11 @@ export interface State {
  */
 export const FALSE_EPIC_THRESHOLD = 3;
 
-export type Backend = 'claude' | 'codex' | 'hermes' | 'deepseek' | 'grok';
+export type Backend = 'claude' | 'codex' | 'hermes' | 'deepseek' | 'grok' | 'kimi';
 export type BackendResolutionSource = 'state' | 'env' | 'settings' | 'default' | 'refinement-lock' | 'cli-flag-override';
 export type WorkerBackendResolutionSource = 'worker_backend' | 'backend' | 'env_lock';
 
-export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'hermes', 'deepseek', 'grok'] as const;
+export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'hermes', 'deepseek', 'grok', 'kimi'] as const;
 
 export interface ProjectContext {
   project_context_path: string;

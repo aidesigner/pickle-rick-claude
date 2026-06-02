@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { Backend, BACKENDS, State, type BackendResolutionSource, type WorkerBackendResolutionSource } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 
@@ -327,6 +328,7 @@ export function buildWorkerInvocation(backend: Backend, opts: WorkerInvocationOp
   if (backend === 'hermes') return buildHermesWorkerInvocation(opts);
   if (backend === 'deepseek') return buildDeepseekWorkerInvocation(opts);
   if (backend === 'grok') return buildGrokWorkerInvocation(opts);
+  if (backend === 'kimi') return buildKimiWorkerInvocation(opts);
   return buildClaudeWorkerInvocation(opts);
 }
 
@@ -335,6 +337,7 @@ export function buildManagerInvocation(backend: Backend, opts: ManagerInvocation
   if (backend === 'hermes') return buildHermesWorkerInvocation(opts);
   if (backend === 'deepseek') return buildDeepseekManagerInvocation(opts);
   if (backend === 'grok') return buildGrokWorkerInvocation(opts);
+  if (backend === 'kimi') return buildKimiWorkerInvocation(opts);
   return buildClaudeManagerInvocation(opts);
 }
 
@@ -404,6 +407,17 @@ function buildGrokWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvocati
   if (opts.model?.trim()) args.push('--model', opts.model.trim());
   args.push('-p', opts.prompt);
   return { cmd: 'grok', args, backend: 'grok' };
+}
+
+function buildKimiWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvocation {
+  // INV-SWARM-OFF: kimi has no --no-subagents flag. Only disable path is
+  // --agent-file pointing to a spec that excludes kimi_cli.tools.agent:Agent.
+  const servicesDir = path.dirname(fileURLToPath(import.meta.url));
+  const agentFile = path.resolve(servicesDir, '../data/kimi-no-swarm.yaml');
+  const args: string[] = ['--print', '--agent-file', agentFile];
+  if (opts.model?.trim()) args.push('--model', opts.model.trim());
+  args.push('-p', opts.prompt);
+  return { cmd: 'kimi', args, backend: 'kimi' };
 }
 
 function buildDeepseekEnvOverlay(): Record<string, string> {
