@@ -1,7 +1,8 @@
 ---
 title: P3 feature bundle — B-DWF-2 — soak + retire legacy refinement subprocess
-status: In Progress
-retry_reason: "Re-activated 2026-06-01 — blocking ManifestSchema date-time→minLength fix landed in commit e1c322f2 (.claude/workflows/refine-analyze.js). Re-running R-DWF-3-SOAK gate; a fresh soak FAIL re-shelves per AC-SOAK-3."
+status: Shelved
+shelved_reason: "R-DWF-3-SOAK cannot cleanly complete. Attempt 1 found a real workflow bug (ManifestSchema format:date-time rejected by Workflow-runtime AJV) — FIXED in e1c322f2 (landed on main, a standalone improvement to the opt-in workflow path). Attempt 2 (post-fix) got further — all 3 analysts succeeded — but the synthesis step ran with UNDEFINED input paths (Original PRD/Session dir/Refinement dir all 'undefined' in the soak invocation), so no manifest landed at a verifiable path and the soak stalled ~34min. Root cause = soak-harness input wiring, not necessarily workflow code. SHELVED: retiring the safe-default legacy refinement path is low-value and not justified on a soak that can't cleanly validate. Legacy path retained (zero regression; workflow path stays opt-in default-off). Re-attempt needs: a reliable soak harness that passes the PRD/session/refinement paths to the workflow + confirmation the workflow produces a valid manifest end-to-end."
+retry_reason: "Re-activated 2026-06-01 — blocking ManifestSchema date-time→minLength fix landed in commit e1c322f2. Re-soak stalled on undefined synthesis input paths; re-shelved per AC-SOAK-3."
 prior_shelved_reason: "R-DWF-3-SOAK FAIL — ManifestSchema format:date-time rejected by workflow runtime AJV; fix required before retry. See prds/research/dwf-soak-findings.md."
 shelved_date: 2026-06-01
 filed: 2026-06-01
