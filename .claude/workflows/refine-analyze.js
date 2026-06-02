@@ -128,7 +128,11 @@ const ManifestSchema = {
         },
       },
     },
-    completed_at: { type: 'string', format: 'date-time' },
+    // NOTE: `format: 'date-time'` is unsupported by the Workflow-runtime AJV
+    // (no ajv-formats plugin), which silently rejected the synthesis manifest
+    // and produced no output (B-DWF-2 soak finding). Validate as a non-empty
+    // string instead — the synthesis agent stamps a real ISO-8601 timestamp.
+    completed_at: { type: 'string', minLength: 1 },
   },
 };
 
