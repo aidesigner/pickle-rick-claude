@@ -5,7 +5,8 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { printMinimalPanel, Style, TICKET_TIER_BUDGETS, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, TICKET_TIER_BUDGETS, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus, loadPickleSettingsBag } from '../services/pickle-utils.js';
+import { resolveMcpConfigPath } from '../services/backend-spawn.js';
 import { getHeadSha, getHeadBranch, probeConcurrentGitAccess } from '../services/git-utils.js';
 import { LockError, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
 import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive, readMappedPid } from '../services/state-manager.js';
@@ -30,6 +31,64 @@ const DEFAULT_THROUGHPUT_BASELINES = {
     deepseek: 4.0,
     hermes: 4.5,
 };
+function extractTicketIdFromPrompt(prompt) {
+    const match = prompt.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
+    return match ? match[1] : null;
+}
+const MCP_SNAPSHOT_REFRESH_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24h
+/**
+ * R-MFW-4 (Option D, FR-4): write a setup-time snapshot of MCP server data
+ * into `${sessionRoot}/mcp-context/<server>.json` for each server in
+ * `snapshotServers`. Gracefully no-ops when `snapshotServers` is empty or
+ * `mcpConfigPath` is undefined. On `--resume`, refreshes only snapshots older
+ * than 24 h.
+ *
+ * `fetchFn` is injectable for testing; the default caller in `main()` passes
+ * `async () => null` (no-op production default).
+ */
+export async function runMcpSnapshot(sessionRoot, snapshotServers, mcpConfigPath, originalPrompt, fetchFn, isResume = false) {
+    if (snapshotServers.length === 0)
+        return;
+    if (!mcpConfigPath)
+        return;
+    const mcpContextDir = path.join(sessionRoot, 'mcp-context');
+    for (const server of snapshotServers) {
+        if (server !== 'linear')
+            continue;
+        const ticketId = extractTicketIdFromPrompt(originalPrompt);
+        if (!ticketId)
+            continue;
+        const snapshotPath = path.join(mcpContextDir, 'linear-ticket.json');
+        if (fs.existsSync(snapshotPath)) {
+            if (isResume) {
+                const ageMs = Date.now() - fs.statSync(snapshotPath).mtimeMs;
+                if (ageMs < MCP_SNAPSHOT_REFRESH_THRESHOLD_MS)
+                    continue;
+            }
+            else {
+                continue;
+            }
+        }
+        let data;
+        try {
+            data = await fetchFn(server, ticketId);
+        }
+        catch {
+            continue;
+        }
+        if (!data)
+            continue;
+        if (!fs.existsSync(mcpContextDir)) {
+            fs.mkdirSync(mcpContextDir, { recursive: true });
+        }
+        try {
+            fs.writeFileSync(snapshotPath, JSON.stringify(data, null, 2));
+        }
+        catch {
+            /* best-effort — never block session launch */
+        }
+    }
+}
 function die(message) {
     console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);
     process.exit(1);
@@ -1286,6 +1345,17 @@ async function main() {
         evaluateLaunchSizing(session.sessionRoot, args);
     }
     catch { /* sizing is advisory */ }
+    // R-MFW-4 (Option D, FR-4): setup-time MCP snapshot. Best-effort; never
+    // blocks session launch. Production fetchFn is a no-op (returns null) — the
+    // injectable seam exists for integration tests and future live callers.
+    try {
+        const settingsBag = loadPickleSettingsBag();
+        const snapshotServers = Array.isArray(settingsBag?.worker_mcp_snapshot_servers)
+            ? settingsBag.worker_mcp_snapshot_servers
+            : [];
+        await runMcpSnapshot(session.sessionRoot, snapshotServers, resolveMcpConfigPath(settingsBag ?? undefined), session.state.original_prompt || '', async () => null, args.resumeMode);
+    }
+    catch { /* snapshot is best-effort — never block launch */ }
     if (!args.noGraph) {
         await ensureGraph(process.cwd());
     }
