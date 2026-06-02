@@ -680,3 +680,42 @@ test('NFR: codex worker invocation has no env field (zero pollution)', () => {
     const inv = buildWorkerInvocation('codex', { prompt: 'x', addDirs: [] });
     assert.equal(inv.env, undefined, 'codex invocation must not carry env overlay');
 });
+
+// --- AC-MFW-3: --ignore-user-config retention + Option-D-fallback stub ---
+
+test('AC-MFW-3: buildWorkerInvocation(codex) retains --ignore-user-config', () => {
+    // R-MFW-3 invariant: Option C (removing --ignore-user-config) is rejected.
+    // This guard ensures a future refactor cannot silently drop the flag.
+    const inv = buildWorkerInvocation('codex', { prompt: 'x', addDirs: [] });
+    assert.ok(
+        inv.args.includes('--ignore-user-config'),
+        'codex worker invocation must include --ignore-user-config (FM-4 guard)',
+    );
+});
+
+test('AC-MFW-3: buildManagerInvocation(codex) retains --ignore-user-config', () => {
+    // Codex manager path goes through buildCodexInvocation — same invariant.
+    const inv = buildManagerInvocation('codex', { prompt: 'x', addDirs: [] });
+    assert.ok(
+        inv.args.includes('--ignore-user-config'),
+        'codex manager invocation must include --ignore-user-config (FM-4 guard)',
+    );
+});
+
+test('AC-MFW-3: buildWorkerInvocation(codex) Option-D stub — no per-invocation MCP flag', () => {
+    // R-MFW-3 Option-D fallback: codex has no --mcp-config equivalent and
+    // per-invocation -c mcp.servers.*=… injection is infeasible with
+    // --ignore-user-config active. MCP forwarding for codex is deferred to
+    // R-MFW-4 (setup-time snapshot). This test guards that no partial/broken
+    // MCP injection was introduced here.
+    const inv = buildWorkerInvocation('codex', { prompt: 'x', addDirs: [] });
+    assert.equal(
+        inv.args.includes('--mcp-config'),
+        false,
+        'codex invocation must NOT include --mcp-config (no codex equivalent; Option D via R-MFW-4)',
+    );
+    assert.ok(
+        !inv.args.some(a => typeof a === 'string' && a.startsWith('mcp.servers')),
+        'codex invocation must NOT include mcp.servers -c override (Option B infeasible)',
+    );
+});

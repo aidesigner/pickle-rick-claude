@@ -417,6 +417,27 @@ function buildCodexInvocation(prompt: string, addDirs: string[], model?: string,
     // produces FM-4 (stall-on-imaginary-worker) where codex narrates a worker
     // that doesn't exist instead of invoking spawn-morty.js.
     '--ignore-rules',
+    // R-MFW-3 Option-D stub: MCP forwarding for codex workers is deferred to
+    // R-MFW-4 (setup-time snapshot path).
+    //
+    // Option B (per-invocation MCP injection via `-c mcp.servers.*=…`) was
+    // investigated and is NOT feasible:
+    //   1. Codex has no `--mcp-config <path>` flag (unlike claude).
+    //   2. `-c` overrides are documented as applying to values "otherwise
+    //      loaded from config.toml"; their behaviour when `--ignore-user-config`
+    //      suppresses config.toml is unspecified and untested.
+    //   3. MCP server config is a complex nested TOML array — injecting it
+    //      per-invocation via `-c` is fragile and has no reliable schema anchor.
+    //   4. `resolveMcpConfigPath` (R-MFW-2) returns a JSON file path for
+    //      claude's `--mcp-config`; there is no codex equivalent.
+    //
+    // Option C (removing `--ignore-user-config`) is REJECTED — it reintroduces
+    // FM-4 (INV-IGNORE-USER-CONFIG).
+    //
+    // Resolution: R-MFW-4 will write a setup-time MCP snapshot before codex
+    // workers are spawned; that snapshot covers codex without modifying the
+    // per-invocation args here. `worker_mcp_snapshot_servers` in
+    // pickle_settings.json (R-MFW-1) controls which servers are snapshotted.
     '--ignore-user-config',
   ];
   for (const dir of addDirs) {
