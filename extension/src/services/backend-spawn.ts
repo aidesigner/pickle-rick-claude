@@ -406,9 +406,7 @@ function buildClaudeWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvoca
   assertAddDirsUnderTmpdirIfTestMode(opts.addDirs);
   emitMcpConfigResolved(opts.settingsBag);
   const args: string[] = ['--dangerously-skip-permissions'];
-  for (const dir of opts.addDirs) {
-    if (dir && existsSilently(dir)) args.push('--add-dir', dir);
-  }
+  appendAddDirArgs(args, opts.addDirs);
   if (opts.outputFormat && opts.outputFormat !== 'text') {
     args.push('--output-format', opts.outputFormat);
   }
@@ -477,9 +475,7 @@ function buildCodexInvocation(prompt: string, addDirs: string[], model?: string,
     // pickle_settings.json (R-MFW-1) controls which servers are snapshotted.
     '--ignore-user-config',
   ];
-  for (const dir of addDirs) {
-    if (dir && existsSilently(dir)) args.push('--add-dir', dir);
-  }
+  appendAddDirArgs(args, addDirs);
   if (model) args.push('-m', model);
   // Codex `-c key=value` is the documented config-override syntax. Must come
   // BEFORE the `--` prompt separator or codex parses it as part of the prompt.
@@ -586,9 +582,7 @@ export function buildJudgeInvocation(backend: Backend, opts: JudgeInvocationOpti
 
 function buildClaudeJudgeInvocation(opts: JudgeInvocationOptions): SpawnInvocation {
   const args: string[] = ['--dangerously-skip-permissions'];
-  for (const dir of opts.addDirs) {
-    if (dir && existsSilently(dir)) args.push('--add-dir', dir);
-  }
+  appendAddDirArgs(args, opts.addDirs);
   if (opts.model) args.push('--model', opts.model);
   if (opts.systemPrompt) args.push('--system-prompt', opts.systemPrompt);
   // Read-only tool allowlist — judge MUST NOT write, edit, or execute.
@@ -619,9 +613,7 @@ function buildCodexJudgeInvocation(opts: JudgeInvocationOptions): SpawnInvocatio
     '--skip-git-repo-check',
     '--ephemeral',
   ];
-  for (const dir of opts.addDirs) {
-    if (dir && existsSilently(dir)) args.push('--add-dir', dir);
-  }
+  appendAddDirArgs(args, opts.addDirs);
   if (opts.model) args.push('-m', opts.model);
   args.push('--', composedPrompt);
   return { cmd: 'codex', args, backend: 'codex' };
@@ -629,6 +621,18 @@ function buildCodexJudgeInvocation(opts: JudgeInvocationOptions): SpawnInvocatio
 
 function existsSilently(p: string): boolean {
   try { return fs.existsSync(p); } catch { return false; }
+}
+
+/**
+ * Append `--add-dir <dir>` for each existing sandbox dir. Single source of truth
+ * for the existence-filtered add-dir allowlisting shared by every worker/judge
+ * builder (claude + codex). The manager builder intentionally does NOT use this
+ * — it pushes add-dirs without the existence gate.
+ */
+function appendAddDirArgs(args: string[], addDirs: readonly string[]): void {
+  for (const dir of addDirs) {
+    if (dir && existsSilently(dir)) args.push('--add-dir', dir);
+  }
 }
 
 export function backendEnvOverrides(backend: Backend): NodeJS.ProcessEnv {
