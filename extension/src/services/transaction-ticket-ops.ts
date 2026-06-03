@@ -411,55 +411,34 @@ function applyPlannedWrite(
     }
   }
   const action = existed ? 'write' : 'create';
-  appendApplyLedger(ledgerPath, {
+  const ledgerEntry = (
+    status: CourseCorrectionApplyLedgerEntry['status'],
+    error?: string,
+  ): CourseCorrectionApplyLedgerEntry => ({
     step,
     action,
     operation,
     ticket_id: ticketId,
     path: file.path,
-    status: 'started',
+    status,
     recovery_class: existed ? 'restore-previous-content' : 'delete-created',
     beforeContent,
     previousContent: beforeContent,
     afterContent: file.content,
     content: file.content,
+    ...(error !== undefined ? { error } : {}),
     createdAt: nowIso,
   });
+
+  appendApplyLedger(ledgerPath, ledgerEntry('started'));
   try {
     fs.mkdirSync(path.dirname(file.path), { recursive: true });
     fs.writeFileSync(file.path, file.content, 'utf-8');
   } catch (error) {
-    appendApplyLedger(ledgerPath, {
-      step,
-      action,
-      operation,
-      ticket_id: ticketId,
-      path: file.path,
-      status: 'failed',
-      recovery_class: existed ? 'restore-previous-content' : 'delete-created',
-      beforeContent,
-      previousContent: beforeContent,
-      afterContent: file.content,
-      content: file.content,
-      error: safeErrorMessage(error),
-      createdAt: nowIso,
-    });
+    appendApplyLedger(ledgerPath, ledgerEntry('failed', safeErrorMessage(error)));
     throw error;
   }
-  appendApplyLedger(ledgerPath, {
-    step,
-    action,
-    operation,
-    ticket_id: ticketId,
-    path: file.path,
-    status: 'applied',
-    recovery_class: existed ? 'restore-previous-content' : 'delete-created',
-    beforeContent,
-    previousContent: beforeContent,
-    afterContent: file.content,
-    content: file.content,
-    createdAt: nowIso,
-  });
+  appendApplyLedger(ledgerPath, ledgerEntry('applied'));
 }
 
 function writeHaltFile(sessionRoot: string, ledgerPath: string, failedStep: number, cause: string, nowIso: string): string {
