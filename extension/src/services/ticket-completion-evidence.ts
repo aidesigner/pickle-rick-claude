@@ -63,6 +63,10 @@ export interface EvidenceCtx {
   startTimeEpoch?: number | null;
   /** R-CCR-1: fallback directory when workingDir is unusable for git. */
   fallbackDir?: string;
+  /** R-CXOR-2: baseline commit SHA at session start — rejected as completion evidence. */
+  startCommit?: string | null;
+  /** R-CXOR-2: pinned SHA at session bootstrap — rejected as completion evidence. */
+  pinnedSha?: string | null;
 }
 
 /** Options for persistEvidence. */
@@ -144,6 +148,26 @@ function extractRCodeTokens(title: string | null): string[] {
 function readFirstHeading(content: string): string | null {
   const m = content.match(/^#\s+(.+)$/m);
   return m?.[1]?.trim() || null;
+}
+
+/** R-CXOR-2: true when sha is a session baseline (start_commit or pinned_sha). */
+function isBaselineSha(sha: string, ctx: Pick<EvidenceCtx, 'startCommit' | 'pinnedSha'>): boolean {
+  return (ctx.startCommit != null && sha === ctx.startCommit) ||
+    (ctx.pinnedSha != null && sha === ctx.pinnedSha);
+}
+
+/**
+ * Probes whether an explicit SHA is git-reachable, falling back to fallbackDir on
+ * 'git-could-not-run'. Returns the EvidenceResult on success, or null when the
+ * SHA is not reachable (caller maps null → absent).
+ */
+function probeExplicitSha(sha: string, workingDir: string, fallbackDir?: string): EvidenceResult | null {
+  const primary = probeCatFile(workingDir, sha);
+  if (primary === 'exists') return { kind: 'explicit', sha };
+  if (primary !== 'git-could-not-run') return null;
+  if (!fallbackDir || fallbackDir === workingDir) return null;
+  if (probeCatFile(fallbackDir, sha) === 'exists') return { kind: 'explicit', sha, usedFallback: true };
+  return null;
 }
 
 type GitLogEntry = { sha: string; epoch: number; message: string };
@@ -238,13 +262,16 @@ export function readEvidence(ctx: EvidenceCtx): EvidenceResult {
   // --- Explicit completion_commit field ---
   const explicit = normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit'));
   if (explicit) {
-    const primary = probeCatFile(ctx.workingDir, explicit);
-    if (primary === 'exists') return { kind: 'explicit', sha: explicit };
-    if (primary === 'git-could-not-run' && ctx.fallbackDir && ctx.fallbackDir !== ctx.workingDir) {
-      if (probeCatFile(ctx.fallbackDir, explicit) === 'exists') {
-        return { kind: 'explicit', sha: explicit, usedFallback: true };
-      }
+    // R-CXOR-2: reject baseline SHAs — a ticket whose only "commit" is the session
+    // start_commit or pinned_sha did no real work; treat it as absent evidence.
+    if (isBaselineSha(explicit, ctx)) {
+      process.stderr.write(
+        `[ticket-completion-evidence] baseline sha ${explicit} rejected as completion evidence — ticket did no work beyond session start\n`,
+      );
+      return { kind: 'absent' };
     }
+    const r = probeExplicitSha(explicit, ctx.workingDir, ctx.fallbackDir);
+    if (r) return r;
     // Explicit SHA present but not reachable → no usable evidence.
     return { kind: 'absent' };
   }
