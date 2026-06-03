@@ -152,17 +152,10 @@ export function resolveBackend(source) {
     // Silent force — no warning, no log.
     if (process.env.PICKLE_REFINEMENT_LOCK === '1')
         return 'claude';
-    const raw = source ? source.backend : undefined;
-    if (isBackend(raw))
-        return raw;
-    if (typeof raw === 'string' && raw.length > 0)
-        warnBadBackend('state', raw);
-    const env = process.env.PICKLE_BACKEND;
-    if (isBackend(env))
-        return env;
-    if (typeof env === 'string' && env.length > 0)
-        warnBadBackend('PICKLE_BACKEND env', env);
-    return 'claude';
+    // Past the refinement-lock carve-out, backend resolution is identical to the
+    // manager-backend path (state.backend → PICKLE_BACKEND env → 'claude', warning
+    // on unrecognized values), so delegate instead of duplicating the precedence.
+    return resolveManagerBackendValue(source);
 }
 function resolveManagerBackendValue(source) {
     const raw = source ? source.backend : undefined;
@@ -254,42 +247,28 @@ export function resolveBackendFromStateFile(statePath) {
     return resolveBackendFromStateFileWithSource(statePath).backend;
 }
 /**
- * Shared MCP-config resolver — precedence:
- *   1. settingsBag.worker_mcp_config_path (operator override via pickle_settings)
- *   2. ~/.claude.json if present (default user MCP config)
- *   3. undefined — omit --mcp-config entirely (INV-MCP-OPT-IN)
- *
- * `homeDir` defaults to `os.homedir()` and is exposed for testing only.
+ * Single source of truth for MCP-config precedence. Returns both the resolved
+ * path (null when omitted) and which layer matched, so the public
+ * `resolveMcpConfigPath` and the activity-logging `emitMcpConfigResolved` share
+ * one decision tree instead of reimplementing it.
  */
-export function resolveMcpConfigPath(settingsBag, homeDir) {
+function resolveMcpConfigWithLayer(settingsBag, homeDir) {
     const override = settingsBag?.worker_mcp_config_path;
-    if (typeof override === 'string' && override.trim())
-        return override.trim();
+    if (typeof override === 'string' && override.trim()) {
+        return { path: override.trim(), layer: 'settings_override' };
+    }
     const claudeJson = path.join(homeDir ?? os.homedir(), '.claude.json');
-    if (existsSilently(claudeJson))
-        return claudeJson;
-    return undefined;
+    if (existsSilently(claudeJson)) {
+        return { path: claudeJson, layer: 'claude_json_fallback' };
+    }
+    return { path: null, layer: 'omitted' };
+}
+export function resolveMcpConfigPath(settingsBag, homeDir) {
+    return resolveMcpConfigWithLayer(settingsBag, homeDir).path ?? undefined;
 }
 function emitMcpConfigResolved(settingsBag, homeDir) {
     try {
-        const override = settingsBag?.worker_mcp_config_path;
-        let mcp_config_path;
-        let precedence_layer;
-        if (typeof override === 'string' && override.trim()) {
-            mcp_config_path = override.trim();
-            precedence_layer = 'settings_override';
-        }
-        else {
-            const claudeJson = path.join(homeDir ?? os.homedir(), '.claude.json');
-            if (existsSilently(claudeJson)) {
-                mcp_config_path = claudeJson;
-                precedence_layer = 'claude_json_fallback';
-            }
-            else {
-                mcp_config_path = null;
-                precedence_layer = 'omitted';
-            }
-        }
+        const { path: mcp_config_path, layer: precedence_layer } = resolveMcpConfigWithLayer(settingsBag, homeDir);
         logActivity({
             event: 'worker_mcp_config_resolved',
             source: 'pickle',
@@ -335,10 +314,7 @@ function buildClaudeWorkerInvocation(opts) {
     assertAddDirsUnderTmpdirIfTestMode(opts.addDirs);
     emitMcpConfigResolved(opts.settingsBag);
     const args = ['--dangerously-skip-permissions'];
-    for (const dir of opts.addDirs) {
-        if (dir && existsSilently(dir))
-            args.push('--add-dir', dir);
-    }
+    appendAddDirArgs(args, opts.addDirs);
     if (opts.outputFormat && opts.outputFormat !== 'text') {
         args.push('--output-format', opts.outputFormat);
     }
@@ -412,10 +388,7 @@ function buildCodexInvocation(prompt, addDirs, model, effort) {
         // pickle_settings.json (R-MFW-1) controls which servers are snapshotted.
         '--ignore-user-config',
     ];
-    for (const dir of addDirs) {
-        if (dir && existsSilently(dir))
-            args.push('--add-dir', dir);
-    }
+    appendAddDirArgs(args, addDirs);
     if (model)
         args.push('-m', model);
     // Codex `-c key=value` is the documented config-override syntax. Must come
@@ -523,10 +496,7 @@ export function buildJudgeInvocation(backend, opts) {
 }
 function buildClaudeJudgeInvocation(opts) {
     const args = ['--dangerously-skip-permissions'];
-    for (const dir of opts.addDirs) {
-        if (dir && existsSilently(dir))
-            args.push('--add-dir', dir);
-    }
+    appendAddDirArgs(args, opts.addDirs);
     if (opts.model)
         args.push('--model', opts.model);
     if (opts.systemPrompt)
@@ -557,10 +527,7 @@ function buildCodexJudgeInvocation(opts) {
         '--skip-git-repo-check',
         '--ephemeral',
     ];
-    for (const dir of opts.addDirs) {
-        if (dir && existsSilently(dir))
-            args.push('--add-dir', dir);
-    }
+    appendAddDirArgs(args, opts.addDirs);
     if (opts.model)
         args.push('-m', opts.model);
     args.push('--', composedPrompt);
@@ -572,6 +539,18 @@ function existsSilently(p) {
     }
     catch {
         return false;
+    }
+}
+/**
+ * Append `--add-dir <dir>` for each existing sandbox dir. Single source of truth
+ * for the existence-filtered add-dir allowlisting shared by every worker/judge
+ * builder (claude + codex). The manager builder intentionally does NOT use this
+ * — it pushes add-dirs without the existence gate.
+ */
+function appendAddDirArgs(args, addDirs) {
+    for (const dir of addDirs) {
+        if (dir && existsSilently(dir))
+            args.push('--add-dir', dir);
     }
 }
 export function backendEnvOverrides(backend) {

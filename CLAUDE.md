@@ -103,7 +103,7 @@ Operator-configured fields in the source `pickle_settings.json` (deployed via `b
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **pickle-rick-claude** (26348 symbols, 38998 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **pickle-rick-claude** (26447 symbols, 39140 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

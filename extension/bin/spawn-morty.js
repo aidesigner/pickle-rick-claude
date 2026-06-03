@@ -913,42 +913,25 @@ async function runWorkerGateChecks(args) {
         gatePhase = 'tsc';
         gateFailures = parseWorkerGateTscFailures(tscOutput, args.extensionDir);
     }
-    if (!lintOk || !tscResult.ok) {
-        return {
-            lintOk,
-            tscOk: tscResult.ok,
-            testsOk: true,
-            lintErrors,
-            tscErrors,
-            testFailures: [],
-            gateFailures,
-            gatePhase,
-        };
-    }
-    if (args.workerGateTier === 'narrow') {
-        return {
-            lintOk,
-            tscOk: tscResult.ok,
-            testsOk: true,
-            lintErrors,
-            tscErrors,
-            testFailures: [],
-            gateFailures,
-            gatePhase,
-        };
-    }
-    if (args.ticketTier === 'small') {
-        return {
-            lintOk,
-            tscOk: tscResult.ok,
-            testsOk: true,
-            lintErrors,
-            tscErrors,
-            testFailures: [],
-            gateFailures,
-            gatePhase,
-        };
-    }
+    // Pre-test exits (lint/tsc fail, narrow tier, small tier) all report the same
+    // shape: tests were not run, so testsOk:true and testFailures empty. The closure
+    // captures the live lint/tsc bindings so each site reports its own settled values.
+    const preTestResult = () => ({
+        lintOk,
+        tscOk: tscResult.ok,
+        testsOk: true,
+        lintErrors,
+        tscErrors,
+        testFailures: [],
+        gateFailures,
+        gatePhase,
+    });
+    if (!lintOk || !tscResult.ok)
+        return preTestResult();
+    if (args.workerGateTier === 'narrow')
+        return preTestResult();
+    if (args.ticketTier === 'small')
+        return preTestResult();
     const fastTierResult = await runWorkerGateTestCommand('test:fast', args.extensionDir, args.workerTestGateTimeoutMs);
     if (!fastTierResult.ok) {
         gatePhase = fastTierResult.gatePhase;
@@ -1421,23 +1404,23 @@ export function resolveCodexModel(extensionRoot, state) {
     catch { /* settings missing or unreadable: codex CLI default */ }
     return undefined;
 }
-function resolveGrokModel(state) {
-    const m = state?.grok_model;
+function resolveBackendModel(state, field) {
+    const m = state?.[field];
     if (typeof m === 'string' && m.trim().length > 0)
         return m.trim();
     return undefined;
+}
+// Named per-backend adapters over the shared resolver. The names are the documented
+// resolution contract for the `grok_model`/`kimi_model`/`gemini_model` state fields
+// (see extension/CLAUDE.md state.json Field Invariants), so they stay as live symbols.
+function resolveGrokModel(state) {
+    return resolveBackendModel(state, 'grok_model');
 }
 function resolveKimiModel(state) {
-    const m = state?.kimi_model;
-    if (typeof m === 'string' && m.trim().length > 0)
-        return m.trim();
-    return undefined;
+    return resolveBackendModel(state, 'kimi_model');
 }
 function resolveGeminiModel(state) {
-    const m = state?.gemini_model;
-    if (typeof m === 'string' && m.trim().length > 0)
-        return m.trim();
-    return undefined;
+    return resolveBackendModel(state, 'gemini_model');
 }
 function resolveWorkerModel(backend, extensionRoot, sessionRoot, ticketInfo, state) {
     if (backend === 'codex')
@@ -1563,7 +1546,10 @@ function evaluateWorkerOutcome(params) {
     }
     return { isSuccess, role };
 }
-// eslint-disable-next-line max-lines-per-function -- HT-1 reviewed: gemini_binary_missing ENOENT block (R-CBI-GEMINI-2) pushed past 120; per-backend ENOENT handlers are non-extractable per audit-enforced trap door.
+// Native-CLI backends whose missing binary surfaces as ENOENT → exit 127 + a
+// `<backend>_binary_missing` log line. Single source of truth for both the exit-code
+// mapping and the emission below; add a new native-CLI backend here only.
+const NATIVE_CLI_BINARY_MISSING_BACKENDS = ['hermes', 'grok', 'kimi', 'gemini'];
 export async function runWorkerProcess(ctx) {
     const { args, ticketPath, ticketId, sessionRoot, sessionLog, sessionLogPath, sessionWorkingDir } = ctx;
     const gitnexusMcpConfig = args.backend === 'claude' && hasGitNexusIndex(sessionWorkingDir)
@@ -1643,37 +1629,11 @@ export async function runWorkerProcess(ctx) {
             spawnErrorHandled = true;
             clearLifecycleTimers();
             const errorCode = err.code;
-            const exitCode = ((args.backend === 'hermes' || args.backend === 'grok' || args.backend === 'kimi' || args.backend === 'gemini') && errorCode === 'ENOENT') ? 127 : 1;
-            if (args.backend === 'hermes' && errorCode === 'ENOENT') {
+            const isNativeCliEnoent = NATIVE_CLI_BINARY_MISSING_BACKENDS.includes(args.backend) && errorCode === 'ENOENT';
+            const exitCode = isNativeCliEnoent ? 127 : 1;
+            if (isNativeCliEnoent) {
                 sessionLog.write(JSON.stringify({
-                    event: 'hermes_binary_missing',
-                    ts: new Date().toISOString(),
-                    ticket: ticketId,
-                    backend: args.backend,
-                    command: invocation.cmd,
-                }) + '\n');
-            }
-            if (args.backend === 'grok' && errorCode === 'ENOENT') {
-                sessionLog.write(JSON.stringify({
-                    event: 'grok_binary_missing',
-                    ts: new Date().toISOString(),
-                    ticket: ticketId,
-                    backend: args.backend,
-                    command: invocation.cmd,
-                }) + '\n');
-            }
-            if (args.backend === 'kimi' && errorCode === 'ENOENT') {
-                sessionLog.write(JSON.stringify({
-                    event: 'kimi_binary_missing',
-                    ts: new Date().toISOString(),
-                    ticket: ticketId,
-                    backend: args.backend,
-                    command: invocation.cmd,
-                }) + '\n');
-            }
-            if (args.backend === 'gemini' && errorCode === 'ENOENT') {
-                sessionLog.write(JSON.stringify({
-                    event: 'gemini_binary_missing',
+                    event: `${args.backend}_binary_missing`,
                     ts: new Date().toISOString(),
                     ticket: ticketId,
                     backend: args.backend,
