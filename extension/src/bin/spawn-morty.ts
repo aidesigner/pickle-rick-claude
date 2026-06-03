@@ -1646,22 +1646,28 @@ export function resolveCodexModel(extensionRoot: string, state: State | null): s
   return undefined;
 }
 
-function resolveGrokModel(state: State | null): string | undefined {
-  const m = (state as (State & Record<string, unknown>) | null)?.grok_model;
+function resolveBackendModel(
+  state: State | null,
+  field: 'grok_model' | 'kimi_model' | 'gemini_model'
+): string | undefined {
+  const m = (state as (State & Record<string, unknown>) | null)?.[field];
   if (typeof m === 'string' && m.trim().length > 0) return m.trim();
   return undefined;
+}
+
+// Named per-backend adapters over the shared resolver. The names are the documented
+// resolution contract for the `grok_model`/`kimi_model`/`gemini_model` state fields
+// (see extension/CLAUDE.md state.json Field Invariants), so they stay as live symbols.
+function resolveGrokModel(state: State | null): string | undefined {
+  return resolveBackendModel(state, 'grok_model');
 }
 
 function resolveKimiModel(state: State | null): string | undefined {
-  const m = (state as (State & Record<string, unknown>) | null)?.kimi_model;
-  if (typeof m === 'string' && m.trim().length > 0) return m.trim();
-  return undefined;
+  return resolveBackendModel(state, 'kimi_model');
 }
 
 function resolveGeminiModel(state: State | null): string | undefined {
-  const m = (state as (State & Record<string, unknown>) | null)?.gemini_model;
-  if (typeof m === 'string' && m.trim().length > 0) return m.trim();
-  return undefined;
+  return resolveBackendModel(state, 'gemini_model');
 }
 
 function resolveWorkerModel(
