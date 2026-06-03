@@ -574,4 +574,46 @@ then
   audit_exit_code=1
 fi
 
+# AC-8 MCP forwarding invariant: verify trap door entry present in services/CLAUDE.md with all required labels
+if ! node - "$EXTENSION_ROOT/src/services/CLAUDE.md" <<'NODE'
+const fs = require('fs');
+
+const [,, claudePath] = process.argv;
+const text = fs.readFileSync(claudePath, 'utf8');
+const lines = text.split('\n');
+const entry = lines.find((line) => line.includes('(AC-8 MCP forwarding invariant)'));
+
+if (!entry) {
+  process.stderr.write('AC-8 MCP forwarding invariant: trap-door entry not found in extension/src/services/CLAUDE.md\n');
+  process.exit(1);
+}
+
+const labels = ['INVARIANT', 'PATTERN_SHAPE', 'BREAKS', 'ENFORCE'];
+let failures = 0;
+
+for (const label of labels) {
+  const nextLabelPattern = labels
+    .filter((candidate) => candidate !== label)
+    .map((candidate) => `${candidate}:`)
+    .join('|');
+  const match = entry.match(
+    new RegExp(`${label}:([\\s\\S]*?)(?=\\s(?:${nextLabelPattern})|$)`)
+  );
+
+  if (!match || match[1].trim().length === 0) {
+    process.stderr.write(`AC-8 MCP forwarding invariant: trap-door entry is missing populated ${label} content\n`);
+    failures++;
+  }
+}
+
+if (failures > 0) {
+  process.exit(1);
+}
+
+console.log('audit-trap-door-enforcement: AC-8 MCP forwarding invariant trap-door verified');
+NODE
+then
+  audit_exit_code=1
+fi
+
 exit "$audit_exit_code"
