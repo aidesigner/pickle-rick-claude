@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { readMicroverseState } from '../services/microverse-state.js';
 
@@ -8,12 +7,12 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'read-microverse.js') 
     process.stderr.write('Usage: read-microverse <session-root> <field>\n');
     process.exit(1);
   }
-  const mvPath = path.join(sessionRoot, 'microverse.json');
   try {
-    if (!fs.existsSync(mvPath)) {
-      process.stdout.write('0\n');
-      process.exit(0);
-    }
+    // readMicroverseState recovers a dead writer's microverse.json.tmp.<pid>
+    // snapshot when the base file is mid-rename. An fs.existsSync(microverse.json)
+    // pre-gate would short-circuit to '0' in exactly that window and defeat the
+    // tmp recovery this reader was switched to (c0e91aed). It returns null for the
+    // genuinely-absent case, so the gate is both redundant and harmful.
     const raw = readMicroverseState(sessionRoot) as Record<string, unknown> | null;
     if (!raw) {
       process.stdout.write('0\n');

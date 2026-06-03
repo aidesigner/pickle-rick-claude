@@ -163,6 +163,35 @@ test('read-microverse CLI promotes dead writer tmp before reading iteration_regr
   }
 });
 
+test('read-microverse CLI recovers tmp-ONLY snapshot when base microverse.json is mid-rename', () => {
+  // Regression: c0e91aed added a tmp-recovering reader but guarded it behind
+  // fs.existsSync(microverse.json). With no base file (interrupted rename window)
+  // the existsSync pre-gate short-circuited to '0', defeating the recovery it
+  // was meant to enable. Only a dead-writer tmp snapshot exists here — no base.
+  const dir = makeTempDir();
+  try {
+    const recovered = createMicroverseState(BASE_OPTS);
+    recovered.iteration_regressions = 7;
+    // Intentionally NO base microverse.json — only the .tmp.<deadpid> snapshot.
+    fs.writeFileSync(path.join(dir, 'microverse.json.tmp.999999'), JSON.stringify(recovered, null, 2));
+    const future = new Date(Date.now() + 1000);
+    fs.utimesSync(path.join(dir, 'microverse.json.tmp.999999'), future, future);
+    assert.equal(fs.existsSync(path.join(dir, 'microverse.json')), false, 'precondition: no base file');
+
+    const result = spawnSync(process.execPath, [READ_MICROVERSE_BIN, dir, 'iteration_regressions'], {
+      cwd: path.resolve('.'),
+      encoding: 'utf-8',
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), '7', 'must recover the tmp snapshot, not print 0');
+    assert.equal(fs.existsSync(path.join(dir, 'microverse.json.tmp.999999')), false, 'tmp must be promoted');
+    assert.equal(fs.existsSync(path.join(dir, 'microverse.json')), true, 'base file must now exist');
+  } finally {
+    fs.rmSync(dir, { recursive: true });
+  }
+});
+
 test('readRecoverableJsonObject ignores stale tmp cleanup failures and returns the base object', () => {
   const dir = makeTempDir();
   const target = path.join(dir, 'cache.json');
