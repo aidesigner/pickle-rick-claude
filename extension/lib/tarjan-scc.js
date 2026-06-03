@@ -9,10 +9,8 @@ function buildAdjacency(graph) {
             adj.set(id, []);
     }
     for (const edge of graph.edges) {
-        const src = (typeof edge['source'] === 'string' ? edge['source'] : null) ??
-            (typeof edge['from'] === 'string' ? edge['from'] : null);
-        const tgt = (typeof edge['target'] === 'string' ? edge['target'] : null) ??
-            (typeof edge['to'] === 'string' ? edge['to'] : null);
+        const src = edgeEndpoint(edge, 'source', 'from');
+        const tgt = edgeEndpoint(edge, 'target', 'to');
         if (!src || !tgt)
             continue;
         if (!adj.has(src))
