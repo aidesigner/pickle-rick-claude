@@ -28,6 +28,36 @@ function parseConvergenceMode(raw) {
     console.error(`convergence_mode must be 'metric' or 'worker', got ${raw}`);
     process.exit(1);
 }
+// Read + validate the --allowed-paths-file scope JSON. Fail-fast: silently
+// dropping scope filtering would defeat the purpose of the flag. Uses
+// readRecoverableJsonObject so a newer dead-writer scope.json.tmp.<pid> is
+// promoted before reading (init-microverse allowed-path trap door).
+function readAllowedPathsFile(allowedPathsFile) {
+    const fail = (detail) => {
+        console.error(`--allowed-paths-file ${allowedPathsFile}: ${detail}`);
+        process.exit(1);
+    };
+    let raw;
+    try {
+        raw = readRecoverableJsonObject(allowedPathsFile);
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`Failed to read --allowed-paths-file ${allowedPathsFile}: ${msg}`);
+        process.exit(1);
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        fail("expected a JSON object with an 'allowed_paths' array");
+    }
+    const field = raw.allowed_paths;
+    if (!Array.isArray(field)) {
+        fail("'allowed_paths' is missing or not an array");
+    }
+    if (!field.every((p) => typeof p === 'string')) {
+        fail("'allowed_paths' must contain only strings");
+    }
+    return field;
+}
 // Positional args are non-flag tokens that are not the value of a preceding flag.
 // Every flag here takes a value (see parseFlag), so the token after a `--flag` is its value.
 function extractPositionalArgs(args) {
@@ -99,33 +129,9 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
         }
         stallLimit = resolveStallLimit(metric.type, settingsRaw);
     }
-    let allowedPaths;
-    if (allowedPathsFile) {
-        let raw;
-        try {
-            raw = readRecoverableJsonObject(allowedPathsFile);
-        }
-        catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error(`Failed to read --allowed-paths-file ${allowedPathsFile}: ${msg}`);
-            process.exit(1);
-        }
-        // Fail-fast: silently dropping scope filtering would defeat the purpose of the flag.
-        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-            console.error(`--allowed-paths-file ${allowedPathsFile}: expected a JSON object with an 'allowed_paths' array`);
-            process.exit(1);
-        }
-        const field = raw.allowed_paths;
-        if (!Array.isArray(field)) {
-            console.error(`--allowed-paths-file ${allowedPathsFile}: 'allowed_paths' is missing or not an array`);
-            process.exit(1);
-        }
-        if (!field.every((p) => typeof p === 'string')) {
-            console.error(`--allowed-paths-file ${allowedPathsFile}: 'allowed_paths' must contain only strings`);
-            process.exit(1);
-        }
-        allowedPaths = field;
-    }
+    const allowedPaths = allowedPathsFile
+        ? readAllowedPathsFile(allowedPathsFile)
+        : undefined;
     try {
         const convergenceTarget = rawConvergence != null ? Number(rawConvergence) : undefined;
         const state = createMicroverseState({ prdPath: targetPath, metric, stallLimit, convergenceTarget, convergenceMode, convergenceFile, allowedPaths });
