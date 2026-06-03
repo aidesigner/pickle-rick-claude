@@ -104,7 +104,6 @@ function expandWithTestDirs(paths: string[]): string[] {
 // Internal types
 // ---------------------------------------------------------------------------
 interface EdgeEntry { from: string; to: string; label?: string; attrs?: Record<string, string> }
-interface NodeSpec { id: string; attrs: Record<string, string> }
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1447,12 +1446,9 @@ export class DotBuilder {
     };
   }
 
-  private _emit(node: NodeSpec): void;
-  private _emit(id: string, attrs: Record<string, string>): void;
-  private _emit(nodeOrId: NodeSpec | string, attrs?: Record<string, string>): void {
-    const node = typeof nodeOrId === 'string' ? { id: nodeOrId, attrs: attrs ?? {} } : nodeOrId;
-    this._nodes.push(`  ${node.id} [${fmtAttrs(node.attrs)}]`);
-    this._nodeMap.set(node.id, { ...node.attrs });
+  private _emit(id: string, attrs: Record<string, string>): void {
+    this._nodes.push(`  ${id} [${fmtAttrs(attrs)}]`);
+    this._nodeMap.set(id, { ...attrs });
   }
 
   private _link(from: string, to: string): void;

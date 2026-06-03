@@ -1339,10 +1339,9 @@ export class DotBuilder {
             ...tier1Keys,
         };
     }
-    _emit(nodeOrId, attrs) {
-        const node = typeof nodeOrId === 'string' ? { id: nodeOrId, attrs: attrs ?? {} } : nodeOrId;
-        this._nodes.push(`  ${node.id} [${fmtAttrs(node.attrs)}]`);
-        this._nodeMap.set(node.id, { ...node.attrs });
+    _emit(id, attrs) {
+        this._nodes.push(`  ${id} [${fmtAttrs(attrs)}]`);
+        this._nodeMap.set(id, { ...attrs });
     }
     _link(from, to, attrs) {
         const edgeLine = (attrs && Object.keys(attrs).length > 0)
