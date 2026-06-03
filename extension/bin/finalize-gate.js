@@ -11,38 +11,33 @@ import { runAcPhaseGate } from '../services/ac-phase-gate.js';
 import { buildWorkerInvocation, backendEnvOverrides, resolveBackend, } from '../services/backend-spawn.js';
 const VALID_SKILLS = new Set(['szechuan', 'anatomy-park']);
 const sm = new StateManager();
+const DEFAULT_FINALIZE_GATE_SETTINGS = {
+    szechuan_max_remediation_cycles: 3,
+    anatomy_park_max_remediation_cycles: 5,
+    remediator_timeout_s: 600,
+};
 function positiveIntegerOrDefault(value, fallback) {
     return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
 }
 function normalizeFinalizeGateSettings(raw) {
-    const defaults = {
-        szechuan_max_remediation_cycles: 3,
-        anatomy_park_max_remediation_cycles: 5,
-        remediator_timeout_s: 600,
-    };
     return {
-        szechuan_max_remediation_cycles: positiveIntegerOrDefault(raw?.szechuan_max_remediation_cycles, defaults.szechuan_max_remediation_cycles),
-        anatomy_park_max_remediation_cycles: positiveIntegerOrDefault(raw?.anatomy_park_max_remediation_cycles, defaults.anatomy_park_max_remediation_cycles),
-        remediator_timeout_s: positiveIntegerOrDefault(raw?.remediator_timeout_s, defaults.remediator_timeout_s),
+        szechuan_max_remediation_cycles: positiveIntegerOrDefault(raw?.szechuan_max_remediation_cycles, DEFAULT_FINALIZE_GATE_SETTINGS.szechuan_max_remediation_cycles),
+        anatomy_park_max_remediation_cycles: positiveIntegerOrDefault(raw?.anatomy_park_max_remediation_cycles, DEFAULT_FINALIZE_GATE_SETTINGS.anatomy_park_max_remediation_cycles),
+        remediator_timeout_s: positiveIntegerOrDefault(raw?.remediator_timeout_s, DEFAULT_FINALIZE_GATE_SETTINGS.remediator_timeout_s),
     };
 }
 function loadFinalizeGateSettings(extRoot) {
-    const defaults = {
-        szechuan_max_remediation_cycles: 3,
-        anatomy_park_max_remediation_cycles: 5,
-        remediator_timeout_s: 600,
-    };
     try {
         const raw = readRecoverableJsonObject(path.join(extRoot, 'pickle_settings.json'));
         if (!raw)
-            return defaults;
+            return DEFAULT_FINALIZE_GATE_SETTINGS;
         const cg = raw.convergence_gate;
         if (!cg || typeof cg !== 'object')
-            return defaults;
+            return DEFAULT_FINALIZE_GATE_SETTINGS;
         return normalizeFinalizeGateSettings(cg);
     }
     catch {
-        return defaults;
+        return DEFAULT_FINALIZE_GATE_SETTINGS;
     }
 }
 function resolveFinalizeSettingsRoot() {
