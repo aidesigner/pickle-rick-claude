@@ -766,6 +766,22 @@ const EVENT_CASES = [
     },
     drop: 'gate_payload',
   },
+  {
+    type: 'worker_head_regression_detected',
+    valid: {
+      event: 'worker_head_regression_detected',
+      ts: TS,
+      ticket: 'abc12345',
+      session: 'session-1',
+      gate_payload: {
+        start_commit: 'abc1234',
+        current_head_sha: 'abc1234',
+        orphan_tip_sha: 'def5678',
+        action: 'ff_reattached',
+      },
+    },
+    drop: 'gate_payload',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -1040,6 +1056,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'refinement_over_collapse_detected',
     'concurrent_git_access_detected',
     'worker_mcp_config_resolved',
+    'worker_head_regression_detected',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

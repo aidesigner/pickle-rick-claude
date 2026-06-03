@@ -1753,6 +1753,87 @@ function readHeadCommit(workingDir: string): string | null {
   }
 }
 
+/** Returns true when headSha is the same as refSha or is an ancestor of refSha (HEAD regressed). */
+function isHeadAtOrBelowCommit(headSha: string, refSha: string, workingDir: string): boolean {
+  if (headSha === refSha) return true;
+  const r = spawnSync('git', ['-C', workingDir, 'merge-base', '--is-ancestor', headSha, refSha], { encoding: 'utf-8', timeout: 5000 });
+  return r.status === 0;
+}
+
+/**
+ * R-CXOR-1: detect and recover from a worker HEAD regression.
+ *
+ * A codex worker may commit real work then `git reset --hard` to the pre-ticket
+ * baseline on gate failure, leaving the ticket frontmatter Done but HEAD frozen.
+ * This function detects that case and attempts ff-only reattachment of the orphaned
+ * tip via the ticket's completion_commit SHA.  Falls back to marking the ticket
+ * Failed so the pipeline never accepts Done at baseline.
+ */
+export function detectAndRecoverHeadRegression(input: {
+  ticketId: string;
+  workingDir: string;
+  startCommit: string;
+  completionCommitSha: string | null;
+  sessionDir: string;
+  statePath: string;
+  iteration: number;
+  log: (msg: string) => void;
+}): { detected: boolean; recovered: boolean; action: 'ff_reattached' | 'marked_failed' | 'none' } {
+  const { ticketId, workingDir, startCommit, completionCommitSha, sessionDir, statePath, iteration, log } = input;
+  const currentHead = readHeadCommit(workingDir);
+  if (!currentHead) return { detected: false, recovered: false, action: 'none' };
+  if (!isHeadAtOrBelowCommit(currentHead, startCommit, workingDir)) {
+    return { detected: false, recovered: false, action: 'none' };
+  }
+
+  log(`[head-regression] ticket ${ticketId} iter=${iteration}: HEAD=${currentHead} at/below start_commit=${startCommit}`);
+
+  let recovered = false;
+  let action: 'ff_reattached' | 'marked_failed' = 'marked_failed';
+
+  if (completionCommitSha) {
+    const verifyR = spawnSync('git', ['-C', workingDir, 'cat-file', '-t', completionCommitSha], { encoding: 'utf-8', timeout: 5000 });
+    if (verifyR.status === 0 && ((verifyR.stdout as string) || '').trim() === 'commit') {
+      const mergeR = spawnSync('git', ['-C', workingDir, 'merge', '--ff-only', completionCommitSha], { encoding: 'utf-8', timeout: 15000 });
+      if (mergeR.status === 0) {
+        recovered = true;
+        action = 'ff_reattached';
+        log(`[head-regression] ff-only reattach to ${completionCommitSha} succeeded`);
+      } else {
+        log(`[head-regression] ff-only reattach failed: ${((mergeR.stderr as string) || '').trim()}`);
+      }
+    } else {
+      log(`[head-regression] orphan SHA ${completionCommitSha} not accessible as commit`);
+    }
+  }
+
+  if (!recovered) {
+    try {
+      updateTicketFrontmatter(ticketId, sessionDir, { status: 'Failed', completion_commit: null });
+      log(`[head-regression] ticket ${ticketId} marked Failed — HEAD at baseline, orphan unrecoverable`);
+    } catch (err) {
+      log(`[head-regression] ticket Failed flip error: ${safeErrorMessage(err)}`);
+    }
+  }
+
+  try {
+    writeActivityEntry(statePath, {
+      event: 'worker_head_regression_detected',
+      ts: new Date().toISOString(),
+      ticket: ticketId,
+      session: path.basename(sessionDir),
+      gate_payload: {
+        start_commit: startCommit,
+        current_head_sha: currentHead,
+        orphan_tip_sha: completionCommitSha,
+        action,
+      },
+    });
+  } catch { /* best-effort */ }
+
+  return { detected: true, recovered, action };
+}
+
 function emitMuxWastedIter(input: {
   sessionDir: string;
   iteration: number;
@@ -5465,6 +5546,21 @@ async function runMuxRunnerMain() {
           // R-PEDC: clear stale prior-iteration stamp on recovery.
           clearStaleDoneWithoutCommitEvidence(statePath);
           log(`Ticket ${previousTicket} already marked Done by model — skipping validation (completion_commit: ${guard.sha})`);
+          // R-CXOR-1: detect HEAD regression — worker may have committed then git-reset to baseline.
+          if (previousTicketStartCommit) {
+            try {
+              detectAndRecoverHeadRegression({
+                ticketId: prevTicketInfo.id,
+                workingDir: prevTicketInfo.working_dir || state.working_dir || process.cwd(),
+                startCommit: previousTicketStartCommit,
+                completionCommitSha: guard.sha || null,
+                sessionDir,
+                statePath,
+                iteration,
+                log,
+              });
+            } catch (err) { log(`head-regression check failed (ignored): ${safeErrorMessage(err)}`); }
+          }
         } else {
           // Drift scenario: model changed current_ticket without following protocol
           const ticketWorkingDir = prevTicketInfo?.working_dir || state.working_dir || process.cwd();

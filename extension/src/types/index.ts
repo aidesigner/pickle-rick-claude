@@ -655,6 +655,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'pickle_command_deprecated',
   'refinement_over_collapse_detected',
   'worker_mcp_config_resolved',
+  'worker_head_regression_detected',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

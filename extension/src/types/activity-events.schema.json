@@ -1458,6 +1458,26 @@
           }
         }
       }
+    },
+    "worker_head_regression_detected": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "session", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_head_regression_detected" },
+        "ts": { "type": "string" },
+        "ticket": { "type": ["string", "null"] },
+        "session": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["start_commit", "current_head_sha", "orphan_tip_sha", "action"],
+          "properties": {
+            "start_commit": { "type": "string" },
+            "current_head_sha": { "type": "string" },
+            "orphan_tip_sha": { "type": ["string", "null"] },
+            "action": { "type": "string", "enum": ["ff_reattached", "marked_failed"] }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -1552,6 +1572,7 @@
     { "$ref": "#/definitions/pickle_command_deprecated" },
     { "$ref": "#/definitions/refinement_over_collapse_detected" },
     { "$ref": "#/definitions/concurrent_git_access_detected" },
-    { "$ref": "#/definitions/worker_mcp_config_resolved" }
+    { "$ref": "#/definitions/worker_mcp_config_resolved" },
+    { "$ref": "#/definitions/worker_head_regression_detected" }
   ]
 }

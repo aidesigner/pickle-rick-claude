@@ -299,6 +299,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'pickle_command_deprecated',
     'refinement_over_collapse_detected',
     'worker_mcp_config_resolved',
+    'worker_head_regression_detected',
 ];
 /** Recoverable reasons a ticket can be flipped to Failed by the auto-skip guard (R-WSWA-3). */
 export const FAILURE_REASONS = ['oversized_no_progress'];
