@@ -24,38 +24,33 @@ interface FinalizeGateSettings {
   remediator_timeout_s: number;
 }
 
+const DEFAULT_FINALIZE_GATE_SETTINGS: FinalizeGateSettings = {
+  szechuan_max_remediation_cycles: 3,
+  anatomy_park_max_remediation_cycles: 5,
+  remediator_timeout_s: 600,
+};
+
 function positiveIntegerOrDefault(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 function normalizeFinalizeGateSettings(raw: Partial<FinalizeGateSettings> | null | undefined): FinalizeGateSettings {
-  const defaults: FinalizeGateSettings = {
-    szechuan_max_remediation_cycles: 3,
-    anatomy_park_max_remediation_cycles: 5,
-    remediator_timeout_s: 600,
-  };
-
   return {
-    szechuan_max_remediation_cycles: positiveIntegerOrDefault(raw?.szechuan_max_remediation_cycles, defaults.szechuan_max_remediation_cycles),
-    anatomy_park_max_remediation_cycles: positiveIntegerOrDefault(raw?.anatomy_park_max_remediation_cycles, defaults.anatomy_park_max_remediation_cycles),
-    remediator_timeout_s: positiveIntegerOrDefault(raw?.remediator_timeout_s, defaults.remediator_timeout_s),
+    szechuan_max_remediation_cycles: positiveIntegerOrDefault(raw?.szechuan_max_remediation_cycles, DEFAULT_FINALIZE_GATE_SETTINGS.szechuan_max_remediation_cycles),
+    anatomy_park_max_remediation_cycles: positiveIntegerOrDefault(raw?.anatomy_park_max_remediation_cycles, DEFAULT_FINALIZE_GATE_SETTINGS.anatomy_park_max_remediation_cycles),
+    remediator_timeout_s: positiveIntegerOrDefault(raw?.remediator_timeout_s, DEFAULT_FINALIZE_GATE_SETTINGS.remediator_timeout_s),
   };
 }
 
 function loadFinalizeGateSettings(extRoot: string): FinalizeGateSettings {
-  const defaults: FinalizeGateSettings = {
-    szechuan_max_remediation_cycles: 3,
-    anatomy_park_max_remediation_cycles: 5,
-    remediator_timeout_s: 600,
-  };
   try {
     const raw = readRecoverableJsonObject(path.join(extRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
-    if (!raw) return defaults;
+    if (!raw) return DEFAULT_FINALIZE_GATE_SETTINGS;
     const cg = raw.convergence_gate as Record<string, unknown> | undefined;
-    if (!cg || typeof cg !== 'object') return defaults;
+    if (!cg || typeof cg !== 'object') return DEFAULT_FINALIZE_GATE_SETTINGS;
     return normalizeFinalizeGateSettings(cg as Partial<FinalizeGateSettings>);
   } catch {
-    return defaults;
+    return DEFAULT_FINALIZE_GATE_SETTINGS;
   }
 }
 
