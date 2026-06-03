@@ -57,10 +57,9 @@ export function buildJudgeEnv(
       // authenticate via ANTHROPIC_API_KEY directly, so CLAUDE_API_KEY is redundant
       // and might point at the outer session's key material.
       if (k === 'CLAUDE_API_KEY' && baseEnv['ANTHROPIC_API_KEY']) continue;
-      // R-SJET-3 superset: also strip the DANGEROUS_PREFIXES/EXACT session
-      // markers so the probe path inherits outer-session env hygiene
-      // (PICKLE_*, SESSION_ROOT, TICKET_DIR, etc.).
-      if (DANGEROUS_EXACT.has(k)) continue;
+      // R-SJET-3 superset: also strip the DANGEROUS_PREFIXES session markers so
+      // the probe path inherits outer-session env hygiene (PICKLE_*,
+      // SESSION_ROOT, TICKET_DIR, etc.). CLAUDECODE is handled above.
       if (DANGEROUS_PREFIXES.some(p => k.startsWith(p))) continue;
       out[k] = v;
     }
@@ -84,11 +83,6 @@ const DANGEROUS_PREFIXES = [
   'SESSION_ROOT',
   'TICKET_DIR',
 ];
-
-// Exact session-marker matches (no trailing underscore in the env name).
-const DANGEROUS_EXACT = new Set<string>([
-  'CLAUDECODE',
-]);
 
 /**
  * Convenience wrapper used at the two judge spawn sites in microverse-runner.ts.
