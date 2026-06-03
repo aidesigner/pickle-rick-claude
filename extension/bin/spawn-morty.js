@@ -318,7 +318,7 @@ export function parseBackendOverrideArg(argv) {
         return null;
     const value = requireFlagValue(argv, idx);
     if (!isBackend(value)) {
-        die(`Error: --backend must be one of claude, codex, hermes, grok, kimi (got ${JSON.stringify(value)}).`);
+        die(`Error: --backend must be one of claude, codex, hermes, grok, kimi, gemini (got ${JSON.stringify(value)}).`);
     }
     return value;
 }
@@ -1433,6 +1433,12 @@ function resolveKimiModel(state) {
         return m.trim();
     return undefined;
 }
+function resolveGeminiModel(state) {
+    const m = state?.gemini_model;
+    if (typeof m === 'string' && m.trim().length > 0)
+        return m.trim();
+    return undefined;
+}
 function resolveWorkerModel(backend, extensionRoot, sessionRoot, ticketInfo, state) {
     if (backend === 'codex')
         return resolveCodexModel(extensionRoot, state);
@@ -1440,6 +1446,8 @@ function resolveWorkerModel(backend, extensionRoot, sessionRoot, ticketInfo, sta
         return resolveGrokModel(state);
     if (backend === 'kimi')
         return resolveKimiModel(state);
+    if (backend === 'gemini')
+        return resolveGeminiModel(state);
     if (backend !== 'claude')
         return undefined;
     let enableComplexityTiers = true;
@@ -1555,6 +1563,7 @@ function evaluateWorkerOutcome(params) {
     }
     return { isSuccess, role };
 }
+// eslint-disable-next-line max-lines-per-function -- HT-1 reviewed: gemini_binary_missing ENOENT block (R-CBI-GEMINI-2) pushed past 120; per-backend ENOENT handlers are non-extractable per audit-enforced trap door.
 export async function runWorkerProcess(ctx) {
     const { args, ticketPath, ticketId, sessionRoot, sessionLog, sessionLogPath, sessionWorkingDir } = ctx;
     const gitnexusMcpConfig = args.backend === 'claude' && hasGitNexusIndex(sessionWorkingDir)
@@ -1634,7 +1643,7 @@ export async function runWorkerProcess(ctx) {
             spawnErrorHandled = true;
             clearLifecycleTimers();
             const errorCode = err.code;
-            const exitCode = ((args.backend === 'hermes' || args.backend === 'grok' || args.backend === 'kimi') && errorCode === 'ENOENT') ? 127 : 1;
+            const exitCode = ((args.backend === 'hermes' || args.backend === 'grok' || args.backend === 'kimi' || args.backend === 'gemini') && errorCode === 'ENOENT') ? 127 : 1;
             if (args.backend === 'hermes' && errorCode === 'ENOENT') {
                 sessionLog.write(JSON.stringify({
                     event: 'hermes_binary_missing',
@@ -1656,6 +1665,15 @@ export async function runWorkerProcess(ctx) {
             if (args.backend === 'kimi' && errorCode === 'ENOENT') {
                 sessionLog.write(JSON.stringify({
                     event: 'kimi_binary_missing',
+                    ts: new Date().toISOString(),
+                    ticket: ticketId,
+                    backend: args.backend,
+                    command: invocation.cmd,
+                }) + '\n');
+            }
+            if (args.backend === 'gemini' && errorCode === 'ENOENT') {
+                sessionLog.write(JSON.stringify({
+                    event: 'gemini_binary_missing',
                     ts: new Date().toISOString(),
                     ticket: ticketId,
                     backend: args.backend,

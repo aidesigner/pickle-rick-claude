@@ -311,6 +311,8 @@ export function buildWorkerInvocation(backend, opts) {
         return buildGrokWorkerInvocation(opts);
     if (backend === 'kimi')
         return buildKimiWorkerInvocation(opts);
+    if (backend === 'gemini')
+        return buildGeminiWorkerInvocation(opts);
     return buildClaudeWorkerInvocation(opts);
 }
 export function buildManagerInvocation(backend, opts) {
@@ -324,6 +326,8 @@ export function buildManagerInvocation(backend, opts) {
         return buildGrokWorkerInvocation(opts);
     if (backend === 'kimi')
         return buildKimiWorkerInvocation(opts);
+    if (backend === 'gemini')
+        return buildGeminiWorkerInvocation(opts);
     return buildClaudeManagerInvocation(opts);
 }
 function buildClaudeWorkerInvocation(opts) {
@@ -438,6 +442,16 @@ function buildKimiWorkerInvocation(opts) {
         args.push('--model', opts.model.trim());
     args.push('-p', opts.prompt);
     return { cmd: 'kimi', args, backend: 'kimi' };
+}
+function buildGeminiWorkerInvocation(opts) {
+    // INV-SWARM-OFF: gemini has no --no-subagents flag. --approval-mode default
+    // keeps auto-approve off (the yolo default is false, this makes it explicit).
+    // --output-format stream-json matches the measured one-shot CLI surface.
+    const args = ['--approval-mode', 'default', '--output-format', 'stream-json'];
+    if (opts.model?.trim())
+        args.push('-m', opts.model.trim());
+    args.push('-p', opts.prompt);
+    return { cmd: 'gemini', args, backend: 'gemini' };
 }
 function buildDeepseekEnvOverlay() {
     const key = process.env.DEEPSEEK_API_KEY;

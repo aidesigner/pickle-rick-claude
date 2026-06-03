@@ -68,7 +68,7 @@ test('backend.hermes-accepted: resolves hermes from state and env', () => {
 
 test('resolveBackend: rejects invalid backend', () => {
     withUnsetBackendEnv(() => {
-        assert.equal(resolveBackend({ backend: 'gemini' }), 'claude');
+        assert.equal(resolveBackend({ backend: 'unknown-backend' }), 'claude');
     });
 });
 
