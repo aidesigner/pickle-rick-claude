@@ -916,19 +916,21 @@ function timeoutFailure(check: GateCheck): GateFailure {
 }
 
 /**
- * Write a valid empty `GateBaselineFile` for baseline-mode early-return paths
- * (no project type detected, or detected type lacks a command map). This keeps
- * the contract with `microverse-runner.capturePerIterationGateBaseline` —
- * which post-checks `pathExists(baselinePath)` — intact, so a green skip in
- * baseline mode does NOT become a silent pipeline-killer downstream.
- *
- * Mirrors `writeBaselineFile`'s mkdir + writeStateFile + access + post-write
- * inspect pattern. Throws `BaselineWriteFailedError` on any disk failure.
+ * Persist a `GateBaselineFile` to disk with mandatory post-write verification.
+ * Used by both the empty-baseline early-return paths (no project type detected,
+ * or detected type lacks a command map — `checks`/`failures` empty) and the
+ * captured-baseline path. The post-write `access` + `inspectBaselinePath` probe
+ * keeps the contract with `microverse-runner.capturePerIterationGateBaseline` —
+ * which post-checks `pathExists(baselinePath)` — intact, so a green baseline-mode
+ * result never reports success while `gate/baseline.json` is absent. Throws
+ * `BaselineWriteFailedError` on any disk failure.
  */
-async function writeEmptyBaselineFile(
+async function persistGateBaseline(
   baselinePath: string,
   opts: RunGateOpts,
   projectType: ProjectType | null,
+  checks: GateCheck[],
+  failures: GateFailure[],
   emit: GateEmit,
 ): Promise<void> {
   try {
@@ -938,41 +940,8 @@ async function writeEmptyBaselineFile(
       captured_iteration: opts.baselineIteration,
       working_dir: opts.workingDir,
       project_type: projectType as GateBaselineFile['project_type'],
-      checks: [],
-      failures: [],
-    };
-    await fs.promises.mkdir(path.dirname(baselinePath), { recursive: true });
-    writeStateFile(baselinePath, baseline);
-    await fs.promises.access(baselinePath);
-    const postWriteStatus = await inspectBaselinePath(baselinePath);
-    emit('gate_baseline_disk_check', { phase: 'post_write', ...postWriteStatus });
-    if (postWriteStatus.exists !== true) {
-      throw new BaselineWriteFailedError(
-        baselinePath,
-        `Baseline write reported success but file is missing at ${baselinePath}`,
-      );
-    }
-  } catch (err) {
-    throw baselineWriteFailed(baselinePath, err);
-  }
-}
-
-async function writeBaselineFile(
-  baselinePath: string,
-  opts: RunGateOpts,
-  projectType: ProjectType,
-  withIndices: GateFailure[],
-  emit: GateEmit,
-): Promise<void> {
-  try {
-    const baseline: GateBaselineFile = {
-      schema_version: 1,
-      captured_at: new Date().toISOString(),
-      captured_iteration: opts.baselineIteration,
-      working_dir: opts.workingDir,
-      project_type: projectType as GateBaselineFile['project_type'],
-      checks: opts.checks,
-      failures: withIndices,
+      checks,
+      failures,
     };
     await fs.promises.mkdir(path.dirname(baselinePath), { recursive: true });
     writeStateFile(baselinePath, baseline);
@@ -1030,7 +999,7 @@ async function resolveBaselineResult(
   const preWriteStatus = await inspectBaselinePath(baselinePath);
   emit('gate_baseline_disk_check', { phase: 'pre_write', ...preWriteStatus });
   if (preWriteStatus.exists !== true) {
-    await writeBaselineFile(baselinePath, opts, projectType, withIndices, emit);
+    await persistGateBaseline(baselinePath, opts, projectType, opts.checks, withIndices, emit);
     emit('gate_baseline_captured', { path: baselinePath, failure_count: withIndices.length });
     emit('gate_preexisting_tests_baselined', { failure_count: withIndices.length });
     return {
@@ -1123,7 +1092,7 @@ async function emitSkippedAndReturn(
   extra: Record<string, unknown> = {},
 ): Promise<GateResult> {
   if (opts.mode === 'baseline' && opts.baselinePath) {
-    await writeEmptyBaselineFile(opts.baselinePath, opts, projectType, emit);
+    await persistGateBaseline(opts.baselinePath, opts, projectType, [], [], emit);
   }
   emit('gate_skipped', { reason, ...extra });
   return { ...emptyGateResult(), elapsed_ms: Date.now() - start };
