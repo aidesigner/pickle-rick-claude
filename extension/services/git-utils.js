@@ -118,7 +118,13 @@ export function updateTicketFrontmatter(ticketId, sessionDir, patch) {
     const fm = extractFrontmatter(original);
     const baseContent = fm ? original.slice(0, fm.end) : original;
     const { content: updatedBase, statusReplaced } = applyStatusAndUpdatedFields(baseContent, ticketId, nextStatus, today);
-    const content = applyCompletionCommitField(fm ? updatedBase + original.slice(fm.end) : updatedBase, patch);
+    // Apply completion_commit to the frontmatter section ONLY. setFrontmatterField's
+    // add-path fallback anchors on the closing `---` at end-of-string; that only holds
+    // for the frontmatter slice. Running it against the full document (frontmatter + body)
+    // leaves the closing `---` mid-string, so an absent completion_commit is silently
+    // dropped — stamping `status: Done` with no completion evidence.
+    const baseWithCompletion = applyCompletionCommitField(updatedBase, patch);
+    const content = fm ? baseWithCompletion + original.slice(fm.end) : baseWithCompletion;
     if (nextStatus !== null && !statusReplaced) {
         console.warn(`Warning: no "status:" field found in ticket ${ticketId} — status not updated`);
     }
