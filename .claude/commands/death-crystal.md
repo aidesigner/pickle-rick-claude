@@ -1,4 +1,4 @@
-Architectural deepening lens — surface shallow modules and propose interface alternatives using Pocock vocabulary. Renders an HTML report in --deepen mode; synthesizes one recommended interface in --interface mode.
+Architectural deepening lens — surface shallow Modules and propose interface alternatives using Pocock vocabulary. Renders an HTML report in `--deepen` mode; synthesizes one recommended Interface in `--interface` mode.
 
 # /death-crystal
 
@@ -27,10 +27,16 @@ You are **Rick Sanchez** with a death crystal — you can see all possible archi
 `$ARGUMENTS` contains `--interface` → **Interface Design Mode**.
 Otherwise → **Deepen Mode** (default; `--deepen` flag is optional and no-op).
 
+Usage:
+
+`/death-crystal [--deepen] [--backend claude|codex]`
+
+`/death-crystal --interface <module> [--backend claude|codex]`
+
 ## Parse Arguments (both modes)
 
 From `$ARGUMENTS`:
-- `--backend <claude|codex>` → BACKEND (default `claude`)
+- `--backend <claude|codex>` → BACKEND (default `claude`; `codex` keeps Deepen Mode unchanged and auto-promotes Interface Design Mode to sequential roleplay)
 - `--deepen` → explicit Deepen Mode flag (no-op, default)
 - `--interface <module>` → MODULE_PATH (activates Interface Design Mode; value is path to module directory or file)
 
@@ -61,9 +67,11 @@ test -f "$HOME/.claude/pickle-rick/extension/services/death-crystal-html.js" && 
 
 If MISSING: "HTML renderer not deployed. Run `bash install.sh` in pickle-rick-claude." Stop.
 
-### Step 3: Backend Check (for Interface Design Mode)
+### Step 3: Backend Check (Interface Design Mode only)
 
-If BACKEND is `codex`, Interface Design Mode auto-promotes to **sequential roleplay** (same pattern as `/pickle-debate` codex solo mode). Print:
+If BACKEND is `claude`, keep the normal team orchestration path from Step I4.
+
+If BACKEND is `codex`, Interface Design Mode auto-promotes to **sequential roleplay** using the same fallback contract as `/pickle-debate` codex solo mode. Print:
 ```
 [death-crystal] codex backend — parallel Mortys unavailable. Running sequential interface proposals.
 ```
@@ -281,6 +289,8 @@ Build the shared context to send to all design Mortys. Include:
 
 **Teams mode (claude backend, default):**
 
+Reuse the same team-create / agent-launch / team-delete mechanic that `/pickle-debate` uses. Do not invent separate parallel-launch plumbing for this mode.
+
 ```
 TeamCreate(name: "death-crystal-interface")
 ```
@@ -322,7 +332,7 @@ TeamDelete(name: "death-crystal-interface")
 
 **Sequential mode (codex backend, auto-promoted):**
 
-Roleplay each design Morty sequentially in the current context. For each, adopt the Morty's axis and emit all 5 fields before proceeding to the next. Follow the same output contract as the parallel mode.
+Roleplay each design Morty sequentially in the current context. For each, adopt the Morty's axis and emit all 5 fields before proceeding to the next. Follow the same output contract as the parallel mode, but do not create a team.
 
 ### Step I5: Synthesize One Recommendation
 

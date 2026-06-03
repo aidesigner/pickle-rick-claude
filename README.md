@@ -669,17 +669,19 @@ Plumbus runs six analysis frames during the first iteration Edge Walk (Override 
 
 > *"Your finger goes on there, Morty, and you think about the architecture you want. The crystal shows you the path to it."*
 
-Reads code through John Ousterhout's *A Philosophy of Software Design* and Ben Pocock's interface-shape essays, then surfaces **shallow modules** — components whose interface complexity rivals their implementation — and proposes **deeper** alternatives. Sibling to Szechuan Sauce (*is it well-designed?*) and Anatomy Park (*is it correct?*): Death Crystal asks *"is this interface deeper than its implementation, or just hiding the mess?"*
+Reads code through John Ousterhout's *A Philosophy of Software Design* and Ben Pocock's interface-shape essays, then surfaces **shallow Modules** — Modules whose Interface complexity rivals their Implementation — and proposes **deeper** alternatives. Sibling to Szechuan Sauce (*is it well-designed?*) and Anatomy Park (*is it correct?*): Death Crystal asks *"is this Interface deeper than its Implementation, or just hiding the mess?"*
 
 | Command | Description |
 |---|---|
-| `/death-crystal --deepen` | Architectural deepening lens — scan the target for shallow modules, information leakage, temporal decomposition, and pass-through methods; rank by depth deficit and propose deeper consolidations |
-| `/death-crystal --interface <module>` | Pocock-style interface-shape analysis — enumerate what every caller of `<module>` actually needs and propose the minimal sufficient interface |
+| `/death-crystal --deepen` | Architectural deepening lens — scan the target for shallow Modules, render an HTML report in `${SESSION_ROOT}/death-crystal/`, and rank deeper consolidations by depth deficit |
+| `/death-crystal --interface <module>` | Pocock-style interface-shape analysis — run parallel design Mortys for `<module>`, then synthesize one recommended Interface from the caller evidence |
 
 ```bash
 /death-crystal --deepen                       # Surface shallow modules across the target
 /death-crystal --interface src/services/audit # Minimal sufficient interface for one module
 ```
+
+Both modes honor `--backend claude|codex`. On `--backend codex`, `/death-crystal --interface <module>` falls back to sequential roleplay instead of the default team-based parallel Morty launch.
 
 ---
 
