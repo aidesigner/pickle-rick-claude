@@ -240,6 +240,9 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // B-MFW: R-MFW-6 emits this once per worker/manager/refinement spawn
         // recording the resolved MCP config path + winning precedence layer.
         'worker_mcp_config_resolved',
+        // B-CXOR: R-CXOR-1 emits this when a post-iteration HEAD regression
+        // (worker git reset below the pre-iteration commit) is detected + recovered.
+        'worker_head_regression_detected',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
