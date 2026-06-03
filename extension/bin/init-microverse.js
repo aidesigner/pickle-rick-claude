@@ -28,9 +28,23 @@ function parseConvergenceMode(raw) {
     console.error(`convergence_mode must be 'metric' or 'worker', got ${raw}`);
     process.exit(1);
 }
+// Positional args are non-flag tokens that are not the value of a preceding flag.
+// Every flag here takes a value (see parseFlag), so the token after a `--flag` is its value.
+function extractPositionalArgs(args) {
+    const positional = [];
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        if (arg.startsWith('--'))
+            continue;
+        if (i > 0 && args[i - 1]?.startsWith('--'))
+            continue;
+        positional.push(arg);
+    }
+    return positional;
+}
 if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') {
     const args = process.argv.slice(2);
-    const positional = args.filter((a, i) => !a.startsWith('--') && (i === 0 || !args[i - 1]?.startsWith('--')));
+    const positional = extractPositionalArgs(args);
     const sessionDir = positional[0];
     const targetPath = positional[1];
     if (!sessionDir || !targetPath) {
