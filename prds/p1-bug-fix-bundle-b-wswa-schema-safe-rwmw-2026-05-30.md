@@ -1,6 +1,6 @@
 ---
 title: P1 bug-fix bundle — B-WSWA — schema-safe land of R-WMW worker-artifact-progress tracking (LATEST_SCHEMA_VERSION 4→5)
-status: NEXT (P1 drain-queue row 1)
+status: SHIPPED 2026-05-30 (verify-first closed 2026-06-02) — STALE PRD; do not re-launch. Schema v4→5 + worker_artifact_progress + K=3/K=5 events landed via ba276e43 (R-WSWA-1) + 4084702e (R-WSWA-2) and siblings; LATEST_SCHEMA_VERSION=5 in HEAD AND deployed; events worker_artifact_progress_zero / worker_auto_skip_oversized registered; FAILURE_REASONS includes oversized_no_progress; artifact-progress-detector.test.js present. #74 R-WSWA + #33 R-WMW DONE.
 filed: 2026-05-30
 priority: P1
 type: bug-bundle
