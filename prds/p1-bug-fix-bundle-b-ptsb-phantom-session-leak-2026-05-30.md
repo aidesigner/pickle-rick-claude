@@ -1,6 +1,6 @@
 ---
 title: P1 bug-fix bundle — B-PTSB — phantom teams-base session leak (setup.js test invocations write active sessions into the real data root)
-status: NEXT (P1 drain-queue row 1)
+status: SHIPPED v1.87.0 (verify-first closed 2026-06-02) — STALE PRD; do not re-launch. Closer bb85931e (+ 496660c7 test fallout, ce4aff13 R-PTSB-3, 0b8d94ed R-PTSB-4). orphan_phantom_demoted event registered (types/index.ts:570); state-manager.ts demotes pid-null phantom on read (~L970-988); setup-teams.test.js sandboxes PICKLE_DATA_ROOT; audit-test-isolation.sh present. #75 R-PTSB DONE.
 filed: 2026-05-30
 priority: P1
 type: bug-bundle

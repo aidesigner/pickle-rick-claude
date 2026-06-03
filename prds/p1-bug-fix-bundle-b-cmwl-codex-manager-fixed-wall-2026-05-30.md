@@ -1,6 +1,6 @@
 ---
 title: P1 bug-fix bundle — B-CMWL — codex manager fixed-wall pickle stall (relaunch parity + progressing-incomplete-not-fatal + no-progress guard)
-status: NEXT (P1 drain-queue row 2)
+status: SHIPPED v1.88.0 (verify-first closed 2026-06-02) — STALE PRD; do not re-launch. Closer 916f53e5 (+ bb47cb62 R-CMWL-4 no-progress guard). codex_manager_consecutive_no_progress relaunch-parity in HEAD (mux-runner.ts/state-manager.ts/types). #86 R-CMWL DONE.
 filed: 2026-05-30
 priority: P1
 type: bug-bundle
