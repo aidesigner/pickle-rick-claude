@@ -57,9 +57,9 @@ export function buildJudgeEnv(
       // authenticate via ANTHROPIC_API_KEY directly, so CLAUDE_API_KEY is redundant
       // and might point at the outer session's key material.
       if (k === 'CLAUDE_API_KEY' && baseEnv['ANTHROPIC_API_KEY']) continue;
-      // R-SJET-3 superset: also strip the DANGEROUS_PREFIXES/EXACT that
-      // buildJudgeSpawnEnv strips, so the probe path inherits outer-session
-      // env hygiene (PICKLE_*, SESSION_ROOT, TICKET_DIR, etc.).
+      // R-SJET-3 superset: also strip the DANGEROUS_PREFIXES/EXACT session
+      // markers so the probe path inherits outer-session env hygiene
+      // (PICKLE_*, SESSION_ROOT, TICKET_DIR, etc.).
       if (DANGEROUS_EXACT.has(k)) continue;
       if (DANGEROUS_PREFIXES.some(p => k.startsWith(p))) continue;
       out[k] = v;
@@ -90,54 +90,6 @@ const DANGEROUS_EXACT = new Set<string>([
   'CLAUDECODE',
 ]);
 
-const ALLOWED_JUDGE_OVERRIDES: Record<string, string> = {
-  // We deliberately do NOT pass the outer PICKLE_STATE_FILE etc.
-};
-
-/**
- * Build a clean env for spawning the judge CLI.
- * Strips anything that would make an inner `claude` think it is still inside the
- * outer Pickle manager session (the root cause of the iter-3 hang on claude backend).
- */
-export function buildJudgeSpawnEnv(
-  backend: JudgeBackend,
-  baseEnv: NodeJS.ProcessEnv = process.env
-): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = {};
-
-  for (const [k, v] of Object.entries(baseEnv)) {
-    if (v === undefined) continue;
-
-    // Never leak pickle internal state or outer session markers into the judge.
-    if (DANGEROUS_EXACT.has(k)) {
-      continue;
-    }
-    if (DANGEROUS_PREFIXES.some(p => k.startsWith(p))) {
-      continue;
-    }
-
-    // Keep everything else (API keys, PATH, HOME, routing flags such as
-    // CLAUDE_CODE_USE_VERTEX / CLAUDE_CODE_USE_BEDROCK, ANTHROPIC_*, etc.)
-    out[k] = v;
-  }
-
-  // Explicitly force a "clean" claude context for the judge.
-  // The judge itself may set its own, but we start from a known-good slate.
-  delete out['CLAUDECODE'];
-  delete out['PICKLE_STATE_FILE'];
-  delete out['PICKLE_ROLE'];
-
-  // Future: per-backend tweaks (e.g. codex may need different model routing)
-  if (backend === 'claude' || backend === 'auto') {
-    // claude CLI is the default judge path we are hardening.
-  }
-
-  // Merge any explicit overrides (currently empty — hook for R-SJET-4 config).
-  Object.assign(out, ALLOWED_JUDGE_OVERRIDES);
-
-  return out;
-}
-
 /**
  * Convenience wrapper used at the two judge spawn sites in microverse-runner.ts.
  * Delegates to buildJudgeEnv with isNestedClaude() detection.
@@ -152,4 +104,4 @@ export function getJudgeEnvForAttempt(
   return buildJudgeEnv(narrowed, isNestedClaude());
 }
 
-export default { buildJudgeSpawnEnv, getJudgeEnvForAttempt, buildJudgeEnv, isNestedClaude };
+export default { getJudgeEnvForAttempt, buildJudgeEnv, isNestedClaude };
