@@ -223,13 +223,10 @@ export function resolveBackend(source: State | { backend?: unknown } | null | un
   // loadBackendFromSession) cannot leak codex back into the refinement phase.
   // Silent force — no warning, no log.
   if (process.env.PICKLE_REFINEMENT_LOCK === '1') return 'claude';
-  const raw = source ? (source as { backend?: unknown }).backend : undefined;
-  if (isBackend(raw)) return raw;
-  if (typeof raw === 'string' && raw.length > 0) warnBadBackend('state', raw);
-  const env = process.env.PICKLE_BACKEND;
-  if (isBackend(env)) return env;
-  if (typeof env === 'string' && env.length > 0) warnBadBackend('PICKLE_BACKEND env', env);
-  return 'claude';
+  // Past the refinement-lock carve-out, backend resolution is identical to the
+  // manager-backend path (state.backend → PICKLE_BACKEND env → 'claude', warning
+  // on unrecognized values), so delegate instead of duplicating the precedence.
+  return resolveManagerBackendValue(source);
 }
 
 function resolveManagerBackendValue(source: State | { backend?: unknown } | null | undefined): Backend {
