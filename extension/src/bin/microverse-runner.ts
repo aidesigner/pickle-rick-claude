@@ -1479,6 +1479,16 @@ export function extractScore(output: string): number | null {
   return null;
 }
 
+function emitJudgeParseFailure(rawOutput: string, parseErrorMessage: string): void {
+  process.stderr.write(
+    `[microverse] judge_json_parse_failed ${JSON.stringify({ raw_output_truncated_512: rawOutput.slice(0, 512), parse_error_message: parseErrorMessage })}\n`,
+  );
+}
+
+function emptyJudgeResult(shape: JudgeResult['shape'], score: number | null = null): JudgeResult {
+  return { score, violations: [], resolved: [], new: [], remaining: [], shape };
+}
+
 /**
  * Parse structured JSON from LLM judge output. Never throws.
  * Returns JudgeResult with shape discriminator: 'full' | 'legacy' | 'malformed' | 'partial'.
@@ -1489,28 +1499,21 @@ export function parseLlmJudgeOutput(rawOutput: string): JudgeResult {
   try {
     parsed = JSON.parse(rawOutput);
   } catch (err) {
-    const parseErrorMessage = err instanceof Error ? err.message : String(err);
-    process.stderr.write(
-      `[microverse] judge_json_parse_failed ${JSON.stringify({ raw_output_truncated_512: rawOutput.slice(0, 512), parse_error_message: parseErrorMessage })}\n`,
-    );
-    return { score: null, violations: [], resolved: [], new: [], remaining: [], shape: 'malformed' };
+    emitJudgeParseFailure(rawOutput, err instanceof Error ? err.message : String(err));
+    return emptyJudgeResult('malformed');
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    process.stderr.write(
-      `[microverse] judge_json_parse_failed ${JSON.stringify({ raw_output_truncated_512: rawOutput.slice(0, 512), parse_error_message: 'parsed value is not an object' })}\n`,
-    );
-    return { score: null, violations: [], resolved: [], new: [], remaining: [], shape: 'malformed' };
+    emitJudgeParseFailure(rawOutput, 'parsed value is not an object');
+    return emptyJudgeResult('malformed');
   }
 
   const obj = parsed as Record<string, unknown>;
 
   // Partial: violations key present but not an array
   if ('violations' in obj && !Array.isArray(obj.violations)) {
-    process.stderr.write(
-      `[microverse] judge_json_parse_failed ${JSON.stringify({ raw_output_truncated_512: rawOutput.slice(0, 512), parse_error_message: 'violations field is not an array' })}\n`,
-    );
-    return { score: null, violations: [], resolved: [], new: [], remaining: [], shape: 'partial' };
+    emitJudgeParseFailure(rawOutput, 'violations field is not an array');
+    return emptyJudgeResult('partial');
   }
 
   const score = typeof obj.score === 'number' ? obj.score : null;
@@ -1518,7 +1521,7 @@ export function parseLlmJudgeOutput(rawOutput: string): JudgeResult {
   // Legacy: valid JSON but missing structured fields
   if (!('violations' in obj) || !('resolved' in obj) || !('new' in obj) || !('remaining' in obj)) {
     process.stderr.write(`[microverse] judge_legacy_shape_inferred\n`);
-    return { score, violations: [], resolved: [], new: [], remaining: [], shape: 'legacy' };
+    return emptyJudgeResult('legacy', score);
   }
 
   const toStringArray = (arr: unknown): string[] =>
