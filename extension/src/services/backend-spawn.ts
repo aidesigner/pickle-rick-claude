@@ -335,40 +335,42 @@ export function resolveBackendFromStateFile(statePath: string): Backend {
  *
  * `homeDir` defaults to `os.homedir()` and is exposed for testing only.
  */
+type McpPrecedenceLayer = 'settings_override' | 'claude_json_fallback' | 'omitted';
+
+/**
+ * Single source of truth for MCP-config precedence. Returns both the resolved
+ * path (null when omitted) and which layer matched, so the public
+ * `resolveMcpConfigPath` and the activity-logging `emitMcpConfigResolved` share
+ * one decision tree instead of reimplementing it.
+ */
+function resolveMcpConfigWithLayer(
+  settingsBag?: { worker_mcp_config_path?: string | null },
+  homeDir?: string,
+): { path: string | null; layer: McpPrecedenceLayer } {
+  const override = settingsBag?.worker_mcp_config_path;
+  if (typeof override === 'string' && override.trim()) {
+    return { path: override.trim(), layer: 'settings_override' };
+  }
+  const claudeJson = path.join(homeDir ?? os.homedir(), '.claude.json');
+  if (existsSilently(claudeJson)) {
+    return { path: claudeJson, layer: 'claude_json_fallback' };
+  }
+  return { path: null, layer: 'omitted' };
+}
+
 export function resolveMcpConfigPath(
   settingsBag?: { worker_mcp_config_path?: string | null },
   homeDir?: string
 ): string | undefined {
-  const override = settingsBag?.worker_mcp_config_path;
-  if (typeof override === 'string' && override.trim()) return override.trim();
-  const claudeJson = path.join(homeDir ?? os.homedir(), '.claude.json');
-  if (existsSilently(claudeJson)) return claudeJson;
-  return undefined;
+  return resolveMcpConfigWithLayer(settingsBag, homeDir).path ?? undefined;
 }
-
-type McpPrecedenceLayer = 'settings_override' | 'claude_json_fallback' | 'omitted';
 
 function emitMcpConfigResolved(
   settingsBag?: { worker_mcp_config_path?: string | null },
   homeDir?: string,
 ): void {
   try {
-    const override = settingsBag?.worker_mcp_config_path;
-    let mcp_config_path: string | null;
-    let precedence_layer: McpPrecedenceLayer;
-    if (typeof override === 'string' && override.trim()) {
-      mcp_config_path = override.trim();
-      precedence_layer = 'settings_override';
-    } else {
-      const claudeJson = path.join(homeDir ?? os.homedir(), '.claude.json');
-      if (existsSilently(claudeJson)) {
-        mcp_config_path = claudeJson;
-        precedence_layer = 'claude_json_fallback';
-      } else {
-        mcp_config_path = null;
-        precedence_layer = 'omitted';
-      }
-    }
+    const { path: mcp_config_path, layer: precedence_layer } = resolveMcpConfigWithLayer(settingsBag, homeDir);
     logActivity({
       event: 'worker_mcp_config_resolved',
       source: 'pickle',
