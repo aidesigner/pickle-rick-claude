@@ -1115,44 +1115,24 @@ async function runWorkerGateChecks(args: {
     gatePhase = 'tsc';
     gateFailures = parseWorkerGateTscFailures(tscOutput, args.extensionDir);
   }
-  if (!lintOk || !tscResult.ok) {
-    return {
-      lintOk,
-      tscOk: tscResult.ok,
-      testsOk: true,
-      lintErrors,
-      tscErrors,
-      testFailures: [],
-      gateFailures,
-      gatePhase,
-    };
-  }
 
-  if (args.workerGateTier === 'narrow') {
-    return {
-      lintOk,
-      tscOk: tscResult.ok,
-      testsOk: true,
-      lintErrors,
-      tscErrors,
-      testFailures: [],
-      gateFailures,
-      gatePhase,
-    };
-  }
+  // Pre-test exits (lint/tsc fail, narrow tier, small tier) all report the same
+  // shape: tests were not run, so testsOk:true and testFailures empty. The closure
+  // captures the live lint/tsc bindings so each site reports its own settled values.
+  const preTestResult = (): WorkerGateCheckResult => ({
+    lintOk,
+    tscOk: tscResult.ok,
+    testsOk: true,
+    lintErrors,
+    tscErrors,
+    testFailures: [],
+    gateFailures,
+    gatePhase,
+  });
 
-  if (args.ticketTier === 'small') {
-    return {
-      lintOk,
-      tscOk: tscResult.ok,
-      testsOk: true,
-      lintErrors,
-      tscErrors,
-      testFailures: [],
-      gateFailures,
-      gatePhase,
-    };
-  }
+  if (!lintOk || !tscResult.ok) return preTestResult();
+  if (args.workerGateTier === 'narrow') return preTestResult();
+  if (args.ticketTier === 'small') return preTestResult();
 
   const fastTierResult = await runWorkerGateTestCommand('test:fast', args.extensionDir, args.workerTestGateTimeoutMs);
   if (!fastTierResult.ok) {
