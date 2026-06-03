@@ -238,8 +238,8 @@ function writeTaskMeta(meta) {
         writeStateFile(metaPath, meta);
 }
 export function skipTaskWithReason(meta, reason) {
-    void reason;
     meta.status = 'failed';
+    meta.failed_reason = reason;
     writeTaskMeta(meta);
 }
 function markTaskConsumed(meta) {
