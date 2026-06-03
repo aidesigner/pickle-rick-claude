@@ -76,6 +76,7 @@ export interface TaskMeta extends Record<string, unknown> {
   prd_hash?: unknown;
   task_id?: unknown;
   backend?: unknown;
+  failed_reason?: unknown;
 }
 
 interface JarTask {
@@ -277,8 +278,8 @@ function writeTaskMeta(meta: TaskMeta): void {
 }
 
 export function skipTaskWithReason(meta: TaskMeta, reason: string): void {
-  void reason;
   meta.status = 'failed';
+  meta.failed_reason = reason;
   writeTaskMeta(meta);
 }
 
