@@ -3,6 +3,9 @@
 // a gitnexus index is present, and that codex workers are excluded.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { buildWorkerInvocation } from '../services/backend-spawn.js';
 import { buildGitNexusMcpConfig } from '../bin/spawn-morty.js';
 
@@ -35,12 +38,24 @@ test('buildWorkerInvocation(claude): includes --mcp-config when mcpConfig provid
 });
 
 test('buildWorkerInvocation(claude): omits --mcp-config when mcpConfig not provided', () => {
-    const inv = buildWorkerInvocation('claude', {
-        prompt: 'do work',
-        addDirs: [],
-    });
-    assert.equal(inv.cmd, 'claude');
-    assert.ok(!inv.args.includes('--mcp-config'), '--mcp-config absent when mcpConfig not provided');
+    // R-MFW-2 added a ~/.claude.json fallback to resolveMcpConfigPath. To assert
+    // the clean-omission path deterministically (independent of the dev machine's
+    // real ~/.claude.json), point HOME at a fresh temp dir with no .claude.json.
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pgi6-nohome-'));
+    const priorHome = process.env.HOME;
+    try {
+        process.env.HOME = tmpHome;
+        const inv = buildWorkerInvocation('claude', {
+            prompt: 'do work',
+            addDirs: [],
+        });
+        assert.equal(inv.cmd, 'claude');
+        assert.ok(!inv.args.includes('--mcp-config'), '--mcp-config absent when nothing resolves');
+    } finally {
+        if (priorHome === undefined) delete process.env.HOME;
+        else process.env.HOME = priorHome;
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
 });
 
 test('buildWorkerInvocation(codex): does not pass --mcp-config even when mcpConfig provided', () => {

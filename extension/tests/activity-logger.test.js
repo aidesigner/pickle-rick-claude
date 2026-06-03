@@ -237,6 +237,9 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // R-PIWG-5.2: advisory launch-time probe emits this when another git
         // process is detected touching the repo at session bootstrap.
         'concurrent_git_access_detected',
+        // B-MFW: R-MFW-6 emits this once per worker/manager/refinement spawn
+        // recording the resolved MCP config path + winning precedence layer.
+        'worker_mcp_config_resolved',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
