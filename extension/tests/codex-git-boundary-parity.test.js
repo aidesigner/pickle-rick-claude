@@ -157,7 +157,6 @@ test('R-CXOR-3: codex-spawn-shaped git reset --hard is detected and recovered â€
   makeTicketFile(sessionDir, ticketId, 'Done', completionCommit);
   const statePath = makeStatePath(sessionDir);
 
-  const log = [];
   // The post-iteration audit (R-CXOR-1) is the authoritative guard for codex workers
   const result = detectAndRecoverHeadRegression({
     ticketId,
@@ -167,7 +166,7 @@ test('R-CXOR-3: codex-spawn-shaped git reset --hard is detected and recovered â€
     sessionDir,
     statePath,
     iteration: 1,
-    log: (msg) => log.push(msg),
+    log: () => {},
   });
 
   // Must detect the regression
