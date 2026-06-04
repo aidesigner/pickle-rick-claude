@@ -884,16 +884,13 @@ function applyResumeConfig(s: State, config: SetupArgs, fullSessionPath: string,
   if (s.active) s.pid = process.pid;
   if (config.resetMode) {
     s.iteration = 0;
-    s.start_time_epoch = config.startEpoch;
   }
-  // AC-LPB-05: when a session is reconstructed (resumed from crash/pause),
-  // start_time_epoch must reset to the resume time so the wall-clock cap-check
-  // doesn't subtract from a stale launch baseline. The reset is intentional
-  // even without --reset because resume IS reconstruction. The activity event
-  // is emitted by the caller (resumeSession) so we can compare original vs new.
-  if (!config.resetMode) {
-    s.start_time_epoch = config.startEpoch;
-  }
+  // AC-LPB-05: start_time_epoch always resets to the resume time — whether or not
+  // --reset was passed — so the wall-clock cap-check doesn't subtract from a stale
+  // launch baseline. Resume IS reconstruction, so the reset is intentional even
+  // without --reset. The activity event is emitted by the caller (resumeSession)
+  // so we can compare original vs new.
+  s.start_time_epoch = config.startEpoch;
   applyResumeLimitConfig(s, config);
   applyResumeModeConfig(s, config);
   if (codexVersionSeen) s.codex_version_seen = codexVersionSeen;
