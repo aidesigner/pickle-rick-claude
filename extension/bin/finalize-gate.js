@@ -14,6 +14,7 @@ const sm = new StateManager();
 const DEFAULT_FINALIZE_GATE_SETTINGS = {
     szechuan_max_remediation_cycles: 3,
     anatomy_park_max_remediation_cycles: 5,
+    citadel_max_remediation_cycles: 3,
     remediator_timeout_s: 600,
 };
 function positiveIntegerOrDefault(value, fallback) {
@@ -23,10 +24,11 @@ function normalizeFinalizeGateSettings(raw) {
     return {
         szechuan_max_remediation_cycles: positiveIntegerOrDefault(raw?.szechuan_max_remediation_cycles, DEFAULT_FINALIZE_GATE_SETTINGS.szechuan_max_remediation_cycles),
         anatomy_park_max_remediation_cycles: positiveIntegerOrDefault(raw?.anatomy_park_max_remediation_cycles, DEFAULT_FINALIZE_GATE_SETTINGS.anatomy_park_max_remediation_cycles),
+        citadel_max_remediation_cycles: positiveIntegerOrDefault(raw?.citadel_max_remediation_cycles, DEFAULT_FINALIZE_GATE_SETTINGS.citadel_max_remediation_cycles),
         remediator_timeout_s: positiveIntegerOrDefault(raw?.remediator_timeout_s, DEFAULT_FINALIZE_GATE_SETTINGS.remediator_timeout_s),
     };
 }
-function loadFinalizeGateSettings(extRoot) {
+export function loadFinalizeGateSettings(extRoot) {
     try {
         const raw = readRecoverableJsonObject(path.join(extRoot, 'pickle_settings.json'));
         if (!raw)
@@ -40,7 +42,7 @@ function loadFinalizeGateSettings(extRoot) {
         return DEFAULT_FINALIZE_GATE_SETTINGS;
     }
 }
-function resolveFinalizeSettingsRoot() {
+export function resolveFinalizeSettingsRoot() {
     const resolvedRoot = getExtensionRoot();
     const requestedRoot = process.env['EXTENSION_DIR'];
     if (requestedRoot && fs.existsSync(path.join(requestedRoot, 'pickle_settings.json'))) {

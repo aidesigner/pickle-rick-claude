@@ -601,6 +601,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'completion_commit_inferred_from_git',
   'worker_completion_commit_announced',
   'recoverable_phase_failure',
+  'citadel_findings_unremediated',
   'subprocess_error',
   'time_cap_disabled_default',
   'manager_max_turns_relaunch',

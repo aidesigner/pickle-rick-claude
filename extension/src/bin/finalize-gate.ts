@@ -18,15 +18,20 @@ import type { GateResult, GateFailure, Backend, ActivityEventType } from '../typ
 const VALID_SKILLS = new Set(['szechuan', 'anatomy-park']);
 const sm = new StateManager();
 
-interface FinalizeGateSettings {
+export interface FinalizeGateSettings {
   szechuan_max_remediation_cycles: number;
   anatomy_park_max_remediation_cycles: number;
+  // R-HRP-1: citadel feeds findings to the remediator (it no longer halts); this bounds the
+  // citadel remediation loop. Lives alongside the other *_max_remediation_cycles caps and reuses
+  // the shared remediator_timeout_s.
+  citadel_max_remediation_cycles: number;
   remediator_timeout_s: number;
 }
 
 const DEFAULT_FINALIZE_GATE_SETTINGS: FinalizeGateSettings = {
   szechuan_max_remediation_cycles: 3,
   anatomy_park_max_remediation_cycles: 5,
+  citadel_max_remediation_cycles: 3,
   remediator_timeout_s: 600,
 };
 
@@ -38,11 +43,12 @@ function normalizeFinalizeGateSettings(raw: Partial<FinalizeGateSettings> | null
   return {
     szechuan_max_remediation_cycles: positiveIntegerOrDefault(raw?.szechuan_max_remediation_cycles, DEFAULT_FINALIZE_GATE_SETTINGS.szechuan_max_remediation_cycles),
     anatomy_park_max_remediation_cycles: positiveIntegerOrDefault(raw?.anatomy_park_max_remediation_cycles, DEFAULT_FINALIZE_GATE_SETTINGS.anatomy_park_max_remediation_cycles),
+    citadel_max_remediation_cycles: positiveIntegerOrDefault(raw?.citadel_max_remediation_cycles, DEFAULT_FINALIZE_GATE_SETTINGS.citadel_max_remediation_cycles),
     remediator_timeout_s: positiveIntegerOrDefault(raw?.remediator_timeout_s, DEFAULT_FINALIZE_GATE_SETTINGS.remediator_timeout_s),
   };
 }
 
-function loadFinalizeGateSettings(extRoot: string): FinalizeGateSettings {
+export function loadFinalizeGateSettings(extRoot: string): FinalizeGateSettings {
   try {
     const raw = readRecoverableJsonObject(path.join(extRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
     if (!raw) return DEFAULT_FINALIZE_GATE_SETTINGS;
@@ -54,7 +60,7 @@ function loadFinalizeGateSettings(extRoot: string): FinalizeGateSettings {
   }
 }
 
-function resolveFinalizeSettingsRoot(): string {
+export function resolveFinalizeSettingsRoot(): string {
   const resolvedRoot = getExtensionRoot();
   const requestedRoot = (process.env as Record<string, string | undefined>)['EXTENSION_DIR'];
   if (requestedRoot && fs.existsSync(path.join(requestedRoot, 'pickle_settings.json'))) {

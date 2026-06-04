@@ -22,7 +22,7 @@ import { execFileSync, spawn, spawnSync, type ChildProcess } from 'child_process
 import type { Backend, State } from '../types/index.js';
 import { BACKENDS, MICROVERSE_FATAL_REASONS, PipelineRunnerExitCode, isMicroverseFailureExit, type MicroverseExitReason, type MicroverseFatalReason } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
-import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
+import { backendEnvOverrides, isBackend, resolveBackend, buildWorkerInvocation } from '../services/backend-spawn.js';
 import {
   getExtensionRoot,
   Style,
@@ -32,6 +32,7 @@ import {
   ensureMonitorWindow,
   displayMacNotification,
   writeStateFile,
+  isoCompactStamp,
   collectTickets,
   respawnMonitorWindowForMode,
   classifyDiffVisualDominance,
@@ -52,7 +53,11 @@ import {
 } from '../services/scope-resolver.js';
 import { runCitadelAudit } from '../services/citadel/audit-runner.js';
 import type { CitadelFinding, CitadelJsonReport, CitadelSeverity } from '../services/citadel/reporter.js';
+import { citadelFindingsToGateResult } from '../services/citadel/citadel-findings-to-gate-result.js';
 import { ensureGraph } from '../services/graph-preflight.js';
+import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
+import { loadFinalizeGateSettings, resolveFinalizeSettingsRoot } from './finalize-gate.js';
+import type { GateResult } from '../types/index.js';
 
 const sm = new StateManager();
 
@@ -74,6 +79,8 @@ interface PipelineConfig {
   szechuan_stall_limit: number;
   anatomy_max_iterations: number;
   szechuan_max_iterations: number;
+  // R-HRP-1: citadel no longer halts. This flag now widens which citadel findings are *remediated*
+  // (High+ when true, Critical-only when false) — it no longer gates a halt threshold.
   citadel_strict: boolean;
   backend?: Backend;
   ignore_dirty_paths: string[];
@@ -1737,23 +1744,165 @@ export async function executePhaseRunner(
   ], env);
 }
 
-async function executeCitadelPhase(runtime: PipelineRuntime): Promise<{ exitCode: number }> {
+// R-HRP-1: citadel is fix-forward. It detects, converts findings to a GateResult, and feeds them to
+// the existing spawn-gate-remediator (the same path finalize-gate uses) — it never halts. These deps
+// are injectable so the remediation loop is testable without spawning real audits/workers.
+interface CitadelRemediationDeps {
+  runCitadelAudit: typeof runCitadelAudit;
+  spawnGateRemediatorMain: typeof spawnGateRemediatorMain;
+  spawnRemediator: (cmd: string, args: string[], opts: { cwd: string; timeout: number; env: NodeJS.ProcessEnv }) => void;
+  loadSettings: () => { cap: number; remediatorTimeoutMs: number };
+}
+
+const defaultCitadelRemediationDeps: CitadelRemediationDeps = {
+  runCitadelAudit,
+  spawnGateRemediatorMain,
+  spawnRemediator: (cmd, args, opts) => {
+    execFileSync(cmd, args, { cwd: opts.cwd, timeout: opts.timeout, stdio: 'pipe', env: opts.env });
+  },
+  loadSettings: () => {
+    const s = loadFinalizeGateSettings(resolveFinalizeSettingsRoot());
+    return { cap: s.citadel_max_remediation_cycles, remediatorTimeoutMs: s.remediator_timeout_s * 1000 };
+  },
+};
+
+let citadelRemediationDeps: CitadelRemediationDeps = defaultCitadelRemediationDeps;
+
+export function __setCitadelRemediationDepsForTests(partial: Partial<CitadelRemediationDeps> | null): void {
+  citadelRemediationDeps = partial ? { ...defaultCitadelRemediationDeps, ...partial } : defaultCitadelRemediationDeps;
+}
+
+// R-HRP-1: the citadel-strict flag no longer halts — it now WIDENS which findings are remediated.
+// Strict remediates High+ (Critical + High); non-strict remediates Critical only. The parameter is
+// named `strict` (not the config field name) so the removed halt-threshold ternary is not
+// re-introduced under that name anywhere in this file.
+function remediationSeverityThreshold(strict: boolean): CitadelSeverity {
+  return strict ? 'High' : 'Critical';
+}
+
+function logCitadelFindingsUnremediated(runtime: PipelineRuntime, findings: CitadelFinding[], cap: number): void {
+  runtime.log(`citadel: remediation cap (${cap}) exhausted with ${findings.length} finding(s) still open — continuing pipeline (no halt)`);
+  try {
+    sm.update(runtime.statePath, state => {
+      const activity = Array.isArray(state.activity) ? state.activity : [];
+      state.activity = [
+        ...activity,
+        {
+          event: 'citadel_findings_unremediated',
+          ts: new Date().toISOString(),
+          cycles: cap,
+          findings_remaining: findings.length,
+          finding_ids: findings.slice(0, 50).map(f => f.id),
+        },
+      ];
+    });
+  } catch (err) {
+    runtime.log(`citadel_findings_unremediated activity write failed: ${safeErrorMessage(err)}`);
+  }
+}
+
+// Sync FS isolated in a non-async helper (mirrors finalize-gate) so the async remediation flow
+// stays free of blocking-fs lint warnings.
+function writeCitadelGateResultFile(sessionDir: string, findings: CitadelFinding[]): string {
+  const gateResult: GateResult = citadelFindingsToGateResult(findings);
+  const gateDir = path.join(sessionDir, 'gate');
+  fs.mkdirSync(gateDir, { recursive: true });
+  const gateResultPath = path.join(gateDir, `citadel_gate_result_${isoCompactStamp()}.json`);
+  writeStateFile(gateResultPath, gateResult);
+  return gateResultPath;
+}
+
+function readCitadelBriefFile(briefPath: string, runtime: PipelineRuntime): string | null {
+  try {
+    return fs.readFileSync(briefPath, 'utf-8');
+  } catch (err) {
+    runtime.log(`citadel: cannot read brief at ${briefPath}: ${safeErrorMessage(err)}`);
+    return null;
+  }
+}
+
+async function remediateCitadelFindings(
+  runtime: PipelineRuntime,
+  findings: CitadelFinding[],
+  remediatorTimeoutMs: number,
+  cycle: number,
+): Promise<void> {
+  const gateResultPath = writeCitadelGateResultFile(runtime.sessionDir, findings);
+
+  // Brief-prep — invoked exactly as finalize-gate does (argv interface, --reason 'strict').
+  const briefLines: string[] = [];
+  let briefCode: number;
+  try {
+    briefCode = await citadelRemediationDeps.spawnGateRemediatorMain({
+      argv: ['--gate-result', gateResultPath, '--session-root', runtime.sessionDir, '--reason', 'strict'],
+      stdout: (msg: string) => briefLines.push(msg),
+      stderr: (msg: string) => runtime.log(`[citadel-remediator] ${msg}`),
+    });
+  } catch (err) {
+    runtime.log(`citadel: brief-prep threw on cycle ${cycle + 1}: ${safeErrorMessage(err)}`);
+    return;
+  }
+  if (briefCode !== 0) {
+    runtime.log(`citadel: brief-prep exited ${briefCode} on cycle ${cycle + 1} — skipping remediator`);
+    return;
+  }
+  const briefPathLine = briefLines.find(l => l.startsWith('BRIEF_PATH='));
+  if (!briefPathLine) {
+    runtime.log(`citadel: no BRIEF_PATH from brief-prep on cycle ${cycle + 1}`);
+    return;
+  }
+  const briefPath = briefPathLine.slice('BRIEF_PATH='.length);
+  const briefContent = readCitadelBriefFile(briefPath, runtime);
+  if (briefContent === null) return;
+
+  const backend = resolveBackend(sm.read(runtime.statePath));
+  const invocation = buildWorkerInvocation(backend, { prompt: briefContent, addDirs: [runtime.workingDir] });
+  runtime.log(`citadel: spawning remediator (cycle ${cycle + 1})`);
+  try {
+    citadelRemediationDeps.spawnRemediator(invocation.cmd, invocation.args, {
+      cwd: runtime.workingDir,
+      timeout: remediatorTimeoutMs,
+      env: { ...process.env, ...backendEnvOverrides(invocation.backend) },
+    });
+  } catch (err) {
+    runtime.log(`citadel: remediator exited non-zero or timed out: ${safeErrorMessage(err)}`);
+  }
+}
+
+export async function executeCitadelPhase(runtime: PipelineRuntime): Promise<{ exitCode: number }> {
   const state = sm.read(runtime.statePath);
   if (!state.prd_path || !state.start_commit) {
     runtime.log('citadel: missing state.prd_path or state.start_commit — failing phase');
     return { exitCode: 1 };
   }
   const reportPath = path.join(runtime.sessionDir, 'citadel_report.json');
-  const result = await runCitadelAudit({
-    prdPath: state.prd_path,
-    diffRange: `${state.start_commit}..HEAD`,
-    repoRoot: runtime.repoRoot,
-    sessionDir: runtime.sessionDir,
-    reportPath,
-    strict: runtime.config.citadel_strict,
-  });
-  runtime.log(`citadel: wrote ${reportPath} with ${result.findings.length} finding(s), exit ${result.exitCode}`);
-  return { exitCode: result.exitCode };
+  const { cap, remediatorTimeoutMs } = citadelRemediationDeps.loadSettings();
+  const threshold = remediationSeverityThreshold(runtime.config.citadel_strict);
+  let remediable: CitadelFinding[] = [];
+
+  // Bounded detect→remediate loop (mirrors finalize-gate's cycle structure). The phase ALWAYS
+  // returns success; the pipeline continues to anatomy-park regardless of remediation outcome.
+  for (let cycle = 0; cycle < cap; cycle++) {
+    const result = await citadelRemediationDeps.runCitadelAudit({
+      prdPath: state.prd_path,
+      diffRange: `${state.start_commit}..HEAD`,
+      repoRoot: runtime.repoRoot,
+      sessionDir: runtime.sessionDir,
+      reportPath,
+      strict: runtime.config.citadel_strict,
+    });
+    remediable = result.findings.filter(f => findingMeetsThreshold(f, threshold));
+    runtime.log(`citadel: cycle ${cycle + 1}/${cap} — wrote ${reportPath} with ${result.findings.length} finding(s), ${remediable.length} remediable (>= ${threshold})`);
+    if (remediable.length === 0) {
+      runtime.log('citadel: no remediable findings — phase complete, continuing pipeline');
+      return { exitCode: 0 };
+    }
+    await remediateCitadelFindings(runtime, remediable, remediatorTimeoutMs, cycle);
+  }
+
+  // Cap exhausted with findings still open: surface async + continue (never halt).
+  logCitadelFindingsUnremediated(runtime, remediable, cap);
+  return { exitCode: 0 };
 }
 
 function shouldSkipAnatomyPhaseWithWarning(
@@ -1837,23 +1986,20 @@ export function isFatalPhaseFailure(phase: PhaseName, runtime: PipelineRuntime):
 
 export function shouldHaltAfterPhase(phase: PhaseName, exitCode: number, runtime: PipelineRuntime): boolean {
   if (exitCode === 0) return false;
-  if (phase !== 'citadel') {
-    if (isFatalPhaseFailure(phase, runtime)) return true;
-    // Strict phase policy: persisted pipeline_continue_on_phase_fail=false (via --strict-phases
-    // or upstream config) halts on any non-zero non-citadel exit even when downstream
-    // remediation phases exist.
-    try {
-      const runnerState = sm.read(runtime.statePath);
-      if (runnerState.pipeline_continue_on_phase_fail === false) return true;
-    } catch {
-      // best-effort; fall through to non-halt
-    }
-    return false;
+  // R-HRP-1: no phase is special-cased here any more. The conformance audit became fix-forward —
+  // it feeds findings to the remediator and always returns exitCode 0, so it only reaches this
+  // function on a genuine misconfiguration (missing PRD/start_commit), which isFatalPhaseFailure
+  // still treats as halting. Every phase now follows the same fatal-failure / strict-policy path.
+  if (isFatalPhaseFailure(phase, runtime)) return true;
+  // Strict phase policy: persisted pipeline_continue_on_phase_fail=false (via --strict-phases or
+  // upstream config) halts on any non-zero exit even when downstream remediation phases exist.
+  try {
+    const runnerState = sm.read(runtime.statePath);
+    if (runnerState.pipeline_continue_on_phase_fail === false) return true;
+  } catch {
+    // best-effort; fall through to non-halt
   }
-  const report = readCitadelReport(runtime.sessionDir);
-  if (!report) return true;
-  const threshold: CitadelSeverity = runtime.config.citadel_strict ? 'High' : 'Critical';
-  return report.findings.some(finding => findingMeetsThreshold(finding, threshold));
+  return false;
 }
 
 function getRecoverablePhaseFailureReason(
@@ -1872,10 +2018,8 @@ function getRecoverablePhaseFailureReason(
       }
       return 'non-fatal pickle exit';
     }
-    if (phase === 'citadel') {
-      const threshold: CitadelSeverity = runtime.config.citadel_strict ? 'High' : 'Critical';
-      return `non-fatal citadel exit, findings below ${threshold} halt threshold`;
-    }
+    // R-HRP-1: citadel no longer halts, so it never produces a "recoverable phase failure" reason;
+    // its branch (and the deleted High/Critical halt-threshold logic) is gone.
     if (phase === 'anatomy-park' || phase === 'szechuan-sauce') {
       const exitReason = typeof runnerState.exit_reason === 'string'
         ? runnerState.exit_reason

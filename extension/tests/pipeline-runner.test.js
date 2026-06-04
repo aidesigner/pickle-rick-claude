@@ -25,10 +25,14 @@ import {
   runBundlePreflight,
   BundlePreflightError,
   samplePhaseHistoryTimestamp,
+  executeCitadelPhase,
+  shouldHaltAfterPhase,
+  __setCitadelRemediationDepsForTests,
 } from '../bin/pipeline-runner.js';
+import { isGateResult } from '../bin/spawn-gate-remediator.js';
 import { backendEnvOverrides } from '../services/backend-spawn.js';
 import { AC_PHASE_MANIFEST, runAcPhaseGate } from '../services/ac-phase-gate.js';
-import { Defaults } from '../types/index.js';
+import { Defaults, VALID_ACTIVITY_EVENTS } from '../types/index.js';
 import { validateBundleArtifact } from '../../bin/verify-bundle.js';
 
 function tmpDir() {
@@ -2117,6 +2121,230 @@ describe('R-CCR-5 closer-release comment anchor', () => {
       /\/\/[^\n]*handoff stops skip closer-release/,
       'AC-CCR-5-1: finalizePipeline must carry a // comment with the literal '
         + 'phrase "handoff stops skip closer-release"',
+    );
+  });
+});
+
+describe('R-HRP-1 citadel fix-forward (stops halting; feeds the remediator)', () => {
+  function writeCitadelState(statePath, overrides = {}) {
+    const dir = path.dirname(statePath);
+    fs.writeFileSync(statePath, JSON.stringify({
+      active: true,
+      working_dir: dir,
+      step: 'citadel',
+      iteration: 1,
+      max_iterations: 50,
+      max_time_minutes: 720,
+      worker_timeout_seconds: 1200,
+      start_time_epoch: 1000,
+      completion_promise: null,
+      original_prompt: 'citadel fix-forward test',
+      current_ticket: null,
+      history: [],
+      started_at: new Date().toISOString(),
+      session_dir: dir,
+      schema_version: 3,
+      exit_reason: null,
+      prd_path: 'prd.md',
+      start_commit: 'abc1234',
+      backend: 'claude',
+      activity: [],
+      ...overrides,
+    }, null, 2));
+  }
+
+  function makeRuntime(dir, { strict = false } = {}) {
+    return {
+      sessionDir: dir,
+      statePath: path.join(dir, 'state.json'),
+      repoRoot: dir,
+      workingDir: dir,
+      extensionRoot: dir,
+      backend: 'claude',
+      phaseEnv: { ...process.env },
+      designSafe: false,
+      log: () => {},
+      config: {
+        phases: ['pickle', 'citadel', 'anatomy-park', 'szechuan-sauce'],
+        target: dir,
+        child_mux_runner_heartbeat_ms: 1000,
+        child_mux_runner_stall_seconds: 60,
+        anatomy_stall_limit: 3,
+        szechuan_stall_limit: 5,
+        anatomy_max_iterations: 100,
+        szechuan_max_iterations: 50,
+        citadel_strict: strict,
+        ignore_dirty_paths: [],
+      },
+    };
+  }
+
+  function citadelResult(findings) {
+    return {
+      schema: '1.0',
+      schema_version: '1.0',
+      prd_path: 'prd.md',
+      diff_range: 'abc1234..HEAD',
+      exit_code: findings.length ? 2 : 0,
+      exitCode: findings.length ? 2 : 0,
+      header: { pickle_phase_failed: false, pickle_exit_code: 0 },
+      sections: {},
+      findings,
+      decision_required: [],
+      decisions: [],
+      summary: {
+        findings: findings.length, critical: 0, high: 0, medium: 0, low: 0,
+        decision_required: 0, decisions: 0, unguarded_trap_doors: 0,
+      },
+      markdown: '',
+      json: {},
+    };
+  }
+
+  const CRITICAL = [{ id: 'C-1', severity: 'Critical', message: 'boom', file: 'a.ts', line: 7 }];
+
+  test('citadel_findings_unremediated is registered in VALID_ACTIVITY_EVENTS', () => {
+    assert.ok(
+      VALID_ACTIVITY_EVENTS.includes('citadel_findings_unremediated'),
+      'citadel_findings_unremediated must be present in VALID_ACTIVITY_EVENTS',
+    );
+  });
+
+  // (a) Critical findings do NOT halt: the phase exit is non-halting and the next phase
+  // (anatomy-park) is dispatched.
+  test('(a) Critical findings do not halt — phase returns 0 and shouldHaltAfterPhase is false', async () => {
+    const dir = tmpDir();
+    try {
+      writeCitadelState(path.join(dir, 'state.json'));
+      const runtime = makeRuntime(dir);
+      let auditCalls = 0;
+      __setCitadelRemediationDepsForTests({
+        loadSettings: () => ({ cap: 3, remediatorTimeoutMs: 1000 }),
+        runCitadelAudit: async () => citadelResult(auditCalls++ === 0 ? CRITICAL : []),
+        spawnGateRemediatorMain: async ({ argv, stdout }) => {
+          const briefPath = path.join(dir, 'gate', 'brief.md');
+          fs.writeFileSync(briefPath, 'fix it');
+          stdout(`BRIEF_PATH=${briefPath}`);
+          void argv;
+          return 0;
+        },
+        spawnRemediator: () => { /* no-op worker */ },
+      });
+
+      const { exitCode } = await executeCitadelPhase(runtime);
+
+      assert.equal(exitCode, 0, 'citadel must return a non-halting exit code (0)');
+      assert.equal(
+        shouldHaltAfterPhase('citadel', exitCode, runtime),
+        false,
+        'shouldHaltAfterPhase must be false for citadel — next phase (anatomy-park) is dispatched',
+      );
+    } finally {
+      __setCitadelRemediationDepsForTests(null);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // (b) spawnGateRemediatorMain is invoked with a GateResult whose failures correspond to the
+  // citadel findings.
+  test('(b) spawnGateRemediatorMain receives a GateResult whose failures correspond to the findings', async () => {
+    const dir = tmpDir();
+    try {
+      writeCitadelState(path.join(dir, 'state.json'));
+      const runtime = makeRuntime(dir);
+      let auditCalls = 0;
+      const captured = [];
+      __setCitadelRemediationDepsForTests({
+        loadSettings: () => ({ cap: 3, remediatorTimeoutMs: 1000 }),
+        runCitadelAudit: async () => citadelResult(auditCalls++ === 0 ? CRITICAL : []),
+        spawnGateRemediatorMain: async ({ argv }) => {
+          const idx = argv.indexOf('--gate-result');
+          const gateResultPath = argv[idx + 1];
+          captured.push(JSON.parse(fs.readFileSync(gateResultPath, 'utf-8')));
+          // No BRIEF_PATH emitted → remediateCitadelFindings returns early (no worker spawn).
+          return 0;
+        },
+        spawnRemediator: () => { throw new Error('worker should not spawn in this test'); },
+      });
+
+      await executeCitadelPhase(runtime);
+
+      assert.equal(captured.length, 1, 'spawnGateRemediatorMain must be invoked once');
+      const gateResult = captured[0];
+      assert.ok(isGateResult(gateResult), 'gate result must satisfy isGateResult()');
+      assert.equal(gateResult.failures.length, CRITICAL.length, 'one failure per finding');
+      assert.equal(
+        gateResult.failures[0].ruleOrCode,
+        CRITICAL[0].id,
+        'each GateFailure must correspond to its citadel finding id',
+      );
+      assert.equal(gateResult.status, 'red', 'non-empty findings → red gate result');
+    } finally {
+      __setCitadelRemediationDepsForTests(null);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // (c) When the remediator exhausts citadel_max_remediation_cycles with findings still open, the
+  // pipeline logs a citadel_findings_unremediated activity event and STILL continues (no halt).
+  test('(c) cap exhausted with findings open — logs citadel_findings_unremediated and continues', async () => {
+    const dir = tmpDir();
+    try {
+      writeCitadelState(path.join(dir, 'state.json'));
+      const runtime = makeRuntime(dir);
+      __setCitadelRemediationDepsForTests({
+        loadSettings: () => ({ cap: 2, remediatorTimeoutMs: 1000 }),
+        // Findings never clear → remediation is a no-op → cap is exhausted.
+        runCitadelAudit: async () => citadelResult(CRITICAL),
+        spawnGateRemediatorMain: async ({ stdout }) => {
+          const briefPath = path.join(dir, 'gate', 'brief.md');
+          fs.writeFileSync(briefPath, 'fix it');
+          stdout(`BRIEF_PATH=${briefPath}`);
+          return 0;
+        },
+        spawnRemediator: () => { /* no-op: never fixes the finding */ },
+      });
+
+      const { exitCode } = await executeCitadelPhase(runtime);
+
+      assert.equal(exitCode, 0, 'cap exhaustion must NOT halt — phase still returns 0');
+      assert.equal(
+        shouldHaltAfterPhase('citadel', exitCode, runtime),
+        false,
+        'exit reason is not a halt even after cap exhaustion',
+      );
+      const persisted = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+      const event = (persisted.activity ?? []).find(e => e.event === 'citadel_findings_unremediated');
+      assert.ok(event, 'a citadel_findings_unremediated activity event must be logged');
+      assert.equal(event.cycles, 2, 'event records the exhausted cap');
+      assert.ok(event.findings_remaining >= 1, 'event records the remaining open findings');
+    } finally {
+      __setCitadelRemediationDepsForTests(null);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // PATTERN_SHAPE: no shouldHaltAfterPhase branch references 'citadel'; no
+  // citadel_strict ? 'High' : 'Critical' halt-threshold expression remains anywhere.
+  test('PATTERN_SHAPE: halt path no longer special-cases citadel and the halt-threshold ternary is gone', () => {
+    const srcPath = path.join(import.meta.dirname, '..', 'src', 'bin', 'pipeline-runner.ts');
+    const src = fs.readFileSync(srcPath, 'utf-8');
+
+    // The shouldHaltAfterPhase function body must contain no 'citadel' string literal.
+    const fnStart = src.indexOf('export function shouldHaltAfterPhase');
+    assert.ok(fnStart >= 0, 'shouldHaltAfterPhase must exist');
+    const fnBody = src.slice(fnStart, src.indexOf('\n}\n', fnStart) + 2);
+    assert.doesNotMatch(
+      fnBody,
+      /['"]citadel['"]/,
+      "shouldHaltAfterPhase must not reference the 'citadel' literal",
+    );
+
+    // No citadel_strict ? 'High' : 'Critical' halt-threshold expression anywhere (whitespace-tolerant).
+    assert.doesNotMatch(
+      src,
+      /citadel_strict\s*\?\s*['"]High['"]\s*:\s*['"]Critical['"]/,
+      "the citadel_strict ? 'High' : 'Critical' halt-threshold expression must be deleted",
     );
   });
 });
