@@ -451,6 +451,39 @@ it('isGitCommitCommand detects commit behind non-arg-consuming git global boolea
   }
 });
 
+it('isGitCommitCommand detects commit behind leading env-var assignments', async () => {
+  const { isGitCommitCommand } = await import('../hooks/handlers/tsc-gate.js');
+  // A worker may emit an env-var-prefixed git command (`GIT_COMMITTER_DATE=… git
+  // commit`, a real git idiom). Before the parity fix segmentIsGitCommit read the
+  // assignment token as tokens[0], failed the `=== 'git'` check, classified the
+  // segment non-commit, and SKIPPED the R-WACT tsc gate for a real broken-TS
+  // commit. config-protection.ts:findGitVerb/parseFirstShellWord already skip
+  // leading `NAME=value` tokens (it catches `GIT_DIR=x git reset`); this closes
+  // the one-sided sibling-parity gap.
+  const positives = [
+    'GIT_COMMITTER_DATE=2020-01-01T00:00:00 git commit -m "x"',
+    'GIT_AUTHOR_DATE=2020-01-01 git commit -m "x"',
+    'GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@x git commit -m "x"',
+    'GIT_COMMITTER_DATE=2020-01-01 git --no-pager commit -m "x"',
+    'GIT_COMMITTER_DATE=2020-01-01 git -C extension commit -m "x"',
+    'git add -A && GIT_AUTHOR_DATE=2020-01-01 git commit -m "x"',
+    'cd extension && GIT_COMMITTER_DATE=2020 git commit -m "x"',
+    'git add -A\nGIT_AUTHOR_DATE=2020-01-01 git commit -m "x"',
+  ];
+  for (const command of positives) {
+    assert.equal(isGitCommitCommand(command), true, JSON.stringify(command));
+  }
+  // An env-prefixed non-commit subcommand stays non-commit (prefix skipped, real
+  // subcommand read).
+  const negatives = [
+    'GIT_AUTHOR_DATE=2020-01-01 git log --oneline',
+    'GIT_COMMITTER_DATE=2020 git status',
+  ];
+  for (const command of negatives) {
+    assert.equal(isGitCommitCommand(command), false, JSON.stringify(command));
+  }
+});
+
 it('isGitCommitCommand segments on unquoted newlines (newline-separated add+commit)', async () => {
   const { isGitCommitCommand } = await import('../hooks/handlers/tsc-gate.js');
   // A worker naturally emits sequential commands one per line. Before the fix the

@@ -184,10 +184,20 @@ function segmentIsGitCommit(segment: string): boolean {
   const stripped = stripCdPrefix(segment);
   const tokens = tokenizeCommand(stripped);
   if (tokens.length === 0) return false;
-  if (tokens[0] === 'gh') return false;
-  if (tokens[0] !== 'git') return false;
 
-  let index = 1;
+  // Skip leading `NAME=value` env-var assignments before the executable token
+  // (`GIT_COMMITTER_DATE=… git commit`). config-protection.ts:findGitVerb and
+  // parseFirstShellWord both skip these via the identical regex; without the
+  // same skip here, an env-prefixed commit reads `GIT_COMMITTER_DATE=…` as
+  // tokens[0], fails the `=== 'git'` check, is classified non-commit, and SKIPS
+  // the R-WACT tsc gate for a real broken-TS commit — a one-sided parity gap
+  // vs the sibling detector (which catches `GIT_DIR=x git reset`).
+  let gitIdx = 0;
+  while (gitIdx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[gitIdx])) gitIdx++;
+  if (tokens[gitIdx] === 'gh') return false;
+  if (tokens[gitIdx] !== 'git') return false;
+
+  let index = gitIdx + 1;
   while (index < tokens.length) {
     const token = tokens[index];
     // Skip a space-separated arg-consuming global option AND its value token
