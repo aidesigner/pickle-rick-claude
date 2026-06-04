@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import publishCouncilStack, { CouncilPublishError, composeBody } from '../bin/council-publish.js';
+import { validateDirective } from '../services/council-schema.js';
 
 function minimalFinding(overrides = {}) {
     return {
@@ -854,6 +855,46 @@ test('composeBody: one finding renders severity, rule, recommendation, and Trap 
     assert.ok(/do the thing/.test(body), 'recommendation present');
     assert.ok(/### Trap Doors/.test(body), 'Trap Doors section present');
     assert.ok(/_None catalogued\._/.test(body), 'empty trap doors placeholder present');
+});
+
+// --- 22b. composeBody escapes pipes/newlines in free-text cells (anatomy-park HIGH) ---
+
+test('composeBody: pipe and newline in finding cells stay inside one aligned table row', () => {
+    // Drive through the real schema validator so the test exercises the actual
+    // data flow: directive JSON -> validateDirective -> branch findings ->
+    // composeBody table row (the exact path council-publish takes at runtime).
+    const directive = validateDirective(minimalDirective(['feat/one'], {
+        branches: [{
+            name: 'feat/one',
+            findings: [minimalFinding({
+                file: 'src/a|b.ts',
+                description: 'union `Foo | Bar` mishandled\nsecond line of detail',
+                rule: 'no|pipe',
+                recommendation: 'use `A | B`\nand split it',
+            })],
+        }],
+    }));
+    const finding = directive.branches[0].findings[0];
+    const body = composeBody({
+        sessionRoot: '/tmp/council-abc123',
+        branch: 'feat/one',
+        finalRound: 1,
+        codexEnabled: false,
+        findings: [finding],
+        trapDoors: [],
+        roundOutcomes: [],
+    });
+    const rows = body.split('\n').filter(l => l.startsWith('| P0 '));
+    assert.equal(rows.length, 1, 'finding renders as exactly one table row (no newline split)');
+    const row = rows[0];
+    // Each cell contributes its escaped `|`; the row's column delimiters are the
+    // only unescaped pipes. 8 delimiters => 7 columns (severity..recommendation).
+    assert.equal((row.match(/(?<!\\)\|/g) || []).length, 8, 'exactly 7 columns, no spurious ones');
+    assert.ok(row.includes('Foo \\| Bar'), 'pipe in description escaped');
+    assert.ok(row.includes('A \\| B'), 'pipe in recommendation escaped');
+    assert.ok(row.includes('src/a\\|b.ts'), 'pipe in file escaped');
+    assert.ok(row.includes('second line of detail'), 'second line folded into the same row');
+    assert.ok(!/\n.*second line of detail/.test(row), 'no literal newline before folded content');
 });
 
 // --- 23. composeBody with empty findings renders placeholder ---

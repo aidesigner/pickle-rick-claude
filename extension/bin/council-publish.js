@@ -14,6 +14,15 @@ function slugify(branch) {
     return branch.replace(/\//g, '__');
 }
 /**
+ * Escape a value for safe interpolation into a GitHub-flavored markdown table
+ * cell. A raw `|` opens a spurious column and a raw newline terminates the row,
+ * shifting every subsequent finding's cells out of alignment — council findings
+ * are LLM-authored free text and routinely contain both. `|` → `\|`, CR/LF → `<br>`.
+ */
+function escapeTableCell(value) {
+    return value.replace(/\|/g, '\\|').replace(/\r\n|\r|\n/g, '<br>');
+}
+/**
  * Parse `gh pr list --json number,state,updatedAt` output tolerantly.
  * Accepts a JSON array (current shape) OR a bare integer on the first line
  * (legacy `--jq .[0].number` shape). Returns a discriminated result so the
@@ -150,7 +159,7 @@ export function composeBody(params) {
             const file = f.line_range != null
                 ? `${f.file}:${f.line_range.replace(/-/g, '–')}`
                 : `${f.file}:${f.line}`;
-            return `| ${f.severity} | ${f.confidence} | [${f.source}] | ${file} | ${f.description} | ${f.rule} | ${f.recommendation} |`;
+            return `| ${f.severity} | ${f.confidence} | [${f.source}] | ${escapeTableCell(file)} | ${escapeTableCell(f.description)} | ${escapeTableCell(f.rule)} | ${escapeTableCell(f.recommendation)} |`;
         });
         findingsBlock = [header, sep, ...rows].join('\n');
     }
