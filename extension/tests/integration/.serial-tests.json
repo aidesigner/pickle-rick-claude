@@ -19,6 +19,7 @@
     "tests/integration/lock-scope-rejects-live-runner.test.js",
     "tests/integration/microverse-runner-judge-failure.test.js",
     "tests/integration/microverse-runner.worker-subprocess-error.test.js",
+    "tests/integration/mmtrh-heal-script.test.js",
     "tests/integration/pipeline-runner-dirty-tree-guard.test.js",
     "tests/integration/pipeline-runner-dirty-tree-relaunch.test.js",
     "tests/integration/readiness-bundle-prd.test.js",

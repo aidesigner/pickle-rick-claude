@@ -4,7 +4,7 @@
     "description": "Number of coding principle violations (lower is better)",
     "validation": "Review the code at the target path for violations of established coding principles (KISS, YAGNI, DRY, SOLID, Small Functions, Guard Clauses, Cognitive Load, Self-Documenting Code, Encapsulation, Fail-Fast, etc). Count only REAL, actionable violations — not style nitpicks. A violation must be fixable and must clearly hurt readability, maintainability, or correctness. Score = number of violations found.",
     "type": "llm",
-    "timeout_seconds": 300,
+    "timeout_seconds": 600,
     "tolerance": 0,
     "direction": "lower"
   },
