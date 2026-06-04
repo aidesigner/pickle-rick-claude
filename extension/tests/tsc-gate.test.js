@@ -378,6 +378,60 @@ it('isGitCommitCommand detects commit in any chained segment without false posit
   assert.equal(isGitCommitCommand('git commit -m "cleanup; done"'), true);
 });
 
+it('isGitCommitCommand segments on unquoted newlines (newline-separated add+commit)', async () => {
+  const { isGitCommitCommand } = await import('../hooks/handlers/tsc-gate.js');
+  // A worker naturally emits sequential commands one per line. Before the fix the
+  // tokenizer swallowed the unquoted newline as whitespace, collapsing the lines
+  // into one segment whose subcommand read `add`, so the gate was SKIPPED.
+  const positives = [
+    'git add -A\ngit commit -m "x"',
+    'git add -u\ngit commit -m "x"',
+    'cd extension\ngit add -A\ngit commit -m "x"',
+    'git status\ngit commit -m "x"',
+  ];
+  for (const command of positives) {
+    assert.equal(isGitCommitCommand(command), true, JSON.stringify(command));
+  }
+  const negatives = [
+    'git add -A\necho done',
+    'git status\ngit log --oneline',
+  ];
+  for (const command of negatives) {
+    assert.equal(isGitCommitCommand(command), false, JSON.stringify(command));
+  }
+  // A newline INSIDE a quoted commit message stays one token, so a multi-line
+  // commit body is a single commit segment, still detected — never mis-split.
+  assert.equal(isGitCommitCommand('git commit -m "line1\nline2"'), true);
+});
+
+it('blocks broken staged tracked TypeScript across newline-separated git commit forms', () => {
+  const harness = makeHarness();
+  const repoRoot = makeRepo();
+  try {
+    writeSession(harness, repoRoot);
+    stageTrackedBrokenFile(repoRoot);
+    const commands = [
+      'git add -A\ngit commit -m "broken"',
+      'git add -u\ngit commit -m "broken"',
+      'cd .\ngit add -A\ngit commit -m "broken"',
+      'git status\ngit commit -m "broken"',
+    ];
+
+    for (const command of commands) {
+      const before = readActivityEvents(harness).length;
+      const result = runHandler({ harness, repoRoot, command });
+      assert.equal(result.status, 0, command);
+      assert.equal(result.decision?.decision, 'block', command);
+      assert.match(result.decision?.reason ?? '', /^R-WACT: tsc --noEmit failed with compile_error:/, command);
+      const newEvents = readActivityEvents(harness).slice(before);
+      assertFailedEvent(latestEvent(newEvents, 'tsc_gate_failed'), 'compile_error');
+    }
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    harness.cleanup();
+  }
+});
+
 it('approves clean staged TypeScript', () => {
   const harness = makeHarness();
   const repoRoot = makeRepo();

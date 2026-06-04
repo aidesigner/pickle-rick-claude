@@ -74,22 +74,29 @@ function stripCdPrefix(command) {
     }
     return stripped;
 }
-const SHELL_SEGMENT_SEPARATORS = new Set(['&&', '||', '|', '&', ';']);
+const SHELL_SEGMENT_SEPARATORS = new Set(['&&', '||', '|', '&', ';', '\n']);
 /**
- * Splits a shell command into top-level segments on `&&`, `||`, `|`, `&`, and
- * `;`. Quote-aware: a separator inside single/double quotes (e.g. a commit
- * message `-m 'fix && reset'`) is preserved, never a split point. Mirrors the
- * proven `splitShellSegments` shape in config-protection.ts so the chained
- * worker-forbidden-op guards segment identically.
+ * Splits a shell command into top-level segments on `&&`, `||`, `|`, `&`, `;`,
+ * and an unquoted newline (a top-level command terminator, semantically
+ * identical to `;`). Quote-aware: a separator inside single/double quotes (e.g.
+ * a commit message `-m 'fix && reset'`, or a multi-line `-m "line1\nline2"`) is
+ * preserved, never a split point. Mirrors the proven `splitShellSegments` shape
+ * in config-protection.ts so the chained worker-forbidden-op guards segment
+ * identically.
  *
  * Without segmentation the gate inspected only the cd-stripped leading command,
  * so the CLAUDE.md-canonical `git add -A && git commit -m "…"` form (the
  * documented commit pattern in pickle-microverse.md / meeseeks.md) reported the
  * subcommand as `add` and the tsc check was skipped — a broken-TS commit slipped
- * the R-WACT backstop. Each segment is now evaluated independently.
+ * the R-WACT backstop. A worker also naturally emits `git add` and `git commit`
+ * on separate lines, so a swallowed newline produced the same single-segment
+ * bypass. Each segment is now evaluated independently.
  */
 function splitTopLevelSegments(command) {
-    const rawTokens = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+    // `\n` is matched as its own alternative BEFORE `\S+` so an unquoted newline
+    // becomes a boundary token; `"[^"]*"`/`'[^']*'` span newlines (negated class
+    // includes `\n`), so a newline inside a quoted commit message is preserved.
+    const rawTokens = command.match(/"[^"]*"|'[^']*'|\n|\S+/g) ?? [];
     const tokens = [];
     for (const raw of rawTokens) {
         const quoted = (raw.startsWith('"') && raw.endsWith('"')) ||
