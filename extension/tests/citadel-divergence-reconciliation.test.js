@@ -82,4 +82,36 @@ describe('citadel divergence reconciliation', () => {
       fs.rmSync(sessionDir, { recursive: true, force: true });
     }
   });
+
+  test('survives a changed file that is unreadable from the working tree', async () => {
+    const { repoRoot, base } = createRepo();
+    try {
+      // Commit a changed test file so it lands in `base..HEAD` (status M/A)...
+      writeFile(repoRoot, 'tests/behavior.test.js', [
+        'import assert from "node:assert/strict";',
+        '',
+        'assert.equal("x", "x"); // AC-FF-05 product decision contradicts PRD; test locks it.',
+        '',
+      ].join('\n'));
+      git(repoRoot, ['add', '.']);
+      git(repoRoot, ['commit', '-qm', 'add committed test']);
+
+      // ...then make it unreadable from the working tree (uncommitted delete).
+      // The committed diff range still lists it as changed, so divergence
+      // reconciliation tries to read it from disk and gets ENOENT.
+      fs.rmSync(path.join(repoRoot, 'tests/behavior.test.js'));
+
+      // Must NOT throw — the whole audit would crash before the fix.
+      const report = await runCitadelAudit({
+        prdPath: 'prd.md',
+        diffRange: `${base}..HEAD`,
+        repoRoot,
+      });
+
+      assert.equal(report.sections.divergence_reconciliation.summary.changed_tests_scanned, 1);
+      assert.equal(report.sections.divergence_reconciliation.decisionsRequired.length, 0);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
 });

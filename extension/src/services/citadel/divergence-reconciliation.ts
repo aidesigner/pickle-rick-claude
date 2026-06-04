@@ -84,7 +84,17 @@ function decisionsForTrapDoorFile(repoRoot: string, file: ChangedFileSummary): D
 }
 
 function changedLineEvidence(repoRoot: string, file: ChangedFileSummary): DivergenceEvidence[] {
-  const lines = readFileSync(path.join(repoRoot, file.path), 'utf-8').split(/\r?\n/);
+  // A changed file present in the committed diff range can be unreadable from
+  // the working tree (deleted/moved post-`head`, broken symlink, perms). Fail
+  // soft like every sibling analyzer (ac-coverage, state-transitions, etc.) —
+  // reconcileDivergences runs UNwrapped by safeRunAnalyzer, so a throw here
+  // crashes the entire Citadel audit instead of skipping one file.
+  let lines: string[];
+  try {
+    lines = readFileSync(path.join(repoRoot, file.path), 'utf-8').split(/\r?\n/);
+  } catch {
+    return [];
+  }
   const evidence: DivergenceEvidence[] = [];
   for (const range of file.changedLines) {
     for (let lineNumber = range.start; lineNumber <= range.end; lineNumber += 1) {
