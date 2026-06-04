@@ -73,7 +73,10 @@ const ticketId = process.env.FAKE_TICKET_ID;
 fs.mkdirSync(ticketDir, { recursive: true });
 fs.writeFileSync(path.join(ticketDir, 'research_2026-05-06.md'), '# research\\n');
 const target = path.join(process.cwd(), 'extension', 'src', ${JSON.stringify(fixtureName)});
-fs.writeFileSync(target, 'export const workerGateFixture = 2;\\n');
+// Vary content by ticketId so each stubbed worker run is a real change; identical
+// content made the second run's \`git commit\` a no-op ("nothing to commit"), crashing
+// the shim before the promise token (real workers always make distinct changes).
+fs.writeFileSync(target, 'export const workerGateFixture = ' + JSON.stringify(ticketId) + ';\\n');
 execFileSync('git', ['add', ${JSON.stringify(`extension/src/${fixtureName}`)}], { cwd: process.cwd() });
 execFileSync('git', ['commit', '-m', \`fix(\${ticketId}): worker gate fixture\`, '--no-gpg-sign'], { cwd: process.cwd(), stdio: 'ignore' });
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: process.cwd(), encoding: 'utf8' }).trim();
