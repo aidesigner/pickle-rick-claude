@@ -1462,12 +1462,7 @@ export class DotBuilder {
     else this._edgeList.push({ from, to });
   }
 
-  private _emitSubgraph(name: string, body: () => void): void;
-  private _emitSubgraph(clusterId: string, label: string, bodyEmitter: () => void): void;
-  private _emitSubgraph(clusterId: string, labelOrBody: string | (() => void), body?: () => void): void {
-    const label = typeof labelOrBody === 'string' ? labelOrBody : clusterId;
-    const bodyEmitter = typeof labelOrBody === 'function' ? labelOrBody : body;
-    if (!bodyEmitter) return;
+  private _emitSubgraph(clusterId: string, label: string, bodyEmitter: () => void): void {
     const prevNodesLen = this._nodes.length;
     const prevEdgesLen = this._edges.length;
     bodyEmitter();
