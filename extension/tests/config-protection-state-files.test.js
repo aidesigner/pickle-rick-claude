@@ -176,6 +176,44 @@ test('R-WSRC-3: blocks Edit to ~/.claude/pickle-rick/** runtime file', () => {
   assert.equal(result.decision, 'block');
 });
 
+test('R-WSRC-3: blocks Edit to ~/.claude/pickle-rick/** via unexpanded tilde', () => {
+  // path.resolve does NOT expand `~`; the shell does at exec time. A worker
+  // file_path like `~/.claude/pickle-rick/...` must still be contained.
+  const { tmpDir, stateFile } = bootstrapSession();
+  const tildePath = '~/' + '.claude/pickle-rick/extension/bin/mux-runner.js';
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Edit',
+    toolInput: { file_path: tildePath },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Bash redirect to ~/.claude/pickle-rick/** runtime file', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const tildePath = '~/' + '.claude/pickle-rick/extension/services/state-manager.js';
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo evil > ${tildePath}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Bash redirect to $HOME/.claude/pickle-rick/** runtime file', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const homeVarPath = '$HOME/' + '.claude/pickle-rick/persona.md';
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo evil > ${homeVarPath}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
 test('R-WSRC-3: blocks Write to pickle_settings.json', () => {
   const { tmpDir, stateFile } = bootstrapSession();
   const result = runHandler({

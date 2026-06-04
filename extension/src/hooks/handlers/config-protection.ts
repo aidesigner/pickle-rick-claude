@@ -124,15 +124,31 @@ function matchProtectedStateBasename(filePath: string): string | null {
 }
 
 /**
+ * Expands a leading `~`, `~/`, `$HOME`, or `${HOME}` to the absolute home
+ * directory. `path.resolve` does NOT expand these shell forms, so a bash
+ * redirect or tool `file_path` like `~/.claude/pickle-rick/...` would otherwise
+ * resolve under the cwd (`<cwd>/~/...`) and slip past the runtime-root guard
+ * even though the shell expands it to the real runtime tree at exec time.
+ */
+function expandLeadingHome(filePath: string): string {
+  if (filePath === '~') return os.homedir();
+  if (filePath.startsWith('~/')) return path.join(os.homedir(), filePath.slice(2));
+  const homeVar = filePath.match(/^(?:\$HOME|\$\{HOME\})(?=\/|$)/);
+  if (homeVar) return path.join(os.homedir(), filePath.slice(homeVar[0].length));
+  return filePath;
+}
+
+/**
  * Returns true if `filePath` resolves inside the deployed runtime tree
  * (`~/.claude/pickle-rick/**`). Uses path.resolve (no realpath) because the
  * worker may not have the target on disk yet; symlink resolution is not
- * the threat model here.
+ * the threat model here. Leading `~`/`$HOME` forms are expanded first so the
+ * shell-expanded destination is checked, not a literal `~` under the cwd.
  */
 function isInsideRuntimeRoot(filePath: string): boolean {
   if (!filePath) return false;
   const runtimeRoot = getProtectedRuntimeRoot();
-  const resolved = path.resolve(filePath);
+  const resolved = path.resolve(expandLeadingHome(filePath));
   if (resolved === runtimeRoot) return true;
   return resolved.startsWith(runtimeRoot + path.sep);
 }
