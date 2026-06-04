@@ -593,3 +593,122 @@ test('R-WSRC-GR-LEAK: unknown role passes through (no over-blocking)', () => {
   });
   assert.equal(result.decision, 'approve');
 });
+
+// ---------------------------------------------------------------------------
+// Chained-command bypass (cfgprot-chained-command-forbidden-op-bypass)
+// The CLAUDE.md-mandated `cd <subdir> && git <verb>` pattern must NOT bypass
+// the worker-forbidden-op guards. Prohibited verbs in ANY chained segment block.
+// ---------------------------------------------------------------------------
+
+test('R-WSRC-GR chained: worker blocks `cd extension && git reset --hard HEAD~1`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'cd extension && git reset --hard HEAD~1' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /R-WSRC-GR/);
+  assert.match(result.reason, /reset/);
+});
+
+test('R-WSRC-GR chained: worker blocks `git status && git push origin main`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git status && git push origin main' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /push/);
+});
+
+test('R-WSRC-GR chained: worker blocks `cd sub ; git rebase main`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'cd sub ; git rebase main' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /rebase/);
+});
+
+test('R-WSRC-GR chained: refinement-worker blocks `cd x && git stash`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'cd x && git stash' },
+    extraEnv: { PICKLE_ROLE: 'refinement-worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /stash/);
+});
+
+test('R-WSRC-GR chained: quoted commit message with `&& git reset` is NOT a bypass trigger (approve)', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: "git commit -m 'fix && git reset bug'" },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'approve');
+});
+
+test('R-WSRC-GR chained: legitimate `cd extension && git add src/foo.ts` still approves', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'cd extension && git add src/foo.ts' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'approve');
+});
+
+// R-PIPE-3 / R-WSRC: install.sh chaining (Phase 2.5 replay match of the same
+// first-segment-only detection shape).
+test('R-WSRC install.sh chained: worker blocks `cd x && bash install.sh`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'cd x && bash install.sh' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /install\.sh/);
+});
+
+// R-CSIS-B1: expensive-tier `node --test <file>` chaining (Phase 2.5 replay
+// match — same leading-command-only detection shape). `cd x && node --test
+// <expensive>` must still be blocked, else the RUN_EXPENSIVE_TESTS skip guard
+// is bypassed and the soak re-runs unconditionally (timeout→relaunch loop).
+test('R-CSIS-B1 chained: worker blocks `cd extension && node --test <expensive>`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  fs.writeFileSync(path.join(tmpDir, 'soak.test.js'), '// @tier: expensive\n');
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'cd extension && node --test soak.test.js' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /R-CSIS-B1/);
+});
+
+test('R-CSIS-B1: recommended `RUN_EXPENSIVE_TESTS=1 npm run test:expensive` is NOT blocked', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'RUN_EXPENSIVE_TESTS=1 npm run test:expensive' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'approve');
+});

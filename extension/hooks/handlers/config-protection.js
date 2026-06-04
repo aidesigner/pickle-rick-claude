@@ -360,25 +360,65 @@ function detectTargetedStateFile(input) {
     }
     return null;
 }
+const SHELL_SEGMENT_SEPARATORS = new Set(['&&', '||', '|', '&', ';']);
 /**
- * R-PIPE-3 / R-WSRC: Explicit detection for `bash install.sh` (and variants)
- * from worker contexts. This is a hard forbidden (manager-only) per the
- * project CLAUDE.md worker rules. The hook must return "block" for workers.
+ * Splits a shell command into top-level segments on the control operators
+ * `&&`, `||`, `|`, `&`, and `;`. Quote-aware: an operator inside single or
+ * double quotes (e.g. a commit message `-m 'fix && reset bug'`) is NOT a split
+ * point, so legitimate commits are never mis-segmented.
  *
- * Only matches when `install.sh` is the EXECUTABLE token (basename of the
- * binary being invoked), not when it appears as an argument to a read-only
- * tool (`cat install.sh`, `vim install.sh`, `git log install.sh`) and not
- * when it is a suffix of a different filename (`pre-install.sh`,
- * `my-install.sh`).
+ * The worker-forbidden-op detectors (`detectProhibitedGitVerb`,
+ * `isBashInvokingInstallSh`) only inspect the FIRST executable token of the
+ * string they receive. Without segmentation, `cd sub && git reset --hard` and
+ * `git status && git push` slip the guard because the leading token is `cd` /
+ * the first git verb is benign — yet the project CLAUDE.md mandates the
+ * `cd <subdir> && git <verb>` pattern, making chaining the common case. Each
+ * segment is evaluated independently so a prohibited verb in ANY position is
+ * caught. Over-segmentation is fail-safe: only prohibited verbs/`install.sh`
+ * are matched, so benign chained commands (`cd x && git add .`) still pass.
  */
-function isBashInvokingInstallSh(command) {
-    if (!command)
-        return false;
-    const trimmed = command.trim();
+function splitShellSegments(command) {
+    const rawTokens = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+    const tokens = [];
+    for (const raw of rawTokens) {
+        const quoted = (raw.startsWith('"') && raw.endsWith('"')) ||
+            (raw.startsWith('\'') && raw.endsWith('\''));
+        if (quoted) {
+            tokens.push(raw);
+            continue;
+        }
+        // Separate glued `;` (e.g. `git status;git reset`) into its own token so
+        // it acts as a boundary; quoted `;` was already preserved above.
+        for (const part of raw.split(/(;)/)) {
+            if (part.length > 0)
+                tokens.push(part);
+        }
+    }
+    const segments = [];
+    let current = [];
+    for (const token of tokens) {
+        if (SHELL_SEGMENT_SEPARATORS.has(token)) {
+            if (current.length > 0)
+                segments.push(current.join(' '));
+            current = [];
+            continue;
+        }
+        current.push(token);
+    }
+    if (current.length > 0)
+        segments.push(current.join(' '));
+    return segments.length > 0 ? segments : [command];
+}
+/**
+ * Returns true if a single (already-segmented) shell command invokes
+ * `install.sh` as its executable token, skipping a leading `bash`/`sh` wrapper.
+ * Does not match read-only references (`cat install.sh`) or suffixed filenames
+ * (`pre-install.sh`).
+ */
+function segmentInvokesInstallSh(segment) {
+    const trimmed = segment.trim();
     if (!trimmed)
         return false;
-    // Tokenize on whitespace; locate the executable token (first non-empty token,
-    // skipping a leading `bash` or `sh` wrapper).
     const tokens = trimmed.split(/\s+/);
     let execIdx = 0;
     if (tokens[execIdx] === 'bash' || tokens[execIdx] === 'sh')
@@ -391,6 +431,23 @@ function isBashInvokingInstallSh(command) {
         ? cleanExec.substring(cleanExec.lastIndexOf('/') + 1)
         : cleanExec;
     return base === 'install.sh';
+}
+/**
+ * R-PIPE-3 / R-WSRC: Explicit detection for `bash install.sh` (and variants)
+ * from worker contexts. This is a hard forbidden (manager-only) per the
+ * project CLAUDE.md worker rules. The hook must return "block" for workers.
+ *
+ * Only matches when `install.sh` is the EXECUTABLE token (basename of the
+ * binary being invoked), not when it appears as an argument to a read-only
+ * tool (`cat install.sh`, `vim install.sh`, `git log install.sh`) and not
+ * when it is a suffix of a different filename (`pre-install.sh`,
+ * `my-install.sh`). Every chained segment is checked so `cd x && bash
+ * install.sh` is caught, not just a leading invocation.
+ */
+function isBashInvokingInstallSh(command) {
+    if (!command)
+        return false;
+    return splitShellSegments(command).some(segmentInvokesInstallSh);
 }
 /**
  * Extracts the EXECUTABLE token from a shell command, handling common shell
@@ -465,30 +522,33 @@ function findGitVerb(command) {
 export function detectProhibitedGitVerb(command) {
     if (!command)
         return null;
-    if (parseFirstShellWord(command) !== 'git')
-        return null;
-    const parsed = findGitVerb(command);
-    if (!parsed)
-        return null;
-    const { verb, afterVerb } = parsed;
-    if (PROHIBITED_GIT_VERBS_SIMPLE.has(verb))
-        return { verb };
-    if (verb === 'checkout' && isCheckoutRefOperation(afterVerb))
-        return { verb: 'checkout' };
-    if (verb === 'commit' && afterVerb.some(t => t === '--amend'))
-        return { verb: 'commit --amend' };
-    if (verb === 'fetch' && afterVerb.some(t => t === '--prune'))
-        return { verb: 'fetch --prune' };
+    // Evaluate every chained segment, not just the leading command: a worker
+    // running `cd sub && git reset` or `git status && git push` must still be
+    // caught (the leading token is `cd` / a benign git verb).
+    for (const segment of splitShellSegments(command)) {
+        if (parseFirstShellWord(segment) !== 'git')
+            continue;
+        const parsed = findGitVerb(segment);
+        if (!parsed)
+            continue;
+        const { verb, afterVerb } = parsed;
+        if (PROHIBITED_GIT_VERBS_SIMPLE.has(verb))
+            return { verb };
+        if (verb === 'checkout' && isCheckoutRefOperation(afterVerb))
+            return { verb: 'checkout' };
+        if (verb === 'commit' && afterVerb.some(t => t === '--amend'))
+            return { verb: 'commit --amend' };
+        if (verb === 'fetch' && afterVerb.some(t => t === '--prune'))
+            return { verb: 'fetch --prune' };
+    }
     return null;
 }
 /**
  * R-CSIS-B1: Extract the file path argument from `node --test <path>` commands.
  * Returns the first non-flag token after `--test`, or null if the pattern doesn't match.
  */
-function extractNodeTestPath(command) {
-    if (!command)
-        return null;
-    const trimmed = command.trim();
+function extractNodeTestPathFromSegment(segment) {
+    const trimmed = segment.trim();
     if (!trimmed)
         return null;
     const tokens = trimmed.split(/\s+/);
@@ -509,6 +569,18 @@ function extractNodeTestPath(command) {
         if (foundTestFlag && !t.startsWith('-'))
             return t;
         idx++;
+    }
+    return null;
+}
+function extractNodeTestPath(command) {
+    if (!command)
+        return null;
+    // Check every chained segment so `cd x && node --test <expensive>` cannot
+    // smuggle the expensive-test invocation past the leading-command check.
+    for (const segment of splitShellSegments(command)) {
+        const hit = extractNodeTestPathFromSegment(segment);
+        if (hit)
+            return hit;
     }
     return null;
 }
