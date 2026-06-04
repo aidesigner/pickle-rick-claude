@@ -36,7 +36,7 @@ const VALID_GATE_STATUSES = new Set<string>(['green', 'red', 'green-with-known-f
 const VALID_FAILURE_CHECKS = new Set<string>(['typecheck', 'lint', 'tests']);
 const VALID_FAILURE_SEVERITIES = new Set<string>(['error', 'warning']);
 
-function isGateFailure(v: unknown): v is GateFailure {
+export function isGateFailure(v: unknown): v is GateFailure {
   if (!v || typeof v !== 'object') return false;
   const f = v as Record<string, unknown>;
   return (
@@ -50,7 +50,7 @@ function isGateFailure(v: unknown): v is GateFailure {
   );
 }
 
-function isGateResult(v: unknown): v is GateResult {
+export function isGateResult(v: unknown): v is GateResult {
   if (!v || typeof v !== 'object') return false;
   const obj = v as Record<string, unknown>;
   return (

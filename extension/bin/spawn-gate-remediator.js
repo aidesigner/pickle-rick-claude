@@ -17,7 +17,7 @@ function parseFlag(argv, flag) {
 const VALID_GATE_STATUSES = new Set(['green', 'red', 'green-with-known-flake-warnings']);
 const VALID_FAILURE_CHECKS = new Set(['typecheck', 'lint', 'tests']);
 const VALID_FAILURE_SEVERITIES = new Set(['error', 'warning']);
-function isGateFailure(v) {
+export function isGateFailure(v) {
     if (!v || typeof v !== 'object')
         return false;
     const f = v;
@@ -29,7 +29,7 @@ function isGateFailure(v) {
         typeof f['severity'] === 'string' && VALID_FAILURE_SEVERITIES.has(f['severity']) &&
         typeof f['occurrence_index'] === 'number');
 }
-function isGateResult(v) {
+export function isGateResult(v) {
     if (!v || typeof v !== 'object')
         return false;
     const obj = v;
