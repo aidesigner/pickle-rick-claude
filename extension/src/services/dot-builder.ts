@@ -1451,8 +1451,6 @@ export class DotBuilder {
     this._nodeMap.set(id, { ...attrs });
   }
 
-  private _link(from: string, to: string): void;
-  private _link(from: string, to: string, attrs?: Record<string, string>): void;
   private _link(from: string, to: string, attrs?: Record<string, string>): void {
     const edgeLine = (attrs && Object.keys(attrs).length > 0)
       ? `  ${from} -> ${to} [${fmtAttrs(attrs)}]`
