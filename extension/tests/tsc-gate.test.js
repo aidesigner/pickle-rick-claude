@@ -378,6 +378,43 @@ it('isGitCommitCommand detects commit in any chained segment without false posit
   assert.equal(isGitCommitCommand('git commit -m "cleanup; done"'), true);
 });
 
+it('isGitCommitCommand detects commit behind arg-consuming git global options', async () => {
+  const { isGitCommitCommand } = await import('../hooks/handlers/tsc-gate.js');
+  // Each arg-consuming global option (`-C`, `-c`, `--git-dir`, `--work-tree`,
+  // `--namespace`, `--super-prefix`, `--exec-path`) consumes its value token in
+  // space form; the value must NOT be read as the subcommand. Before the parity
+  // fix `--namespace ns commit`, `--super-prefix sp/ commit`, and
+  // `--exec-path /p commit` read the value as the subcommand and were classified
+  // non-commit, SKIPPING the R-WACT tsc gate for a real broken-TS commit.
+  const positives = [
+    'git -C . commit -m "x"',
+    'git -c user.name=t commit -m "x"',
+    'git --git-dir .git commit -m "x"',
+    'git --work-tree . commit -m "x"',
+    'git --namespace ns commit -m "x"',
+    'git --super-prefix sp/ commit -m "x"',
+    'git --exec-path /p commit -m "x"',
+    'git --exec-path=/p commit -m "x"',
+    'git --namespace=ns commit -m "x"',
+    'git --super-prefix=sp/ commit -m "x"',
+    'git --exec-path /p --namespace ns commit -m "x"',
+    'cd extension && git --exec-path /p commit -m "x"',
+  ];
+  for (const command of positives) {
+    assert.equal(isGitCommitCommand(command), true, command);
+  }
+  // The consumed VALUE token must never be promoted to the subcommand: a global
+  // option whose value is `log`/`diff` must not flip the command to non-commit,
+  // and a non-commit verb behind the option stays non-commit.
+  const negatives = [
+    'git --namespace log status',
+    'git --exec-path /p log --oneline',
+  ];
+  for (const command of negatives) {
+    assert.equal(isGitCommitCommand(command), false, command);
+  }
+});
+
 it('isGitCommitCommand segments on unquoted newlines (newline-separated add+commit)', async () => {
   const { isGitCommitCommand } = await import('../hooks/handlers/tsc-gate.js');
   // A worker naturally emits sequential commands one per line. Before the fix the

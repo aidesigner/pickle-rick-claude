@@ -6,6 +6,19 @@ import { approve, loadActiveState, resolveStateFile } from '../resolve-state.js'
 import { logActivity } from '../../services/activity-logger.js';
 import { getDataRoot, safeErrorMessage } from '../../services/pickle-utils.js';
 import { StateManager } from '../../services/state-manager.js';
+/**
+ * Git global options that consume the FOLLOWING token as their value in
+ * space-separated form (`git -C <path> commit`). The commit-classification scan
+ * must skip both the option AND its value, otherwise the value token is read as
+ * the subcommand and a real `git commit` is mis-classified as non-commit — the
+ * R-WACT tsc gate is then SKIPPED for that commit. Mirrors the 7-option coverage
+ * of `config-protection.ts:ARG_CONSUMING_GIT_GLOBAL_OPTIONS` (findGitVerb) so the
+ * two sibling git-command detectors stay in parity. The `=`-glued forms
+ * (`--git-dir=<path>`) are self-contained and skipped as single flag tokens.
+ */
+const ARG_CONSUMING_GIT_GLOBAL_OPTIONS = new Set([
+    '-c', '-C', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--exec-path',
+]);
 const TSC_TRIGGER_RE = /\.(?:[cm]?ts|tsx)$/i;
 const TSC_CONFIG_RE = /^tsconfig(?:\..+)?\.json$/i;
 const PACKAGE_JSON_RE = /^package.*\.json$/i;
@@ -141,13 +154,16 @@ function segmentIsGitCommit(segment) {
         const token = tokens[index];
         if (NEGATIVE_GIT_SUBCOMMANDS.has(token))
             return false;
-        if (token === '-c' || token === '-C' || token === '--git-dir' || token === '--work-tree') {
+        if (ARG_CONSUMING_GIT_GLOBAL_OPTIONS.has(token)) {
             index += 2;
             continue;
         }
         if (token.startsWith('-c') ||
             token.startsWith('--git-dir=') ||
-            token.startsWith('--work-tree=')) {
+            token.startsWith('--work-tree=') ||
+            token.startsWith('--namespace=') ||
+            token.startsWith('--super-prefix=') ||
+            token.startsWith('--exec-path=')) {
             index += 1;
             continue;
         }
