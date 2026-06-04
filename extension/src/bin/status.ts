@@ -4,7 +4,7 @@ import * as path from 'path';
 import { printMinimalPanel, collectTickets, statusSymbol, findSessionPathForCwd, getTicketStatus, getDataRoot, resolveWorkerTestGateTimeoutMs } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { State, MicroverseSessionState } from '../types/index.js';
-import { readMicroverseState } from '../services/microverse-state.js';
+import { readMicroverseState, readRecoverableJsonObject } from '../services/microverse-state.js';
 
 const sm = new StateManager();
 
@@ -43,12 +43,11 @@ function formatTask(raw: string | undefined): string {
 
 function readPipelineStatus(sessionPath: string): PipelineStatusSnapshot | null {
   const statusPath = path.join(sessionPath, 'pipeline-status.json');
-  try {
-    const raw = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
-    return raw && typeof raw === 'object' ? raw as PipelineStatusSnapshot : null;
-  } catch {
-    return null;
-  }
+  // Recoverable read: promote a newer `.tmp.<pid>` snapshot left by an
+  // interrupted tmp-rename write (writePipelineStatus) before the base file.
+  // Matches the sibling readers in monitor.ts and pipeline-runner.ts.
+  const raw = readRecoverableJsonObject(statusPath);
+  return raw ? (raw as PipelineStatusSnapshot) : null;
 }
 
 function countPhaseCompletedEvents(state: State): number {

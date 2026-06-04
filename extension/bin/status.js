@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { printMinimalPanel, collectTickets, statusSymbol, findSessionPathForCwd, getTicketStatus, getDataRoot, resolveWorkerTestGateTimeoutMs } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
-import { readMicroverseState } from '../services/microverse-state.js';
+import { readMicroverseState, readRecoverableJsonObject } from '../services/microverse-state.js';
 const sm = new StateManager();
 export function computeConsecutiveNoProgress(mvState) {
     const recent = (mvState.failure_history ?? []).slice(-3);
@@ -28,13 +28,11 @@ function formatTask(raw) {
 }
 function readPipelineStatus(sessionPath) {
     const statusPath = path.join(sessionPath, 'pipeline-status.json');
-    try {
-        const raw = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
-        return raw && typeof raw === 'object' ? raw : null;
-    }
-    catch {
-        return null;
-    }
+    // Recoverable read: promote a newer `.tmp.<pid>` snapshot left by an
+    // interrupted tmp-rename write (writePipelineStatus) before the base file.
+    // Matches the sibling readers in monitor.ts and pipeline-runner.ts.
+    const raw = readRecoverableJsonObject(statusPath);
+    return raw ? raw : null;
 }
 function countPhaseCompletedEvents(state) {
     if (!Array.isArray(state.activity))

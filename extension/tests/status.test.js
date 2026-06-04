@@ -251,6 +251,59 @@ test('pickle-status recap: counts actual phase_completed events in output', () =
     });
 });
 
+test('pickle-status recap: recovers pipeline-status.json from orphan tmp when base is absent', () => {
+    // Regression: status.ts must promote a newer `.tmp.<pid>` pipeline-status.json
+    // snapshot (left by an interrupted tmp-rename write) instead of raw-reading the
+    // absent/stale base file. Sibling readers (monitor.ts, pipeline-runner.ts) already
+    // use readRecoverableJsonObject; status.ts had drifted to raw JSON.parse.
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+        const ts = new Date().toISOString();
+
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        // No base pipeline-status.json — only a dead-pid recoverable tmp snapshot.
+        const statusPath = path.join(sessionDir, 'pipeline-status.json');
+        fs.writeFileSync(`${statusPath}.tmp.${DEAD_TMP_PID}`, JSON.stringify({
+            status: 'completed',
+            current_phase: null,
+            completed_phases: 1,
+            skipped_phases: 0,
+            total_phases: 4,
+            updated_at: ts,
+        }));
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                step: 'completed',
+                iteration: 1,
+                max_iterations: 10,
+                current_ticket: 'TICKET-ORPHAN',
+                original_prompt: 'Recover pipeline-status from tmp',
+                activity: [{ event: 'phase_completed', ts, phase: 'pickle' }],
+            })
+        );
+
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            // With the raw-read bug total_phases would be 0 ("1/0"); the recovered
+            // tmp supplies total_phases=4.
+            assert.match(
+                output,
+                /Pipeline recap: 1\/4 phases completed/,
+                `Expected recovered total_phases from orphan tmp, got: ${output}`
+            );
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
 test('pickle-status recoverable count: shows total recoverable_phase_failure events', () => {
     withExtensionDir((tmpDir) => {
         const sessionDir = fs.realpathSync(
