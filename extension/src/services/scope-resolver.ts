@@ -14,7 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { runGit, getHeadSha, getDiffFiles, getMergeBase } from './git-utils.js';
-import { StateManager } from './state-manager.js';
+import { StateManager, isProcessAlive } from './state-manager.js';
 import type { State } from '../types/index.js';
 
 export type ScopeMode = 'branch' | 'diff' | 'paths';
@@ -337,15 +337,6 @@ function resolveRepoRootFromState(sm: StateManager, statePath: string): string {
     throw new ScopeError('SCOPE_NOT_A_REPO', `refreshScope: no repoRoot given and no state.json at ${statePath}`);
   }
   return sm.read(statePath).working_dir;
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function readScopeJson(scopePath: string): ScopeJson | null {
