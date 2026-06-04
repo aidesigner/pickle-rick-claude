@@ -60,7 +60,7 @@ Per-subsystem `/anatomy-park` → `/szechuan-sauce`, scoped, claude, `--target e
 | # | Subsystem | Anatomy | Szechuan |
 |---|---|---|---|
 | HS-1 | Orchestration core (mux/pipeline/jar-runner, manager-relaunch, circuit-breaker, classifier) | ✅ clean (converged, 0 commits — well-hardened by prior sweeps) | ✅ converged (1 deslop: `6a1a8d04` DRY validateStartupState) |
-| HS-2 | Worker spawning + backends | ⏳ LAUNCHED (session 9a1fe0b6) | — |
+| HS-2 | Worker spawning + backends | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session 9a1fe0b6) | ⏳ LAUNCHED |
 | HS-3 | Microverse | — | — |
 | HS-4 | State + transactions | — | — |
 | HS-5 | Gates | — | — |
