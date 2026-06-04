@@ -269,3 +269,15 @@ export function slugify(value: string, fallback = '', maxLength?: number): strin
 export function uniqueSortedStrings(values: string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
+
+/**
+ * Escape a string for embedding in a single-line Markdown table cell: backslash
+ * the cell-delimiting `|` and collapse any line break to a space so the row
+ * stays on one line. Shared by the citadel analyzers (previously duplicated 4×;
+ * DRY Rule of Three). The `\r?\n` form is the strict superset of the variants it
+ * replaces: identical output for `\r`-free input, and for a CRLF break it strips
+ * the carriage return too, so no stray control char survives in the cell.
+ */
+export function escapeTableCell(value: string): string {
+  return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}

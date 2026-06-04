@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { uniqueSortedStrings } from './reporter.js';
+import { escapeTableCell, uniqueSortedStrings } from './reporter.js';
 const DEFAULT_MAX_EVIDENCE = 3;
 const COMMON_WORDS = new Set([
     'acceptance',
@@ -225,9 +225,6 @@ function formatEvidenceCell(row) {
 }
 function formatEvidenceRef(evidence) {
     return `${evidence.file}:${evidence.line}`;
-}
-function escapeTableCell(value) {
-    return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }
 function normalizeLlmEntityMappings(mappings) {
     const byAcId = new Map();

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { AcceptanceCriterion } from './prd-parser.js';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
-import { uniqueSortedStrings } from './reporter.js';
+import { escapeTableCell, uniqueSortedStrings } from './reporter.js';
 
 export type CoverageMatchType = 'ac_id' | 'keyword_anchor' | 'symbol' | 'llm_entity';
 export type CoverageSeverity = 'Critical' | 'High';
@@ -351,10 +351,6 @@ function formatEvidenceCell(row: AcCoverageRow): string {
 
 function formatEvidenceRef(evidence: CoverageEvidence): string {
   return `${evidence.file}:${evidence.line}`;
-}
-
-function escapeTableCell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }
 
 function normalizeLlmEntityMappings(mappings: readonly LlmEntityMapping[]): Map<string, string[]> {

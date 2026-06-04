@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
-import { CitadelFinding, slugify, uniqueSortedStrings } from './reporter.js';
+import { CitadelFinding, escapeTableCell, slugify, uniqueSortedStrings } from './reporter.js';
 import { extractTrapDoorsSection } from './trap-doors-section.js';
 
 export type RuleSetInvariantSeverity = 'High' | 'Medium';
@@ -353,10 +353,6 @@ function formatEvidence(row: RuleSetInventoryRow): string {
     return row.invariantEvidence.map((evidence) => `${evidence.file}:${evidence.line}`).join(', ');
   }
   return row.explicitInvariant ? `missing; PRD:${row.explicitInvariant.line}` : 'missing';
-}
-
-function escapeTableCell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 
 function slug(value: string): string {

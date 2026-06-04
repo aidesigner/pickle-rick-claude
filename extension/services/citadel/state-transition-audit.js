@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { slugify } from './reporter.js';
+import { escapeTableCell, slugify } from './reporter.js';
 const DEFAULT_MAX_EVIDENCE = 3;
 const CODE_FILE_PATTERN = /\.[cm]?[jt]sx?$/i;
 export function auditStateTransitions(transitionRows, diff, options = {}) {
@@ -122,9 +122,6 @@ function formatEvidence(row) {
         return row.expectedCallSite ? `missing; expected ${row.expectedCallSite}` : 'missing';
     }
     return row.emitEvidence.map((evidence) => `${evidence.file}:${evidence.line}`).join(', ');
-}
-function escapeTableCell(value) {
-    return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 function slug(value) {
     return slugify(value, 'unknown', 80);

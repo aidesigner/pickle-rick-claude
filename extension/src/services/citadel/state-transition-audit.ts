@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { DiffSummary, ChangedFileSummary } from './diff-walker.js';
 import { TransitionAuditRow } from './prd-parser.js';
-import { slugify } from './reporter.js';
+import { escapeTableCell, slugify } from './reporter.js';
 
 export type TransitionAuditSeverity = 'High';
 
@@ -195,10 +195,6 @@ function formatEvidence(row: TransitionAuditCoverageRow): string {
     return row.expectedCallSite ? `missing; expected ${row.expectedCallSite}` : 'missing';
   }
   return row.emitEvidence.map((evidence) => `${evidence.file}:${evidence.line}`).join(', ');
-}
-
-function escapeTableCell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 
 function slug(value: string): string {
