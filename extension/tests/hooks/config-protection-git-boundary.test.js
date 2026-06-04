@@ -712,3 +712,99 @@ test('R-CSIS-B1: recommended `RUN_EXPENSIVE_TESTS=1 npm run test:expensive` is N
   });
   assert.equal(result.decision, 'approve');
 });
+
+// ---------------------------------------------------------------------------
+// Newline-separated bypass (cfgprot-newline-segment-bypass)
+// An unquoted newline is a top-level shell command terminator (identical to
+// `;`). A worker naturally emits sequential commands one per line, so a
+// prohibited verb on ANY line must block — not just the first. Pre-fix the
+// tokenizer swallowed newlines as whitespace, collapsing every line into one
+// segment whose first git verb was benign, hiding `git reset --hard`.
+// ---------------------------------------------------------------------------
+
+test('R-WSRC-GR newline: worker blocks `git status\\ngit reset --hard HEAD~1`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git status\ngit reset --hard HEAD~1' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /R-WSRC-GR/);
+  assert.match(result.reason, /reset/);
+});
+
+test('R-WSRC-GR newline: worker blocks multi-line `git add\\ngit commit\\ngit reset --hard`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git add -A\ngit commit -m wip\ngit reset --hard HEAD~2' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /reset/);
+});
+
+test('R-WSRC-GR newline: worker blocks `git status\\ngit push origin main`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git status\ngit push origin main' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /push/);
+});
+
+// Quote-aware: a real newline INSIDE a quoted commit message must NOT split,
+// so a commit body that mentions "reset" is not mis-flagged as a reset op.
+test('R-WSRC-GR newline: quoted multi-line commit message with "reset" is NOT a bypass trigger (approve)', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git commit -m "line one\nline two does a reset of state"' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'approve');
+});
+
+test('R-WSRC-GR newline: legitimate `git add src/foo.ts\\ngit commit -m ok` still approves', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git add src/foo.ts\ngit commit -m ok' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'approve');
+});
+
+// Replay consumers of splitShellSegments: install.sh + expensive node --test
+test('R-WSRC install.sh newline: worker blocks `cd x\\nbash install.sh`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'cd x\nbash install.sh' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /install\.sh/);
+});
+
+test('R-CSIS-B1 newline: worker blocks `cd extension\\nnode --test <expensive>`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  fs.writeFileSync(path.join(tmpDir, 'soak.test.js'), '// @tier: expensive\n');
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'cd extension\nnode --test soak.test.js' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /R-CSIS-B1/);
+});

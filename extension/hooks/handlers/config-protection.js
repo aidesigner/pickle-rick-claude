@@ -360,25 +360,31 @@ function detectTargetedStateFile(input) {
     }
     return null;
 }
-const SHELL_SEGMENT_SEPARATORS = new Set(['&&', '||', '|', '&', ';']);
+const SHELL_SEGMENT_SEPARATORS = new Set(['&&', '||', '|', '&', ';', '\n']);
 /**
  * Splits a shell command into top-level segments on the control operators
- * `&&`, `||`, `|`, `&`, and `;`. Quote-aware: an operator inside single or
- * double quotes (e.g. a commit message `-m 'fix && reset bug'`) is NOT a split
- * point, so legitimate commits are never mis-segmented.
+ * `&&`, `||`, `|`, `&`, `;`, and an unquoted newline (a top-level command
+ * terminator, semantically identical to `;`). Quote-aware: a separator inside
+ * single or double quotes (e.g. a commit message `-m 'fix && reset bug'`, or a
+ * multi-line `-m "line1\nline2"`) is NOT a split point, so legitimate commits
+ * are never mis-segmented.
  *
  * The worker-forbidden-op detectors (`detectProhibitedGitVerb`,
  * `isBashInvokingInstallSh`) only inspect the FIRST executable token of the
  * string they receive. Without segmentation, `cd sub && git reset --hard` and
- * `git status && git push` slip the guard because the leading token is `cd` /
- * the first git verb is benign — yet the project CLAUDE.md mandates the
- * `cd <subdir> && git <verb>` pattern, making chaining the common case. Each
- * segment is evaluated independently so a prohibited verb in ANY position is
- * caught. Over-segmentation is fail-safe: only prohibited verbs/`install.sh`
- * are matched, so benign chained commands (`cd x && git add .`) still pass.
+ * `git status\ngit reset --hard` slip the guard because the leading token is
+ * `cd` / the first git verb is benign — yet the project CLAUDE.md mandates the
+ * `cd <subdir> && git <verb>` pattern AND a worker naturally emits sequential
+ * commands one per line, making both forms the common case. Each segment is
+ * evaluated independently so a prohibited verb in ANY position is caught.
+ * Over-segmentation is fail-safe: only prohibited verbs/`install.sh` are
+ * matched, so benign chained commands (`cd x && git add .`) still pass.
  */
 function splitShellSegments(command) {
-    const rawTokens = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+    // `\n` is matched as its own alternative BEFORE `\S+` so an unquoted newline
+    // becomes a boundary token; `"[^"]*"`/`'[^']*'` span newlines (negated class
+    // includes `\n`), so a newline inside a quoted commit message is preserved.
+    const rawTokens = command.match(/"[^"]*"|'[^']*'|\n|\S+/g) ?? [];
     const tokens = [];
     for (const raw of rawTokens) {
         const quoted = (raw.startsWith('"') && raw.endsWith('"')) ||
