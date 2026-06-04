@@ -1581,9 +1581,11 @@ function applyHeuristicBackendRouting(
   try {
     const settings = readRecoverableJsonObject(path.join(getExtensionRoot(), 'pickle_settings.json')) as Record<string, unknown> | null;
     if (settings?.enable_backend_routing_heuristic !== true || backend !== 'codex') return sessionBackend;
-    routedReason = ticketInfo?.complexity_tier === 'large'
-      ? 'complexity_tier=large'
-      : ticketInfo?.title && /\b(UI|Wire|Audit)\b/i.test(ticketInfo.title) ? `title-signal:${ticketInfo.title}` : null;
+    if (ticketInfo?.complexity_tier === 'large') {
+      routedReason = 'complexity_tier=large';
+    } else if (ticketInfo?.title && /\b(UI|Wire|Audit)\b/i.test(ticketInfo.title)) {
+      routedReason = `title-signal:${ticketInfo.title}`;
+    }
   } catch { /* settings missing or unreadable: no override */ }
 
   if (!routedReason) return sessionBackend;
