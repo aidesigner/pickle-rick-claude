@@ -1462,10 +1462,6 @@ export class DotBuilder {
     else this._edgeList.push({ from, to });
   }
 
-  private _linkEdge(from: string, to: string, attrs?: Record<string, string>): void {
-    this._link(from, to, attrs ?? {});
-  }
-
   private _emitSubgraph(name: string, body: () => void): void;
   private _emitSubgraph(clusterId: string, label: string, bodyEmitter: () => void): void;
   private _emitSubgraph(clusterId: string, labelOrBody: string | (() => void), body?: () => void): void {
@@ -2342,7 +2338,7 @@ export class DotBuilder {
     // P25: Catastrophic recovery loop (suppressed by convergence — iterate has its own retry)
     if (!this._hasFanOut && !this._hasCompeting && this._implPhases.length > 0 && !this._hasConvergence) {
       this._applied.add('P25');
-      this._linkEdge('regression_check', 'setup_deps', { loop_restart: 'true' });
+      this._link('regression_check', 'setup_deps', { loop_restart: 'true' });
     }
 
     this._emitMicroverseLoop();

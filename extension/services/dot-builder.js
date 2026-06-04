@@ -1356,9 +1356,6 @@ export class DotBuilder {
         else
             this._edgeList.push({ from, to });
     }
-    _linkEdge(from, to, attrs) {
-        this._link(from, to, attrs ?? {});
-    }
     _emitSubgraph(clusterId, labelOrBody, body) {
         const label = typeof labelOrBody === 'string' ? labelOrBody : clusterId;
         const bodyEmitter = typeof labelOrBody === 'function' ? labelOrBody : body;
@@ -2198,7 +2195,7 @@ export class DotBuilder {
         // P25: Catastrophic recovery loop (suppressed by convergence — iterate has its own retry)
         if (!this._hasFanOut && !this._hasCompeting && this._implPhases.length > 0 && !this._hasConvergence) {
             this._applied.add('P25');
-            this._linkEdge('regression_check', 'setup_deps', { loop_restart: 'true' });
+            this._link('regression_check', 'setup_deps', { loop_restart: 'true' });
         }
         this._emitMicroverseLoop();
         this._emitReviewRatchet();
