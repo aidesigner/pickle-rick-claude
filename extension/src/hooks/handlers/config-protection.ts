@@ -531,16 +531,6 @@ function isCheckoutRefOperation(afterVerb: string[]): boolean {
 }
 
 /**
- * R-WSRC-GR: Detects prohibited git verbs per the Git Boundary Rules.
- * Returns {verb} when the command is a prohibited git operation, null otherwise.
- *
- * Allowed exceptions (return null):
- *   git checkout -- <path>       (path-mode via --)
- *   git checkout .               (whole-tree restore)
- *   git commit (without --amend) (plain commit is allowed)
- *   git fetch (without --prune)  (plain fetch is allowed)
- */
-/**
  * Tokenize a single (already-segmented) shell command, quote-aware: a quoted
  * span stays one token and its surrounding matching quotes are stripped, so
  * `git "reset"` tokenizes to `['git', 'reset']`. Mirrors tsc-gate.ts:tokenizeCommand.
@@ -564,6 +554,16 @@ function tokenizeGitCommand(command: string): string[] {
   });
 }
 
+/**
+ * R-WSRC-GR: Detects prohibited git verbs per the Git Boundary Rules.
+ * Returns {verb} when the command is a prohibited git operation, null otherwise.
+ *
+ * Allowed exceptions (return null):
+ *   git checkout -- <path>       (path-mode via --)
+ *   git checkout .               (whole-tree restore)
+ *   git commit (without --amend) (plain commit is allowed)
+ *   git fetch (without --prune)  (plain fetch is allowed)
+ */
 function findGitVerb(command: string): { verb: string; afterVerb: string[] } | null {
   const tokens = tokenizeGitCommand(command);
   let idx = 0;
