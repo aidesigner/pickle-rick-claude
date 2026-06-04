@@ -415,6 +415,42 @@ it('isGitCommitCommand detects commit behind arg-consuming git global options', 
   }
 });
 
+it('isGitCommitCommand detects commit behind non-arg-consuming git global boolean flags', async () => {
+  const { isGitCommitCommand } = await import('../hooks/handlers/tsc-gate.js');
+  // A git global BOOLEAN option (`--no-pager`, `-p`, `--paginate`,
+  // `--no-optional-locks`, `--bare`, …) consumes no value. Before the parity fix
+  // segmentIsGitCommit skipped only the arg-consuming options + `=`-glued forms,
+  // so any other leading flag fell through to `=== 'commit'`, was mistaken for the
+  // subcommand, and `git --no-pager commit` was classified non-commit — SKIPPING
+  // the R-WACT tsc gate for a real broken-TS commit. findGitVerb (config-protection)
+  // skips ALL `-`-prefixed flags; this closes the one-sided parity gap.
+  const positives = [
+    'git --no-pager commit -m "x"',
+    'git -p commit -m "x"',
+    'git --paginate commit -m "x"',
+    'git --no-optional-locks commit -m "x"',
+    'git --bare commit -m "x"',
+    'git --no-pager -c user.name=t commit -m "x"',
+    'git -p --namespace ns commit -m "x"',
+    'git add -A && git --no-pager commit -m "x"',
+    'cd extension && git --no-pager commit -m "x"',
+    'git add -A\ngit --no-pager commit -m "x"',
+  ];
+  for (const command of positives) {
+    assert.equal(isGitCommitCommand(command), true, command);
+  }
+  // A boolean flag before a non-commit subcommand stays non-commit (the flag is
+  // skipped, the real subcommand is read).
+  const negatives = [
+    'git --no-pager log --oneline',
+    'git -p status',
+    'git --no-optional-locks diff --cached',
+  ];
+  for (const command of negatives) {
+    assert.equal(isGitCommitCommand(command), false, command);
+  }
+});
+
 it('isGitCommitCommand segments on unquoted newlines (newline-separated add+commit)', async () => {
   const { isGitCommitCommand } = await import('../hooks/handlers/tsc-gate.js');
   // A worker naturally emits sequential commands one per line. Before the fix the

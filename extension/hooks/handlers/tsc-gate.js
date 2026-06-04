@@ -152,21 +152,26 @@ function segmentIsGitCommit(segment) {
     let index = 1;
     while (index < tokens.length) {
         const token = tokens[index];
-        if (NEGATIVE_GIT_SUBCOMMANDS.has(token))
-            return false;
+        // Skip a space-separated arg-consuming global option AND its value token
+        // (`-C <path>`), so the value is never mistaken for the subcommand.
         if (ARG_CONSUMING_GIT_GLOBAL_OPTIONS.has(token)) {
             index += 2;
             continue;
         }
-        if (token.startsWith('-c') ||
-            token.startsWith('--git-dir=') ||
-            token.startsWith('--work-tree=') ||
-            token.startsWith('--namespace=') ||
-            token.startsWith('--super-prefix=') ||
-            token.startsWith('--exec-path=')) {
+        // Skip ANY other leading flag before the subcommand: a non-arg-consuming
+        // boolean global option (`--no-pager`, `-p`, `--paginate`,
+        // `--no-optional-locks`, `--bare`, …) OR an `=`-glued arg-option
+        // (`--git-dir=…`, `-cuser.name=x`). Mirrors findGitVerb, which skips every
+        // `-`-prefixed token before reading the verb; without this, a boolean flag
+        // falls through to the `=== 'commit'` read, is mistaken for the subcommand,
+        // mis-classifies `git --no-pager commit` as non-commit, and SKIPS the
+        // R-WACT tsc gate for a broken-TS commit.
+        if (token.startsWith('-')) {
             index += 1;
             continue;
         }
+        if (NEGATIVE_GIT_SUBCOMMANDS.has(token))
+            return false;
         return token === 'commit';
     }
     return false;
