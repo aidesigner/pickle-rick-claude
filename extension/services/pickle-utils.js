@@ -8,7 +8,6 @@ import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
 import { readEvidence } from './ticket-completion-evidence.js';
-import { isRecord } from '../lib/is-record.js';
 let stateWriteSeq = 0;
 const DEFAULT_MICROVERSE_SETTINGS = {
     judge_backend: 'claude',
@@ -16,6 +15,9 @@ const DEFAULT_MICROVERSE_SETTINGS = {
     judge_model_claude: 'claude-sonnet-4-6',
     judge_model_codex: 'gpt-5.4',
 };
+function isRecord(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
 function isJudgeBackendValue(value) {
     return value === 'claude' || value === 'codex' || value === 'auto';
 }
