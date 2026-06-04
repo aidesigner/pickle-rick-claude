@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { slugify } from './reporter.js';
+import { slugify, uniqueSortedStrings } from './reporter.js';
 
 export interface AcShapeEvidence {
   file: string;
@@ -247,11 +247,6 @@ function uniqueMatches(text: string, pattern: RegExp): string[] {
 
 function compareAcShapeItems(a: { acId: string; id: string }, b: { acId: string; id: string }): number {
   return a.acId.localeCompare(b.acId) || a.id.localeCompare(b.id);
-}
-
-
-function uniqueSortedStrings(values: string[]): string[] {
-  return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
 
 function escapeRegExp(value: string): string {

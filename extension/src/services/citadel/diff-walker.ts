@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { DiffEntry, getDiffFiles, runGit } from '../git-utils.js';
+import { uniqueSortedStrings } from './reporter.js';
 
 export type ChangedFileKind = 'production' | 'test';
 
@@ -219,10 +220,6 @@ function collectClaudeFiles(directory: string, repoRoot: string, found: Set<stri
       collectClaudeFiles(fullPath, repoRoot, found);
     }
   }
-}
-
-function uniqueSortedStrings(values: string[]): string[] {
-  return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
 
 function finiteNumber(value: string, fallback: number): number {

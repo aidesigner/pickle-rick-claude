@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { slugify } from './reporter.js';
+import { slugify, uniqueSortedStrings } from './reporter.js';
 const CODE_FILE_PATTERN = /\.[cm]?tsx?$/i;
 const DECORATOR_PATTERN = /^\s*@([A-Za-z_][\w.]*)\s*\((.*)\)\s*$/;
 const HTTP_DECORATOR_PATTERN = /^(Get|Post|Put|Patch|Delete|Head|Options)$/i;
@@ -285,9 +285,6 @@ function severityRank(severity) {
 }
 function escapeTableCell(value) {
     return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
-}
-function uniqueSortedStrings(values) {
-    return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
 function countChar(value, char) {
     return value.split(char).length - 1;

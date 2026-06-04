@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { uniqueSortedStrings } from './reporter.js';
 const DEFAULT_MAX_EVIDENCE = 3;
 const COMMON_WORDS = new Set([
     'acceptance',
@@ -227,9 +228,6 @@ function formatEvidenceRef(evidence) {
 }
 function escapeTableCell(value) {
     return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
-}
-function uniqueSortedStrings(values) {
-    return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
 function normalizeLlmEntityMappings(mappings) {
     const byAcId = new Map();

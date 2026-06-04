@@ -158,3 +158,13 @@ export function slugify(value, fallback = '', maxLength) {
     const capped = maxLength === undefined ? slug : slug.slice(0, maxLength);
     return capped || fallback;
 }
+/**
+ * Deduplicate and locale-sort a string list. Shared by the citadel analyzers
+ * (previously duplicated 6×; DRY Rule of Three). The single rule-set-invariant
+ * variant added a `.filter(Boolean)`, proven a no-op there: every call site
+ * feeds regex captures whose first character class (`[A-Za-z_$]`, `[A-Z]`)
+ * guarantees a non-empty match, so no falsy member can ever reach the Set.
+ */
+export function uniqueSortedStrings(values) {
+    return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}

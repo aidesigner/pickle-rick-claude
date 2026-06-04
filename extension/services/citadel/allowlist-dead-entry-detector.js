@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
-import { slugify } from './reporter.js';
+import { slugify, uniqueSortedStrings } from './reporter.js';
 const DEFAULT_MAX_CALLERS = 3;
 const CODE_FILE_PATTERN = /\.[cm]?[jt]sx?$/i;
 const TEST_FILE_PATTERN = /(?:^|\/)(?:__tests__|tests?|specs?)(?:\/|$)|(?:\.|-)test\.[cm]?[jt]sx?$|(?:\.|-)spec\.[cm]?[jt]sx?$/i;
@@ -262,9 +262,6 @@ function declarationKey(entry) {
 }
 function isTestFile(filePath) {
     return TEST_FILE_PATTERN.test(toPosixPath(filePath));
-}
-function uniqueSortedStrings(values) {
-    return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
 function toPosixPath(filePath) {
     return filePath.split(path.sep).join('/');

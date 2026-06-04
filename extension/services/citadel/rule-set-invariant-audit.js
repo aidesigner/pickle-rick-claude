@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { slugify } from './reporter.js';
+import { slugify, uniqueSortedStrings } from './reporter.js';
 import { extractTrapDoorsSection } from './trap-doors-section.js';
 const DEFAULT_MAX_EVIDENCE = 3;
 const CODE_FILE_PATTERN = /\.[cm]?[jt]sx?$/i;
@@ -252,9 +252,6 @@ function formatEvidence(row) {
 }
 function escapeTableCell(value) {
     return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
-}
-function uniqueSortedStrings(values) {
-    return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 function slug(value) {
     return slugify(value, 'unknown', 80);

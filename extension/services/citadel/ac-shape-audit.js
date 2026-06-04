@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { slugify } from './reporter.js';
+import { slugify, uniqueSortedStrings } from './reporter.js';
 const AC_ID_PATTERN = /\bAC-[A-Z0-9]+(?:-[A-Z0-9]+)*(?:-\d+)?\b/g;
 const BULLET_PATTERN = /^\s*(?:[-*]|\d+[.)])\s+(.+)$/;
 const ENDPOINT_PATTERN = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+[`'"]?(\/[^\s`'")|,;]+)/gi;
@@ -179,9 +179,6 @@ function uniqueMatches(text, pattern) {
 }
 function compareAcShapeItems(a, b) {
     return a.acId.localeCompare(b.acId) || a.id.localeCompare(b.id);
-}
-function uniqueSortedStrings(values) {
-    return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
 function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

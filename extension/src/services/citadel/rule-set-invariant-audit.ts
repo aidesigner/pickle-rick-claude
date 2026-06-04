@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
-import { CitadelFinding, slugify } from './reporter.js';
+import { CitadelFinding, slugify, uniqueSortedStrings } from './reporter.js';
 import { extractTrapDoorsSection } from './trap-doors-section.js';
 
 export type RuleSetInvariantSeverity = 'High' | 'Medium';
@@ -357,10 +357,6 @@ function formatEvidence(row: RuleSetInventoryRow): string {
 
 function escapeTableCell(value: string): string {
   return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
-}
-
-function uniqueSortedStrings(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
 function slug(value: string): string {

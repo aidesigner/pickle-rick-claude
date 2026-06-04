@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
-import { slugify } from './reporter.js';
+import { slugify, uniqueSortedStrings } from './reporter.js';
 
 export type SiblingAuthSeverity = 'Critical' | 'High' | 'Medium';
 
@@ -395,10 +395,6 @@ function severityRank(severity: string): number {
 
 function escapeTableCell(value: string): string {
   return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
-}
-
-function uniqueSortedStrings(values: string[]): string[] {
-  return [...new Set(values)].sort((a, b) => a.localeCompare(b));
 }
 
 function countChar(value: string, char: string): number {
