@@ -2,6 +2,7 @@ import { statSync } from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DiffSummary, ChangedFileSummary } from './diff-walker.js';
+import { slugify } from './reporter.js';
 
 export type DiffHygieneSeverity = 'Critical' | 'High' | 'Medium';
 export type SzechuanDiffHygienePriority = 'P0' | 'P1' | 'P2';
@@ -339,10 +340,7 @@ function extractFindingPath(finding: SzechuanFindingLike): string | undefined {
 }
 
 function slug(value: string): string {
-  return toPosixPath(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'root';
+  return slugify(value, 'root');
 }
 
 function toPosixPath(filePath: string): string {

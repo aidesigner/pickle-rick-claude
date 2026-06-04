@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { DiffSummary, ChangedFileSummary } from './diff-walker.js';
 import { TransitionAuditRow } from './prd-parser.js';
+import { slugify } from './reporter.js';
 
 export type TransitionAuditSeverity = 'High';
 
@@ -201,9 +202,5 @@ function escapeTableCell(value: string): string {
 }
 
 function slug(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 80) || 'unknown';
+  return slugify(value, 'unknown', 80);
 }

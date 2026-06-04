@@ -142,3 +142,19 @@ function oneSentence(value) {
     const first = value.trim().split(/(?<=[.!?])\s+/)[0] ?? value.trim();
     return first.replace(/\s+/g, ' ');
 }
+/**
+ * Slugify an arbitrary string into a finding-ID component: lowercase, collapse
+ * runs of non-alphanumerics to single dashes, then trim edge dashes. `fallback`
+ * is returned when the input slugs to empty; `maxLength` caps the result.
+ * Shared by the citadel analyzers (previously duplicated 9×; DRY Rule of Three).
+ * Note: after the non-alphanumeric collapse no consecutive dashes remain, so
+ * trimming a single edge dash is equivalent to trimming a run.
+ */
+export function slugify(value, fallback = '', maxLength) {
+    const slug = value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+    const capped = maxLength === undefined ? slug : slug.slice(0, maxLength);
+    return capped || fallback;
+}

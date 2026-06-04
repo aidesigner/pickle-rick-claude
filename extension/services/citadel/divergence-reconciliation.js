@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { slugify } from './reporter.js';
 const AC_ID_PATTERN = /\bAC-[A-Z0-9]+(?:-[A-Z0-9]+)*(?:-\d+)?\b/;
 const CONTRADICTION_PATTERN = /\b(?:contradicts?|conflicts?\s+with|diverges?\s+from|differs?\s+from|against)\s+(?:the\s+)?PRD\b|\bPRD\s+(?:contradicts?|conflicts?\s+with|diverges?\s+from|differs?\s+from)\b/i;
 const INTENT_MARKER_PATTERN = /\b(?:product|ux|business)\s+decision\b|\b(?:chosen|intentional|intentionally|deliberately|shipped)\s+(?:behavior|deviation|divergence|different|differs?)\b/i;
@@ -79,5 +80,5 @@ function compareDecisions(a, b) {
     return first.file.localeCompare(second.file) || first.line - second.line || a.id.localeCompare(b.id);
 }
 function slug(value) {
-    return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'root';
+    return slugify(value, 'root');
 }

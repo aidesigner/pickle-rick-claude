@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { Endpoint, StatusCodeRow } from './prd-parser.js';
+import { slugify } from './reporter.js';
 
 export type EndpointContractSeverity = 'High' | 'Medium';
 
@@ -142,7 +143,7 @@ function buildFindings(row: EndpointContractRow): EndpointContractFinding[] {
 
 function toFinding(row: EndpointContractRow, kind: 'status' | 'message', message: string): EndpointContractFinding {
   return {
-    id: `citadel-endpoint-contract-${slug(formatEndpoint(row.endpoint))}-${row.statusCodeRow.statusCode}-${kind}`,
+    id: `citadel-endpoint-contract-${slugify(formatEndpoint(row.endpoint))}-${row.statusCodeRow.statusCode}-${kind}`,
     severity: severityForStatus(row.statusCodeRow.statusCode),
     message,
     endpoint: row.endpoint,
@@ -301,10 +302,6 @@ function countChar(value: string, char: string): number {
 
 function formatEndpoint(endpoint: Endpoint): string {
   return `${endpoint.method} ${endpoint.path}`;
-}
-
-function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
 function toPosixPath(filePath: string): string {

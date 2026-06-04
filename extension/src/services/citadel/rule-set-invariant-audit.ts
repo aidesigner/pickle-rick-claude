@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
-import { CitadelFinding } from './reporter.js';
+import { CitadelFinding, slugify } from './reporter.js';
 import { extractTrapDoorsSection } from './trap-doors-section.js';
 
 export type RuleSetInvariantSeverity = 'High' | 'Medium';
@@ -364,11 +364,7 @@ function uniqueSortedStrings(values: string[]): string[] {
 }
 
 function slug(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 80) || 'unknown';
+  return slugify(value, 'unknown', 80);
 }
 
 // ---- Trap-door triple audit ----

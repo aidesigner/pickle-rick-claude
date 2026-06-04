@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { AllowlistEntry } from './prd-parser.js';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
+import { slugify } from './reporter.js';
 
 export type AllowlistDeadEntrySeverity = 'High';
 
@@ -316,7 +317,7 @@ function findCallers(
 
 function toFinding(entry: AllowlistDeclaration): AllowlistDeadEntryFinding {
   return {
-    id: `citadel-dead-allowlist-${entry.kind}-${slug(entry.value)}-${entry.line}`,
+    id: `citadel-dead-allowlist-${entry.kind}-${slugify(entry.value, 'entry')}-${entry.line}`,
     severity: 'High',
     message: `${entry.kind} '${entry.value}' has no production caller; dead allowlist; deploy-ordering smell.`,
     entry,
@@ -353,9 +354,6 @@ function declarationKey(entry: AllowlistDeclaration): string {
   return `${entry.file}:${entry.line}:${entry.kind}:${entry.name}:${entry.value}`;
 }
 
-function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'entry';
-}
 
 function isTestFile(filePath: string): boolean {
   return TEST_FILE_PATTERN.test(toPosixPath(filePath));

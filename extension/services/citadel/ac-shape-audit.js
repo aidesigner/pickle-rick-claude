@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { slugify } from './reporter.js';
 const AC_ID_PATTERN = /\bAC-[A-Z0-9]+(?:-[A-Z0-9]+)*(?:-\d+)?\b/g;
 const BULLET_PATTERN = /^\s*(?:[-*]|\d+[.)])\s+(.+)$/;
 const ENDPOINT_PATTERN = /\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+[`'"]?(\/[^\s`'")|,;]+)/gi;
@@ -67,7 +68,7 @@ function toDecisionRequired(block, fanout) {
         return undefined;
     const severity = fanout.count >= 3 && !fanout.justified ? 'High' : 'Medium';
     return {
-        id: `citadel-ac-shape-${slug(block.id)}`,
+        id: `citadel-ac-shape-${slugify(block.id)}`,
         severity,
         acId: block.id,
         message: `${block.id} enumerates ${distinctTargets.length} distinct targets with a repeated predicate; rewrite as a universal invariant before refinement fan-out misses sibling targets.`,
@@ -178,9 +179,6 @@ function uniqueMatches(text, pattern) {
 }
 function compareAcShapeItems(a, b) {
     return a.acId.localeCompare(b.acId) || a.id.localeCompare(b.id);
-}
-function slug(value) {
-    return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 function uniqueSortedStrings(values) {
     return [...new Set(values)].sort((a, b) => a.localeCompare(b));

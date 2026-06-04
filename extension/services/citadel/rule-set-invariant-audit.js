@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { slugify } from './reporter.js';
 import { extractTrapDoorsSection } from './trap-doors-section.js';
 const DEFAULT_MAX_EVIDENCE = 3;
 const CODE_FILE_PATTERN = /\.[cm]?[jt]sx?$/i;
@@ -256,11 +257,7 @@ function uniqueSortedStrings(values) {
     return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 function slug(value) {
-    return value
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
-        .slice(0, 80) || 'unknown';
+    return slugify(value, 'unknown', 80);
 }
 const ENFORCE_HAS_REF_RE = /[\w./*-]+\.(?:test\.js|spec\.js|sh)\b/;
 export function parseTrapDoorDeclarations(content) {

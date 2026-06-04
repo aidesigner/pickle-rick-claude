@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { slugify } from './reporter.js';
 
 export interface AcShapeEvidence {
   file: string;
@@ -131,7 +132,7 @@ function toDecisionRequired(block: AcBlock, fanout: ManifestFanout): AcShapeDeci
 
   const severity: AcShapeDecisionRequired['severity'] = fanout.count >= 3 && !fanout.justified ? 'High' : 'Medium';
   return {
-    id: `citadel-ac-shape-${slug(block.id)}`,
+    id: `citadel-ac-shape-${slugify(block.id)}`,
     severity,
     acId: block.id,
     message: `${block.id} enumerates ${distinctTargets.length} distinct targets with a repeated predicate; rewrite as a universal invariant before refinement fan-out misses sibling targets.`,
@@ -248,9 +249,6 @@ function compareAcShapeItems(a: { acId: string; id: string }, b: { acId: string;
   return a.acId.localeCompare(b.acId) || a.id.localeCompare(b.id);
 }
 
-function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-}
 
 function uniqueSortedStrings(values: string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));

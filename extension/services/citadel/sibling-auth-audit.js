@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { slugify } from './reporter.js';
 const CODE_FILE_PATTERN = /\.[cm]?tsx?$/i;
 const DECORATOR_PATTERN = /^\s*@([A-Za-z_][\w.]*)\s*\((.*)\)\s*$/;
 const HTTP_DECORATOR_PATTERN = /^(Get|Post|Put|Patch|Delete|Head|Options)$/i;
@@ -292,9 +293,5 @@ function countChar(value, char) {
     return value.split(char).length - 1;
 }
 function slug(value) {
-    return value
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
-        .slice(0, 80) || 'unknown';
+    return slugify(value, 'unknown', 80);
 }

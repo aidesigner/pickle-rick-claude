@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { slugify } from './reporter.js';
 const DEFAULT_MAX_EVIDENCE = 3;
 const CODE_FILE_PATTERN = /\.[cm]?[jt]sx?$/i;
 export function auditStateTransitions(transitionRows, diff, options = {}) {
@@ -126,9 +127,5 @@ function escapeTableCell(value) {
     return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 function slug(value) {
-    return value
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
-        .slice(0, 80) || 'unknown';
+    return slugify(value, 'unknown', 80);
 }

@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
+import { slugify } from './reporter.js';
 const SKIPPED_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage']);
 const SOURCE_FILE_PATTERN = /\.[cm]?tsx?$/i;
 const TEST_FILE_PATTERN = /(?:^|\/)(?:__tests__|tests?|specs?)(?:\/|$)|(?:\.|-)test\.[cm]?[jt]sx?$|(?:\.|-)spec\.[cm]?[jt]sx?$/i;
@@ -72,7 +73,7 @@ function buildFindings(row) {
 }
 function toFinding(row, kind, message) {
     return {
-        id: `citadel-endpoint-contract-${slug(formatEndpoint(row.endpoint))}-${row.statusCodeRow.statusCode}-${kind}`,
+        id: `citadel-endpoint-contract-${slugify(formatEndpoint(row.endpoint))}-${row.statusCodeRow.statusCode}-${kind}`,
         severity: severityForStatus(row.statusCodeRow.statusCode),
         message,
         endpoint: row.endpoint,
@@ -218,9 +219,6 @@ function countChar(value, char) {
 }
 function formatEndpoint(endpoint) {
     return `${endpoint.method} ${endpoint.path}`;
-}
-function slug(value) {
-    return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 function toPosixPath(filePath) {
     return filePath.split(path.sep).join('/');

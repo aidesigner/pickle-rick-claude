@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
+import { slugify } from './reporter.js';
 
 export type SiblingAuthSeverity = 'Critical' | 'High' | 'Medium';
 
@@ -405,9 +406,5 @@ function countChar(value: string, char: string): number {
 }
 
 function slug(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 80) || 'unknown';
+  return slugify(value, 'unknown', 80);
 }

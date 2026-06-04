@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import ts from 'typescript';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
+import { slugify } from './reporter.js';
 
 export type FrontendPropDriftSeverity = 'High';
 
@@ -359,5 +360,5 @@ function sortedStrings(values: string[]): string[] {
 }
 
 function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'root';
+  return slugify(value, 'root');
 }

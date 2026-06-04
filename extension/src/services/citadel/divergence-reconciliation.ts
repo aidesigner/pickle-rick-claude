@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
+import { slugify } from './reporter.js';
 
 export type DivergenceDecisionKind = 'test-locks-prd-divergence' | 'trap-door-prd-contradiction';
 
@@ -113,5 +114,5 @@ function compareDecisions(a: DivergenceDecisionRequired, b: DivergenceDecisionRe
 }
 
 function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'root';
+  return slugify(value, 'root');
 }

@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
+import { slugify } from './reporter.js';
 const DEFAULT_MAX_CALLERS = 3;
 const CODE_FILE_PATTERN = /\.[cm]?[jt]sx?$/i;
 const TEST_FILE_PATTERN = /(?:^|\/)(?:__tests__|tests?|specs?)(?:\/|$)|(?:\.|-)test\.[cm]?[jt]sx?$|(?:\.|-)spec\.[cm]?[jt]sx?$/i;
@@ -225,7 +226,7 @@ function findCallers(entry, files, maxCallers) {
 }
 function toFinding(entry) {
     return {
-        id: `citadel-dead-allowlist-${entry.kind}-${slug(entry.value)}-${entry.line}`,
+        id: `citadel-dead-allowlist-${entry.kind}-${slugify(entry.value, 'entry')}-${entry.line}`,
         severity: 'High',
         message: `${entry.kind} '${entry.value}' has no production caller; dead allowlist; deploy-ordering smell.`,
         entry,
@@ -258,9 +259,6 @@ function sameDeclaration(a, b) {
 }
 function declarationKey(entry) {
     return `${entry.file}:${entry.line}:${entry.kind}:${entry.name}:${entry.value}`;
-}
-function slug(value) {
-    return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'entry';
 }
 function isTestFile(filePath) {
     return TEST_FILE_PATTERN.test(toPosixPath(filePath));
