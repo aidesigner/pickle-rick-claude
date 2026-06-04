@@ -264,6 +264,40 @@ describe('init-microverse convergence flags', () => {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // DEFAULT_METRIC invariants (R-SJWT-2 + SCJM-T5)
+  // ---------------------------------------------------------------------------
+
+  test('DEFAULT_METRIC.timeout_seconds is 600 (R-SJWT-2)', () => {
+    const dir = makeTempDir();
+    try {
+      run([dir, '/some/target']);
+      const state = readMicroverse(dir);
+      assert.equal(
+        state.key_metric.timeout_seconds,
+        600,
+        'DEFAULT_METRIC.timeout_seconds must be 600',
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  test('DEFAULT_METRIC does not pin judge_model (SCJM-T5)', () => {
+    const dir = makeTempDir();
+    try {
+      run([dir, '/some/target']);
+      const state = readMicroverse(dir);
+      assert.equal(
+        'judge_model' in state.key_metric,
+        false,
+        'DEFAULT_METRIC must not contain judge_model key',
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
   test('--allowed-paths-file promotes newer dead tmp scope before reading allowed_paths', () => {
     const dir = makeTempDir();
     try {
