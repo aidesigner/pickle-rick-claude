@@ -204,9 +204,7 @@ export function validateDirective(obj: unknown): Directive {
   const sv = r['schema_version'];
   if (sv !== 1) fail(`unsupported directive schema_version: ${String(sv)}`, '$.schema_version');
 
-  if (!('round' in r)) fail('missing required field "round"', '$.round');
-  const round = r['round'];
-  if (typeof round !== 'number' || !Number.isInteger(round)) fail('"round" must be an integer', '$.round');
+  const round = requireInteger(r, 'round', '$');
 
   if (!('codex_enabled' in r)) fail('missing required field "codex_enabled"', '$.codex_enabled');
   const codex_enabled = r['codex_enabled'];
@@ -217,9 +215,7 @@ export function validateDirective(obj: unknown): Directive {
   if (!Array.isArray(branchesRaw)) fail('"branches" must be an array', '$.branches');
   const branches: BranchEntry[] = (branchesRaw as unknown[]).map((b, i) => {
     const br = asRecord(b, `$.branches[${i}]`);
-    if (!('name' in br)) fail('missing required field "name"', `$.branches[${i}].name`);
-    const name = br['name'];
-    if (typeof name !== 'string') fail('"name" must be a string', `$.branches[${i}].name`);
+    const name = requireString(br, 'name', `$.branches[${i}]`);
     if (!('findings' in br)) fail('missing required field "findings"', `$.branches[${i}].findings`);
     const findings = validateFindings(br['findings'], `$.branches[${i}].findings`);
     return { name, findings } as BranchEntry;
@@ -230,7 +226,7 @@ export function validateDirective(obj: unknown): Directive {
 
   return {
     schema_version: 1,
-    round: round as number,
+    round,
     codex_enabled: codex_enabled as boolean,
     branches,
     trap_doors,
