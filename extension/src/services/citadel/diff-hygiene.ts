@@ -213,9 +213,6 @@ function isFixtureFile(filePath: string): boolean {
 }
 
 function containsNonPlaceholderPii(repoRoot: string, filePath: string): boolean {
-  // Isolated, intentionally UNGUARDED read: auditDiffHygiene runs UNWRAPPED by safeRunAnalyzer, and
-  // the fail-open try/catch for this read lands in R-HRP-4 (50f75afa). Kept minimal so it can be
-  // wrapped cleanly there.
   const content = readAddedFileText(repoRoot, filePath);
   for (const match of content.matchAll(new RegExp(PII_KEY_VALUE_RE.source, PII_KEY_VALUE_RE.flags))) {
     const key = match[1].toLowerCase();
@@ -226,7 +223,13 @@ function containsNonPlaceholderPii(repoRoot: string, filePath: string): boolean 
 }
 
 function readAddedFileText(repoRoot: string, filePath: string): string {
-  return readFileSync(path.join(repoRoot, filePath), 'utf-8');
+  // auditDiffHygiene runs UNWRAPPED by safeRunAnalyzer; a TOCTOU-removed or unreadable
+  // fixture file must degrade to no-PII-found, never crash the whole citadel audit.
+  try {
+    return readFileSync(path.join(repoRoot, filePath), 'utf-8');
+  } catch {
+    return '';
+  }
 }
 
 function isPlaceholderValue(value: string): boolean {
