@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 
 export interface AcShapeEvidence {
@@ -194,9 +194,19 @@ function readManifestText(sessionDir: string | undefined): string {
     path.join(sessionDir, 'prd_refined.md'),
     path.join(sessionDir, 'refinement_manifest.json'),
   ];
+  // existsSync proves existence, not readability — a manifest that exists but is
+  // unreadable (EACCES/EISDIR, or a TOCTOU atomic-rename of refinement_manifest.json)
+  // would throw out of auditAcShape, which audit-runner runs UNWRAPPED by
+  // safeRunAnalyzer, crashing the entire Citadel audit. Guard each read instead.
   return paths
-    .filter((filePath) => existsSync(filePath))
-    .map((filePath) => readFileSync(filePath, 'utf-8'))
+    .map((filePath) => {
+      try {
+        return readFileSync(filePath, 'utf-8');
+      } catch {
+        return '';
+      }
+    })
+    .filter((text) => text !== '')
     .join('\n');
 }
 
