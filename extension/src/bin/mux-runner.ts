@@ -4647,39 +4647,21 @@ async function runMuxRunnerMain() {
   // means unlimited iterations there). These rules must NOT be shared.
   {
     // R-WTZ: repair a zeroed worker_timeout_seconds before validation so a
-    // poisoned sentinel value does not brick the phase with exit 2.
+    // poisoned sentinel value does not brick the phase with exit 2. Logged here
+    // for observability; validateStartupState performs the same (idempotent)
+    // repair silently as part of the single authoritative validation path.
     const timeoutRepair = repairZeroWorkerTimeout(ownerState);
     if (timeoutRepair.repaired) {
       sm.update(statePath, s => { s.worker_timeout_seconds = timeoutRepair.value; });
       log(`[mux-runner] R-WTZ: repaired worker_timeout_seconds 0 → ${timeoutRepair.value}s at load`);
     }
-    // Use raw object to detect null (JSON-serialized NaN) vs absent vs zero
-    const rawObj = ownerState as unknown as Record<string, unknown>;
-    const issues: string[] = [];
-
-    const maxIterField = rawObj.max_iterations;
-    const rawMaxIter = Number(maxIterField);
-    if (maxIterField == null || !Number.isFinite(rawMaxIter) || rawMaxIter < 0) {
-      issues.push(`max_iterations must be >= 0 (got ${maxIterField})`);
-    }
-
-    const rawTimeout = Number(rawObj.worker_timeout_seconds);
-    if (!Number.isFinite(rawTimeout) || rawTimeout <= 0) {
-      issues.push(`worker_timeout_seconds must be > 0 (got ${rawObj.worker_timeout_seconds})`);
-    } else if (rawTimeout > 86400) {
-      issues.push(`worker_timeout_seconds > 86400s implausible (got ${rawTimeout}); edit state.json`);
-    }
-
-    // iteration=0 is valid (fresh session); null/undefined are not — check explicitly
-    // before numeric coercion since Number(null)=0 would otherwise pass.
-    const iterField = rawObj.iteration;
-    const rawIter = Number(iterField);
-    if (iterField == null || !Number.isFinite(rawIter) || rawIter < 0) {
-      issues.push(`iteration must be >= 0 (got ${iterField})`);
-    }
-
-    if (issues.length > 0) {
-      console.error(`Invalid state at ${statePath}:\n  - ${issues.join('\n  - ')}`);
+    // Single source of truth for startup-state validation — the same rules used
+    // by validateStartupState (covered by mux-runner-startup-validation.test.js).
+    // Convert its thrown Error into the runner's exit-2 contract.
+    try {
+      validateStartupState(ownerState, statePath);
+    } catch (err) {
+      console.error(safeErrorMessage(err));
       process.exit(2);
     }
   }
