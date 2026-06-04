@@ -12,6 +12,10 @@ const EXCLUDED_FILENAMES = new Set([
   'diff-walker.ts',
   'prd-parser.ts',
   'trap-doors-section.ts',
+  // R-HRP-2 adapter that maps CitadelFinding[] -> GateResult for the remediation
+  // feed; it is consumed by the gate/remediator path, NOT an analyzer wired into
+  // audit-runner, so it is excluded from the analyzer-wiring discovery surface.
+  'citadel-findings-to-gate-result.ts',
 ]);
 
 function isExcluded(filename) {

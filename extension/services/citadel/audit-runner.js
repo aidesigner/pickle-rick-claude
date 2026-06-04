@@ -17,6 +17,9 @@ import { detectAllowlistDeadEntries } from './allowlist-dead-entry-detector.js';
 import { auditStateTransitions } from './state-transition-audit.js';
 import { auditTrapDoorCoverage } from './trap-door-coverage-audit.js';
 import { checkEndpointContractConformance } from './endpoint-contract-conformance.js';
+import { auditSchemaRegistryDrift } from './schema-registry-drift-audit.js';
+import { auditTestAuthenticity } from './test-authenticity-audit.js';
+import { auditStaleReferences } from './stale-reference-audit.js';
 import { readRecoverableJsonObject } from '../recoverable-json.js';
 export async function runCitadelAudit(options) {
     const report = buildCitadelAuditReport(options);
@@ -59,6 +62,9 @@ export function buildCitadelAuditReport(options) {
     const stateTransitions = safeRunAnalyzer('citadel-state-transitions', () => auditStateTransitions(parsedPrd.transitionAuditRows, diff, { repoRoot }));
     const trapDoorCoverage = safeRunAnalyzer('citadel-trap-door', () => auditTrapDoorCoverage(diff));
     const endpointContractConformance = safeRunAnalyzer('citadel-endpoint-contract', () => checkEndpointContractConformance(parsedPrd.endpoints, parsedPrd.statusCodeRows, { repoRoot }), { analyzerCompatibility: ['nestjs-api'], projectShapes });
+    const schemaRegistryDrift = safeRunAnalyzer('citadel-schema-registry-drift', () => auditSchemaRegistryDrift(diff));
+    const testAuthenticity = safeRunAnalyzer('citadel-test-authenticity', () => auditTestAuthenticity(diff));
+    const staleReference = safeRunAnalyzer('citadel-stale-reference', () => auditStaleReferences(diff));
     const decisionRequired = [
         ...acShape.decisionsRequired,
         ...divergenceReconciliation.decisionsRequired,
@@ -75,6 +81,9 @@ export function buildCitadelAuditReport(options) {
         ...stateTransitions.findings.map((finding) => withFindingSource(finding, 'state_transitions')),
         ...trapDoorCoverage.findings.map((finding) => withFindingSource(finding, 'trap_door_coverage')),
         ...endpointContractConformance.findings.map((finding) => withFindingSource(finding, 'endpoint_contract_conformance')),
+        ...schemaRegistryDrift.findings.map((finding) => withFindingSource(finding, 'schema_registry_drift')),
+        ...testAuthenticity.findings.map((finding) => withFindingSource(finding, 'test_authenticity')),
+        ...staleReference.findings.map((finding) => withFindingSource(finding, 'stale_reference')),
     ]);
     const sections = {
         sibling_auth_preconditions: siblingAuth,
@@ -89,6 +98,9 @@ export function buildCitadelAuditReport(options) {
         state_transitions: stateTransitions,
         trap_door_coverage: trapDoorCoverage,
         endpoint_contract_conformance: endpointContractConformance,
+        schema_registry_drift: schemaRegistryDrift,
+        test_authenticity: testAuthenticity,
+        stale_reference: staleReference,
     };
     const reporter = new Reporter();
     return reporter.build({

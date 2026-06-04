@@ -17,6 +17,9 @@ import { detectAllowlistDeadEntries } from './allowlist-dead-entry-detector.js';
 import { auditStateTransitions } from './state-transition-audit.js';
 import { auditTrapDoorCoverage } from './trap-door-coverage-audit.js';
 import { checkEndpointContractConformance } from './endpoint-contract-conformance.js';
+import { auditSchemaRegistryDrift } from './schema-registry-drift-audit.js';
+import { auditTestAuthenticity } from './test-authenticity-audit.js';
+import { auditStaleReferences } from './stale-reference-audit.js';
 import { readRecoverableJsonObject } from '../recoverable-json.js';
 
 interface FindingLike extends CitadelFinding {
@@ -114,6 +117,12 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     () => checkEndpointContractConformance(parsedPrd.endpoints, parsedPrd.statusCodeRows, { repoRoot }),
     { analyzerCompatibility: ['nestjs-api'], projectShapes },
   );
+  const schemaRegistryDrift = safeRunAnalyzer('citadel-schema-registry-drift', () =>
+    auditSchemaRegistryDrift(diff));
+  const testAuthenticity = safeRunAnalyzer('citadel-test-authenticity', () =>
+    auditTestAuthenticity(diff));
+  const staleReference = safeRunAnalyzer('citadel-stale-reference', () =>
+    auditStaleReferences(diff));
   const decisionRequired: DecisionRequired[] = [
     ...acShape.decisionsRequired,
     ...divergenceReconciliation.decisionsRequired,
@@ -130,6 +139,9 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     ...stateTransitions.findings.map((finding) => withFindingSource(finding as FindingLike, 'state_transitions')),
     ...trapDoorCoverage.findings.map((finding) => withFindingSource(finding as FindingLike, 'trap_door_coverage')),
     ...endpointContractConformance.findings.map((finding) => withFindingSource(finding as FindingLike, 'endpoint_contract_conformance')),
+    ...schemaRegistryDrift.findings.map((finding) => withFindingSource(finding as FindingLike, 'schema_registry_drift')),
+    ...testAuthenticity.findings.map((finding) => withFindingSource(finding as FindingLike, 'test_authenticity')),
+    ...staleReference.findings.map((finding) => withFindingSource(finding as FindingLike, 'stale_reference')),
   ]);
   const sections = {
     sibling_auth_preconditions: siblingAuth,
@@ -144,6 +156,9 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     state_transitions: stateTransitions,
     trap_door_coverage: trapDoorCoverage,
     endpoint_contract_conformance: endpointContractConformance,
+    schema_registry_drift: schemaRegistryDrift,
+    test_authenticity: testAuthenticity,
+    stale_reference: staleReference,
   };
   const reporter = new Reporter();
   return reporter.build({
