@@ -50,7 +50,29 @@ The ordered worklist. Each tick the babysitter takes the top non-blocked row, la
 | ~~21~~ | **HS-SWEEP** — subsystem hardening sweep ✅ SHIPPED v1.97.0 | — | (sweep) | Operator-requested 2026-06-03. All **14 subsystems** hardened via per-subsystem `/anatomy-park` → `/szechuan-sauce` (standalone skills, scoped, claude backend, 600s szechuan judge timeout per #95 R-SJWT). Real bugs caught: **HS-6** completion_commit CRITICAL data-loss (`99910586`); **HS-11** ~10 CRITICAL/HIGH R-WSRC/tsc-gate command-parser security bypasses (&&/newline/git -C/-c/quoted-verb/env-prefix/boolean-flag/tilde-HOME); **HS-12** 4 CRITICAL Citadel audit-crash availability fixes; **HS-13** 2 HIGH (metrics-drops-4/7-backends + status recoverable-read); **HS-14** 2 HIGH council-publish markdown-injection. Plus dozens of DRY/deslop fixes across HS-1..5/7..10. Batched on main, single MINOR release **v1.97.0** (full gate green: tsc/eslint/7-audits/fast/integration/expensive; node-modules-reuse test synced to landed completion-commit behavior). Filed **#95 R-SJWT** (szechuan judge whole-tree timeout). Per-subsystem detail in **§ Subsystem Hardening Sweep** below. | done |
 
 | ~~23~~ | **B-SJWT** — szechuan judge whole-tree scope ✅ SHIPPED v1.98.0 | P2 | #95 R-SJWT | `prds/p2-bug-fix-bundle-b-sjwt-szechuan-judge-whole-tree-scope.md` (authored 2026-06-04 from #95, surfaced during HS-SWEEP). Scoped szechuan judge scores the whole `extension/` tree not `allowed_paths` → judge_timeout + score-inflation. R-SJWT-1 scope judge prompt to allowed_paths; R-SJWT-2 default timeout 300→600; R-SJWT-3 convergence-to-0 regression + trap door; closer. Distinct from (shipped) #47 R-SJET spawn-hang. Schema-neutral MINOR. **SHIPPED v1.98.0 2026-06-04** (session `922b5750`): R-SJWT-1 (`eae41782`) + R-SJWT-2 (`cc005d9b`) + R-SJWT-3 (`2ef9c95b`) + C-SJWT-CLOSER (`4062f97b`) all Done; full gate green; bumped `92e17948`; released `v1.98.0`. | done |
+| 26 | **HS-SWEEP-2** — full-system review hammer (post-B-HRP) | P2 | (operator-requested 2026-06-04) | Per-subsystem `/anatomy-park` → `/szechuan-sauce` across all 14 subsystems of `extension/` (same HS-1..14 mapping + paths as § Subsystem Hardening Sweep below), claude backend, scoped (`--scope paths:<subsystem globs>`, `--target extension`). Now that **#95 R-SJWT** scopes the szechuan judge to `allowed_paths` (v1.98.0), scoped szechuan converges to 0 cleanly (no 600s workaround). Standalone phases (citadel NOT invoked — that runs only in /pickle-pipeline). Babysitter drives tick-by-tick: launch HS-N anatomy → converge → HS-N szechuan → converge → HS-(N+1). Real bugs land as commits; clean subsystems converge 0-finding. Single MINOR release at sweep end. Progress tracked in § HS-SWEEP-2 Progress. | ~28 phases |
 | ~~24~~ | **B-HRP** — citadel fix-forward (replace halt-gate with remediation feed) ✅ SHIPPED v1.99.0 | P2 | (PR-review-gap analysis) | `prds/p2-feature-bundle-b-hrp-human-review-parity-automated-detection.md` (revised 2026-06-04 per operator: simplify, don't add brittleness). **Reframed from "add 15 detectors" to "stop citadel halting."** Today `pickle → citadel(HALTS) → anatomy → szechuan`; citadel is the only halting phase, sitting in front of two fix-forward loops. R-HRP-1: citadel never halts — findings convert to a `GateResult` and feed the EXISTING `spawn-gate-remediator` (same fixer finalize-gate uses), pipeline auto-fixes + continues. R-HRP-2: `CitadelFinding[]→GateFailure[]` adapter. R-HRP-3: leak detections (schema drift, auth/flag parity, test-authenticity, stale-ref, banned constructs/casts, PII) added as plain analyzers feeding that ONE path — no severity clamp/flags needed since nothing halts. R-HRP-4: fail-open guards for the 3 extended UNwrapped analyzers. **NET-DELETES complexity**: citadel halt path + severity-threshold, the old draft's Medium-clamp/`warn|block` flags/`B-HRP-PROMOTE`, 2 worker-gate shell scripts, redundant szechuan/anatomy prompt rows. Correctness gates (test/tsc/lint/convergence) still block broken code — only the conformance *halt* is removed. Schema-neutral MINOR. **status: draft — design finalized (operator chose reform-in-place); ready to launch.** | ~6 |
+
+### § HS-SWEEP-2 Progress (Drain Queue row 26)
+
+Per-subsystem `/anatomy-park` → `/szechuan-sauce`, scoped, claude, `--target extension`. Paths = § Subsystem Hardening Sweep HS-N. Mark `A✅`/`S✅` as each phase converges; note commits/findings.
+
+| # | Subsystem | Anatomy | Szechuan |
+|---|---|---|---|
+| HS-1 | Orchestration core (mux/pipeline/jar-runner, manager-relaunch, circuit-breaker, classifier) | ⏳ LAUNCHED | — |
+| HS-2 | Worker spawning + backends | — | — |
+| HS-3 | Microverse | — | — |
+| HS-4 | State + transactions | — | — |
+| HS-5 | Gates | — | — |
+| HS-6 | Shared core lib | — | — |
+| HS-7 | Dot codegen | — | — |
+| HS-8 | Scope resolution | — | — |
+| HS-9 | Monitoring / TUI | — | — |
+| HS-10 | Session lifecycle | — | — |
+| HS-11 | Hooks | — | — |
+| HS-12 | Citadel (incl. new B-HRP analyzers) | — | — |
+| HS-13 | Reporting | — | — |
+| HS-14 | Debate / council | — | — |
 
 **Watch-only — NOT in the drain (out of scope until their gate clears):**
 - **B-CSI** (#25 R-CSI) — external-event-gated: needs a real concurrent-session destructive-command incident to analyze. Re-activates on the next incident. Not operator-interaction.
