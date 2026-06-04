@@ -7,6 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   __setSpawnRunnerForTests,
+  __setCitadelRemediationDepsForTests,
   main,
   readCitadelReport,
   setupPhase,
@@ -205,6 +206,7 @@ function assertSectionBody(lines, heading, body) {
 
 afterEach(() => {
   __setSpawnRunnerForTests(null);
+  __setCitadelRemediationDepsForTests(null);
 });
 
 describe('pipeline phase config dispatch', () => {
@@ -354,22 +356,35 @@ describe('pipeline phase config dispatch', () => {
     }
   });
 
-  test('main halts on High citadel findings when citadel_strict is enabled', async () => {
+  test('main does NOT halt on High citadel findings when citadel_strict is enabled (remediates, continues)', async () => {
     const { repo, sessionDir } = makeSession(['pickle', 'anatomy-park'], { citadel_strict: true });
     const fixture = writeCitadelHighFixture(repo, sessionDir);
     updateState(sessionDir, { prd_path: fixture.prdPath, start_commit: fixture.startCommit });
+    // R-HRP-1: citadel_strict now WIDENS which findings are remediated (High+); it no longer halts.
+    // Stub the remediation spawns so no real worker launches; the pipeline continues to anatomy-park.
+    __setCitadelRemediationDepsForTests({
+      loadSettings: () => ({ cap: 1, remediatorTimeoutMs: 1000 }),
+      spawnGateRemediatorMain: async ({ stdout }) => {
+        const briefPath = path.join(sessionDir, 'citadel-brief.md');
+        fs.writeFileSync(briefPath, 'fix it');
+        stdout(`BRIEF_PATH=${briefPath}`);
+        return 0;
+      },
+      spawnRemediator: () => { /* no-op */ },
+    });
     const calls = [];
     __setSpawnRunnerForTests(async (cmd, args, env) => {
       calls.push({ cmd, args, env });
       return 0;
     });
     try {
-      await expectMainExit(sessionDir, 1);
-      assert.equal(calls.length, 1);
+      await expectMainExit(sessionDir, 0);
+      // pickle (mux-runner) then anatomy-park (microverse-runner) — citadel ran in-process and continued.
+      assert.equal(calls.length, 2);
       assertRunnerScript(calls[0].args[0], 'mux-runner.js');
+      assertRunnerScript(calls[1].args[0], 'microverse-runner.js');
       const status = JSON.parse(fs.readFileSync(path.join(sessionDir, 'pipeline-status.json'), 'utf-8'));
-      assert.equal(status.status, 'failed');
-      assert.equal(status.completed_phases, 1);
+      assert.notEqual(status.status, 'failed');
       const report = readCitadelReport(sessionDir);
       assert.ok(report);
       assert.equal(report.summary.high, 1);

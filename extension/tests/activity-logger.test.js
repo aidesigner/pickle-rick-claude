@@ -86,6 +86,9 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'manager_max_turns_relaunch',
         'iteration_classified_at_max_turns',
         'readiness_failed_post_correction',
+        // B-HRP R-HRP-1: citadel fix-forward emits this when the remediation cap is
+        // exhausted with findings still open (pipeline continues, never halts).
+        'citadel_findings_unremediated',
         // BMAD residual P0.6: check-readiness --skip-readiness emits this when
         // the gate is bypassed via state.flags.skip_readiness_reason.
         'readiness_skipped',

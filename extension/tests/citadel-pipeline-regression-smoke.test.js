@@ -7,9 +7,27 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   __setSpawnRunnerForTests,
+  __setCitadelRemediationDepsForTests,
   main,
   readCitadelReport,
 } from '../bin/pipeline-runner.js';
+
+// B-HRP R-HRP-1: citadel no longer halts — it runs a bounded detect→remediate loop and the
+// pipeline ALWAYS continues to anatomy-park/szechuan-sauce. These smoke tests keep runCitadelAudit
+// REAL (the point is to prove Citadel detects the LOA-618 issues) but stub the remediation spawns
+// so no real worker is launched, and assert the pipeline CONTINUES rather than halting.
+function stubCitadelRemediationNoHalt(sessionDir) {
+  __setCitadelRemediationDepsForTests({
+    loadSettings: () => ({ cap: 1, remediatorTimeoutMs: 1000 }),
+    spawnGateRemediatorMain: async ({ stdout }) => {
+      const briefPath = path.join(sessionDir, 'citadel-brief.md');
+      fs.writeFileSync(briefPath, 'fix it');
+      stdout(`BRIEF_PATH=${briefPath}`);
+      return 0;
+    },
+    spawnRemediator: () => { /* no-op: do not spawn a real remediator worker in tests */ },
+  });
+}
 
 const __dirname = import.meta.dirname;
 const FIXTURE_DIR = path.resolve(__dirname, '../../prds/fixtures/citadel');
@@ -151,13 +169,15 @@ function matchedHighIssueIds(report, issues) {
 
 afterEach(() => {
   __setSpawnRunnerForTests(null);
+  __setCitadelRemediationDepsForTests(null);
 });
 
 describe('citadel pipeline regression smoke', () => {
-  test('pipeline runs Citadel on the LOA-618 fixture and writes the expected blocking report', async () => {
+  test('pipeline runs Citadel on the LOA-618 fixture, detects the issues, and CONTINUES (no halt)', async () => {
     const fixture = readJson('loa-618-diff-fixture.json');
     const issues = readJson('loa-618-issues.json');
     const run = createPipelineFixtureSession(fixture);
+    stubCitadelRemediationNoHalt(run.sessionDir);
     const calls = [];
     __setSpawnRunnerForTests(async (_cmd, args) => {
       const scriptName = path.basename(args[0]);
@@ -169,8 +189,10 @@ describe('citadel pipeline regression smoke', () => {
     });
 
     try {
-      await expectMainExit(run.sessionDir, 1);
-      assert.deepEqual(calls, ['mux-runner.js']);
+      // R-HRP-1: Citadel still writes its findings report, but it no longer halts — the pipeline
+      // continues through anatomy-park and szechuan-sauce (the remediator is fed the findings).
+      await expectMainExit(run.sessionDir, 0);
+      assert.deepEqual(calls, ['mux-runner.js', 'microverse-runner.js', 'microverse-runner.js']);
       const report = readCitadelReport(run.sessionDir);
       assert.ok(report);
       const matched = matchedHighIssueIds(report, issues);
@@ -178,18 +200,21 @@ describe('citadel pipeline regression smoke', () => {
         matched.length >= fixture.expected.minimumMatchedIssuesAtHighOrAbove,
         `matched ${matched.length} stable issue ids: ${matched.join(', ')}`,
       );
+      // The report still computes its severity-based exitCode field; it is simply no longer
+      // used to halt the pipeline.
       assert.equal(report.exitCode, fixture.expected.strictExitCode);
       assert.equal(report.schema, '1.0');
       const status = JSON.parse(fs.readFileSync(path.join(run.sessionDir, 'pipeline-status.json'), 'utf-8'));
-      assert.equal(status.status, 'failed');
+      assert.notEqual(status.status, 'failed');
     } finally {
       cleanup(run);
     }
   });
 
-  test('strict pipeline halts after Citadel on the LOA-618 fixture', async () => {
+  test('strict pipeline detects High citadel findings and CONTINUES (citadel_strict widens remediation, no halt)', async () => {
     const fixture = readJson('loa-618-diff-fixture.json');
     const run = createPipelineFixtureSession(fixture, { citadel_strict: true });
+    stubCitadelRemediationNoHalt(run.sessionDir);
     const calls = [];
     __setSpawnRunnerForTests(async (_cmd, args) => {
       const scriptName = path.basename(args[0]);
@@ -201,14 +226,14 @@ describe('citadel pipeline regression smoke', () => {
     });
 
     try {
-      await expectMainExit(run.sessionDir, 1);
-      assert.deepEqual(calls, ['mux-runner.js']);
+      await expectMainExit(run.sessionDir, 0);
+      assert.deepEqual(calls, ['mux-runner.js', 'microverse-runner.js', 'microverse-runner.js']);
       const report = readCitadelReport(run.sessionDir);
       assert.ok(report);
       assert.equal(report.exitCode, fixture.expected.strictExitCode);
       assert.ok(report.summary.high + report.summary.critical >= fixture.expected.minimumMatchedIssuesAtHighOrAbove);
       const status = JSON.parse(fs.readFileSync(path.join(run.sessionDir, 'pipeline-status.json'), 'utf-8'));
-      assert.equal(status.status, 'failed');
+      assert.notEqual(status.status, 'failed');
     } finally {
       cleanup(run);
     }
