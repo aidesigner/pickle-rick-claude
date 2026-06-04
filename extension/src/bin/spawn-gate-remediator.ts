@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { isoCompactStamp, safeErrorMessage } from '../services/pickle-utils.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { isBackend } from '../services/backend-spawn.js';
@@ -284,7 +285,7 @@ function loadTrapDoorSection(
   if (extensionClaudeMdContent) return extensionClaudeMdContent;
 
   const claudeMdPath = path.join(
-    path.dirname(path.dirname(new URL(import.meta.url).pathname)),
+    path.dirname(path.dirname(fileURLToPath(import.meta.url))),
     'CLAUDE.md'
   );
   try {
