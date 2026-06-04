@@ -500,6 +500,18 @@ function parseFirstShellWord(command: string): string | null {
 const PROHIBITED_GIT_VERBS_SIMPLE = new Set(['reset', 'switch', 'stash', 'rebase', 'pull', 'push']);
 
 /**
+ * Git global options that consume the FOLLOWING token as their value when given
+ * in space-separated form (`git -C <path> reset`). The verb scan must skip both
+ * the option AND its value, otherwise the value token (`<path>`) is mistaken for
+ * the verb and a prohibited operation slips the guard. The `=`-glued form
+ * (`--git-dir=<path>`) is self-contained — it is already skipped as a flag.
+ * Mirrors the option-arg handling in tsc-gate.ts:segmentIsGitCommit.
+ */
+const ARG_CONSUMING_GIT_GLOBAL_OPTIONS = new Set([
+  '-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--exec-path',
+]);
+
+/**
  * Returns true when `git checkout <args>` is targeting a ref (blocked).
  * Allowed: `git checkout -- <path>`, `git checkout .`, `git checkout` with no positional.
  */
@@ -532,6 +544,9 @@ function findGitVerb(command: string): { verb: string; afterVerb: string[] } | n
   const rest = tokens.slice(idx).filter(t => t.length > 0);
   let verbIdx = -1;
   for (let i = 0; i < rest.length; i++) {
+    // Skip a space-separated arg-consuming global option AND its value token
+    // (`-C <path>`), so the value is never mistaken for the verb.
+    if (ARG_CONSUMING_GIT_GLOBAL_OPTIONS.has(rest[i])) { i++; continue; }
     if (!rest[i].startsWith('-')) { verbIdx = i; break; }
   }
   if (verbIdx === -1) return null;

@@ -808,3 +808,65 @@ test('R-CSIS-B1 newline: worker blocks `cd extension\\nnode --test <expensive>`'
   assert.equal(result.decision, 'block');
   assert.match(result.reason, /R-CSIS-B1/);
 });
+
+// R-WSRC-GR option-arg: `findGitVerb` must skip git global options that consume
+// the following token (`git -C <path> reset`), else the value is mistaken for
+// the verb and the destructive op slips the guard (proven null pre-fix).
+test('R-WSRC-GR -C: worker blocks `git -C extension reset --hard HEAD~1`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git -C extension reset --hard HEAD~1' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /R-WSRC-GR/);
+  assert.match(result.reason, /reset/);
+});
+
+test('R-WSRC-GR -c: worker blocks `git -c x=y push origin main`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git -c x=y push origin main' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /push/);
+});
+
+test('R-WSRC-GR -C chained: worker blocks `cd extension && git -C . reset --hard`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'cd extension && git -C . reset --hard HEAD~1' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /reset/);
+});
+
+test('R-WSRC-GR -C: worker approves `git -C extension checkout -- src/foo.ts` (path-mode preserved)', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git -C extension checkout -- src/foo.ts' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'approve');
+});
+
+test('R-WSRC-GR -C: worker approves `git -C extension commit -m wip` (non-prohibited verb preserved)', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: "git -C extension commit -m 'wip'" },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'approve');
+});
