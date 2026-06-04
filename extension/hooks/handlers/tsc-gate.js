@@ -74,8 +74,54 @@ function stripCdPrefix(command) {
     }
     return stripped;
 }
-export function isGitCommitCommand(command) {
-    const stripped = stripCdPrefix(command);
+const SHELL_SEGMENT_SEPARATORS = new Set(['&&', '||', '|', '&', ';']);
+/**
+ * Splits a shell command into top-level segments on `&&`, `||`, `|`, `&`, and
+ * `;`. Quote-aware: a separator inside single/double quotes (e.g. a commit
+ * message `-m 'fix && reset'`) is preserved, never a split point. Mirrors the
+ * proven `splitShellSegments` shape in config-protection.ts so the chained
+ * worker-forbidden-op guards segment identically.
+ *
+ * Without segmentation the gate inspected only the cd-stripped leading command,
+ * so the CLAUDE.md-canonical `git add -A && git commit -m "…"` form (the
+ * documented commit pattern in pickle-microverse.md / meeseeks.md) reported the
+ * subcommand as `add` and the tsc check was skipped — a broken-TS commit slipped
+ * the R-WACT backstop. Each segment is now evaluated independently.
+ */
+function splitTopLevelSegments(command) {
+    const rawTokens = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+    const tokens = [];
+    for (const raw of rawTokens) {
+        const quoted = (raw.startsWith('"') && raw.endsWith('"')) ||
+            (raw.startsWith('\'') && raw.endsWith('\''));
+        if (quoted) {
+            tokens.push(raw);
+            continue;
+        }
+        // Separate a glued `;` (e.g. `git status;git commit`) into its own boundary
+        // token; quoted `;` was already preserved above.
+        for (const part of raw.split(/(;)/)) {
+            if (part.length > 0)
+                tokens.push(part);
+        }
+    }
+    const segments = [];
+    let current = [];
+    for (const token of tokens) {
+        if (SHELL_SEGMENT_SEPARATORS.has(token)) {
+            if (current.length > 0)
+                segments.push(current.join(' '));
+            current = [];
+            continue;
+        }
+        current.push(token);
+    }
+    if (current.length > 0)
+        segments.push(current.join(' '));
+    return segments.length > 0 ? segments : [command];
+}
+function segmentIsGitCommit(segment) {
+    const stripped = stripCdPrefix(segment);
     const tokens = tokenizeCommand(stripped);
     if (tokens.length === 0)
         return false;
@@ -101,6 +147,9 @@ export function isGitCommitCommand(command) {
         return token === 'commit';
     }
     return false;
+}
+export function isGitCommitCommand(command) {
+    return splitTopLevelSegments(command).some(segmentIsGitCommit);
 }
 function runTextCommand(cmd, args, cwd, timeoutMs) {
     const result = spawnSync(cmd, args, {

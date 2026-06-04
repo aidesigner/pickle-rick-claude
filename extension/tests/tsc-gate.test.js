@@ -325,6 +325,13 @@ it('blocks broken staged tracked TypeScript across supported git commit command 
       'cd . && git commit -m "broken"',
       'cd "."; git commit -m "broken"',
       'cd "./" && git -c core.hooksPath=.git/hooks commit -m "broken"',
+      // Chained add+commit — the CLAUDE.md-canonical commit form (pickle-microverse.md,
+      // meeseeks.md). Previously isGitCommitCommand saw subcommand `add` and SKIPPED
+      // the tsc gate, letting broken-TS commits slip the R-WACT backstop.
+      'git add -A && git commit -m "broken"',
+      'git add -u && git commit -m "broken"',
+      'cd . && git add -A && git commit -m "broken"',
+      'git status; git commit -m "broken"',
     ];
 
     for (const command of commands) {
@@ -340,6 +347,35 @@ it('blocks broken staged tracked TypeScript across supported git commit command 
     fs.rmSync(repoRoot, { recursive: true, force: true });
     harness.cleanup();
   }
+});
+
+it('isGitCommitCommand detects commit in any chained segment without false positives', async () => {
+  const { isGitCommitCommand } = await import('../hooks/handlers/tsc-gate.js');
+  const positives = [
+    'git add -A && git commit -m "x"',
+    'git add -u && git commit -m "x"',
+    'cd extension && git add -A && git commit -m "x"',
+    'git status; git commit -m "x"',
+    'git status;git commit -m "x"',
+    'git add . || git commit -m "x"',
+  ];
+  for (const command of positives) {
+    assert.equal(isGitCommitCommand(command), true, command);
+  }
+  const negatives = [
+    'git add -A && echo done',
+    'git status && git log --oneline',
+    'git diff --cached && git show HEAD',
+    'echo "git commit" && ls',
+    // Separators inside the commit message must not be mis-segmented, but the
+    // command is still a commit, so it MUST be detected.
+  ];
+  for (const command of negatives) {
+    assert.equal(isGitCommitCommand(command), false, command);
+  }
+  // Quote-awareness: a commit message containing `&&`/`;` is one commit, detected.
+  assert.equal(isGitCommitCommand('git commit -m "fix && reset bug"'), true);
+  assert.equal(isGitCommitCommand('git commit -m "cleanup; done"'), true);
 });
 
 it('approves clean staged TypeScript', () => {
