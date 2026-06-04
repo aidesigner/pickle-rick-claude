@@ -7,16 +7,20 @@ const HTTP_DECORATOR_PATTERN = /^(Get|Post|Put|Patch|Delete|Head|Options)$/i;
 const METHOD_DECL_PATTERN = /^\s*(?:public|private|protected|async|static|\s)*([A-Za-z_]\w*)\s*\(/;
 const DESTRUCTIVE_NAME_PATTERN = /(delete|revert|override|cancel|purge|destroy)/i;
 const DESTRUCTIVE_ROUTE_PATTERN = /(revert|override|cancel|purge)-/i;
-export function auditSiblingAuthPreconditions(diff) {
+export function auditSiblingAuthPreconditions(diff, options = {}) {
     const controllers = loadControllerFiles(diff.changedFiles, diff.repoRoot).flatMap(parseControllers);
     const routes = stableRoutes(controllers.flatMap((controller) => controller.methods));
     const guardParityFindings = findGuardParityFindings(routes);
     const destructiveRoleFindings = findDestructiveRoleFindings(routes);
-    const findings = [...guardParityFindings, ...destructiveRoleFindings].sort(compareFindings);
+    const weakerRolesEnabled = !!options.projectShapes?.includes('nestjs-api');
+    const weakerDestructiveRoleFindings = findWeakerDestructiveRoleFindings(routes, weakerRolesEnabled);
+    const findings = [...guardParityFindings, ...destructiveRoleFindings, ...weakerDestructiveRoleFindings]
+        .sort(compareFindings);
     return {
         routes,
         guardParityFindings,
         destructiveRoleFindings,
+        weakerDestructiveRoleFindings,
         findings,
         destructiveRoleDriftTable: renderDestructiveRoleDriftTable(destructiveRoleFindings),
         summary: {
@@ -24,6 +28,7 @@ export function auditSiblingAuthPreconditions(diff) {
             routes: routes.length,
             guardParityFindings: guardParityFindings.length,
             destructiveRoleFindings: destructiveRoleFindings.length,
+            weakerDestructiveRoleFindings: weakerDestructiveRoleFindings.length,
         },
     };
 }
@@ -140,6 +145,10 @@ function decoratorGuardTokens(decorator) {
         return [`roles(${roleArgs(decorator.args).join(',')})`];
     if (decorator.name === 'UseGuards')
         return [`guards(${argumentTokens(decorator.args).join(',')})`];
+    // @Throttle parity: a rate-limit decorator present on one sibling route but absent on another
+    // surfaces through the guard-parity signature comparison as a missing 'throttle' token.
+    if (decorator.name === 'Throttle')
+        return ['throttle'];
     return [];
 }
 function findGuardParityFindings(routes) {
@@ -174,6 +183,48 @@ function findDestructiveRoleFindings(routes) {
         .filter((group) => group.length > 1 && new Set(group.map((route) => route.roles.join('|'))).size > 1)
         .map(destructiveRoleDriftFinding);
     return [...missingRoleFindings, ...driftFindings].sort(compareFindings);
+}
+/**
+ * Gated `nestjs-api` detection: a destructive sibling route whose @Roles allowlist is a STRICT
+ * SUPERSET of another destructive sibling's allowlist (same controller file) — i.e. it grants
+ * strictly broader (weaker) access to a destructive operation than a sibling does. Distinct from
+ * the unconditional drift finding (which fires on any difference); this isolates the
+ * privilege-escalation direction the remediator should tighten.
+ */
+function findWeakerDestructiveRoleFindings(routes, enabled) {
+    if (!enabled)
+        return [];
+    const destructiveRoutes = routes.filter((route) => route.destructive && route.roles.length > 0);
+    const findings = [];
+    for (const group of groupBy(destructiveRoutes, (route) => route.file).values()) {
+        if (group.length < 2)
+            continue;
+        for (const route of group) {
+            const stricter = group.find((sibling) => sibling !== route && isStrictSubset(sibling.roles, route.roles));
+            if (!stricter)
+                continue;
+            findings.push({
+                id: `citadel-destructive-role-weaker-${slug(route.file)}-${slug(route.methodName)}`,
+                severity: 'High',
+                message: `Destructive route ${route.methodName} allows a weaker @Roles allowlist `
+                    + `[${route.roles.join(', ')}] than its sibling ${stricter.methodName} `
+                    + `[${stricter.roles.join(', ')}]; tighten it to the stricter sibling.`,
+                controller: route.file,
+                method: formatRouteMethod(route),
+                roles: route.roles,
+                stricterSiblingMethod: formatRouteMethod(stricter),
+                stricterSiblingRoles: stricter.roles,
+                evidence: [routeEvidence(route), routeEvidence(stricter)],
+            });
+        }
+    }
+    return findings.sort(compareFindings);
+}
+function isStrictSubset(subset, superset) {
+    if (subset.length >= superset.length)
+        return false;
+    const supersetSet = new Set(superset);
+    return subset.every((role) => supersetSet.has(role));
 }
 function missingRoleFinding(route) {
     return {

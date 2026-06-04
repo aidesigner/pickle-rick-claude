@@ -1,0 +1,83 @@
+// @tier: fast
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  hasAsErrorCast,
+  hasAsAnyCast,
+  findBannedCasts,
+  auditBannedCasts,
+} from '../../services/citadel/banned-casts-audit.js';
+import { buildCitadelAuditReport } from '../../services/citadel/audit-runner.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+const PRDS_DIR = path.resolve(REPO_ROOT, 'prds');
+
+describe('banned-casts: detectors', () => {
+  test('fires on (x as Error). access and as any', () => {
+    assert.ok(hasAsErrorCast('const m = (err as Error).message;'));
+    assert.ok(hasAsErrorCast('return (e.cause as Error).stack;'));
+    assert.ok(hasAsAnyCast('const obj = payload as any;'));
+    assert.ok(hasAsAnyCast('return { ...state } as any;'));
+  });
+  test('silent on the CLAUDE.md-prescribed safe forms and strings', () => {
+    assert.ok(!hasAsErrorCast('const m = err instanceof Error ? err.message : String(err);'));
+    assert.ok(!hasAsAnyCast('const v = raw as unknown as Foo;'));
+    assert.ok(!hasAsAnyCast('const company = "Anatomy Park as any place";'));
+  });
+});
+
+describe('banned-casts: findBannedCasts', () => {
+  test('flags both classes on a positive fixture and is silent on clean lines', () => {
+    const findings = findBannedCasts([{
+      file: 'src/y.ts',
+      lines: [
+        { no: 5, text: 'const m = (err as Error).message;' },
+        { no: 6, text: 'const o = blob as any;' },
+        { no: 7, text: 'const msg = err instanceof Error ? err.message : String(err);' },
+        { no: 8, text: '// (x as Error).message  — comment ignored' },
+      ],
+    }]);
+    assert.equal(findings.length, 2);
+    assert.ok(findings.some((f) => f.id.startsWith('banned-cast:as-error:')));
+    assert.ok(findings.some((f) => f.id.startsWith('banned-cast:as-any:')));
+    for (const f of findings) assert.equal(f.severity, 'Medium');
+  });
+
+  test('end-to-end wired read via auditBannedCasts on a temp file', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bcast-'));
+    try {
+      fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(repoRoot, 'src/y.ts'), 'export const m = (err as Error).message;\n');
+      const result = auditBannedCasts({
+        range: 'BASE..HEAD', base: 'BASE', head: 'HEAD', repoRoot,
+        changedFiles: [{ path: 'src/y.ts', status: 'M', kind: 'production', changedLines: [{ start: 1, end: 1 }], blame: [] }],
+        claudeFiles: [],
+      });
+      assert.ok(result.findings.some((f) => f.id.startsWith('banned-cast:as-error:')));
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('banned-casts: clean tree', () => {
+  test('emits ZERO findings on the current pickle-rick-claude tree (HEAD..HEAD)', () => {
+    const prdFiles = fs.readdirSync(PRDS_DIR).filter((f) => f.endsWith('.md'));
+    assert.ok(prdFiles.length > 0, 'need at least one PRD file');
+    const report = buildCitadelAuditReport({
+      prdPath: path.join('prds', prdFiles[0]),
+      diffRange: 'HEAD..HEAD',
+      repoRoot: REPO_ROOT,
+    });
+    const section = report.sections.banned_casts;
+    assert.ok(section, 'banned_casts section must exist');
+    assert.deepEqual(section.findings, []);
+    const leaked = report.findings.filter((f) => f.source_section === 'banned_casts');
+    assert.deepEqual(leaked, []);
+  });
+});

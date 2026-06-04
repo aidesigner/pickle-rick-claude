@@ -20,6 +20,8 @@ import { checkEndpointContractConformance } from './endpoint-contract-conformanc
 import { auditSchemaRegistryDrift } from './schema-registry-drift-audit.js';
 import { auditTestAuthenticity } from './test-authenticity-audit.js';
 import { auditStaleReferences } from './stale-reference-audit.js';
+import { auditBannedConstructs } from './banned-constructs-audit.js';
+import { auditBannedCasts } from './banned-casts-audit.js';
 import { readRecoverableJsonObject } from '../recoverable-json.js';
 export async function runCitadelAudit(options) {
     const report = buildCitadelAuditReport(options);
@@ -43,7 +45,7 @@ export function buildCitadelAuditReport(options) {
     const parsedPrd = parseWithComposes(prdPath, { repoRoot });
     const diff = walkDiff(options.diffRange, { repoRoot });
     const projectShapes = detectProjectShapes(repoRoot);
-    const siblingAuth = auditSiblingAuthPreconditions(diff);
+    const siblingAuth = auditSiblingAuthPreconditions(diff, { projectShapes });
     const frontendPropDrift = safeRunAnalyzer('citadel-frontend-prop-drift', () => auditFrontendPropDrift(diff), { analyzerCompatibility: ['react-frontend'], projectShapes });
     const acShape = auditAcShape({
         prdPath,
@@ -65,6 +67,8 @@ export function buildCitadelAuditReport(options) {
     const schemaRegistryDrift = safeRunAnalyzer('citadel-schema-registry-drift', () => auditSchemaRegistryDrift(diff));
     const testAuthenticity = safeRunAnalyzer('citadel-test-authenticity', () => auditTestAuthenticity(diff));
     const staleReference = safeRunAnalyzer('citadel-stale-reference', () => auditStaleReferences(diff));
+    const bannedConstructs = safeRunAnalyzer('citadel-banned-constructs', () => auditBannedConstructs(diff));
+    const bannedCasts = safeRunAnalyzer('citadel-banned-casts', () => auditBannedCasts(diff));
     const decisionRequired = [
         ...acShape.decisionsRequired,
         ...divergenceReconciliation.decisionsRequired,
@@ -84,6 +88,8 @@ export function buildCitadelAuditReport(options) {
         ...schemaRegistryDrift.findings.map((finding) => withFindingSource(finding, 'schema_registry_drift')),
         ...testAuthenticity.findings.map((finding) => withFindingSource(finding, 'test_authenticity')),
         ...staleReference.findings.map((finding) => withFindingSource(finding, 'stale_reference')),
+        ...bannedConstructs.findings.map((finding) => withFindingSource(finding, 'banned_constructs')),
+        ...bannedCasts.findings.map((finding) => withFindingSource(finding, 'banned_casts')),
     ]);
     const sections = {
         sibling_auth_preconditions: siblingAuth,
@@ -101,6 +107,8 @@ export function buildCitadelAuditReport(options) {
         schema_registry_drift: schemaRegistryDrift,
         test_authenticity: testAuthenticity,
         stale_reference: staleReference,
+        banned_constructs: bannedConstructs,
+        banned_casts: bannedCasts,
     };
     const reporter = new Reporter();
     return reporter.build({

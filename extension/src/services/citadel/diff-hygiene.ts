@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DiffSummary, ChangedFileSummary } from './diff-walker.js';
@@ -10,7 +10,8 @@ export type DiffHygieneRule =
   | 'root-markdown-orphan'
   | 'root-scratch-artifact'
   | 'env-file'
-  | 'large-unignored-file';
+  | 'large-unignored-file'
+  | 'pii-in-fixture';
 
 export const ROOT_MARKDOWN_ALLOWLIST = new Set([
   'AGENTS.md',
@@ -23,6 +24,34 @@ export const ROOT_MARKDOWN_ALLOWLIST = new Set([
 export const LARGE_FILE_BYTES = 1024 * 1024;
 export const ENV_FILE_ALLOWLIST = new Set(['.env.example']);
 const GIT_CHECK_IGNORE_TIMEOUT_MS = 5_000;
+
+/**
+ * Enumerated identity/financial PII keys. Intentionally tight (no email/phone/name) so the rule
+ * stays high-signal and silent on ordinary test fixtures. A fixture-file key from this set whose
+ * value is non-placeholder is a committed-PII leak.
+ */
+export const PII_KEY_ALLOWLIST = new Set([
+  'ssn',
+  'social_security_number',
+  'tax_id',
+  'taxid',
+  'ein',
+  'credit_card',
+  'card_number',
+  'cvv',
+  'account_number',
+  'routing_number',
+  'passport_number',
+  'drivers_license',
+  'driver_license',
+  'date_of_birth',
+  'dob',
+]);
+
+const PII_KEY_VALUE_RE = /['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?\s*[:=]\s*['"]([^'"]+)['"]/g;
+const PLACEHOLDER_WORD_RE = /placeholder|example|redact|sample|dummy|fake|test|xxxx|n\/?a|todo|change[_-]?me/i;
+const PLACEHOLDER_FILLER_RE = /^[\sx0\-_.*]+$/i;
+const PLACEHOLDER_FAKE_SSN = new Set(['000-00-0000', '123-45-6789', '111-11-1111']);
 
 export interface DiffHygieneFinding {
   id: string;
@@ -171,7 +200,44 @@ function ruleMatchesForAddedFile(repoRoot: string, file: ChangedFileSummary): Ru
     matches.push({ file: file.path, rule: 'large-unignored-file', sizeBytes: size });
   }
 
+  if (isFixtureFile(normalized) && containsNonPlaceholderPii(repoRoot, file.path)) {
+    matches.push({ file: file.path, rule: 'pii-in-fixture' });
+  }
+
   return matches;
+}
+
+function isFixtureFile(filePath: string): boolean {
+  return /(?:^|\/)(?:fixtures|__fixtures__)\//.test(filePath)
+    || /\.fixture\.[cm]?[jt]sx?$/i.test(filePath);
+}
+
+function containsNonPlaceholderPii(repoRoot: string, filePath: string): boolean {
+  // Isolated, intentionally UNGUARDED read: auditDiffHygiene runs UNWRAPPED by safeRunAnalyzer, and
+  // the fail-open try/catch for this read lands in R-HRP-4 (50f75afa). Kept minimal so it can be
+  // wrapped cleanly there.
+  const content = readAddedFileText(repoRoot, filePath);
+  for (const match of content.matchAll(new RegExp(PII_KEY_VALUE_RE.source, PII_KEY_VALUE_RE.flags))) {
+    const key = match[1].toLowerCase();
+    if (!PII_KEY_ALLOWLIST.has(key)) continue;
+    if (!isPlaceholderValue(match[2])) return true;
+  }
+  return false;
+}
+
+function readAddedFileText(repoRoot: string, filePath: string): string {
+  return readFileSync(path.join(repoRoot, filePath), 'utf-8');
+}
+
+function isPlaceholderValue(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return true;
+  if (PLACEHOLDER_FILLER_RE.test(trimmed)) return true;
+  if (trimmed.startsWith('<') && trimmed.endsWith('>')) return true;
+  if (trimmed.startsWith('{{') || trimmed.startsWith('${')) return true;
+  if (PLACEHOLDER_WORD_RE.test(trimmed)) return true;
+  if (PLACEHOLDER_FAKE_SSN.has(trimmed)) return true;
+  return false;
 }
 
 function makeFinding(
@@ -220,6 +286,8 @@ function messageForRule(rule: DiffHygieneRule, file: string, sizeBytes: number |
       return `Environment file ${file} must not be committed unless it is .env.example.`;
     case 'large-unignored-file':
       return `Large added file ${file} is ${sizeBytes ?? 0} bytes and is not gitignored.`;
+    case 'pii-in-fixture':
+      return `Fixture ${file} contains a non-placeholder value for an enumerated PII key; replace it with a placeholder.`;
   }
 }
 
@@ -233,12 +301,15 @@ function szechuanMessageForRule(rule: DiffHygieneRule, file: string, sizeBytes: 
       return `Secret leak risk: ${file} must not be committed unless it is .env.example.`;
     case 'large-unignored-file':
       return `Binary leak risk: ${file} is ${sizeBytes ?? 0} bytes and is not gitignored.`;
+    case 'pii-in-fixture':
+      return `PII leak risk: ${file} commits a non-placeholder value for an enumerated PII key.`;
   }
 }
 
 function citadelSeverityForRule(rule: DiffHygieneRule): DiffHygieneSeverity {
   switch (rule) {
     case 'env-file':
+    case 'pii-in-fixture':
       return 'Critical';
     case 'large-unignored-file':
       return 'High';
@@ -251,6 +322,7 @@ function citadelSeverityForRule(rule: DiffHygieneRule): DiffHygieneSeverity {
 function szechuanPriorityForRule(rule: DiffHygieneRule): SzechuanDiffHygienePriority {
   switch (rule) {
     case 'env-file':
+    case 'pii-in-fixture':
       return 'P0';
     case 'root-markdown-orphan':
     case 'root-scratch-artifact':
