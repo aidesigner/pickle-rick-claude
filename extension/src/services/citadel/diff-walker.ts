@@ -105,7 +105,14 @@ function classifyChangedFile(filePath: string): ChangedFileKind {
 }
 
 function getChangedLineRanges(filePath: string, range: ParsedRange, repoRoot: string): ChangedLineRange[] {
-  const out = runGit(['diff', `${range.base}...${range.head}`, '--unified=0', '--', filePath], repoRoot);
+  // Per-file git calls MUST fail soft: walkDiff runs UNwrapped by safeRunAnalyzer
+  // (audit-runner.ts:84), and its output feeds every downstream analyzer. One
+  // changed path the aggregate diff accepts but a per-file command rejects
+  // (submodule/gitlink pointer, type-change, path absent at head) otherwise
+  // throws out of buildCitadelAuditReport and crashes the ENTIRE Citadel audit.
+  // getDiffFiles already succeeded (check=true); degrade this file's metadata to
+  // empty (check=false → '' on non-zero exit) instead of killing the whole run.
+  const out = runGit(['diff', `${range.base}...${range.head}`, '--unified=0', '--', filePath], repoRoot, false);
   const ranges: ChangedLineRange[] = [];
   for (const line of out.split(/\r?\n/)) {
     const match = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
@@ -140,7 +147,11 @@ function summarizeBlame(
 ): BlameCommitSummary[] {
   const commits = new Map<string, BlameCommitSummary>();
   for (const range of changedLines) {
-    const output = runGit(['blame', '--line-porcelain', '-L', `${range.start},${range.end}`, head, '--', filePath], repoRoot);
+    // Fail soft (check=false): a gitlink/submodule pointer or type-change in the
+    // diff makes `git blame -L start,end head -- file` exit non-zero ("fatal: no
+    // such path"). walkDiff is UNwrapped (audit-runner.ts:84), so an unguarded
+    // throw here would crash the entire Citadel audit over one un-blameable file.
+    const output = runGit(['blame', '--line-porcelain', '-L', `${range.start},${range.end}`, head, '--', filePath], repoRoot, false);
     for (const block of parseBlamePorcelain(output)) {
       if (block.line === undefined) continue;
       const current = commits.get(block.commit) ?? {
