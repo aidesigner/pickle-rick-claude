@@ -14,13 +14,22 @@ function slugify(branch) {
     return branch.replace(/\//g, '__');
 }
 /**
+ * Collapse CR/LF in LLM-authored free text to `<br>` so it cannot break out of
+ * its surrounding markdown construct. A raw newline ends the current line and
+ * lets the remainder render as arbitrary block-level markdown (headings, lists,
+ * `</details>` breakout) in the published PR comment.
+ */
+function collapseCellNewlines(value) {
+    return value.replace(/\r\n|\r|\n/g, '<br>');
+}
+/**
  * Escape a value for safe interpolation into a GitHub-flavored markdown table
  * cell. A raw `|` opens a spurious column and a raw newline terminates the row,
  * shifting every subsequent finding's cells out of alignment — council findings
  * are LLM-authored free text and routinely contain both. `|` → `\|`, CR/LF → `<br>`.
  */
 function escapeTableCell(value) {
-    return value.replace(/\|/g, '\\|').replace(/\r\n|\r|\n/g, '<br>');
+    return collapseCellNewlines(value.replace(/\|/g, '\\|'));
 }
 /**
  * Parse `gh pr list --json number,state,updatedAt` output tolerantly.
@@ -165,7 +174,7 @@ export function composeBody(params) {
     }
     const trapBlock = trapDoors.length === 0
         ? '_None catalogued._'
-        : trapDoors.map(td => `- \`${td.path}\` — ${td.constraint}; ${td.why_it_breaks}; ${td.what_must_hold}`).join('\n');
+        : trapDoors.map(td => `- \`${collapseCellNewlines(td.path)}\` — ${collapseCellNewlines(td.constraint)}; ${collapseCellNewlines(td.why_it_breaks)}; ${collapseCellNewlines(td.what_must_hold)}`).join('\n');
     const roundBlock = roundOutcomes.length > 0 ? roundOutcomes.join('\n') : '- (no rounds recorded)';
     return [
         '## Council of Ricks — Stack Review',

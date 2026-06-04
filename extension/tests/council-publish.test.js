@@ -1068,3 +1068,34 @@ test('composeBody: non-empty trapDoors renders dash bullets with path and constr
     assert.ok(/token must be rotated on login/.test(body), 'constraint present');
     assert.ok(!/None catalogued/.test(body), 'placeholder must not appear when trapDoors non-empty');
 });
+
+// --- 25b. composeBody collapses newlines in trap-door free text (anatomy-park HIGH) ---
+
+test('composeBody: newline in trap-door free text cannot inject block markdown', () => {
+    // Drive through the real schema validator so the test exercises the actual
+    // runtime path: directive JSON -> validateDirective -> trap_doors -> composeBody.
+    // A raw newline in LLM-authored trap-door text must not break the single
+    // bullet into a new line that renders as a fake heading in the PR comment.
+    const directive = validateDirective(minimalDirective(['feat/one'], {
+        trap_doors: [{
+            path: 'src/auth/session.ts',
+            constraint: 'token rotated on login',
+            why_it_breaks: 'stale token replay\n## Injected Heading',
+            what_must_hold: 'rotation atomic\n- injected list item',
+        }],
+    }));
+    const body = composeBody({
+        sessionRoot: '/tmp/council-abc123',
+        branch: 'feat/one',
+        finalRound: 1,
+        codexEnabled: false,
+        findings: [],
+        trapDoors: directive.trap_doors,
+        roundOutcomes: [],
+    });
+    const bullets = body.split('\n').filter(l => l.startsWith('- `src/auth/session.ts`'));
+    assert.equal(bullets.length, 1, 'trap door renders as exactly one bullet (no newline split)');
+    assert.ok(!/^## Injected Heading/m.test(body), 'injected heading must not start a line');
+    assert.ok(!/^- injected list item/m.test(body), 'injected list item must not start a line');
+    assert.ok(bullets[0].includes('stale token replay<br>## Injected Heading'), 'newline folded to <br>');
+});
