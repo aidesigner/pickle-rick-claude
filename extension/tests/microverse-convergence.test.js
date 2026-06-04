@@ -30,6 +30,7 @@ import {
     writeMicroverseState,
     readMicroverseState,
 } from '../services/microverse-state.js';
+import { buildJudgePrompt } from '../bin/microverse-runner.js';
 
 function makeTmpDir() {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-conv-')));
@@ -378,4 +379,48 @@ test('createMicroverseState with convergenceMode: metric sets convergence_mode t
     };
     const mv = createMicroverseState({ prdPath: 'prd.md', metric, stallLimit: 3, convergenceMode: 'metric' });
     assert.equal(mv.convergence_mode, 'metric');
+});
+
+// ---------------------------------------------------------------------------
+// R-SJWT-3: scoped judge prompt convergence-to-0 regression
+// ---------------------------------------------------------------------------
+
+test('R-SJWT-1: buildJudgePrompt with allowedPaths omits "Target path:" for scoped run', () => {
+    const prompt = buildJudgePrompt(
+        'Reduce code quality violations',
+        '/repo',
+        [],
+        '/repo/src',
+        undefined,
+        [],
+        ['src/foo.ts', 'src/bar.ts'],
+    );
+    assert.ok(!prompt.includes('Target path:'), 'scoped prompt must not include "Target path:"');
+    assert.ok(prompt.includes('Review ONLY these paths:'), 'scoped prompt must include "Review ONLY these paths:"');
+});
+
+test('R-SJWT-1: buildJudgePrompt with allowedPaths enumerates each allowed path', () => {
+    const allowedPaths = ['src/foo.ts', 'src/bar.ts', 'src/baz.ts'];
+    const prompt = buildJudgePrompt(
+        'Reduce violations',
+        '/repo',
+        [],
+        '/repo/src',
+        undefined,
+        [],
+        allowedPaths,
+    );
+    for (const p of allowedPaths) {
+        assert.ok(prompt.includes(`- ${p}`), `scoped prompt must enumerate allowed path: ${p}`);
+    }
+});
+
+test('R-SJWT-3: convergence-to-0 — scoped judge score of 0 classifies as improved, not held', () => {
+    // When a scoped judge prompt restricts evaluation to allowed_paths only,
+    // and the only remaining violations are out-of-scope, the judge returns score=0.
+    // compareMetric must classify that as 'improved', not 'held', so convergence
+    // completes at 0 instead of plateauing at a non-zero value.
+    const classification = compareMetric(0, 3, 0.5, 'lower');
+    assert.equal(classification, 'improved', 'score 0 vs prior 3 (lower-is-better) must classify as improved');
+    assert.notEqual(classification, 'held', 'score 0 must not classify as held — would cause false plateau');
 });
