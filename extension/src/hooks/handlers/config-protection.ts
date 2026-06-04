@@ -487,7 +487,12 @@ function parseFirstShellWord(command: string): string | null {
   if (!command) return null;
   const trimmed = command.trim();
   if (!trimmed) return null;
-  const tokens = trimmed.split(/\s+/);
+  // Quote-aware: the shell strips quotes around the executable, so `"git" reset`
+  // runs as `git reset`. A bare split(/\s+/) read the token `"git"` (quotes
+  // attached), so `detectProhibitedGitVerb` skipped the segment (`"git"` !== 'git')
+  // and the destructive reset slipped the R-WSRC-GR guard. Same root cause and
+  // same fix as findGitVerb's quoted-verb gap.
+  const tokens = tokenizeGitCommand(trimmed);
   let idx = 0;
   if (tokens[idx] === 'bash' || tokens[idx] === 'sh') idx++;
   while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx])) idx++;
@@ -535,8 +540,32 @@ function isCheckoutRefOperation(afterVerb: string[]): boolean {
  *   git commit (without --amend) (plain commit is allowed)
  *   git fetch (without --prune)  (plain fetch is allowed)
  */
+/**
+ * Tokenize a single (already-segmented) shell command, quote-aware: a quoted
+ * span stays one token and its surrounding matching quotes are stripped, so
+ * `git "reset"` tokenizes to `['git', 'reset']`. Mirrors tsc-gate.ts:tokenizeCommand.
+ * Without quote-stripping, the bare `split(/\s+/)` read the token `"reset"`
+ * (quotes attached), which is not in PROHIBITED_GIT_VERBS_SIMPLE, so
+ * `git "reset" --hard` (which the shell runs as `git reset --hard`) slipped the
+ * R-WSRC-GR guard — a one-sided parity gap vs segmentIsGitCommit, which already
+ * strips quotes (`git "commit"` classifies as a commit).
+ */
+function tokenizeGitCommand(command: string): string[] {
+  const raw = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+  return raw.map((token) => {
+    if (token.length >= 2) {
+      const first = token[0];
+      const last = token[token.length - 1];
+      if ((first === '"' && last === '"') || (first === '\'' && last === '\'')) {
+        return token.slice(1, -1);
+      }
+    }
+    return token;
+  });
+}
+
 function findGitVerb(command: string): { verb: string; afterVerb: string[] } | null {
-  const tokens = command.trim().split(/\s+/);
+  const tokens = tokenizeGitCommand(command);
   let idx = 0;
   if (tokens[idx] === 'bash' || tokens[idx] === 'sh') idx++;
   while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx])) idx++;

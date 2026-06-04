@@ -870,3 +870,84 @@ test('R-WSRC-GR -C: worker approves `git -C extension commit -m wip` (non-prohib
   });
   assert.equal(result.decision, 'approve');
 });
+
+// The shell strips quotes around a verb, so `git "reset" --hard` runs as
+// `git reset --hard`. findGitVerb's bare split(/\s+/) read the token `"reset"`
+// (quotes attached) → not in PROHIBITED_GIT_VERBS_SIMPLE → the destructive
+// reset slipped the guard. tokenizeGitCommand now strips matching quotes,
+// mirroring tsc-gate.ts:segmentIsGitCommit (which already strips them).
+test('R-WSRC-GR quoted-verb: worker blocks `git "reset" --hard HEAD~1`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'git "reset" --hard HEAD~1' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /R-WSRC-GR/);
+  assert.match(result.reason, /reset/);
+});
+
+test("R-WSRC-GR quoted-verb: worker blocks `git 'push' origin main`", () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: "git 'push' origin main" },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /push/);
+});
+
+test('R-WSRC-GR quoted-verb chained: worker blocks `cd extension && git "reset" --hard`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: 'cd extension && git "reset" --hard HEAD~1' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /reset/);
+});
+
+// The shell also strips quotes around the EXECUTABLE, so `"git" reset` runs as
+// `git reset`. parseFirstShellWord's bare split read the token `"git"`, so
+// detectProhibitedGitVerb skipped the segment (`"git"` !== 'git') and the reset
+// slipped the guard — the quoted-executable twin of the quoted-verb bypass.
+test('R-WSRC-GR quoted-exec: worker blocks `"git" reset --hard HEAD~1`', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: '"git" reset --hard HEAD~1' },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /reset/);
+});
+
+test("R-WSRC-GR quoted-exec: worker blocks `'git' push origin main`", () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: "'git' push origin main" },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /push/);
+});
+
+test('R-WSRC-GR quoted-verb: worker still approves quoted commit message containing reset', () => {
+  const { tmpDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir, stateFile,
+    toolName: 'Bash',
+    toolInput: { command: "git commit -m 'fix reset bug'" },
+    extraEnv: { PICKLE_ROLE: 'worker' },
+  });
+  assert.equal(result.decision, 'approve');
+});
