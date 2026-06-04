@@ -12,7 +12,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { StateManager, clearExitReason } from '../services/state-manager.js';
+import { StateManager, clearExitReason, isProcessAlive } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 import { Defaults } from '../types/index.js';
 const USAGE = `Usage: node lock-scope.js <session-root> --mode branch [--scope-base <ref>]
@@ -25,15 +25,6 @@ Example:
   node lock-scope.js ~/.local/share/pickle-rick/sessions/2026-05-09-abc/def --mode branch
   node lock-scope.js ~/.local/share/pickle-rick/sessions/2026-05-09-abc/def --mode branch --scope-base main
 `;
-function isProcessAlive(pid) {
-    try {
-        process.kill(pid, 0);
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
 function parseArgs(argv) {
     const args = argv.slice(2);
     if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {

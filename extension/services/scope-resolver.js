@@ -13,7 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { runGit, getHeadSha, getDiffFiles, getMergeBase } from './git-utils.js';
-import { StateManager } from './state-manager.js';
+import { StateManager, isProcessAlive } from './state-manager.js';
 /** Max number of seed files permitted for one-hop expansion. Above this, throw SCOPE_ONE_HOP_TOO_LARGE. */
 const ONE_HOP_FILE_CAP = 100;
 /**
@@ -246,15 +246,6 @@ function resolveRepoRootFromState(sm, statePath) {
         throw new ScopeError('SCOPE_NOT_A_REPO', `refreshScope: no repoRoot given and no state.json at ${statePath}`);
     }
     return sm.read(statePath).working_dir;
-}
-function isProcessAlive(pid) {
-    try {
-        process.kill(pid, 0);
-        return true;
-    }
-    catch {
-        return false;
-    }
 }
 function readScopeJson(scopePath) {
     let base = null;
