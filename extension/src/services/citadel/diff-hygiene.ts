@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DiffSummary, ChangedFileSummary } from './diff-walker.js';
@@ -281,8 +281,11 @@ function isEnvFile(basename: string): boolean {
 
 function fileSize(repoRoot: string, filePath: string): number {
   const fullPath = path.join(repoRoot, filePath);
-  if (!existsSync(fullPath)) return 0;
-  return statSync(fullPath).size;
+  try {
+    return statSync(fullPath).size;
+  } catch {
+    return 0;
+  }
 }
 
 function isGitIgnored(repoRoot: string, filePath: string): boolean {

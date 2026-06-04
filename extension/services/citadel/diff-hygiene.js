@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 export const ROOT_MARKDOWN_ALLOWLIST = new Set([
@@ -165,9 +165,12 @@ function isEnvFile(basename) {
 }
 function fileSize(repoRoot, filePath) {
     const fullPath = path.join(repoRoot, filePath);
-    if (!existsSync(fullPath))
+    try {
+        return statSync(fullPath).size;
+    }
+    catch {
         return 0;
-    return statSync(fullPath).size;
+    }
 }
 function isGitIgnored(repoRoot, filePath) {
     const result = spawnSync('git', ['check-ignore', '--quiet', '--', filePath], {
