@@ -446,13 +446,27 @@ export function enforceRateLimitGate(_state: State, transcript: string): HelperR
   return null;
 }
 
-export function enforceLimits(state: State): HelperResult | null {
+interface LimitMetrics {
+  startEpoch: number;
+  maxTimeMins: number;
+  maxIter: number;
+  curIter: number;
+  elapsedSeconds: number;
+}
+
+/** Single source of truth for the time/iteration limit metrics derived from state. */
+function computeLimitMetrics(state: State): LimitMetrics {
   const now = Math.floor(Date.now() / 1000);
   const startEpoch = finiteNumber(state.start_time_epoch);
   const maxTimeMins = finiteNumber(state.max_time_minutes);
   const maxIter = finiteNumber(state.max_iterations);
   const curIter = finiteNumber(state.iteration);
   const elapsedSeconds = startEpoch > 0 ? Math.max(0, now - startEpoch) : 0;
+  return { startEpoch, maxTimeMins, maxIter, curIter, elapsedSeconds };
+}
+
+export function enforceLimits(state: State): HelperResult | null {
+  const { startEpoch, maxTimeMins, maxIter, curIter, elapsedSeconds } = computeLimitMetrics(state);
 
   if (maxIter > 0 && curIter >= maxIter) {
     return { decision: 'approve', stateMutations: state.tmux_mode === true ? undefined : { active: false } };
@@ -580,12 +594,7 @@ function tokenActivity(token: TokenKind, isWorkerRole: boolean): ActivityKind | 
 }
 
 function classifyLimitDecision(state: State): ClassifiedResult | null {
-  const now = Math.floor(Date.now() / 1000);
-  const startEpoch = finiteNumber(state.start_time_epoch);
-  const maxTimeMins = finiteNumber(state.max_time_minutes);
-  const maxIter = finiteNumber(state.max_iterations);
-  const curIter = finiteNumber(state.iteration);
-  const elapsedSeconds = startEpoch > 0 ? Math.max(0, now - startEpoch) : 0;
+  const { startEpoch, maxTimeMins, maxIter, curIter, elapsedSeconds } = computeLimitMetrics(state);
   const limitResult = enforceLimits(state);
   if (!limitResult) return null;
 
