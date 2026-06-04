@@ -1344,6 +1344,9 @@ const JUDGE_SYSTEM_PROMPT = [
  *   "## Prior violations" section is appended so the judge does not re-report already-
  *   tracked issues. Capped at the 50 most-recent entries by `last_seen_iter` desc.
  *   Non-array values are treated as empty (defensive).
+ * @param allowedPaths - When non-empty (scoped run), the judge is restricted to these
+ *   paths and the whole-tree "Target path:" instruction is omitted. When empty/absent
+ *   (unscoped run), existing whole-tree behavior is preserved.
  */
 export function buildJudgePrompt(
   goal: string,
@@ -1352,6 +1355,7 @@ export function buildJudgePrompt(
   prdPath?: string,
   judgeContextPath?: string,
   priorViolations: ViolationLedger[] = [],
+  allowedPaths: string[] = [],
 ): string {
   const parts: string[] = [
     `Goal: ${goal}`,
@@ -1363,7 +1367,11 @@ export function buildJudgePrompt(
     parts.push('Read this file FIRST — it defines the scoring criteria, priority matrix, and violation taxonomy you must use.');
   }
 
-  if (prdPath) {
+  if (allowedPaths.length > 0) {
+    parts.push('Review ONLY these paths:');
+    for (const p of allowedPaths) parts.push(`- ${p}`);
+    parts.push('Use Read, Glob, and Grep to examine these files before scoring.');
+  } else if (prdPath) {
     parts.push(`Target path: ${prdPath}`);
     parts.push('Examine the code at this path before scoring. If it is a directory, use Glob to find source files and Read to examine them.');
   }
@@ -1560,6 +1568,7 @@ export async function measureLlmMetric(
   judgeContextPath?: string,
   backend: Backend = 'claude',
   priorViolations: ViolationLedger[] = [],
+  allowedPaths: string[] = [],
 ): Promise<{ raw: string; score: number } | null> {
   return (await measureLlmMetricAttempt(
     goal,
@@ -1571,6 +1580,7 @@ export async function measureLlmMetric(
     judgeContextPath,
     backend,
     priorViolations,
+    allowedPaths,
   )).metric;
 }
 
@@ -1839,13 +1849,14 @@ async function measureLlmMetricAttempt(
   judgeContextPath?: string,
   backend: Backend = 'claude',
   priorViolations: ViolationLedger[] = [],
+  allowedPaths: string[] = [],
 ): Promise<JudgeMeasurementAttempt> {
   // The judge always runs via the claude binary, even when state.backend=codex.
   // codex on ChatGPT accounts rejects claude-sonnet-4-6 as unsupported, causing
   // silent false-convergence (BestScore: 0). Worker iteration spawns continue
   // to honor state.backend; only the judge is pinned to claude.
   const model = judgeModel || DEFAULT_JUDGE_MODEL;
-  const userPrompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath, priorViolations);
+  const userPrompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath, priorViolations, allowedPaths);
 
   // Always use the claude judge path: --allowedTools Read,Glob,Grep +
   // --no-session-persistence + --system-prompt. The judge MUST NOT write,
@@ -2085,6 +2096,7 @@ export async function measureLlmMetricWithBackoff(
   backend: Backend = 'claude',
   priorViolations: ViolationLedger[] = [],
   attemptActivity?: JudgeAttemptActivity,
+  allowedPaths: string[] = [],
 ): Promise<JudgeMeasurementResult> {
   const primaryWorkerBackend = backend;
   const settings = attemptActivity?.spawnContext === 'iteration'
@@ -2123,6 +2135,7 @@ export async function measureLlmMetricWithBackoff(
       judgeContextPath,
       attemptBackend,
       priorViolations,
+      allowedPaths,
     );
     const elapsedMs = Math.max(0, Date.now() - startedAt);
     if (attemptActivity) {
@@ -2511,6 +2524,7 @@ async function measureCurrentMetric(
       state.judge_context_path,
       backend,
       state.violation_ledger ?? [],
+      state.allowed_paths ?? [],
     );
   }
   return null;
@@ -2687,6 +2701,7 @@ async function measureLlmBaseline(
       iteration: ctx.iteration,
       spawnContext: 'baseline',
     },
+    state.allowed_paths ?? [],
   );
   if (measured.metric) return measured.metric;
   const exitReason: ExitReason = mapJudgeMeasurementFailure(measured);
@@ -2956,6 +2971,7 @@ async function measureLlmIteration(
       statePath: ctx.statePath,
       runnerState: ctx.currentRunnerState,
     },
+    state.allowed_paths ?? [],
   );
   if (measured.metric) return { kind: 'ok', metric: measured.metric };
   const exitReason = mapJudgeMeasurementFailure(measured);

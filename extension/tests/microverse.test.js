@@ -2161,6 +2161,24 @@ test('buildJudgePrompt with 60-entry priorViolations caps to 50 sorted by last_s
     assert.ok(entryLines[49].includes('last seen iter 11'), 'last entry should have last_seen_iter = 11');
 });
 
+// R-SJWT-1: scoped judge prompt (allowed_paths)
+test('buildJudgePrompt with allowedPaths uses scoped instruction and omits whole-tree instruction', () => {
+    const paths = ['extension/src/foo.ts', 'extension/src/bar.ts'];
+    const prompt = buildJudgePrompt('fix bugs', '/tmp', undefined, '/tmp/target', undefined, [], paths);
+    assert.ok(prompt.includes('extension/src/foo.ts'), 'should include first allowed path');
+    assert.ok(prompt.includes('extension/src/bar.ts'), 'should include second allowed path');
+    assert.ok(prompt.includes('Review ONLY these paths:'), 'should include scoped section header');
+    assert.ok(!prompt.includes('Examine the code at this path'), 'must not include whole-tree examine instruction');
+    assert.ok(!prompt.includes('Target path:'), 'must not include Target path: when allowedPaths is non-empty');
+});
+
+test('buildJudgePrompt with empty allowedPaths falls back to whole-tree Target path (unscoped)', () => {
+    const prompt = buildJudgePrompt('fix bugs', '/tmp', undefined, '/tmp/target', undefined, [], []);
+    assert.ok(prompt.includes('Target path: /tmp/target'), 'should include Target path for unscoped run');
+    assert.ok(prompt.includes('Examine the code at this path'), 'should include whole-tree examine instruction');
+    assert.ok(!prompt.includes('Review ONLY'), 'must not include scoped instruction for unscoped run');
+});
+
 test('measureLlmMetric passes judgeContextPath to buildJudgePrompt', async () => {
     const orig = _deps.execFileSync;
     process.env['PICKLE_JUDGE_LEGACY_SPAWN'] = '1';
