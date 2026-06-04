@@ -132,6 +132,22 @@ function aggregateRowBackendOutputs(row) {
     }
     return outputs;
 }
+function backendColumnLabel(backend) {
+    return backend.charAt(0).toUpperCase() + backend.slice(1);
+}
+/**
+ * One output column per backend that has non-zero output across the window.
+ * Driven by BACKENDS so a new backend is never silently dropped from the
+ * per-backend breakdown; backends with no activity are omitted to keep the
+ * table readable.
+ */
+function buildBackendColumns(perEntryOutputs) {
+    return BACKENDS.filter((backend) => perEntryOutputs.some((outputs) => outputs[backend] > 0)).map((backend) => ({
+        header: backendColumnLabel(backend),
+        align: 'right',
+        values: perEntryOutputs.map((outputs) => formatNumber(outputs[backend])),
+    }));
+}
 function printDailyTable(report) {
     printMinimalPanel(`Metrics — ${report.since} to ${report.until}`, {
         Projects: String(report.projects.length),
@@ -142,13 +158,11 @@ function printDailyTable(report) {
     }, 'CYAN', '📊');
     if (report.rows.length === 0)
         return;
+    const rowBackendOutputs = report.rows.map(aggregateRowBackendOutputs);
     const dates = [];
     const turns = [];
     const input = [];
     const output = [];
-    const claude = [];
-    const codex = [];
-    const hermes = [];
     const added = [];
     const removed = [];
     const net = [];
@@ -158,10 +172,6 @@ function printDailyTable(report) {
         turns.push(formatNumber(rowTotals.turns));
         input.push(formatNumber(rowTotals.input));
         output.push(formatNumber(rowTotals.output));
-        const backendOutputs = aggregateRowBackendOutputs(row);
-        claude.push(formatNumber(backendOutputs.claude));
-        codex.push(formatNumber(backendOutputs.codex));
-        hermes.push(formatNumber(backendOutputs.hermes));
         added.push('+' + formatNumber(rowTotals.added));
         removed.push('-' + formatNumber(rowTotals.removed));
         net.push(formatNumber(rowTotals.added - rowTotals.removed));
@@ -171,9 +181,7 @@ function printDailyTable(report) {
         { header: 'Turns', align: 'right', values: turns },
         { header: 'Input', align: 'right', values: input },
         { header: 'Output', align: 'right', values: output },
-        { header: 'Claude', align: 'right', values: claude },
-        { header: 'Codex', align: 'right', values: codex },
-        { header: 'Hermes', align: 'right', values: hermes },
+        ...buildBackendColumns(rowBackendOutputs),
         { header: '+Lines', align: 'right', values: added },
         { header: '-Lines', align: 'right', values: removed },
         { header: 'Net', align: 'right', values: net },
@@ -264,9 +272,6 @@ function printWeeklyTable(report) {
     const labels = [];
     const turns = [];
     const output = [];
-    const claude = [];
-    const codex = [];
-    const hermes = [];
     const added = [];
     const removed = [];
     const delta = [];
@@ -276,9 +281,6 @@ function printWeeklyTable(report) {
         labels.push(w.label);
         turns.push(formatNumber(w.turns));
         output.push(formatNumber(w.output));
-        claude.push(formatNumber(w.backendOutput.claude));
-        codex.push(formatNumber(w.backendOutput.codex));
-        hermes.push(formatNumber(w.backendOutput.hermes));
         added.push('+' + formatNumber(w.added));
         removed.push('-' + formatNumber(w.removed));
         if (i === 0) {
@@ -304,9 +306,7 @@ function printWeeklyTable(report) {
         { header: 'Week', align: 'left', values: labels },
         { header: 'Turns', align: 'right', values: turns },
         { header: 'Output', align: 'right', values: output },
-        { header: 'Claude', align: 'right', values: claude },
-        { header: 'Codex', align: 'right', values: codex },
-        { header: 'Hermes', align: 'right', values: hermes },
+        ...buildBackendColumns(weeks.map((w) => w.backendOutput)),
         { header: '+Lines', align: 'right', values: added },
         { header: '-Lines', align: 'right', values: removed },
         { header: 'Δ Output', align: 'right', values: delta },

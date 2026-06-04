@@ -564,6 +564,77 @@ test('metrics.hermes-bucket: mixed backend session reports separate backend tota
     }
 });
 
+test('metrics.backend-columns: newer backends (gemini) are never silently dropped from the per-backend breakdown', () => {
+    const { root } = makeTempProjectsDir();
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-data-root-'));
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-repos-'));
+    try {
+        const today = formatLocalDateKey(new Date());
+        // A claude turn plus a gemini turn — gemini is in BACKENDS but had no column before HS-13.
+        writeSessionLine(root, 'multi-backend-project', 'session.jsonl',
+            makeAssistantLine(`${today}T10:00:00Z`, 100, 200, 0, 0, 'claude'));
+        writeSessionLine(root, 'multi-backend-project', 'session.jsonl',
+            makeAssistantLine(`${today}T11:00:00Z`, 50, 700, 0, 0, 'gemini'));
+
+        const jsonResult = runMetricsCli(['--days', '0', '--json'], {
+            CLAUDE_PROJECTS_DIR: root,
+            METRICS_REPO_ROOT: repoRoot,
+            PICKLE_DATA_ROOT: dataRoot,
+        });
+        assert.equal(jsonResult.status, 0, `stderr: ${jsonResult.stderr}`);
+        const report = JSON.parse(jsonResult.stdout);
+        assert.equal(report.totals.output, 900);
+        assert.equal(report.tokens_per_backend.gemini.output, 700);
+
+        const tableResult = runMetricsCli(['--days', '0'], {
+            CLAUDE_PROJECTS_DIR: root,
+            METRICS_REPO_ROOT: repoRoot,
+            PICKLE_DATA_ROOT: dataRoot,
+        });
+        assert.equal(tableResult.status, 0, `stderr: ${tableResult.stderr}`);
+        // The gemini output must surface as its own column, not vanish into the total.
+        assert.match(tableResult.stdout, /Gemini/);
+        assert.match(tableResult.stdout, /Claude/);
+
+        const weeklyResult = runMetricsCli(['--days', '0', '--weekly'], {
+            CLAUDE_PROJECTS_DIR: root,
+            METRICS_REPO_ROOT: repoRoot,
+            PICKLE_DATA_ROOT: dataRoot,
+        });
+        assert.equal(weeklyResult.status, 0, `stderr: ${weeklyResult.stderr}`);
+        assert.match(weeklyResult.stdout, /Gemini/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('metrics.backend-columns: a backend with zero output in the window gets no column', () => {
+    const { root } = makeTempProjectsDir();
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-data-root-'));
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-repos-'));
+    try {
+        const today = formatLocalDateKey(new Date());
+        writeSessionLine(root, 'claude-only-project', 'session.jsonl',
+            makeAssistantLine(`${today}T10:00:00Z`, 100, 200, 0, 0, 'claude'));
+
+        const tableResult = runMetricsCli(['--days', '0'], {
+            CLAUDE_PROJECTS_DIR: root,
+            METRICS_REPO_ROOT: repoRoot,
+            PICKLE_DATA_ROOT: dataRoot,
+        });
+        assert.equal(tableResult.status, 0, `stderr: ${tableResult.stderr}`);
+        assert.match(tableResult.stdout, /Claude/);
+        // No gemini activity → no Gemini column (keeps the table readable).
+        assert.doesNotMatch(tableResult.stdout, /Gemini/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 test('scanSessionFiles: nonexistent directory returns empty map', () => {
     const result = scanSessionFiles('/nonexistent/path', '2026-02-28', '2026-02-28', '/tmp/no-cache.json');
     assert.equal(result.size, 0);
