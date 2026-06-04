@@ -192,68 +192,34 @@ function loadFiles(
 
 function findRuleSetDeclarations(file: LoadedFile): DeclarationCandidate[] {
   return [
-    ...findArrayDeclarations(file),
-    ...findEnumDeclarations(file),
-    ...findObjectDeclarations(file),
+    ...findDeclarations(file, ARRAY_DECLARATION_PATTERN, 'array', extractArrayMembers, true),
+    ...findDeclarations(file, ENUM_DECLARATION_PATTERN, 'enum', extractEnumMembers, false),
+    ...findDeclarations(file, OBJECT_DECLARATION_PATTERN, 'object', extractObjectKeys, true),
   ].sort((a, b) => a.line - b.line || a.declarationName.localeCompare(b.declarationName));
 }
 
-function findArrayDeclarations(file: LoadedFile): DeclarationCandidate[] {
+function findDeclarations(
+  file: LoadedFile,
+  pattern: RegExp,
+  kind: RuleSetDeclarationKind,
+  extractMembers: (body: string) => string[],
+  requireRuleSetName: boolean,
+): DeclarationCandidate[] {
   const declarations: DeclarationCandidate[] = [];
-  for (const match of file.content.matchAll(ARRAY_DECLARATION_PATTERN)) {
+  for (const match of file.content.matchAll(pattern)) {
     const name = match[1];
-    if (!looksLikeRuleSetName(name)) continue;
+    if (requireRuleSetName && !looksLikeRuleSetName(name)) continue;
     const line = lineNumberAtOffset(file.lineStarts, match.index ?? 0);
     if (!lineIsChanged(file.changedLines, line)) continue;
-    const members = extractArrayMembers(match[2]);
+    const members = extractMembers(match[2]);
     if (members.length < 3) continue;
-    declarations.push({
-      declarationName: name,
-      kind: 'array',
-      file: file.path,
-      line,
-      members,
-    });
+    declarations.push({ declarationName: name, kind, file: file.path, line, members });
   }
   return declarations;
 }
 
-function findEnumDeclarations(file: LoadedFile): DeclarationCandidate[] {
-  const declarations: DeclarationCandidate[] = [];
-  for (const match of file.content.matchAll(ENUM_DECLARATION_PATTERN)) {
-    const line = lineNumberAtOffset(file.lineStarts, match.index ?? 0);
-    if (!lineIsChanged(file.changedLines, line)) continue;
-    const members = uniqueSortedStrings([...match[2].matchAll(/^\s*([A-Za-z_$][\w$]*)/gm)].map((entry) => entry[1]));
-    if (members.length < 3) continue;
-    declarations.push({
-      declarationName: match[1],
-      kind: 'enum',
-      file: file.path,
-      line,
-      members,
-    });
-  }
-  return declarations;
-}
-
-function findObjectDeclarations(file: LoadedFile): DeclarationCandidate[] {
-  const declarations: DeclarationCandidate[] = [];
-  for (const match of file.content.matchAll(OBJECT_DECLARATION_PATTERN)) {
-    const name = match[1];
-    if (!looksLikeRuleSetName(name)) continue;
-    const line = lineNumberAtOffset(file.lineStarts, match.index ?? 0);
-    if (!lineIsChanged(file.changedLines, line)) continue;
-    const members = extractObjectKeys(match[2]);
-    if (members.length < 3) continue;
-    declarations.push({
-      declarationName: name,
-      kind: 'object',
-      file: file.path,
-      line,
-      members,
-    });
-  }
-  return declarations;
+function extractEnumMembers(body: string): string[] {
+  return uniqueSortedStrings([...body.matchAll(/^\s*([A-Za-z_$][\w$]*)/gm)].map((entry) => entry[1]));
 }
 
 function extractArrayMembers(body: string): string[] {
