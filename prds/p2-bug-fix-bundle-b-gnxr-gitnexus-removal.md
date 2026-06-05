@@ -9,6 +9,7 @@ composes:
   - "#96 R-GNDT — setup.js GitNexus graph-preflight (`gitnexus analyze`) rewrites tracked CLAUDE.md/AGENTS.md index stats → dirty tree → pipeline-runner FATAL self-brick. RESOLVED BY REMOVAL: deleting the GitNexus integration removes the mutator entirely (no preflight, no stat-drift, no self-brick)."
   - "#97 R-PFNP — pipeline-runner dirty-tree preflight ignore-prefix matches only top-level docs/prds; nested packages/api/docs/prd/ blocks launch. GitNexus-INDEPENDENT robustness fix — kept."
   - "#98 R-PRNF — pipeline-runner treats a readiness-HALTED pickle phase as a recoverable partial build and reports a zero-build pipeline 'complete'. GitNexus-INDEPENDENT correctness fix — kept."
+  - "#99 R-WCUC — mux-runner no-progress detector discards completed, gate-passing-but-uncommitted worker output (keys on commits-landed not tree-changes-passing-gates) → work loss on clean-tree relaunch. GitNexus-INDEPENDENT run-integrity fix — folded in by operator (dominant codex failure mode)."
 backend_constraint: claude
 schema_neutral: true   # no state.json field change, no LATEST_SCHEMA_VERSION bump. Removes graph_preflight_completed/graph_preflight_degraded from the VALID_ACTIVITY_EVENTS allowlist (runtime event allowlist, not state schema) — backward-compatible: old state.json stays readable.
 replaces: B-GNDT (the fix-in-place plan-of-record; operator chose full removal over patching the preflight)
@@ -56,7 +57,8 @@ GitNexus is the shipped "Pipeline Graph Intelligence" feature (R-PGI-*): a knowl
 - Full removal of the GitNexus integration from the runtime, skills, commands, docs, config, and on-disk index (full teardown per operator).
 - R-PFNP: pipeline-runner dirty-tree preflight ignores `docs/`/`prds/` at any path depth.
 - R-PRNF: pipeline-runner treats a readiness-halted pickle phase as a hard failure (not recoverable-continue) and never reports a zero-build run as `completed`.
-- Closer: full release gate, version bump, install.sh, push, release, MASTER_PLAN repoint closing #96/#97/#98.
+- R-WCUC: mux-runner no-progress detector commits gate-passing uncommitted worker output (or records the diff if gates fail) instead of discarding it; splits the `work_uncommitted` vs `no_work_produced` failure taxonomy.
+- Closer: full release gate, version bump, install.sh, push, release, MASTER_PLAN repoint closing #96/#97/#98/#99.
 
 ## Not in scope
 
@@ -124,8 +126,15 @@ GitNexus is the shipped "Pipeline Graph Intelligence" feature (R-PGI-*): a knowl
 - **AC-PRNF-9-4:** a genuine partial build (pickle errored AFTER producing ticket commits this run) still continues to citadel for remediation (no regression of the legitimate recoverable-continue path).
 - **AC-PRNF-9-5:** the R-PHC-6 continue-by-default phase-halt trap door and R-ICP-2 phase-incomplete trap door are not regressed (existing pipeline-runner tests stay green).
 
+### R-WCUC-10 (medium) — commit gate-passing uncommitted worker output instead of discarding it (#99)
+- **Scope:** in `extension/src/bin/mux-runner.ts` no-progress detector (the `oversized_no_progress` → `closer_handoff_terminal` path; see R-WMW-5 trap door): before declaring `oversized_no_progress`/Failed, inspect the working tree for uncommitted changes attributable to the ticket. (a) If present AND the ticket's gate passes (typecheck + the ticket's acceptance spec(s)), **commit the worker output and mark the ticket Done** instead of Failed. (b) If present but gates FAIL, record the diff (stash ref or patch file under the session dir) in the failure record so the next clean-tree relaunch does not silently destroy it. (c) Split the `failure_reason` taxonomy: `no_work_produced` (true no-progress) distinct from `work_uncommitted` (tree has gate-passing changes). NOT in scope: the worker-lifecycle reason the commit step didn't fire (separate codex-lifecycle-convergence investigation); true oversized tickets that produce no convergent work still fail/split.
+- **AC-WCUC-10-1:** a regression where a worker writes gate-passing files but never commits → the ticket ends `Done` with a commit, not `Failed`/`oversized_no_progress`.
+- **AC-WCUC-10-2:** when uncommitted changes are present but gates fail, the failed-ticket record references the preserved diff (stash ref / session-dir patch) and a relaunch does not destroy it unrecorded.
+- **AC-WCUC-10-3:** the `failure_reason` taxonomy distinguishes `work_uncommitted` from `no_work_produced`; the 907.1-shaped case (gate-passing tree, no commit) reports `work_uncommitted`.
+- **AC-WCUC-10-4:** the R-WMW-5 oversized-wedge auto-skip trap door is not regressed — a genuinely wedged ticket with NO gate-passing tree changes still auto-skips/fails as before.
+
 ### R-GNXR-CLOSER (closer) — gate, ship, repoint
-- **Scope:** run the full release gate from `extension/` (tsc --noEmit, eslint --max-warnings=-1, tsc, all audit-*.sh, test:fast, test:integration, RUN_EXPENSIVE_TESTS=1 test:expensive); CONFIRM GREEN; recompile so deployed `.js` matches `.ts`; bump `extension/package.json` per semver (MINOR — removes commands/skills/events + a feature, no state-schema change and no CLI-arg/hook-contract removal); commit `chore: bump version to X.Y.Z`; `bash install.sh`; verify clean tree + parity; `git push`; `gh release create vX.Y.Z`; repoint MASTER_PLAN row 27 to ✅ SHIPPED, mark #96 (resolved-by-removal) / #97 / #98 done, and note `p2-pipeline-graph-intelligence` + `p2-codegraph-integration` as superseded.
+- **Scope:** run the full release gate from `extension/` (tsc --noEmit, eslint --max-warnings=-1, tsc, all audit-*.sh, test:fast, test:integration, RUN_EXPENSIVE_TESTS=1 test:expensive); CONFIRM GREEN; recompile so deployed `.js` matches `.ts`; bump `extension/package.json` per semver (MINOR — removes commands/skills/events + a feature, no state-schema change and no CLI-arg/hook-contract removal); commit `chore: bump version to X.Y.Z`; `bash install.sh`; verify clean tree + parity; `git push`; `gh release create vX.Y.Z`; repoint MASTER_PLAN row 27 to ✅ SHIPPED, mark #96 (resolved-by-removal) / #97 / #98 / #99 done, and note `p2-pipeline-graph-intelligence` + `p2-codegraph-integration` as superseded.
 - **AC-CLOSER-1:** full gate green (read each tier's summary; re-run c=8 flakes at c=2/c=4 per `feedback_release_gate_fast_suite_concurrency_flakes`).
 - **AC-CLOSER-2:** `grep -rniE "gitnexus" extension/src .claude CLAUDE.md AGENTS.md COMMANDS.md README.md roadmap.md internals.md` returns zero matches (whole-integration removal verified at close).
 - **AC-CLOSER-3:** `git status` clean, compiled `.js` matches `.ts`, release tagged, MASTER_PLAN row 27 repointed.

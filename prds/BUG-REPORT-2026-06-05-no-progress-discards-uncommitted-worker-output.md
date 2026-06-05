@@ -50,6 +50,16 @@ This is adjacent to **R-PRNF (#98)** — both are the runner/mux-runner mishandl
 - **AC-R-WCUC-2:** if uncommitted changes are present but gates FAIL, do NOT silently discard them on the next clean-tree relaunch — record the diff (stash ref / patch file in the session dir) in the failure record. Verify: the failed-ticket record references the preserved diff; relaunch does not destroy it unrecorded.
 - **AC-R-WCUC-3:** split the `failure_reason` taxonomy so `no_work_produced` (true no-progress) is distinct from `work_uncommitted` (tree has gate-passing changes). Verify: the 907.1-shaped case reports `work_uncommitted`, not `oversized_no_progress`, so downstream recovery chooses commit-vs-split correctly.
 
+## Update 2026-06-05 — frequency/severity (this is the DOMINANT failure mode on codex, not an edge case)
+
+Across the LOA-907 codex build, `oversized_no_progress` is the **dominant outcome for every non-trivial ticket**, not a rare edge case:
+- **Failed `oversized_no_progress`:** 907.0 (combined), 907.1 (scaffold — work present, uncommitted → R-WCUC), 907.2 (combined docs), 907.2-ii (parity table — 340B stub), 907.3 (4 node wraps — **no output, nodes still stubs**).
+- **Converged normally (worker committed):** only the trivial single-file tickets — 907.0-i (flag migration), 907.0-ii (reader), 907.0b (preconditions), 907.2-i (BEHAVIOR.md).
+
+So the codex worker reliably converges trivial single-file tickets but **systematically fails to reach its commit/implement-completion step within the lifecycle budget for anything larger** — the no-progress detector then fails the ticket. Net effect: the pipeline is **effectively non-autonomous on codex** — a human/babysitter had to split / commit-present-work / generate-the-doc / split-again on ~every non-trivial ticket to make forward progress (5 manual recoveries in the first 8 non-trivial tickets).
+
+Implications: (1) raises the priority of **AC-R-WCUC-1/-3** (commit gate-passing present work; split the failure taxonomy) — without them, codex builds stall on nearly every real ticket. (2) Suggests a deeper **codex-lifecycle convergence investigation** (separate finding candidate): why does the codex worker not reach implement-write/commit within `worker_timeout=2400s` for moderate tickets, when claude-backed workers presumably do? Likely the multi-phase lifecycle (research→review→plan→review→implement→conformance→review→simplify→commit) consumes the budget before the commit step on codex. (3) A pragmatic mitigation is aggressive auto-decomposition (one-file-per-ticket) for codex builds, or a "commit what's verified at timeout" behavior.
+
 ## NOT in scope
 
 The worker lifecycle itself (why the commit step didn't fire — could be timeout or implement↔review cycling; a separate investigation). True oversized tickets that produce no convergent work (those correctly fail/split — see 907.0 in the same session, which produced no files and was correctly split). The R-PRNF runner-continue defect (#98).
