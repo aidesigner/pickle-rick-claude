@@ -244,26 +244,26 @@ export function appendMonitorStderrLog(opts: {
   const header = opts.firstWriteForProcess === false ? Buffer.alloc(0) : Buffer.from(buildMonitorStderrHeader(opts.sessionDir, pid, ts), 'utf8');
   const appended = header.length > 0 ? Buffer.concat([header, payload]) : payload;
 
-  let existing = Buffer.alloc(0);
+  // Append unconditionally, then trim from the front only when the file has
+  // grown past the cap. The common path is a single append + stat; the whole
+  // file is re-read solely on the (rare) rotation path. The previous
+  // implementation read the entire log on every write and double-wrote on
+  // rotation (append followed by an overwrite that partially undid it).
+  fs.appendFileSync(logPath, appended);
+
+  let onDiskSize = appended.length;
   try {
-    if (fs.existsSync(logPath)) {
-      existing = fs.readFileSync(logPath);
-    }
-  } catch {
-    existing = Buffer.alloc(0);
-  }
+    onDiskSize = fs.statSync(logPath).size;
+  } catch { /* keep the append length as a best-effort estimate */ }
 
-  const combined = Buffer.concat([existing, appended]);
-  let next = combined;
   let bytesDropped = 0;
-  if (combined.length > capBytes) {
-    bytesDropped = combined.length - capBytes;
-    next = combined.subarray(bytesDropped);
-  }
-
-  fs.appendFileSync(logPath, appended, 'utf8');
-  if (bytesDropped > 0) {
-    fs.writeFileSync(logPath, next);
+  if (onDiskSize > capBytes) {
+    bytesDropped = onDiskSize - capBytes;
+    let current = appended;
+    try {
+      current = fs.readFileSync(logPath);
+    } catch { /* fall back to the just-appended buffer */ }
+    fs.writeFileSync(logPath, current.subarray(bytesDropped));
     logFn({
       event: 'monitor_stderr_rotated',
       source: 'pickle',
