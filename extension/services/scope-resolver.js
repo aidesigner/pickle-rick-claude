@@ -626,8 +626,14 @@ function findImporters(name, repoRoot, timeoutMs) {
     // aliased imports (`{ foo as bar }`) are NOT matched: `\bfoo\b\s*[,}]`
     // requires , or } after foo — ` as` does not satisfy this (documented miss).
     const pattern = `import\\s+${name}\\b|import[^{;]*\\{[^}]*\\b${name}\\b\\s*[,}]`;
+    // `null` from _runRgImportWalk means rg failed/missing — the ONLY case the
+    // grep fallback exists for. A successful rg that found zero importers returns
+    // `[]`, which is the authoritative answer: rg honors .gitignore + the
+    // `*.{ts,…}` glob, so falling through to `grep -rl … .` (which does NOT honor
+    // .gitignore) would both double the subprocess count and pull ignored
+    // importers (node_modules/, dist/) into the one-hop set.
     const rgMatches = _runRgImportWalk(pattern, repoRoot, timeoutMs);
-    if (rgMatches.length > 0)
+    if (rgMatches !== null)
         return rgMatches;
     return _runGrepImportWalk(pattern, repoRoot, timeoutMs);
 }
@@ -648,7 +654,7 @@ function _runRgImportWalk(pattern, root, timeoutMs) {
     }
     const errorCode = rg.error?.code;
     console.warn(`scope-resolver import walk: rg ${errorCode === 'ETIMEDOUT' ? 'timeout' : 'fail'} status=${rg.status ?? 'null'} signal=${rg.signal ?? 'null'} error=${errorCode ?? 'none'}`);
-    return [];
+    return null;
 }
 function _runGrepImportWalk(pattern, root, timeoutMs) {
     const grep = spawnSync('grep', ['-rl', '-E', '--include=*.ts', '--include=*.tsx', '--include=*.js', '--include=*.jsx',

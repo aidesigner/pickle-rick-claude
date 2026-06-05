@@ -36,6 +36,13 @@ const HANG_SCRIPT = `#!/bin/sh
 /bin/sleep 60
 `;
 
+// rg's "ran fine, found zero matches" exit code. Distinct from a tool failure
+// (exit 2). The SUT MUST treat this as the authoritative empty answer and NOT
+// fall through to the gitignore-blind grep fallback.
+const RG_EMPTY_SUCCESS_SCRIPT = `#!/bin/sh
+exit 1
+`;
+
 function makeRepo() {
     const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scope-import-walk-')));
     fs.writeFileSync(path.join(repo, 'a.ts'), 'export function foo() {}\n');
@@ -157,6 +164,19 @@ test('computeOneHop import walks', async (t) => {
             warningCategoryCount(output.warnings, 'fail') +
             warningCategoryCount(output.warnings, 'timeout');
         assert.equal(failureCount, 2);
+    });
+
+    await t.test('rg success with zero matches does NOT fall through to grep', () => {
+        // rg ran fine (exit 1 = no matches) — that is the authoritative empty
+        // answer. grep would print ./b.ts if (wrongly) consulted, so its
+        // absence from the result proves the fallback was not taken. This
+        // guards the rg-empty-vs-rg-failure conflation: rg honors .gitignore,
+        // grep -rl does not, so a spurious grep fallback both double-spawns and
+        // can pull ignored importers into the one-hop set.
+        const output = runInRepo({ rg: RG_EMPTY_SUCCESS_SCRIPT, grep: SUCCESS_SCRIPT });
+        assert.deepStrictEqual(output.result, ['a.ts']);
+        assert.equal(hasFailureWarning(output.warnings, 'rg'), false);
+        assert.equal(hasFailureWarning(output.warnings, 'grep'), false);
     });
 
     await t.test('rg hang is bounded by findImportersTimeoutMs', () => {
