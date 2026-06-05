@@ -97,6 +97,29 @@ describe('parseWithComposes', () => {
     assert.equal(result.transitionAuditRows.some((row) => row.auditAction === 'logChildTransition'), true);
   });
 
+  test('diamond root→[A,B], A→C, B→C → no throw; shared base C merged exactly once', async () => {
+    const { parseWithComposes } = await importParser();
+    writePrd(tmpDir, 'diamond/c.md', [], '# C\n\nR-DIAMOND-3 shared base requirement.\n');
+    writePrd(tmpDir, 'diamond/a.md', ['diamond/c.md'], '# A\n\nR-DIAMOND-1 branch a requirement.\n');
+    writePrd(tmpDir, 'diamond/b.md', ['diamond/c.md'], '# B\n\nR-DIAMOND-2 branch b requirement.\n');
+    const rootPrd = writePrd(tmpDir, 'diamond/root.md', ['diamond/a.md', 'diamond/b.md']);
+
+    // A shared base reachable via two distinct branches is a DAG diamond, not a
+    // cycle — it must not throw, and its R-codes must merge exactly once.
+    const result = parseWithComposes(rootPrd, { repoRoot: tmpDir });
+
+    const cReal = fs.realpathSync(path.join(tmpDir, 'diamond/c.md'));
+    assert.ok(result.composedRcodes.has(cReal), 'shared base C must appear in composedRcodes');
+    const allRcodeIds = [...result.composedRcodes.values()].flat().map((entry) => entry.id);
+    assert.equal(
+      allRcodeIds.filter((id) => id === 'R-DIAMOND-3').length,
+      1,
+      'shared base R-code must be merged exactly once (no duplicate, no cycle error)',
+    );
+    assert.ok(allRcodeIds.includes('R-DIAMOND-1'), 'branch A R-code missing');
+    assert.ok(allRcodeIds.includes('R-DIAMOND-2'), 'branch B R-code missing');
+  });
+
   test('cycle A→B→A → throws ComposesCycleError', async () => {
     const { parseWithComposes, ComposesCycleError } = await importParser();
     writePrd(tmpDir, 'cycle/a.md', ['cycle/b.md']);

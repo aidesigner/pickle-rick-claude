@@ -508,7 +508,8 @@ function walkComposeChain(
   prdPath: string,
   repoRoot: string,
   depth: number,
-  visited: Set<string>,
+  onPath: Set<string>,
+  processed: Set<string>,
   aggregate: ParsedPrd,
   composedRcodes: Map<string, RcodeEntry[]>,
 ): void {
@@ -535,10 +536,13 @@ function walkComposeChain(
       throw new ComposesCycleError(`symlink resolution failed for "${composePath}": ${msg}`);
     }
 
-    if (visited.has(realPath)) throw new ComposesCycleError(realPath);
+    // A node currently on the DFS recursion path is a true cycle.
+    if (onPath.has(realPath)) throw new ComposesCycleError(realPath);
+    // A node already fully merged via another branch is a benign diamond;
+    // the merge layer dedupes content by key, so skip the redundant re-walk
+    // instead of misreporting the shared base as a cycle.
+    if (processed.has(realPath)) continue;
     if (depth >= MAX_COMPOSES_DEPTH) throw new ComposesDepthError(depth);
-
-    visited.add(realPath);
 
     let sourceContent: string;
     try {
@@ -550,7 +554,10 @@ function walkComposeChain(
     mergeParsedPrd(aggregate, parsePrdMarkdown(sourceContent));
     composedRcodes.set(realPath, extractRcodesFromMarkdown(sourceContent));
 
-    walkComposeChain(realPath, repoRoot, depth + 1, visited, aggregate, composedRcodes);
+    onPath.add(realPath);
+    walkComposeChain(realPath, repoRoot, depth + 1, onPath, processed, aggregate, composedRcodes);
+    onPath.delete(realPath);
+    processed.add(realPath);
   }
 }
 
@@ -582,9 +589,10 @@ export function parseWithComposes(prdPath: string, options: ParseWithComposesOpt
     const msg = err instanceof Error ? err.message : String(err);
     throw new ComposesError(`Failed to resolve path "${prdPath}": ${msg}`);
   }
-  const visited = options.visited ?? new Set<string>([selfReal]);
+  const onPath = options.visited ?? new Set<string>([selfReal]);
+  const processed = new Set<string>();
 
-  walkComposeChain(prdPath, repoRoot, 0, visited, aggregate, composedRcodes);
+  walkComposeChain(prdPath, repoRoot, 0, onPath, processed, aggregate, composedRcodes);
 
   return aggregate;
 }

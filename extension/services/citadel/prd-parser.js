@@ -364,7 +364,7 @@ function mergeUniqueByKey(target, source, keyOf) {
         target.push(entry);
     }
 }
-function walkComposeChain(prdPath, repoRoot, depth, visited, aggregate, composedRcodes) {
+function walkComposeChain(prdPath, repoRoot, depth, onPath, processed, aggregate, composedRcodes) {
     let content;
     try {
         content = readFileSync(prdPath, 'utf-8');
@@ -390,11 +390,16 @@ function walkComposeChain(prdPath, repoRoot, depth, visited, aggregate, composed
             const msg = err instanceof Error ? err.message : String(err);
             throw new ComposesCycleError(`symlink resolution failed for "${composePath}": ${msg}`);
         }
-        if (visited.has(realPath))
+        // A node currently on the DFS recursion path is a true cycle.
+        if (onPath.has(realPath))
             throw new ComposesCycleError(realPath);
+        // A node already fully merged via another branch is a benign diamond;
+        // the merge layer dedupes content by key, so skip the redundant re-walk
+        // instead of misreporting the shared base as a cycle.
+        if (processed.has(realPath))
+            continue;
         if (depth >= MAX_COMPOSES_DEPTH)
             throw new ComposesDepthError(depth);
-        visited.add(realPath);
         let sourceContent;
         try {
             sourceContent = readFileSync(realPath, 'utf-8');
@@ -405,7 +410,10 @@ function walkComposeChain(prdPath, repoRoot, depth, visited, aggregate, composed
         }
         mergeParsedPrd(aggregate, parsePrdMarkdown(sourceContent));
         composedRcodes.set(realPath, extractRcodesFromMarkdown(sourceContent));
-        walkComposeChain(realPath, repoRoot, depth + 1, visited, aggregate, composedRcodes);
+        onPath.add(realPath);
+        walkComposeChain(realPath, repoRoot, depth + 1, onPath, processed, aggregate, composedRcodes);
+        onPath.delete(realPath);
+        processed.add(realPath);
     }
 }
 export function parseWithComposes(prdPath, options = {}) {
@@ -430,7 +438,8 @@ export function parseWithComposes(prdPath, options = {}) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new ComposesError(`Failed to resolve path "${prdPath}": ${msg}`);
     }
-    const visited = options.visited ?? new Set([selfReal]);
-    walkComposeChain(prdPath, repoRoot, 0, visited, aggregate, composedRcodes);
+    const onPath = options.visited ?? new Set([selfReal]);
+    const processed = new Set();
+    walkComposeChain(prdPath, repoRoot, 0, onPath, processed, aggregate, composedRcodes);
     return aggregate;
 }
