@@ -384,10 +384,21 @@ function mvTruncate(s: string): string {
   return s.slice(0, s.length - (bare.length - MV_WIDTH + 1)) + '…';
 }
 
+/**
+ * Truncate `s` to at most `limit` characters, appending '…' when cut.
+ * `reserve` characters are dropped before the ellipsis (default 1) so the
+ * result — ellipsis included — stays within `limit`. Plain-length counterpart
+ * to the ANSI-aware {@link mvTruncate}; use this for raw content truncated
+ * before being wrapped in color codes.
+ */
+function truncate(s: string, limit: number, reserve = 1): string {
+  return s.length > limit ? s.slice(0, limit - reserve) + '…' : s;
+}
+
 function mvSubsystemLine(name: string, clean: string, target: string, findingsMap: Record<string, unknown[]>): string {
   const findings = Array.isArray(findingsMap[name]) ? findingsMap[name] as unknown[] : [];
   const rawLast = findings.length > 0 ? String(findings[findings.length - 1]) : '--';
-  const lastAction = rawLast.length > 20 ? rawLast.slice(0, 19) + '…' : rawLast;
+  const lastAction = truncate(rawLast, 20);
   return mvTruncate(`  ${MX.GREEN}${name}${MX.R} ${MX.DIM}${clean}/${target}${MX.R} ${lastAction}`);
 }
 
@@ -524,7 +535,7 @@ export function formatCurrentField(
   const raw = title ? `${currentTicketId}: ${title}` : String(currentTicketId);
   // Reserve ~16 cols for the "  Current: " label + padding
   const maxLen = Math.max(8, width - 16);
-  const display = raw.length > maxLen ? raw.slice(0, maxLen - 1) + '…' : raw;
+  const display = truncate(raw, maxLen);
   return `${MX.BRIGHT}${display}${MX.R}`;
 }
 
@@ -734,7 +745,7 @@ function buildHeaderFields(state: State, tickets: TicketInfo[], width: number, s
   const workDir = state.working_dir || '';
   const project = workDir ? path.basename(workDir) : 'unknown';
   const task = state.original_prompt || '';
-  const taskDisplay = task.length > width - 20 ? task.slice(0, width - 23) + '…' : (task || 'none');
+  const taskDisplay = truncate(task, width - 20, 3) || 'none';
   const fields: [string, string][] = [
     ['Project', `${MX.BRIGHT}${project}${MX.R}`],
     ['Task', `${MX.GREEN}${taskDisplay}${MX.R}`],
@@ -766,7 +777,7 @@ function buildRecentOutput(sessionDir: string, width: number, sep: string): stri
     if (summaryLines.length === 0) return recentOut;
     recentOut.push(`\n${sep}\n${MX.DIM}Recent output:${MX.R}\n`);
     for (const logLine of summaryLines) {
-      const truncated = logLine.length > width - 2 ? logLine.slice(0, width - 5) + '…' : logLine;
+      const truncated = truncate(logLine, width - 2, 3);
       recentOut.push(`${MX.GREEN}  ${truncated}${MX.R}\n`);
     }
   } catch {
