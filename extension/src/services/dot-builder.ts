@@ -2315,13 +2315,8 @@ export class DotBuilder {
   // eslint-disable-next-line complexity -- HT-1 reviewed: final graph assembly has isolated/convergence rewiring branches.
   private _emitDot(): {
     dot: string;
-    nodeMap: Map<string, Record<string, string>>;
-    edgeList: EdgeEntry[];
-    graphAttrs: Record<string, string>;
-    standaloneNodeIds: Set<string>;
     patternsApplied: string[];
     defenseMatrix: DefenseMatrix;
-    emittedDiagnostics: Diagnostic[];
   } {
     this._resetEmitState();
     this._initializeEmitContext();
@@ -2409,13 +2404,8 @@ export class DotBuilder {
 
     return {
       dot: lines.join('\n'),
-      nodeMap: this._nodeMap,
-      edgeList: this._edgeList,
-      graphAttrs: this._graphAttrs,
-      standaloneNodeIds: this._standaloneNodeIds,
       patternsApplied: [...this._applied],
       defenseMatrix: this._defenseMatrix,
-      emittedDiagnostics: this._emittedDiagnostics,
     };
   }
 

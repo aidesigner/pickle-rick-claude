@@ -2263,13 +2263,8 @@ export class DotBuilder {
         ];
         return {
             dot: lines.join('\n'),
-            nodeMap: this._nodeMap,
-            edgeList: this._edgeList,
-            graphAttrs: this._graphAttrs,
-            standaloneNodeIds: this._standaloneNodeIds,
             patternsApplied: [...this._applied],
             defenseMatrix: this._defenseMatrix,
-            emittedDiagnostics: this._emittedDiagnostics,
         };
     }
 }
