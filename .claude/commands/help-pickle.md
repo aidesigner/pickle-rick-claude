@@ -14,7 +14,7 @@ Summarize the available commands for the user:
 - `/anatomy-park [target]`: Deep subsystem review — trace data flows, fix bugs, catalog trap doors. Flags: `--dry-run`, `--max-iterations`, `--stall-limit`
 - ~~/meeseeks~~: **DEPRECATED** — use `/szechuan-sauce` or `/anatomy-park`
 - ~~/meeseeks-zellij~~: **DEPRECATED** — use `/szechuan-sauce` or `/anatomy-park`
-- `/council-of-ricks`: Iterative Graphite stack reviewer (Council of Ricks). Reviews every branch, generates agent-executable directives. Requires `gt`, `tmux`, `CLAUDE.md`, lint with architectural rules. Flags: `--gitnexus`, `--min-iterations`, `--max-iterations`, `--repo`
+- `/council-of-ricks`: Iterative Graphite stack reviewer (Council of Ricks). Reviews every branch, generates agent-executable directives. Requires `gt`, `tmux`, `CLAUDE.md`, lint with architectural rules. Flags: `--min-iterations`, `--max-iterations`, `--repo`
 - `/pickle-microverse`: Microverse convergence loop — optimize a numeric metric through targeted changes. Requires `tmux` (or `--interactive`)
 - `/attract [file.dot]`: Submit a `.dot` pipeline to the attractor server for execution
 - `/portal-gun <source>`: Migration/transfusion — exhaustive inventory of donor codebase, scope confirmation, concrete migration PRD. `--run` enables convergence loop (execute → coverage scan → delta PRD → re-execute until 100%). Flags: `--run`, `--target <path>`, `--depth <shallow|deep>`, `--no-refine`, `--save-pattern <name>`, `--max-passes <N>`, `--no-converge`

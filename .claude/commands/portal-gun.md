@@ -295,7 +295,7 @@ For each existing target file that will be modified (files classified as "Behavi
 <!-- [Improvement E: Deep Target Diff -- END] -->
 ```
 
-Use GitNexus (`mcp__gitnexus__query`) if indexed, otherwise Glob/Grep/Read.
+Use Glob/Grep/Read.
 
 ## Step 5: Synthesize the PRD
 

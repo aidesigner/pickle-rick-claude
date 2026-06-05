@@ -29,7 +29,6 @@ From `$ARGUMENTS`:
 - `--min-iterations <N>` — override default minimum rounds
 - `--max-iterations <N>` — override default maximum rounds
 - `--repo <path>` — repo root override
-- `--gitnexus` — enable GitNexus graph queries for impact/layer analysis
 - `--no-codex` — disable the Codex adversarial subagent, Phase C (default: enabled)
 - `--codex-timeout <seconds>` — per-branch Codex timeout in seconds (default: 600; this is the canonical default — no corresponding setting in `pickle_settings.json`)
 - `--no-publish` — skip the end-of-session PR comment publish (default: enabled)
@@ -127,9 +126,6 @@ Parse JSON. `codex_enabled` = `ready === true && auth.loggedIn === true`. Captur
 
 If Codex is not ready, record `codex_enabled=false` with a reason (not installed, not logged in, etc). The Council still runs; the Codex subagent in Phase C becomes a no-op that records `skipped` with the reason.
 
-### Step 7: GitNexus (if --gitnexus)
-Run `npx gitnexus analyze`. Warn on failure (non-fatal).
-
 ### Step 8: Discover Stack + Size-Based Round Scaling
 
 Run `gt log short --no-interactive` to enumerate branches (tip → trunk order preserved from gt).
@@ -166,7 +162,6 @@ Write `<SESSION_ROOT>/council-stack.json` with:
 - `trunk`
 - `discovered_at` (ISO)
 - `repo_path`
-- `gitnexus_enabled`
 - `codex_enabled`, `codex_companion_path`, `codex_timeout_seconds`
 - `publish_enabled`
 - `stack_loc` (integer), `stack_files` (integer)
@@ -197,7 +192,7 @@ mux-runner auto-creates the monitor window on startup (council layout — dashbo
 
 Print:
 - Session name, attach command, branches, gate results
-- GitNexus status, **Codex adversarial status** (enabled/disabled + reason if disabled)
+- **Codex adversarial status** (enabled/disabled + reason if disabled)
 - **Stack tier line**, e.g. `stack tier: l (3,247 LOC / 47 files) → min 4 rounds, max 6` — include tier label, LOC, files, and the resolved min/max with their source (`scaled`, `cli`, `settings_floor`)
 - Cancel (`/eat-pickle`), emergency (`tmux kill-session`), state path
 - **Publish at session end**: enabled/disabled (respects `--no-publish` and `default_council_publish` setting)
@@ -209,7 +204,7 @@ Output: `<promise>TASK_COMPLETED</promise>`
 When `$ARGUMENTS` contains `--resume <SESSION_ROOT>`:
 
 ### Step 10: Load State
-Read `state.json` (iteration, min_iterations, working_dir), `council-stack.json` (branches, trunk, repo_path, gitnexus_enabled, codex_enabled, codex_companion_path, codex_timeout_seconds, publish_enabled, stack_loc, stack_files, stack_tier, scaled_min_rounds, effective_min_rounds, effective_max_rounds, min_rounds_source, max_rounds_source), `council-claude-rules.json`, `council-principles.md`. `cd` to `repo_path`. The current `iteration` IS the round number. `state.json.min_iterations` is the same value as `council-stack.json.effective_min_rounds` (Step 9 threaded it through `setup.js`) — use `min_iterations` for the Step 16 approval gate.
+Read `state.json` (iteration, min_iterations, working_dir), `council-stack.json` (branches, trunk, repo_path, codex_enabled, codex_companion_path, codex_timeout_seconds, publish_enabled, stack_loc, stack_files, stack_tier, scaled_min_rounds, effective_min_rounds, effective_max_rounds, min_rounds_source, max_rounds_source), `council-claude-rules.json`, `council-principles.md`. `cd` to `repo_path`. The current `iteration` IS the round number. `state.json.min_iterations` is the same value as `council-stack.json.effective_min_rounds` (Step 9 threaded it through `setup.js`) — use `min_iterations` for the Step 16 approval gate.
 
 ### Step 11: Update State
 ```bash
@@ -222,7 +217,7 @@ Read or create `<SESSION_ROOT>/council-of-ricks-summary.md`. Create `<SESSION_RO
 "The Council convenes! Round <N>!" Brief recap if prior rounds had findings.
 
 ### Step 13: Refresh Stack
-`gt log short --no-interactive` → update `council-stack.json` if changed. If `gitnexus_enabled`: run `npx gitnexus analyze`.
+`gt log short --no-interactive` → update `council-stack.json` if changed.
 
 ### Step 14: Round Structure
 
@@ -270,7 +265,7 @@ Spawn in a SINGLE message (one `Agent` tool call each, all concurrent). Each sub
 | # | Category | Criteria passed to the subagent |
 |---|---|---|
 | B1 | Stack Structure | PR sizing, split candidates, commit hygiene, branch naming, stack ordering across `gt log short` |
-| B2 | CLAUDE.md Compliance | Verify every rule/required-pattern/forbidden-pattern in `council-claude-rules.json` against each branch diff. If `gitnexus_enabled`: query the graph for layer violations |
+| B2 | CLAUDE.md Compliance | Verify every rule/required-pattern/forbidden-pattern in `council-claude-rules.json` against each branch diff |
 | B3 | Contract Discovery | Producer→consumer map across the stack. Grep the full repo for importers of each new/changed export. Zod/enum/union coverage gaps, regex divergence, unhandled union variants (P1) |
 | B4 | Cross-Branch Contracts + Combinatorial | Compare adjacent branch diffs for contract mismatches (shared types, API contracts, state assumptions). For each guard/validator/state machine touched, enumerate 2^N boolean/nullable input combinations; flag unhandled combinations P1 |
 | B5 | Test Coverage + Migration Safety | Test adequacy per branch (review test files — CI/CD validates execution). Persisted-field value-set changes (enum tightening, validation added, canonical vocabulary changed): grep `db/schema/*.ts`, `drizzle/schema/*.ts`, `src/db/schema/*.ts`, `*.sql` — if the field is persisted and old values could exist, P0 unless branch includes migration, backward-compat acceptance, or an explicit trap door |
