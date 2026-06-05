@@ -586,7 +586,7 @@ function finishResolvedPreflight(
     return { exitCode: 7, briefPath: '', brief: '', mode: resolved.mode };
   }
   if (resolved.declinedAutoPromote) {
-    opts.logActivityFn?.({ event: 'debate_user_declined_auto_promote', source: 'pickle', session: path.basename(input.sessionDir) });
+    (opts.logActivityFn ?? logActivity)({ event: 'debate_user_declined_auto_promote', source: 'pickle', session: path.basename(input.sessionDir) });
     return { exitCode: 1, briefPath: '', brief: '', mode: resolved.mode };
   }
   if (resolved.mode === 'solo (auto)') {
