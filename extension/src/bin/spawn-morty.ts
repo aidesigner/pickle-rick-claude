@@ -22,7 +22,7 @@ import {
   type TicketClassifierInfo,
   type TicketComplexityTier,
 } from '../services/pickle-utils.js';
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS, type Backend, type BackendResolutionSource, type LastToolErrorState, type PickleSettings, type State } from '../types/index.js';
 import { isRecord } from '../lib/is-record.js';
 import { getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
@@ -86,7 +86,6 @@ export type BuildWorkerPromptOptions = {
   repoRoot?: string;
   extensionRoot?: string;
   agentsDir?: string;
-  graphContextSlice?: string;
   complexityTier?: TicketComplexityTier;
 };
 
@@ -525,7 +524,6 @@ export function buildTierLifecycleSections(phases: LifecyclePhase[], tier: strin
   return out;
 }
 
-// eslint-disable-next-line complexity -- HT-1 reviewed: R-PIAP-A3 added minimalism-directive branch; extract to helper in a focused refactor PR
 export function buildWorkerPrompt(opts: BuildWorkerPromptOptions): string {
   const { ticket } = opts;
   const extensionRoot = opts.extensionRoot ?? getExtensionRoot();
@@ -580,127 +578,7 @@ export function buildWorkerPrompt(opts: BuildWorkerPromptOptions): string {
 - DO NOT explore harness internals (\`pickle.md\`, \`setup.js\`, \`send-to-morty.md\`, \`mux-runner.js\`). Those are orchestrator-level. Your scope is exclusively the files listed in the ticket's "Files to modify" / "Files to create" sections.`;
   }
 
-  if (opts.graphContextSlice) {
-    workerPrompt += `\n\n${opts.graphContextSlice}`;
-  }
-
-  const gitnexusIndexed = hasGitNexusIndex(opts.repoRoot ?? process.cwd());
-  if (gitnexusIndexed) {
-    if (ticket.backend === 'claude') {
-      workerPrompt += `\n
-# GITNEXUS CODE INTELLIGENCE (auto-detected)
-This repo has a GitNexus knowledge graph index. MCP tools are active for this worker session.
-Use these tools during Research and Plan phases:
-- **mcp__gitnexus__query()**: Find execution flows related to a concept (e.g., "auth validation logic")
-- **mcp__gitnexus__context()**: 360-degree view of a symbol — callers, callees, process participation
-- **mcp__gitnexus__impact()**: Blast radius analysis before modifying shared code
-- **mcp__gitnexus__cypher()**: Custom graph queries (nodes: Function, Class, Method, File, Process, Community)
-
-Prefer GitNexus MCP tools over raw Grep/Glob for understanding call chains and execution flows.
-For simple file/string lookups, Grep/Glob are still fine.`;
-    } else {
-      workerPrompt += `\n
-# GITNEXUS CODE INTELLIGENCE (auto-detected)
-This repo has a GitNexus knowledge graph index. MCP tools are NOT available for this backend.
-If a GRAPH CONTEXT block was injected above, use it for impact/dependency information.
-For code exploration, use Grep/Glob.`;
-    }
-  }
   return `${toolRetryGuidance}${handoffNotes}${workerPrompt}`;
-}
-
-function hasGitNexusIndex(repoRoot: string): boolean {
-  try {
-    return fs.statSync(path.join(repoRoot, '.gitnexus')).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-// R-PGI-6: gitnexus MCP config for claude --mcp-config; codex workers use text context only.
-export function buildGitNexusMcpConfig(): string {
-  return JSON.stringify({
-    mcpServers: {
-      gitnexus: {
-        command: 'npx',
-        args: ['gitnexus', 'mcp'],
-      },
-    },
-  });
-}
-
-// R-PGI-7: extract backtick-quoted identifier symbols from the "Files to modify/create" section.
-export function extractScopeSymbols(ticketContent: string): string[] {
-  const match = /##\s+Files?\s+to\s+(?:modify|create)[:\s]*\n([\s\S]*?)(?:\n##|$)/i.exec(ticketContent);
-  if (!match) return [];
-  const section = match[1];
-  const seen = new Set<string>();
-  const symbols: string[] = [];
-  for (const m of section.matchAll(/`([^`\s/\\]+)`/g)) {
-    const raw = m[1].replace(/\(\)$/, '').trim();
-    if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(raw) && !seen.has(raw)) {
-      seen.add(raw);
-      symbols.push(raw);
-    }
-  }
-  return symbols.slice(0, 5);
-}
-
-// R-PGI-7: read the repo name from .gitnexus/meta.json (repoPath basename), fallback to repoRoot basename.
-export function readGitNexusRepoName(repoRoot: string): string | null {
-  try {
-    const meta = JSON.parse(fs.readFileSync(path.join(repoRoot, '.gitnexus', 'meta.json'), 'utf-8')) as Record<string, unknown>;
-    const repoPath = typeof meta.repoPath === 'string' ? meta.repoPath : null;
-    return repoPath ? path.basename(repoPath) : path.basename(repoRoot);
-  } catch {
-    return path.basename(repoRoot);
-  }
-}
-
-type SpawnSyncFn = typeof spawnSync;
-
-function formatImpactCallers(byDepth: Record<string, Array<{ name: string; filePath?: string }>> | undefined): string {
-  const d1 = byDepth?.['d=1'] ?? [];
-  if (d1.length === 0) return 'none identified';
-  return d1.slice(0, 5).map(c => `\`${c.name}\` (${path.basename(c.filePath ?? '')})`).join(', ');
-}
-
-function querySymbolImpactLine(sym: string, repoName: string, _spawnSync: SpawnSyncFn): string | null {
-  try {
-    const result = _spawnSync(
-      'npx',
-      ['gitnexus', 'impact', sym, '--repo', repoName, '--direction', 'upstream', '--depth', '2'],
-      { encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    if (result.status !== 0 || result.error || !result.stdout) return null;
-    const data = JSON.parse(result.stdout) as Record<string, unknown>;
-    if (data.error) return null;
-    const risk = typeof data.risk === 'string' ? data.risk : 'UNKNOWN';
-    const count = typeof data.impactedCount === 'number' ? data.impactedCount : 0;
-    const byDepth = data.byDepth as Record<string, Array<{ name: string; filePath?: string }>> | undefined;
-    return `**\`${sym}\`** — risk: ${risk}, upstream callers: ${count}\n  - d=1: ${formatImpactCallers(byDepth)}`;
-  } catch {
-    return null;
-  }
-}
-
-// R-PGI-7: build a compact per-ticket impact/dependency slice from gitnexus.
-// Returns null when graph unavailable, no scope symbols found, or all queries fail.
-// Best-effort: any individual symbol query failure is silently skipped.
-export function buildGraphContextSlice(
-  ticketContent: string,
-  repoRoot: string,
-  _spawnSync: SpawnSyncFn = spawnSync,
-): string | null {
-  if (!hasGitNexusIndex(repoRoot)) return null;
-  const symbols = extractScopeSymbols(ticketContent);
-  if (symbols.length === 0) return null;
-  const repoName = readGitNexusRepoName(repoRoot) ?? path.basename(repoRoot);
-  const lines = symbols.slice(0, 3)
-    .map(sym => querySymbolImpactLine(sym, repoName, _spawnSync))
-    .filter((l): l is string => l !== null);
-  if (lines.length === 0) return null;
-  return `# GRAPH CONTEXT (pre-fetched for this ticket's scope)\n${lines.join('\n')}`;
 }
 
 function detectAgentsMdFirewall(workingDir: string): boolean {
@@ -1817,16 +1695,12 @@ const NATIVE_CLI_BINARY_MISSING_BACKENDS: readonly Backend[] = ['hermes', 'grok'
 
 export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exitCode: number; isSuccess: boolean }> {
   const { args, ticketPath, ticketId, sessionRoot, sessionLog, sessionLogPath, sessionWorkingDir } = ctx;
-  const gitnexusMcpConfig = args.backend === 'claude' && hasGitNexusIndex(sessionWorkingDir)
-    ? buildGitNexusMcpConfig()
-    : undefined;
   const invocation = buildWorkerInvocation(args.backend, {
     prompt: ctx.prompt,
     addDirs: [getExtensionRoot(), getDataRoot(), sessionWorkingDir, ticketPath],
     model: ctx.model,
     outputFormat: args.outputFormat,
     effort: ctx.effort,
-    mcpConfig: gitnexusMcpConfig,
     ...(args.backend === 'hermes' ? ctx.hermesOptions : {}),
   });
   try { updateTicketStatus(ticketId, 'In Progress', sessionRoot); } catch { /* best-effort */ }
@@ -2073,12 +1947,10 @@ async function main() {
     '🥒'
   );
   _smCrumb('after printMinimalPanel — before buildWorkerPrompt');
-  const graphContextSlice = buildGraphContextSlice(args.ticketContent, runtime.sessionWorkingDir) ?? undefined;
   const prompt = buildWorkerPrompt({
     ticket: { task: args.ticket, ticketContent: args.ticketContent, ticketId: args.ticketId, ticketPath: args.ticketPath, sessionRoot: args.sessionRoot, backend, isReviewTicket: args.isReviewTicket },
     model: model ?? 'sonnet',
     repoRoot: runtime.sessionWorkingDir,
-    graphContextSlice,
     complexityTier: effectiveTier,
   });
   _smCrumb('buildWorkerPrompt done — before runWorkerProcess');

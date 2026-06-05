@@ -12,8 +12,6 @@ import {
   resolveWorkerModelFromTierAndPersona,
 } from '../bin/spawn-morty.js';
 
-const GITNEXUS_MARKER = '# GITNEXUS CODE INTELLIGENCE (auto-detected)';
-
 function makeTmpDir(prefix = 'pickle-spawn-morty-helpers-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
@@ -70,38 +68,6 @@ function withPhasePersonaEnv(value, fn) {
     else process.env.PICKLE_PHASE_PERSONAS = previous;
   }
 }
-
-test('buildWorkerPrompt: injects GitNexus instructions when .gitnexus is a directory', () => {
-  const repoRoot = makeTmpDir();
-  try {
-    fs.mkdirSync(path.join(repoRoot, '.gitnexus'));
-    const prompt = buildWorkerPrompt({ ticket: baseTicket(repoRoot), model: 'sonnet', repoRoot });
-    assert.ok(prompt.includes(GITNEXUS_MARKER));
-  } finally {
-    fs.rmSync(repoRoot, { recursive: true, force: true });
-  }
-});
-
-test('buildWorkerPrompt: omits GitNexus instructions when .gitnexus is absent', () => {
-  const repoRoot = makeTmpDir();
-  try {
-    const prompt = buildWorkerPrompt({ ticket: baseTicket(repoRoot), model: 'sonnet', repoRoot });
-    assert.equal(prompt.includes(GITNEXUS_MARKER), false);
-  } finally {
-    fs.rmSync(repoRoot, { recursive: true, force: true });
-  }
-});
-
-test('buildWorkerPrompt: omits GitNexus instructions when .gitnexus is a file', () => {
-  const repoRoot = makeTmpDir();
-  try {
-    fs.writeFileSync(path.join(repoRoot, '.gitnexus'), 'not a directory');
-    const prompt = buildWorkerPrompt({ ticket: baseTicket(repoRoot), model: 'sonnet', repoRoot });
-    assert.equal(prompt.includes(GITNEXUS_MARKER), false);
-  } finally {
-    fs.rmSync(repoRoot, { recursive: true, force: true });
-  }
-});
 
 test('buildWorkerPrompt: injects project context before ticket content when available', () => {
   const repoRoot = makeTmpDir();

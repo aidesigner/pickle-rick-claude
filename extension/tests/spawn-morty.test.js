@@ -972,7 +972,7 @@ test('spawn-morty: recovers orphan tmp session timeout before printing worker bu
     }
 });
 
-test('spawn-morty: session working_dir controls child cwd, repo access, and GitNexus detection', () => {
+test('spawn-morty: session working_dir controls child cwd and repo access', () => {
     const tmpDir = makeTmpDir();
     try {
         const sessionDir = path.join(tmpDir, 'session');
@@ -982,7 +982,6 @@ test('spawn-morty: session working_dir controls child cwd, repo access, and GitN
         fs.mkdirSync(ticketDir, { recursive: true });
         fs.mkdirSync(repoDir, { recursive: true });
         fs.mkdirSync(wrongCwd, { recursive: true });
-        fs.mkdirSync(path.join(repoDir, '.gitnexus'), { recursive: true });
 
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
             active: true,
@@ -1029,9 +1028,6 @@ test('spawn-morty: session working_dir controls child cwd, repo access, and GitN
         }
         assert.ok(addDirs.includes(repoDir), 'worker invocation should explicitly include the recovered repo root');
         assert.ok(addDirs.includes(ticketDir), 'worker invocation should still include the ticket directory');
-
-        const prompt = invocation.argv[invocation.argv.length - 1];
-        assert.match(prompt, /GITNEXUS CODE INTELLIGENCE/, 'GitNexus detection should use the recovered repo root, not the caller cwd');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
