@@ -197,7 +197,6 @@ function planCorrectCourse(args, now) {
 export function runCorrectCourse(input, opts = {}) {
     const now = opts.now ?? (() => new Date());
     const out = opts.stdout ?? ((message) => process.stdout.write(`${message}\n`));
-    const backend = resolveBackendFromStateFile(path.join(input.sessionDir, 'state.json'));
     if (input.recoverFromLedger || input.recover) {
         if (input.recoverFromLedger && input.recover) {
             throw new Error('Choose either --recover-from-ledger or --recover, not both.');
@@ -215,8 +214,11 @@ export function runCorrectCourse(input, opts = {}) {
         out(`RECOVERY_LEDGER=${recovery.ledgerPath}`);
         out(`RECOVERY_MODE=${recovery.mode}`);
         out(`RECOVERED_STEPS=${recovery.recoveredSteps.join(',')}`);
+        const backend = resolveBackendFromStateFile(path.join(input.sessionDir, 'state.json'));
         return { exitCode: 0, backend, recovery };
     }
+    // The plan path resolves the backend once inside planCorrectCourse (via
+    // plan.backend); no separate read here keeps state.json a single-read per call.
     const plan = planCorrectCourse(input, now());
     if (input.dryRun) {
         out(JSON.stringify({
