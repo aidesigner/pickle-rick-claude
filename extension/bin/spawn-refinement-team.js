@@ -121,89 +121,8 @@ For each ticket, assign a complexity_tier in the frontmatter:
 - medium: 2-4 files, moderate logic, requires unit tests
 - large: 4+ files, complex integration, multiple test files, cross-cutting concerns
 `;
-const REFINEMENT_GRAPH_CONTEXT_TIMEOUT_MS = 5_000;
-// R-PGI-8: detect .gitnexus index presence
-function hasGitNexusIndex(repoRoot) {
-    try {
-        return fs.statSync(path.join(repoRoot, '.gitnexus')).isDirectory();
-    }
-    catch {
-        return false;
-    }
-}
-// R-PGI-8: read repo name from .gitnexus/meta.json
-function readGitNexusRepoNameForRefinement(repoRoot) {
-    try {
-        const meta = JSON.parse(fs.readFileSync(path.join(repoRoot, '.gitnexus', 'meta.json'), 'utf-8'));
-        const repoPath = typeof meta.repoPath === 'string' ? meta.repoPath : null;
-        return repoPath ? path.basename(repoPath) : path.basename(repoRoot);
-    }
-    catch {
-        return path.basename(repoRoot);
-    }
-}
-// R-PGI-8: extract top backtick-quoted identifier symbols from all PRD "Files to modify/create" sections.
-// Returns up to maxSymbols unique identifier tokens.
-export function extractRefinementSymbols(prdContent, maxSymbols = 5) {
-    const seen = new Set();
-    const symbols = [];
-    for (const m of prdContent.matchAll(/##\s+Files?\s+to\s+(?:modify|create)[:\s]*\n([\s\S]*?)(?=\n##|$)/gi)) {
-        for (const sym of m[1].matchAll(/`([^`\s/\\]+)`/g)) {
-            const raw = sym[1].replace(/\(\)$/, '').trim();
-            if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(raw) && !seen.has(raw)) {
-                seen.add(raw);
-                symbols.push(raw);
-                if (symbols.length >= maxSymbols)
-                    return symbols;
-            }
-        }
-    }
-    return symbols;
-}
-// R-PGI-8: build compact graph context string for the PRD's top symbols (cluster membership + fan-out).
-// Returns null when graph unavailable, no symbols found, or all queries fail.
-// Best-effort: any individual symbol query failure is silently skipped.
-export function buildRefinementGraphContext(prdContent, repoRoot, graphResult, _spawnSync = spawnSync) {
-    if (!graphResult.available || !hasGitNexusIndex(repoRoot))
-        return null;
-    const symbols = extractRefinementSymbols(prdContent);
-    if (symbols.length === 0)
-        return null;
-    const repoName = readGitNexusRepoNameForRefinement(repoRoot);
-    const lines = [];
-    for (const sym of symbols.slice(0, 3)) {
-        try {
-            const result = _spawnSync('npx', ['gitnexus', 'impact', sym, '--repo', repoName, '--direction', 'upstream', '--depth', '2'], { encoding: 'utf-8', timeout: REFINEMENT_GRAPH_CONTEXT_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] });
-            if (result.status !== 0 || result.error || !result.stdout)
-                continue;
-            const data = JSON.parse(result.stdout);
-            if (data.error)
-                continue;
-            const risk = typeof data.risk === 'string' ? data.risk : 'UNKNOWN';
-            const count = typeof data.impactedCount === 'number' ? data.impactedCount : 0;
-            lines.push(`**\`${sym}\`** — risk: ${risk}, upstream callers: ${count}`);
-        }
-        catch {
-            // best-effort: skip failed queries
-        }
-    }
-    if (lines.length === 0)
-        return null;
-    return `# GRAPH CONTEXT (pre-fetched for this PRD's scope)\n${lines.join('\n')}`;
-}
-// # DEFERRED: R-PIAP-A5 classifier not yet in repo
-// R-PIAP-A5 belongs to the sibling R-PIAP epic (prds/p2-proportional-intent-aware-pipeline-2026-05-21.md)
-// and does not exist at HEAD. This function is the optional-graph-input seam: once R-PIAP-A5 lands,
-// it can consume graph data here to replace the heuristics-only instruction with a structured classifier.
-//
-// Core invariant (AC-PGI-8-1): available:false → output IDENTICAL to TICKET_COMPLEXITY_PROMPT_SECTION.
-// This must never regress — heuristics-only fallback is the baseline behavior.
-export function buildTierClassificationSection(graphResult) {
-    if (!graphResult || !graphResult.available) {
-        return TICKET_COMPLEXITY_PROMPT_SECTION;
-    }
-    return `${TICKET_COMPLEXITY_PROMPT_SECTION}
-**Graph advisory (structural data available):** When sizing a ticket, factor in symbol fan-out from the GRAPH CONTEXT section above. A ticket touching a symbol with many upstream callers (HIGH or CRITICAL risk) should lean toward \`large\`; a symbol with zero callers can lean toward \`small\` or \`trivial\`.`;
+export function buildTierClassificationSection() {
+    return TICKET_COMPLEXITY_PROMPT_SECTION;
 }
 // Activity event schema catalog injected into the codebase-analyst prompt so
 // codex workers consuming claude-authored tickets know the canonical event names
@@ -412,15 +331,15 @@ export function checkAnalystOutputPaths(content, workingDir) {
  * Extracted from buildWorkerPrompt to keep that function under the line ceiling;
  * the `\n` join reproduces the original inline template byte-for-byte.
  */
-function buildPromptGuidanceSections(graphResult) {
+function buildPromptGuidanceSections() {
     return [
-        buildTierClassificationSection(graphResult),
+        buildTierClassificationSection(),
         AC_SHAPE_PROMPT_SECTION,
         PATH_VERIFICATION_PROMPT_SECTION,
         BUNDLE_OF_BUNDLES_FANOUT_SECTION,
     ].join('\n');
 }
-export function buildWorkerPrompt(roleId, prdContent, outputFile, workingDir, cycle, previousAnalyses, portalContext, graphContext, graphResult) {
+export function buildWorkerPrompt(roleId, prdContent, outputFile, workingDir, cycle, previousAnalyses, portalContext) {
     const persona = `You are Pickle Rick — hyper-competent, arrogant, ruthlessly thorough.
 *Belch.* You are FORBIDDEN from being a Jerry. Jerries write vague analysis. You write SPECIFIC, ACTIONABLE findings with evidence.
 CRITICAL RULE: You MUST output a text explanation ("brain dump") before every single tool call.`;
@@ -503,7 +422,7 @@ ${content}
     const cycleNote = cycle > 1
         ? `\n**THIS IS CYCLE ${cycle}** — you are deepening a previous analysis. Your output should be MORE SPECIFIC, MORE EVIDENCE-BACKED, and CROSS-REFERENCED with other analysts' findings.\n`
         : '';
-    const outputInstructions = `${graphContext ? `${graphContext}\n\n` : ''}${buildPromptGuidanceSections(graphResult)}
+    const outputInstructions = `${buildPromptGuidanceSections()}
 
 ## Your Output
 
@@ -900,7 +819,7 @@ async function runCycle(opts) {
     try {
         const workerPromises = WORKER_ROLES.map(({ id }) => {
             const outputFile = path.join(opts.refinementDir, `analysis_${id}.md`);
-            const prompt = buildWorkerPrompt(id, opts.prd, outputFile, opts.workingDir, opts.cycle, opts.previousAnalyses, opts.portalContext, opts.graphContext, opts.graphResult);
+            const prompt = buildWorkerPrompt(id, opts.prd, outputFile, opts.workingDir, opts.cycle, opts.previousAnalyses, opts.portalContext);
             return spawnWorker(id, prompt, opts.refinementDir, opts.extensionRoot, opts.timeout, opts.workingDir, opts.maxTurns, opts.cycle, (result) => {
                 statuses.set(id, result.success ? '✅' : '❌');
                 if (result.exitCode !== null && result.exitCode !== 0)
@@ -940,7 +859,7 @@ function archiveCycleResults(refinementDir, cycles, cycle) {
         }
     }
 }
-export async function orchestrateCycles(args, settings, prd, graphContext, graphResult) {
+export async function orchestrateCycles(args, settings, prd) {
     const runtime = resolveRuntime(args, settings);
     const refinementDir = path.join(args.sessionDir, 'refinement');
     const extensionRoot = getExtensionRoot();
@@ -975,8 +894,6 @@ export async function orchestrateCycles(args, settings, prd, graphContext, graph
             previousAnalyses: loadPreviousAnalyses(refinementDir, cycle),
             portalContext,
             sessionDir: args.sessionDir,
-            graphContext,
-            graphResult,
         });
         archiveCycleResults(refinementDir, runtime.cycles, cycle);
         allCycleResults.push(results);
@@ -1205,7 +1122,7 @@ function composedPrdPaths(frontmatter) {
 function resolvePeerPrdPath(parentPrdPath, peerPath) {
     // A peer/composed PRD reference must resolve to a readable FILE. Guard against
     // directory paths: removal-bundle PRDs legitimately cite directories (e.g.
-    // `.claude/skills/gitnexus/`, `extension/src/types`) and a composes:/source:
+    // `.claude/skills/some-skill/`, `extension/src/types`) and a composes:/source:
     // entry that resolves to a directory must NOT be readFileSync'd by callers
     // (resolveComposesChain/visit, extractSourceRequirements) — that throws EISDIR
     // and aborts the whole refinement run.
@@ -1968,10 +1885,8 @@ async function main() {
     const args = parseAndValidateArgs(process.argv.slice(2));
     const settings = loadRefinementSettings();
     const runtime = resolveRuntime(args, settings);
-    const graphResult = { available: false, degraded: false };
     const prdContent = await fs.promises.readFile(args.prdPath, 'utf-8');
-    const graphContext = buildRefinementGraphContext(prdContent, runtime.workingDir, graphResult) ?? undefined;
-    const cycleResults = await orchestrateCycles(args, settings, prdContent, graphContext, graphResult);
+    const cycleResults = await orchestrateCycles(args, settings, prdContent);
     const manifestPath = path.join(args.sessionDir, 'refinement_manifest.json');
     const crossDocWarnings = readCrossDocDriftWarnings(args.sessionDir);
     const analystPathWarnings = scanAnalystOutputsForUnverifiedPaths(cycleResults.refinementDir, runtime.workingDir);
