@@ -146,34 +146,24 @@ function patchPipelineStatusJson(sessionRoot: string, pipelinePath: string): voi
   const pipelineRaw = readRecoverableJsonObject(pipelinePath) as Record<string, unknown> | null;
   const phases = Array.isArray(pipelineRaw?.['phases']) ? (pipelineRaw!['phases'] as string[]) : [];
 
-  let completedPhases = 0;
-  if (fs.existsSync(statusPath)) {
-    const existingStatus = readRecoverableJsonObject(statusPath) as Record<string, unknown> | null;
-    const rawCompleted = existingStatus?.['completed_phases'];
-    if (typeof rawCompleted === 'number' && rawCompleted >= 0) {
-      completedPhases = rawCompleted;
-    }
-  }
+  // Single consistent snapshot of the prior status — reading twice risked mixing
+  // completed_phases from one read with skipped/total from a tmp-recovered second read.
+  const existing = fs.existsSync(statusPath)
+    ? (readRecoverableJsonObject(statusPath) as Record<string, unknown> | null)
+    : null;
+
+  const rawCompleted = existing?.['completed_phases'];
+  const completedPhases = typeof rawCompleted === 'number' && rawCompleted >= 0 ? rawCompleted : 0;
 
   const nextPhase = phases[completedPhases] ?? null;
   const statusPayload: Record<string, unknown> = {
     status: 'running',
     current_phase: nextPhase,
     completed_phases: completedPhases,
-    skipped_phases: 0,
-    total_phases: phases.length,
+    skipped_phases: typeof existing?.['skipped_phases'] === 'number' ? existing['skipped_phases'] : 0,
+    total_phases: typeof existing?.['total_phases'] === 'number' ? existing['total_phases'] : phases.length,
     updated_at: new Date().toISOString(),
   };
-
-  if (fs.existsSync(statusPath)) {
-    const existing = readRecoverableJsonObject(statusPath) as Record<string, unknown> | null;
-    if (existing && typeof existing['skipped_phases'] === 'number') {
-      statusPayload['skipped_phases'] = existing['skipped_phases'];
-    }
-    if (existing && typeof existing['total_phases'] === 'number') {
-      statusPayload['total_phases'] = existing['total_phases'];
-    }
-  }
 
   writeJsonAtomic(statusPath, statusPayload);
   process.stdout.write(`lock-scope: pipeline-status.json patched — status=running current_phase=${String(nextPhase)}\n`);
