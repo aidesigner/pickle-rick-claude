@@ -122,6 +122,58 @@ function displayRangeEnd(untilExclusive: Date): string {
   return dateToFilename(displayEnd);
 }
 
+const MAX_ACTIVITY_FILE_BYTES = 10 * 1024 * 1024; // 10 MB guard
+
+interface ParsedActivityFile {
+  events: ActivityEvent[];
+  totalLines: number;
+  corruptLines: number;
+}
+
+/**
+ * Parse one activity JSONL file, keeping only events whose timestamp falls in
+ * the half-open `[sinceMs, untilMs)` window. The per-event range recheck is
+ * intentional: filename prefiltering is coarse, so mispartitioned lines must be
+ * re-validated here (standup activity-filtering trap door).
+ */
+function parseActivityFile(filePath: string, sinceMs: number, untilMs: number): ParsedActivityFile {
+  const events: ActivityEvent[] = [];
+  let totalLines = 0;
+  let corruptLines = 0;
+
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size > MAX_ACTIVITY_FILE_BYTES) {
+      console.error(`Warning: skipping ${path.basename(filePath)} (${Math.round(stat.size / 1024 / 1024)}MB exceeds 10MB limit).`);
+      return { events, totalLines, corruptLines };
+    }
+  } catch {
+    return { events, totalLines, corruptLines };
+  }
+
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const lines = content.split('\n').filter((l) => l.trim());
+  for (const line of lines) {
+    totalLines++;
+    try {
+      const parsed = JSON.parse(line) as ActivityEvent;
+      if (typeof parsed.ts === 'string' && typeof parsed.event === 'string') {
+        const eventMs = new Date(parsed.ts).getTime();
+        if (!Number.isFinite(eventMs) || eventMs < sinceMs || eventMs >= untilMs) {
+          continue;
+        }
+        events.push(parsed);
+      } else {
+        corruptLines++;
+      }
+    } catch {
+      corruptLines++;
+    }
+  }
+
+  return { events, totalLines, corruptLines };
+}
+
 export function readActivityFiles(activityDir: string, since: Date, until: Date): ActivityEvent[] {
   if (!fs.existsSync(activityDir)) return [];
 
@@ -145,36 +197,11 @@ export function readActivityFiles(activityDir: string, since: Date, until: Date)
   let totalLines = 0;
   let corruptLines = 0;
 
-  const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB guard
-
   for (const file of matchingFiles) {
-    const filePath = path.join(activityDir, file);
-    try {
-      const stat = fs.statSync(filePath);
-      if (stat.size > MAX_FILE_BYTES) {
-        console.error(`Warning: skipping ${file} (${Math.round(stat.size / 1024 / 1024)}MB exceeds 10MB limit).`);
-        continue;
-      }
-    } catch { continue; }
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const lines = content.split('\n').filter((l) => l.trim());
-    for (const line of lines) {
-      totalLines++;
-      try {
-        const parsed = JSON.parse(line) as ActivityEvent;
-        if (typeof parsed.ts === 'string' && typeof parsed.event === 'string') {
-          const eventMs = new Date(parsed.ts).getTime();
-          if (!Number.isFinite(eventMs) || eventMs < sinceMs || eventMs >= untilMs) {
-            continue;
-          }
-          events.push(parsed);
-        } else {
-          corruptLines++;
-        }
-      } catch {
-        corruptLines++;
-      }
-    }
+    const parsed = parseActivityFile(path.join(activityDir, file), sinceMs, untilMs);
+    events.push(...parsed.events);
+    totalLines += parsed.totalLines;
+    corruptLines += parsed.corruptLines;
   }
 
   if (totalLines > 0 && corruptLines / totalLines > 0.1) {
