@@ -199,13 +199,12 @@ export function composeBody(params) {
         '',
     ].join('\n');
 }
-function appendPublishLog(fd, result) {
-    const line = JSON.stringify({ ts: new Date().toISOString(), ...result }) + '\n';
-    fs.writeSync(fd, Buffer.from(line));
-}
 function appendPublishLogRaw(fd, entry) {
     const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n';
     fs.writeSync(fd, Buffer.from(line));
+}
+function appendPublishLog(fd, result) {
+    appendPublishLogRaw(fd, { ...result });
 }
 /**
  * A marker is only "published" if it exists AND has non-zero size. A prior

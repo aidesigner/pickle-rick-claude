@@ -269,14 +269,13 @@ export function composeBody(params: {
   ].join('\n');
 }
 
-function appendPublishLog(fd: number, result: PublishResult): void {
-  const line = JSON.stringify({ ts: new Date().toISOString(), ...result }) + '\n';
-  fs.writeSync(fd, Buffer.from(line));
-}
-
 function appendPublishLogRaw(fd: number, entry: Record<string, unknown>): void {
   const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n';
   fs.writeSync(fd, Buffer.from(line));
+}
+
+function appendPublishLog(fd: number, result: PublishResult): void {
+  appendPublishLogRaw(fd, { ...result });
 }
 
 /**
