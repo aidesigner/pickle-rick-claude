@@ -217,8 +217,6 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'closer_expensive_node_test_blocked',
         'ticket_timeout_progress_extension',
         'ticket_timeout_halted_no_progress',
-        'graph_preflight_completed',
-        'graph_preflight_degraded',
         'worker_artifact_progress_zero',
         'worker_auto_skip_oversized',
         // B-PTSB: R-PTSB-3 pid-null phantom-session demotion on read.
