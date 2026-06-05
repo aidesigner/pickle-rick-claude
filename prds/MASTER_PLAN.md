@@ -65,8 +65,8 @@ Per-subsystem `/anatomy-park` → `/szechuan-sauce`, scoped, claude, `--target e
 | HS-3 | Microverse | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session f54d4fed; 2 sub-threshold drops conf=50 incl. structurally-dead compareMetricSetOps intersectionSize pinned by R-SLLJ-4) | ✅ converged (1 deslop: `8a93a27c` Self-Documenting-Code name MAX_PRIOR_VIOLATIONS_IN_PROMPT judge cap; session 115880a3, iter 2; .js mirror recompiled at sweep-end release) |
 | HS-4 | State + transactions | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session 80113120) | ✅ converged (2 deslop: `50034844` Single-Source-of-Truth clearCurrentTicketCache helper in state-manager, `4b0afcfe` DRY clearCurrentTicketCache helper in transaction-ticket-ops; session 5bca70ee, iter 3; .js mirror recompiled at sweep-end release) |
 | HS-5 | Gates | ✅ clean (worker converged iter 2, 0 commits / 0 trap doors — 2 consecutive clean passes, session 5dc9c3be; 3 sub-threshold drops conf<80. Runner then stuck in an API-429 retry-spin that pre-empted finalize — babysitter confirmed worker convergence + live API probe, killed the spinning runner, deactivated converged) | ✅ converged (0 deslop — worker reported clean pass on all 8 gate files; session ba16b209, iter 7, exit converged after riding out an intermittent 429 throttle, 14min API-driven wait at iter 6) |
-| HS-6 | Shared core lib | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session d124d1b5, iter 2, 6m28s, no 429 issues) | ⏳ LAUNCHED (session f55112f0) |
-| HS-7 | Dot codegen | — | — |
+| HS-6 | Shared core lib | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session d124d1b5, iter 2, 6m28s, no 429 issues) | ✅ converged (1 deslop: `1d09c40f` Single-Source-of-Truth — use canonical lib/is-record in pickle-utils; session f55112f0, iter 2, baseline score 4→0) |
+| HS-7 | Dot codegen | ⏳ LAUNCHED (session 8b44ad0f; scope=2 real files, stale dot-builder-cli.ts dropped) | — |
 | HS-8 | Scope resolution | — | — |
 | HS-9 | Monitoring / TUI | — | — |
 | HS-10 | Session lifecycle | — | — |
