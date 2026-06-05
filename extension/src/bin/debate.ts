@@ -100,6 +100,14 @@ interface PreparedDebateRound {
   previousBriefPaths: string[];
 }
 
+interface DebateWriteContext {
+  args: DebateArgs;
+  prepared: PreparedDebateRound;
+  stateInfo: LoadedDebateState;
+  stateManager: StateManager;
+  createdAt: Date;
+}
+
 interface DebateRoundError {
   error: string;
   exitCode: number;
@@ -554,19 +562,15 @@ function prepareDebateRound(
 }
 
 function writeDebateBrief(
-  args: DebateArgs,
+  ctx: DebateWriteContext,
   briefPath: string,
   brief: string,
-  prepared: PreparedDebateRound,
-  stateInfo: LoadedDebateState,
-  stateManager: StateManager,
-  createdAt: Date,
   out: (message: string) => void,
 ): void {
   fs.mkdirSync(path.dirname(briefPath), { recursive: true });
   fs.writeFileSync(briefPath, brief, 'utf8');
-  if (stateInfo.state) {
-    persistDebateRound(stateInfo.statePath, stateManager, args, prepared, briefPath, createdAt);
+  if (ctx.stateInfo.state) {
+    persistDebateRound(ctx.stateInfo.statePath, ctx.stateManager, ctx.args, ctx.prepared, briefPath, ctx.createdAt);
   }
   out(`BRIEF_PATH=${briefPath}`);
 }
@@ -690,7 +694,7 @@ export function runDebate(input: DebateArgs, opts: DebateRunOptions = {}): Debat
     return { exitCode: 0, briefPath, brief, mode: resolved.mode };
   }
 
-  writeDebateBrief(resolved.args, briefPath, brief, prepared, stateInfo, stateManager, createdAt, out);
+  writeDebateBrief({ args: resolved.args, prepared, stateInfo, stateManager, createdAt }, briefPath, brief, out);
   return { exitCode: 0, briefPath, brief, mode: resolved.mode };
 }
 

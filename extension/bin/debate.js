@@ -401,11 +401,11 @@ function prepareDebateRound(args, state, mode, backend, settings, emitActivity) 
         previousBriefPaths,
     };
 }
-function writeDebateBrief(args, briefPath, brief, prepared, stateInfo, stateManager, createdAt, out) {
+function writeDebateBrief(ctx, briefPath, brief, out) {
     fs.mkdirSync(path.dirname(briefPath), { recursive: true });
     fs.writeFileSync(briefPath, brief, 'utf8');
-    if (stateInfo.state) {
-        persistDebateRound(stateInfo.statePath, stateManager, args, prepared, briefPath, createdAt);
+    if (ctx.stateInfo.state) {
+        persistDebateRound(ctx.stateInfo.statePath, ctx.stateManager, ctx.args, ctx.prepared, briefPath, ctx.createdAt);
     }
     out(`BRIEF_PATH=${briefPath}`);
 }
@@ -502,7 +502,7 @@ export function runDebate(input, opts = {}) {
         }, null, 2));
         return { exitCode: 0, briefPath, brief, mode: resolved.mode };
     }
-    writeDebateBrief(resolved.args, briefPath, brief, prepared, stateInfo, stateManager, createdAt, out);
+    writeDebateBrief({ args: resolved.args, prepared, stateInfo, stateManager, createdAt }, briefPath, brief, out);
     return { exitCode: 0, briefPath, brief, mode: resolved.mode };
 }
 export function main(argv = process.argv.slice(2)) {
