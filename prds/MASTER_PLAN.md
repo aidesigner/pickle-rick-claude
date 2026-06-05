@@ -68,7 +68,7 @@ Per-subsystem `/anatomy-park` → `/szechuan-sauce`, scoped, claude, `--target e
 | HS-6 | Shared core lib | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session d124d1b5, iter 2, 6m28s, no 429 issues) | ✅ converged (1 deslop: `1d09c40f` Single-Source-of-Truth — use canonical lib/is-record in pickle-utils; session f55112f0, iter 2, baseline score 4→0) |
 | HS-7 | Dot codegen | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session 8b44ad0f, iter 2, 6m54s; scope=2 real files, stale dot-builder-cli.ts dropped) | ✅ converged (1 deslop: `dc509a8b` YAGNI — drop 5 unused fields from DotBuilder._emitDot return; session 7930ef9b, iter 4, one regressed attempt at iter 3 correctly rolled back) |
 | HS-8 | Scope resolution | ✅ **2 HIGH fixes** (converged iter 5, consecutive_clean=2, session 3f85c88f, 29m44s): `d9417135` HIGH — rg-empty-vs-failure conflation in one-hop import walk (+ trap door), `afc6d741` HIGH — rg/grep importer-walk extension parity for mjs/cjs (+ trap door) | ✅ converged (1 deslop: `54d5c8a6` DRY — single-read pipeline-status.json in lock-scope patch; session ae066e0f, iter 2, baseline score 4→0) |
-| HS-9 | Monitoring / TUI | ⏳ LAUNCHED (session aaf715ef) | — |
+| HS-9 | Monitoring / TUI | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session aaf715ef, iter 2, 9m27s) | ⏳ LAUNCHED (session 85e203fd) |
 | HS-10 | Session lifecycle | — | — |
 | HS-11 | Hooks | — | — |
 | HS-12 | Citadel (incl. new B-HRP analyzers) | — | — |
