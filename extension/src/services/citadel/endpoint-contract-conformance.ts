@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { Endpoint, StatusCodeRow } from './prd-parser.js';
-import { slugify } from './reporter.js';
+import { slugify, TEST_FILE_PATTERN } from './reporter.js';
 
 export type EndpointContractSeverity = 'High' | 'Medium';
 
@@ -60,7 +60,6 @@ interface SourceFile {
 
 const SKIPPED_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage']);
 const SOURCE_FILE_PATTERN = /\.[cm]?tsx?$/i;
-const TEST_FILE_PATTERN = /(?:^|\/)(?:__tests__|tests?|specs?)(?:\/|$)|(?:\.|-)test\.[cm]?[jt]sx?$|(?:\.|-)spec\.[cm]?[jt]sx?$/i;
 const HTTP_DECORATOR_PATTERN = /^\s*@(Get|Post|Put|Patch|Delete|Head|Options)\s*\(([^)]*)\)/i;
 const CONTROLLER_DECORATOR_PATTERN = /^\s*@Controller\s*\(([^)]*)\)/;
 const EXCEPTION_BY_STATUS: Record<number, string[]> = {

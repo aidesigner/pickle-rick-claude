@@ -1,9 +1,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
-import { slugify, uniqueSortedStrings } from './reporter.js';
+import { slugify, TEST_FILE_PATTERN, uniqueSortedStrings } from './reporter.js';
 const DEFAULT_MAX_CALLERS = 3;
 const CODE_FILE_PATTERN = /\.[cm]?[jt]sx?$/i;
-const TEST_FILE_PATTERN = /(?:^|\/)(?:__tests__|tests?|specs?)(?:\/|$)|(?:\.|-)test\.[cm]?[jt]sx?$|(?:\.|-)spec\.[cm]?[jt]sx?$/i;
 const SKIPPED_DIRS = new Set(['.git', 'node_modules']);
 const STRING_LITERAL_PATTERN = /["'`]([A-Za-z0-9_.:-]+)["'`]/g;
 const QUOTED_KEY_PATTERN = /(?:^|[,{\s])\s*["'`]([A-Za-z0-9_.:-]+)["'`]\s*:/g;

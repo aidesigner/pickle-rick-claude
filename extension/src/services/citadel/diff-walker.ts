@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { DiffEntry, getDiffFiles, runGit } from '../git-utils.js';
-import { uniqueSortedStrings } from './reporter.js';
+import { TEST_FILE_PATTERN, uniqueSortedStrings } from './reporter.js';
 
 export type ChangedFileKind = 'production' | 'test';
 
@@ -51,7 +51,6 @@ interface BlameBlock {
 }
 
 const DEFAULT_HEAD = 'HEAD';
-const TEST_FILE_PATTERN = /(?:^|\/)(?:__tests__|tests?|specs?)(?:\/|$)|(?:\.|-)test\.[cm]?[jt]sx?$|(?:\.|-)spec\.[cm]?[jt]sx?$/i;
 const SKIPPED_CLAUDE_DIRS = new Set(['.git', 'node_modules']);
 
 export function walkDiff(range: string, options: WalkDiffOptions = {}): DiffSummary {

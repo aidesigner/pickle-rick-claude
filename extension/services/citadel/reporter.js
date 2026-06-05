@@ -179,3 +179,13 @@ export function uniqueSortedStrings(values) {
 export function escapeTableCell(value) {
     return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }
+/**
+ * Match POSIX-style paths that name a test or spec file: a `__tests__`/`test(s)`/
+ * `spec(s)` path segment, or a `.test`/`-test`/`.spec`/`-spec` suffix before a
+ * `.js`/`.ts`/`.jsx`/`.tsx`/`.cjs`/`.mjs` extension. Shared by the citadel
+ * analyzers (previously duplicated 3×; DRY Rule of Three). The pattern carries
+ * no `g` flag, so `.test()` is stateless and safe to share across callsites.
+ * Callers normalize backslashes via `toPosixPath` before testing where the input
+ * may be a native path.
+ */
+export const TEST_FILE_PATTERN = /(?:^|\/)(?:__tests__|tests?|specs?)(?:\/|$)|(?:\.|-)test\.[cm]?[jt]sx?$|(?:\.|-)spec\.[cm]?[jt]sx?$/i;
