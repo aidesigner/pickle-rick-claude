@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { AllowlistEntry } from './prd-parser.js';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
-import { slugify, TEST_FILE_PATTERN, uniqueSortedStrings } from './reporter.js';
+import { slugify, TEST_FILE_PATTERN, toPosixPath, uniqueSortedStrings } from './reporter.js';
 
 export type AllowlistDeadEntrySeverity = 'High';
 
@@ -356,8 +356,4 @@ function declarationKey(entry: AllowlistDeclaration): string {
 
 function isTestFile(filePath: string): boolean {
   return TEST_FILE_PATTERN.test(toPosixPath(filePath));
-}
-
-function toPosixPath(filePath: string): string {
-  return filePath.split(path.sep).join('/');
 }

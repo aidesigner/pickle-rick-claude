@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
-import { slugify, TEST_FILE_PATTERN, uniqueSortedStrings } from './reporter.js';
+import { slugify, TEST_FILE_PATTERN, toPosixPath, uniqueSortedStrings } from './reporter.js';
 const DEFAULT_MAX_CALLERS = 3;
 const CODE_FILE_PATTERN = /\.[cm]?[jt]sx?$/i;
 const SKIPPED_DIRS = new Set(['.git', 'node_modules']);
@@ -261,7 +261,4 @@ function declarationKey(entry) {
 }
 function isTestFile(filePath) {
     return TEST_FILE_PATTERN.test(toPosixPath(filePath));
-}
-function toPosixPath(filePath) {
-    return filePath.split(path.sep).join('/');
 }

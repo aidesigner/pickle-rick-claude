@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { slugify } from './reporter.js';
+import { slugify, toPosixPath } from './reporter.js';
 export const ROOT_MARKDOWN_ALLOWLIST = new Set([
     'AGENTS.md',
     'CHANGELOG.md',
@@ -298,7 +298,4 @@ function extractFindingPath(finding) {
 }
 function slug(value) {
     return slugify(value, 'root');
-}
-function toPosixPath(filePath) {
-    return filePath.replace(/\\/g, '/');
 }

@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { Endpoint, StatusCodeRow } from './prd-parser.js';
-import { slugify, TEST_FILE_PATTERN } from './reporter.js';
+import { slugify, TEST_FILE_PATTERN, toPosixPath } from './reporter.js';
 
 export type EndpointContractSeverity = 'High' | 'Medium';
 
@@ -301,8 +301,4 @@ function countChar(value: string, char: string): number {
 
 function formatEndpoint(endpoint: Endpoint): string {
   return `${endpoint.method} ${endpoint.path}`;
-}
-
-function toPosixPath(filePath: string): string {
-  return filePath.split(path.sep).join('/');
 }

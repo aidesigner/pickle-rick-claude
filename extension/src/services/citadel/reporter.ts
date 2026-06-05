@@ -293,3 +293,14 @@ export function escapeTableCell(value: string): string {
  */
 export const TEST_FILE_PATTERN =
   /(?:^|\/)(?:__tests__|tests?|specs?)(?:\/|$)|(?:\.|-)test\.[cm]?[jt]sx?$|(?:\.|-)spec\.[cm]?[jt]sx?$/i;
+
+/**
+ * Normalize a path to POSIX form by replacing backslash separators with `/`.
+ * Shared by the citadel analyzers (previously duplicated 4×; DRY Rule of Three).
+ * Backslash-replacement rather than `split(path.sep).join('/')` so the result is
+ * platform-independent: git emits forward-slash paths on every host, so this is a
+ * no-op for real inputs, but a literal Windows path still normalizes correctly.
+ */
+export function toPosixPath(filePath: string): string {
+  return filePath.replace(/\\/g, '/');
+}

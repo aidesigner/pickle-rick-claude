@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { getDiffFiles, runGit } from '../git-utils.js';
-import { TEST_FILE_PATTERN, uniqueSortedStrings } from './reporter.js';
+import { TEST_FILE_PATTERN, toPosixPath, uniqueSortedStrings } from './reporter.js';
 const DEFAULT_HEAD = 'HEAD';
 const SKIPPED_CLAUDE_DIRS = new Set(['.git', 'node_modules']);
 export function walkDiff(range, options = {}) {
@@ -165,7 +165,4 @@ function collectClaudeFiles(directory, repoRoot, found) {
 function finiteNumber(value, fallback) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
-}
-function toPosixPath(filePath) {
-    return filePath.split(path.sep).join('/');
 }

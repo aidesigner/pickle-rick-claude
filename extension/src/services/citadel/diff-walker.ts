@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { DiffEntry, getDiffFiles, runGit } from '../git-utils.js';
-import { TEST_FILE_PATTERN, uniqueSortedStrings } from './reporter.js';
+import { TEST_FILE_PATTERN, toPosixPath, uniqueSortedStrings } from './reporter.js';
 
 export type ChangedFileKind = 'production' | 'test';
 
@@ -224,8 +224,4 @@ function collectClaudeFiles(directory: string, repoRoot: string, found: Set<stri
 function finiteNumber(value: string, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function toPosixPath(filePath: string): string {
-  return filePath.split(path.sep).join('/');
 }

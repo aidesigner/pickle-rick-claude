@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
-import { slugify, TEST_FILE_PATTERN } from './reporter.js';
+import { slugify, TEST_FILE_PATTERN, toPosixPath } from './reporter.js';
 const SKIPPED_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage']);
 const SOURCE_FILE_PATTERN = /\.[cm]?tsx?$/i;
 const HTTP_DECORATOR_PATTERN = /^\s*@(Get|Post|Put|Patch|Delete|Head|Options)\s*\(([^)]*)\)/i;
@@ -218,7 +218,4 @@ function countChar(value, char) {
 }
 function formatEndpoint(endpoint) {
     return `${endpoint.method} ${endpoint.path}`;
-}
-function toPosixPath(filePath) {
-    return filePath.split(path.sep).join('/');
 }
