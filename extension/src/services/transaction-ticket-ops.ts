@@ -560,6 +560,23 @@ function latestFailedEntry(ledgerPath: string): CourseCorrectionApplyLedgerEntry
   return entries.filter(entry => entry.status === 'failed').at(-1);
 }
 
+/**
+ * R-CNAR-8: single source of truth for the per-ticket cache fields that MUST be
+ * cleared atomically whenever a course-correction transition re-points
+ * `current_ticket`. Stale values here let the new ticket inherit the killed
+ * ticket's tier/budget/max-iter and skew budget calculations. Kept local
+ * (mirrors the private helper in state-manager.ts) — importing pickle-utils'
+ * canonical `clearTicketCacheFields` here would create a new
+ * transaction-ticket-ops → pickle-utils module cycle.
+ */
+function clearCurrentTicketCache(s: State): void {
+  delete s.current_ticket_tier;
+  delete s.current_ticket_budget;
+  delete s.current_ticket_max_iterations;
+  delete s.current_ticket_worker_timeout_seconds;
+  delete s.current_ticket_budget_start_iteration;
+}
+
 export function applyCourseCorrectionRestructure(
   input: ApplyCourseCorrectionRestructureInput,
 ): ApplyCourseCorrectionRestructureResult {
@@ -604,22 +621,14 @@ export function applyCourseCorrectionRestructure(
         // R-CNAR-8: course-correct current_ticket transition MUST clear cache
         // fields. Pre-fix, the new ticket inherited tier/budget/max-iter from
         // the killed ticket and skewed budget calculations.
-        delete state.current_ticket_tier;
-        delete state.current_ticket_budget;
-        delete state.current_ticket_max_iterations;
-        delete state.current_ticket_worker_timeout_seconds;
-        delete state.current_ticket_budget_start_iteration;
+        clearCurrentTicketCache(state);
       }
       if (branch === 'c') {
         const previousTicket = state.current_ticket;
         const redirectedTicket = resolveAddedCurrentTicket(state, addedSet);
         state.current_ticket = redirectedTicket;
         // R-CNAR-8: redirect-current-ticket transition MUST clear cache fields.
-        delete state.current_ticket_tier;
-        delete state.current_ticket_budget;
-        delete state.current_ticket_max_iterations;
-        delete state.current_ticket_worker_timeout_seconds;
-        delete state.current_ticket_budget_start_iteration;
+        clearCurrentTicketCache(state);
         appendActivity(state, {
           event: 'current_ticket_redirected_to_new',
           from_ticket_id: previousTicket,

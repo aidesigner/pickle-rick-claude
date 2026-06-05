@@ -1002,6 +1002,18 @@ export function safeDeactivate(statePath) {
     forceWriteMutate(statePath, s => { s.active = false; }, () => ({ active: false }));
 }
 /**
+ * R-CNAR-8: single source of truth for the per-ticket cache fields that MUST be
+ * cleared atomically whenever `current_ticket` is nulled. Stale values here trip
+ * `iteration_cap_exhausted` on `--resume` of the same session.
+ */
+function clearCurrentTicketCache(s) {
+    delete s.current_ticket_tier;
+    delete s.current_ticket_budget;
+    delete s.current_ticket_max_iterations;
+    delete s.current_ticket_worker_timeout_seconds;
+    delete s.current_ticket_budget_start_iteration;
+}
+/**
  * Finalize a terminal-success exit: deactivate, set step='completed',
  * null current_ticket, reconcile iteration to the runner's outer-loop count,
  * stamp exit_reason for forensics. Never throws — terminal paths must not
@@ -1016,16 +1028,10 @@ export function finalizeTerminalState(statePath, opts = {}) {
         if (opts.step)
             s.step = opts.step;
         s.current_ticket = null;
-        // R-CNAR-8: nulling current_ticket REQUIRES atomic clear of the 5 cache
-        // fields. Without this, --resume of the same session sees stale
-        // current_ticket_max_iterations and trips iteration_cap_exhausted on
-        // iteration 1. Forensic origin: bundle session 2026-05-04-f416c6cc run #6
+        // R-CNAR-8: nulling current_ticket REQUIRES atomic clear of the cache
+        // fields. Forensic origin: bundle session 2026-05-04-f416c6cc run #6
         // attempt 1.
-        delete s.current_ticket_tier;
-        delete s.current_ticket_budget;
-        delete s.current_ticket_max_iterations;
-        delete s.current_ticket_worker_timeout_seconds;
-        delete s.current_ticket_budget_start_iteration;
+        clearCurrentTicketCache(s);
         if (typeof opts.runnerIteration === 'number' && Number.isFinite(opts.runnerIteration)) {
             s.iteration = opts.runnerIteration;
         }
@@ -1054,11 +1060,7 @@ export function clearExitReason(statePath, opts = {}) {
         if (opts.resetCurrentTicket) {
             s.current_ticket = null;
             // R-CNAR-8: see finalizeTerminalState — same invariant.
-            delete s.current_ticket_tier;
-            delete s.current_ticket_budget;
-            delete s.current_ticket_max_iterations;
-            delete s.current_ticket_worker_timeout_seconds;
-            delete s.current_ticket_budget_start_iteration;
+            clearCurrentTicketCache(s);
         }
     }, null);
 }
