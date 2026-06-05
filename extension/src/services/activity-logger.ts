@@ -43,6 +43,32 @@ function filterFlushableEntries(activityDir: string, entries: PendingActivityEnt
   return entries.filter((entry) => path.dirname(entry.filepath) === activityDir);
 }
 
+// Flush buffered events into the current activity root, re-buffering any that
+// fail to append (capped at MAX_BUFFER). Entries captured under a stale data
+// root are dropped by filterFlushableEntries rather than retried forever.
+function flushPendingBuffer(activityDir: string): void {
+  if (pendingBuffer.length === 0) return;
+
+  const toFlush = filterFlushableEntries(activityDir, pendingBuffer.splice(0));
+  const byPath = new Map<string, PendingActivityEntry[]>();
+  for (const entry of toFlush) {
+    const list = byPath.get(entry.filepath) || [];
+    list.push(entry);
+    byPath.set(entry.filepath, list);
+  }
+  for (const [flushPath, entries] of byPath) {
+    try {
+      fs.appendFileSync(flushPath, entries.map((entry) => entry.line).join(''), { mode: 0o600 });
+    } catch {
+      for (const entry of entries) {
+        if (pendingBuffer.length < MAX_BUFFER) {
+          pendingBuffer.push(entry);
+        }
+      }
+    }
+  }
+}
+
 function resolveActivityBackend(event: Partial<ActivityEvent>): ActivityEvent['backend'] | undefined {
   if (isBackend(event.backend)) return event.backend;
   if (isBackend(process.env.PICKLE_BACKEND)) return process.env.PICKLE_BACKEND;
@@ -84,26 +110,7 @@ export function logActivity(
     }
 
     // Flush buffered events on success
-    if (pendingBuffer.length > 0) {
-      const toFlush = filterFlushableEntries(activityDir, pendingBuffer.splice(0));
-      const byPath = new Map<string, PendingActivityEntry[]>();
-      for (const entry of toFlush) {
-        const list = byPath.get(entry.filepath) || [];
-        list.push(entry);
-        byPath.set(entry.filepath, list);
-      }
-      for (const [flushPath, entries] of byPath) {
-        try {
-          fs.appendFileSync(flushPath, entries.map((entry) => entry.line).join(''), { mode: 0o600 });
-        } catch {
-          for (const entry of entries) {
-            if (pendingBuffer.length < MAX_BUFFER) {
-              pendingBuffer.push(entry);
-            }
-          }
-        }
-      }
-    }
+    flushPendingBuffer(activityDir);
   } catch (err) {
     // Activity logging must never break the caller, but warn so data loss is visible
     const msg = safeErrorMessage(err);
