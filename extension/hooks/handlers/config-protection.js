@@ -220,7 +220,14 @@ function isBashTargetingConfig(command) {
 function tokenizeBashCommand(command) {
     const out = [];
     // First, isolate redirect operators so they don't glue to filenames.
+    // `>|` is the noclobber-override redirect (`>|file` forces truncation even
+    // under `set -o noclobber`); semantically it is a `>` redirect. It MUST be
+    // normalized BEFORE the `>>`/`>` passes — otherwise the `|` glues to the
+    // destination (`>|state.json` → tokens `['>', '|state.json']`), the
+    // protected-basename match never sees `state.json`, and the state-write
+    // guard is bypassed. Same redirect class as `>`/`>>`, same R-WSRC-3 invariant.
     const spaced = command
+        .replace(/>\|/g, ' > ')
         .replace(/>>/g, ' >> ')
         .replace(/(^|[^>])>/g, '$1 > ');
     for (const raw of spaced.split(/[\s'"]+/)) {

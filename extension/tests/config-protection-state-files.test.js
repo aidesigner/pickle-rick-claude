@@ -356,6 +356,30 @@ test('R-WSRC-3: blocks Bash `>>` append to state.json', () => {
   assert.equal(result.decision, 'block');
 });
 
+test('R-WSRC-3: blocks Bash `>|` clobber-override redirect to state.json', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo '{}' >| ${target}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Bash fd-prefixed `1>|` clobber-override redirect to state.json', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo '{}' 1>|${target}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
 test('R-WSRC-3: blocks Bash `tee` writing to circuit_breaker.json', () => {
   const { tmpDir, sessionDir, stateFile } = bootstrapSession();
   const target = path.join(sessionDir, 'circuit_breaker.json');
