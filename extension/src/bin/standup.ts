@@ -407,21 +407,23 @@ function buildSessionEntries(
   sessionCommits: Map<string, ActivityEvent[]>,
 ): SessionEntry[] {
   const LIFECYCLE_ONLY = new Set(['session_start', 'session_end']);
-  const sessionEntries = [...sessionEvents.entries()]
-    .filter(([sid, sevts]) => {
-      const commits = sessionCommits.get(sid) || [];
-      const hasMeaningfulEvents = sevts.some((e) => !LIFECYCLE_ONLY.has(e.event));
-      if (!(commits.length > 0 || hasMeaningfulEvents)) return false;
-      const startEvent = sevts.find((e) => e.event === 'session_start');
-      const prompt = startEvent?.original_prompt;
-      const noise = classifyStandupNoise(sid, prompt);
-      if (noise.dropped) {
-        process.stderr.write(`[standup] dropped session ${sid}: ${noise.reason}\n`);
-        return false;
-      }
-      return true;
-    })
-    .map(([sid, sevts]) => buildSessionEntry(sid, sevts, sessionCommits.get(sid) || []));
+  const keptSessions: Array<[string, ActivityEvent[]]> = [];
+  for (const [sid, sevts] of sessionEvents.entries()) {
+    const commits = sessionCommits.get(sid) || [];
+    const hasMeaningfulEvents = sevts.some((e) => !LIFECYCLE_ONLY.has(e.event));
+    if (!(commits.length > 0 || hasMeaningfulEvents)) continue;
+    const startEvent = sevts.find((e) => e.event === 'session_start');
+    const noise = classifyStandupNoise(sid, startEvent?.original_prompt);
+    if (noise.dropped) {
+      process.stderr.write(`[standup] dropped session ${sid}: ${noise.reason}\n`);
+      continue;
+    }
+    keptSessions.push([sid, sevts]);
+  }
+
+  const sessionEntries = keptSessions.map(([sid, sevts]) =>
+    buildSessionEntry(sid, sevts, sessionCommits.get(sid) || []),
+  );
 
   sessionEntries.sort((a, b) => (a.firstTs > b.firstTs ? -1 : a.firstTs < b.firstTs ? 1 : 0));
   return sessionEntries;
