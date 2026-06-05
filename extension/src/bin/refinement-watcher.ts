@@ -49,7 +49,7 @@ function discoverLatestWorkerLog(refinementDir: string, roleId: RoleId): { logPa
   }
 }
 
-function roleStatus(refinementDir: string, roleId: RoleId): '⏳' | '✅' | '❌' {
+function roleStatus(refinementDir: string, roleId: RoleId): '⏳' | '✅' {
   const analysisFile = path.join(refinementDir, `analysis_${roleId}.md`);
   if (!fs.existsSync(analysisFile)) return '⏳';
   // Check if the analysis has content (not just created empty)
