@@ -1046,8 +1046,6 @@ test('activity-event-payload: schema defines all registered event type definitio
     'closer_expensive_node_test_blocked',
     'ticket_timeout_progress_extension',
     'ticket_timeout_halted_no_progress',
-    'graph_preflight_completed',
-    'graph_preflight_degraded',
     'worker_artifact_progress_zero',
     'worker_auto_skip_oversized',
     'orphan_phantom_demoted',

@@ -1303,41 +1303,6 @@
         }
       }
     },
-    "graph_preflight_completed": {
-      "type": "object",
-      "required": ["event", "ts"],
-      "properties": {
-        "event": { "type": "string", "const": "graph_preflight_completed" },
-        "ts": { "type": "string" },
-        "gate_payload": {
-          "type": "object",
-          "properties": {
-            "available": { "type": "boolean" },
-            "degraded": { "type": "boolean" },
-            "indexPath": { "type": "string" },
-            "symbolCount": { "type": "number" },
-            "staleness": { "type": "number" },
-            "reason": { "type": "string" }
-          }
-        }
-      }
-    },
-    "graph_preflight_degraded": {
-      "type": "object",
-      "required": ["event", "ts"],
-      "properties": {
-        "event": { "type": "string", "const": "graph_preflight_degraded" },
-        "ts": { "type": "string" },
-        "gate_payload": {
-          "type": "object",
-          "required": ["reason"],
-          "properties": {
-            "reason": { "type": "string" },
-            "phase": { "type": "string" }
-          }
-        }
-      }
-    },
     "worker_artifact_progress_zero": {
       "type": "object",
       "required": ["event", "ts", "ticket", "gate_payload"],
@@ -1563,8 +1528,6 @@
     { "$ref": "#/definitions/closer_expensive_node_test_blocked" },
     { "$ref": "#/definitions/ticket_timeout_progress_extension" },
     { "$ref": "#/definitions/ticket_timeout_halted_no_progress" },
-    { "$ref": "#/definitions/graph_preflight_completed" },
-    { "$ref": "#/definitions/graph_preflight_degraded" },
     { "$ref": "#/definitions/worker_artifact_progress_zero" },
     { "$ref": "#/definitions/worker_auto_skip_oversized" },
     { "$ref": "#/definitions/orphan_phantom_demoted" },
