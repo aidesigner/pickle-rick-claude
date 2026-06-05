@@ -1208,14 +1208,28 @@ function composedPrdPaths(frontmatter) {
     return paths;
 }
 function resolvePeerPrdPath(parentPrdPath, peerPath) {
-    if (path.isAbsolute(peerPath) && fs.existsSync(peerPath))
+    // A peer/composed PRD reference must resolve to a readable FILE. Guard against
+    // directory paths: removal-bundle PRDs legitimately cite directories (e.g.
+    // `.claude/skills/gitnexus/`, `extension/src/types`) and a composes:/source:
+    // entry that resolves to a directory must NOT be readFileSync'd by callers
+    // (resolveComposesChain/visit, extractSourceRequirements) — that throws EISDIR
+    // and aborts the whole refinement run.
+    const isReadableFile = (candidate) => {
+        try {
+            return fs.statSync(candidate).isFile();
+        }
+        catch {
+            return false;
+        }
+    };
+    if (path.isAbsolute(peerPath) && isReadableFile(peerPath))
         return peerPath;
     const repoRoot = findRepoRoot(path.dirname(parentPrdPath));
     const candidates = [
         path.resolve(path.dirname(parentPrdPath), peerPath),
         path.resolve(repoRoot, peerPath),
     ];
-    return candidates.find((candidate) => fs.existsSync(candidate));
+    return candidates.find(isReadableFile);
 }
 function findRepoRoot(startDir) {
     let dir = startDir;
@@ -2032,7 +2046,11 @@ async function main() {
 if (process.argv[1] && path.basename(process.argv[1]) === 'spawn-refinement-team.js') {
     main().catch((err) => {
         const msg = safeErrorMessage(err);
-        console.error(`${Style.RED}❌ Fatal: ${msg}${Style.RESET}`);
+        const e = err;
+        const detail = e && typeof e === 'object' ? ` [syscall=${e.syscall ?? '?'} path=${e.path ?? '?'}]` : '';
+        console.error(`${Style.RED}❌ Fatal: ${msg}${detail}${Style.RESET}`);
+        if (err instanceof Error && err.stack)
+            console.error(err.stack);
         process.exit(1);
     });
 }
