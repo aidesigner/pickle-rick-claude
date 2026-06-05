@@ -13,7 +13,6 @@ import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaV
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
-import { ensureGraph } from '../services/graph-preflight.js';
 const sm = new StateManager();
 const VALID_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
 export const DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS = 60_000;
@@ -131,7 +130,6 @@ function createSetupConfig() {
         acknowledgeUndersized: false,
         managerIdleBackoffFallbackMs: DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS,
         forceTicketStatusSync: false,
-        noGraph: false,
     };
 }
 function applyPositiveIntegerSetting(settings, key, apply) {
@@ -324,8 +322,6 @@ function loadSettings(config, rootDir) {
         config.managerIdleBackoffFallbackMs = resolveManagerIdleBackoffFallbackMs(settings.manager_idle_backoff_fallback_ms);
         config.iterationBudgetPerBackend = readIterationBudgetPerBackend(settings);
         config.throughputBaselines = readThroughputBaselines(settings);
-        if (settings.enable_graph_preflight === false)
-            config.noGraph = true;
     }
     catch (err) {
         const msg = safeErrorMessage(err);
@@ -565,10 +561,6 @@ const ARG_HANDLERS = {
     '--force-ticket-status-sync': (config, _args, index) => {
         config.forceTicketStatusSync = true;
         config.explicitFlags.add('force-ticket-status-sync');
-        return index;
-    },
-    '--no-graph': (config, _args, index) => {
-        config.noGraph = true;
         return index;
     },
     '-s': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
@@ -1342,9 +1334,6 @@ async function main() {
         await runMcpSnapshot(session.sessionRoot, snapshotServers, resolveMcpConfigPath(settingsBag ?? undefined), session.state.original_prompt || '', async () => null, args.resumeMode);
     }
     catch { /* snapshot is best-effort — never block launch */ }
-    if (!args.noGraph) {
-        await ensureGraph(process.cwd());
-    }
     try {
         updateSessionMap(paths.sessionsMap, process.cwd(), session.sessionRoot);
     }

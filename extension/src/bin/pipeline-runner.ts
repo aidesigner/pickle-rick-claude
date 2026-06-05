@@ -54,7 +54,6 @@ import {
 import { runCitadelAudit } from '../services/citadel/audit-runner.js';
 import type { CitadelFinding, CitadelJsonReport, CitadelSeverity } from '../services/citadel/reporter.js';
 import { citadelFindingsToGateResult } from '../services/citadel/citadel-findings-to-gate-result.js';
-import { ensureGraph } from '../services/graph-preflight.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 import { loadFinalizeGateSettings, resolveFinalizeSettingsRoot } from './finalize-gate.js';
 import type { GateResult } from '../types/index.js';
@@ -2235,15 +2234,6 @@ function refreshPhaseScope(
   }
 }
 
-function loadGraphPreflightEnabled(): boolean {
-  try {
-    const settingsPath = path.join(getExtensionRoot(), 'pickle_settings.json');
-    const raw = readRecoverableJsonObject(settingsPath) as Record<string, unknown> | null;
-    if (raw && raw.enable_graph_preflight === false) return false;
-  } catch { /* best-effort */ }
-  return true;
-}
-
 async function runConfiguredPhase(
   runtime: PipelineRuntime,
   phaseConfig: PhaseConfig,
@@ -2252,9 +2242,6 @@ async function runConfiguredPhase(
   await postPhaseCleanup(phaseConfig.name, runtime.sessionDir);
   preparePhaseState(phaseConfig, runtime);
   const scope = refreshPhaseScope(phaseConfig, runtime, counters);
-  if ((phaseConfig.name === 'anatomy-park' || phaseConfig.name === 'szechuan-sauce') && loadGraphPreflightEnabled()) {
-    await ensureGraph(runtime.repoRoot);
-  }
   const setupResult: PhaseSetupResult = phaseConfig.setup ? phaseConfig.setup({
     sessionDir: runtime.sessionDir,
     target: runtime.target,

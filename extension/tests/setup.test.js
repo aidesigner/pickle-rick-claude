@@ -384,7 +384,7 @@ test('setup: bare non-tmux build session is rejected (R-PNTR-4 — in-session lo
     // The historical non-tmux build-loop path (tmux_mode:false, active:true) was
     // removed. A bare `setup.js --task ...` (no --tmux/--paused/--resume) must hard
     // error with a /pickle-tmux migration hint instead of creating an in-session loop.
-    const result = spawnSync(process.execPath, [SETUP, '--task', 'no-tmux-test', '--no-graph'], {
+    const result = spawnSync(process.execPath, [SETUP, '--task', 'no-tmux-test'], {
         encoding: 'utf-8',
         env: { ...process.env, FORCE_COLOR: '0', PICKLE_DATA_ROOT: process.env.PICKLE_DATA_ROOT ?? DATA_ROOT },
     });

@@ -91,7 +91,7 @@ function runSetupWithFakeLsof(fakeLsofBin, repoRoot, args) {
   const dataRoot = realpathSync(mkdtempSync(join(tmpdir(), 'piwg52-data-')));
   const result = spawnSync(
     process.execPath,
-    [SETUP, '--no-graph', ...args],
+    [SETUP, ...args],
     {
       encoding: 'utf-8',
       cwd: repoRoot,

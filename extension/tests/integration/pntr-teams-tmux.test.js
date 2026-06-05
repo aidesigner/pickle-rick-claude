@@ -48,7 +48,7 @@ function runSetupOk(args) {
     const deadline = Date.now() + 30_000;
     for (;;) {
         try {
-            const output = execFileSync(process.execPath, [SETUP, ...args, '--no-graph'], {
+            const output = execFileSync(process.execPath, [SETUP, ...args], {
                 encoding: 'utf-8',
                 env: { ...process.env, FORCE_COLOR: '0', PICKLE_DATA_ROOT: dataRoot },
             });
@@ -68,7 +68,7 @@ function runSetupOk(args) {
 
 function runSetupExpectFail(args) {
     const dataRoot = makeSandboxDataRoot();
-    const result = spawnSync(process.execPath, [SETUP, ...args, '--no-graph'], {
+    const result = spawnSync(process.execPath, [SETUP, ...args], {
         encoding: 'utf-8',
         env: { ...process.env, FORCE_COLOR: '0', PICKLE_DATA_ROOT: dataRoot },
     });
