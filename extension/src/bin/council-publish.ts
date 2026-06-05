@@ -206,8 +206,8 @@ function readDirectiveJson(sessionRoot: string): Directive {
   try {
     return validateDirective(parsed);
   } catch (err) {
-    const jsonPath = err instanceof CouncilSchemaError ? err.jsonPath : '$';
-    throw new CouncilPublishError(`council-directive.json failed validation: ${jsonPath}: ${safeErrorMessage(err)}`);
+    const schemaPath = err instanceof CouncilSchemaError ? err.jsonPath : '$';
+    throw new CouncilPublishError(`council-directive.json failed validation: ${schemaPath}: ${safeErrorMessage(err)}`);
   }
 }
 
