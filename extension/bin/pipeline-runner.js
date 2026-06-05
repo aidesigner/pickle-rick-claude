@@ -253,11 +253,19 @@ function loadAllowedDirtyPaths(workingDir) {
         throw new Error(`Invalid dirty allowlist at ${filePath}: ${safeErrorMessage(error)}`);
     }
 }
+// Match the path SEGMENT (e.g. 'docs', 'prds') at ANY depth, not just as a root prefix.
+// git pathspec :!docs/** only excludes root-level docs/; this catches packages/api/docs/prd/foo.md.
+function isDirtyPathIgnoredBySegment(filePath, ignoreSegments) {
+    const parts = filePath.replace(/\\/g, '/').split('/');
+    return ignoreSegments.some((seg) => parts.includes(seg));
+}
 function allowedDirtyPathsForLaunch(workingDir, ignoreDirtyPaths) {
     const ignore = ignoreDirtyPaths ?? [...DEFAULT_IGNORE_DIRTY_PATHS];
     const allowlist = loadAllowedDirtyPaths(workingDir);
     const dirtyPaths = listWorkingTreeDirtyPaths(workingDir, ignore);
-    return dirtyPaths.filter((filePath) => !allowlist.has(filePath) && !isGitIgnoredPath(workingDir, filePath));
+    return dirtyPaths.filter((filePath) => !isDirtyPathIgnoredBySegment(filePath, ignore) &&
+        !allowlist.has(filePath) &&
+        !isGitIgnoredPath(workingDir, filePath));
 }
 export function assertCleanWorkingTree(workingDir, ignoreDirtyPaths) {
     const ignore = ignoreDirtyPaths ?? [...DEFAULT_IGNORE_DIRTY_PATHS];

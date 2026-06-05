@@ -144,3 +144,51 @@ test('dirty-tree guard exits 0 for dirty files listed in extension/.pipeline-run
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
 });
+
+// AC-PFNP-8-1: nested docs/ path is ignored at any depth
+test('dirty-tree guard ignores nested docs/ path at any depth (AC-PFNP-8-1)', () => {
+  const { repo, sessionDir } = makeSession();
+  try {
+    const nestedDocDir = path.join(repo, 'packages', 'api', 'docs', 'prd');
+    fs.mkdirSync(nestedDocDir, { recursive: true });
+    const docFile = path.join(nestedDocDir, 'foo.md');
+    fs.writeFileSync(docFile, 'original\n');
+    git(['add', path.join('packages', 'api', 'docs', 'prd', 'foo.md')], repo);
+    git(['commit', '-q', '-m', 'track nested doc'], repo);
+    fs.writeFileSync(docFile, 'changed\n');
+
+    const result = spawnSync(process.execPath, [CLI, sessionDir], {
+      cwd: repo,
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0, `expected exit 0 but got ${result.status}:\n${result.stderr}`);
+    assert.doesNotMatch(result.stderr, /\[FATAL\]/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+// AC-PFNP-8-2: non-docs nested dirty file still blocks
+test('dirty-tree guard blocks nested non-docs dirty file (AC-PFNP-8-2)', () => {
+  const { repo, sessionDir } = makeSession();
+  try {
+    const srcDir = path.join(repo, 'packages', 'api', 'src');
+    fs.mkdirSync(srcDir, { recursive: true });
+    fs.writeFileSync(path.join(srcDir, 'foo.ts'), 'dirty\n');
+
+    const result = spawnSync(process.execPath, [CLI, sessionDir], {
+      cwd: repo,
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 1, `expected exit 1 but got ${result.status}`);
+    assert.match(result.stderr, /\[FATAL\]/);
+    // git reports the untracked directory (packages/) or full path depending on tracking state
+    assert.match(result.stderr, /packages/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
