@@ -193,4 +193,45 @@ test('computeOneHop import walks', async (t) => {
         assert.equal(hasWarning(output.warnings, 'rg', 'fail'), true);
         assert.equal(hasWarning(output.warnings, 'grep', 'timeout'), true);
     });
+
+    await t.test('grep fallback honors .mjs/.cjs extensions (rg/grep parity)', () => {
+        // Real grep, shimmed-failing rg → exercises the fallback path against the
+        // actual `--include` flags. A .mjs importer of the changed export MUST be
+        // in the one-hop set, matching the rg glob's mjs/cjs coverage. Without
+        // the --include=*.mjs/*.cjs flags this returns ['a.ts'] only.
+        const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scope-import-mjs-')));
+        try {
+            fs.writeFileSync(path.join(repo, 'a.ts'), 'export function foo() {}\n');
+            fs.writeFileSync(path.join(repo, 'consumer.mjs'), "import { foo } from './a.js';\n");
+            const shimDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scope-rg-fail-')));
+            try {
+                const rgShim = path.join(shimDir, 'rg');
+                fs.writeFileSync(rgShim, FAIL_SCRIPT(2));
+                fs.chmodSync(rgShim, 0o755);
+                // Prepend shimDir so rg resolves to the failing shim while grep
+                // resolves to the real system binary (the SUT under test).
+                const script = `
+import { computeOneHop } from './services/scope-resolver.js';
+const result = computeOneHop(['a.ts'], ${JSON.stringify(repo)}, { findImportersTimeoutMs: ${HANG_TIMEOUT_MS} });
+process.stdout.write(JSON.stringify({ result }));
+`;
+                const out = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+                    cwd: path.resolve(import.meta.dirname, '..'),
+                    encoding: 'utf-8',
+                    env: { ...process.env, PATH: `${shimDir}:${process.env.PATH}` },
+                    timeout: RUNNER_SPAWN_TIMEOUT_MS,
+                });
+                assert.equal(out.status, 0, out.stderr || out.stdout);
+                const { result } = JSON.parse(out.stdout);
+                assert.ok(
+                    result.includes('consumer.mjs'),
+                    `expected consumer.mjs in one-hop set, got ${JSON.stringify(result)}`,
+                );
+            } finally {
+                fs.rmSync(shimDir, { recursive: true, force: true });
+            }
+        } finally {
+            cleanup(repo);
+        }
+    });
 });

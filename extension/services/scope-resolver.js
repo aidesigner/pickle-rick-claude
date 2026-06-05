@@ -657,7 +657,12 @@ function _runRgImportWalk(pattern, root, timeoutMs) {
     return null;
 }
 function _runGrepImportWalk(pattern, root, timeoutMs) {
+    // Extension set MUST match the rg `--glob` in _runRgImportWalk
+    // (ts,tsx,js,jsx,mjs,cjs). The grep fallback exists only for rg-absent hosts;
+    // a narrower include set silently drops .mjs/.cjs importers from the one-hop
+    // set, under-including scope on exactly the hosts the fallback serves.
     const grep = spawnSync('grep', ['-rl', '-E', '--include=*.ts', '--include=*.tsx', '--include=*.js', '--include=*.jsx',
+        '--include=*.mjs', '--include=*.cjs',
         pattern, '.'], { cwd: root, encoding: 'utf-8', timeout: timeoutMs });
     if (grep.status === 0 || grep.status === 1) {
         return (grep.stdout || '')
