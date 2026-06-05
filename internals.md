@@ -520,7 +520,7 @@ From `pickle_settings.json`:
 - `default_council_max_rounds` — default `5` (exhaustion ceiling; healthy stacks converge in 2–3)
 - `default_council_publish` — default `true`
 
-CLI flags `--min-iterations <N>`, `--max-iterations <N>`, `--no-publish`, `--no-codex`, `--codex-timeout <sec>`, `--gitnexus`, `--repo <path>` override.
+CLI flags `--min-iterations <N>`, `--max-iterations <N>`, `--no-publish`, `--no-codex`, `--codex-timeout <sec>`, `--repo <path>` override.
 
 ### Session Artifacts
 
@@ -543,29 +543,6 @@ CLI flags `--min-iterations <N>`, `--max-iterations <N>`, `--no-publish`, `--no-
 
 ---
 
-## GitNexus Integration
-
-Pickle Rick integrates with [GitNexus](https://gitnexus.dev), an MCP-powered code knowledge graph that indexes your codebase into symbols, relationships, and execution flows. Once indexed, every Morty worker automatically inherits GitNexus awareness — no manual setup per ticket.
-
-- **Explore architecture** — trace execution flows, understand how modules connect, answer "how does X work?"
-- **Impact analysis** — before changing shared code, see the blast radius: direct callers, affected processes, risk level
-- **Safe refactoring** — multi-file coordinated renames using graph + text search, tagged by confidence
-- **Bug tracing** — follow call chains from symptom to root cause across file boundaries
-- **Change detection** — map uncommitted diffs to affected execution flows before you commit
-
-### Setup
-
-```bash
-# Index the current repo (run from project root)
-npx gitnexus analyze
-
-# Verify the index
-npx gitnexus status
-```
-
-GitNexus runs as an MCP server. Once indexed, Pickle Rick's slash commands (`/gitnexus-exploring`, `/gitnexus-impact-analysis`, `/gitnexus-debugging`, `/gitnexus-refactoring`) expose guided workflows for each capability. Workers spawned via `/pickle` or `/pickle-tmux` get GitNexus tool access injected automatically.
-
----
 
 ## Directory Structure
 

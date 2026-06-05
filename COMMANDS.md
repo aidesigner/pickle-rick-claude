@@ -19,7 +19,7 @@ All Pickle Rick slash commands and their flags. For workflow narrative and tool 
 | `/pickle-pipeline "task"` † | Full lifecycle: pickle-tmux → citadel → anatomy-park → szechuan-sauce in one tmux session |
 | `/cronenberg "task"` | Meta-router — deterministic decision matrix picks the right metaphor + cleanup chain, and decides whether to run `/pickle-refine-prd` first based on PRD shape signals. Executes by default; `--dry-run` to preview only. Forwards all non-cronenberg flags through |
 | `/plumbus <file.dot>` | Iterative DAG shaping on a single `.dot` file. `--dry-run`, `--focus`, `--no-validator` |
-| `/council-of-ricks` | Graphite PR stack review — szechuan principles + anatomy data-flow tracing + Codex adversarial challenge. Directives only, never fixes code. `--no-codex` to disable, `--gitnexus` for graph queries |
+| `/council-of-ricks` | Graphite PR stack review — szechuan principles + anatomy data-flow tracing + Codex adversarial challenge. Directives only, never fixes code. `--no-codex` to disable |
 | `/portal-gun <source>` | Gene transfusion from another codebase |
 | `/pickle-dot [path]` | Convert PRD → attractor-compatible DOT digraph |
 | `/attract [file.dot]` | Submit pipeline to attractor server |
@@ -97,7 +97,6 @@ Most flags are command-scoped. The table groups them by command family — flags
 | `--repo <PATH>` | `/council-of-ricks` | Target repo (default: cwd) |
 | `--min-iterations <N>` | `/council-of-ricks` | Minimum review rounds before convergence (overrides size-tier scaling) |
 | `--max-iterations <N>` | `/council-of-ricks` | Maximum review rounds before forced stop (overrides scaled headroom) |
-| `--gitnexus` | `/council-of-ricks` | Enable GitNexus-backed code intelligence during review |
 | `--effort <low\|medium\|high>` | `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/szechuan-sauce`, `/anatomy-park` | Codex reasoning effort (`-c reasoning.effort=<level>`); claude no-op |
 | `--no-codex` | `/council-of-ricks` | Disable the Codex adversarial reviewer |
 | `--codex-timeout <S>` | `/council-of-ricks` | Timeout for Codex adversarial reviewer (seconds) |

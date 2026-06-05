@@ -314,7 +314,7 @@ Two uninstall paths depending on how much you want to remove.
 bash uninstall-hooks.sh
 ```
 
-Settings are backed up to `~/.claude/backups/settings.json.pickle-uninstall-hooks.<timestamp>` before modification. Run `bash install.sh` to re-enable hooks later — `install.sh` is idempotent, safe to re-run any time. Third-party hooks in `settings.json` (GitNexus, RTK, etc.) are never touched.
+Settings are backed up to `~/.claude/backups/settings.json.pickle-uninstall-hooks.<timestamp>` before modification. Run `bash install.sh` to re-enable hooks later — `install.sh` is idempotent, safe to re-run any time. Third-party hooks in `settings.json` (RTK, etc.) are never touched.
 
 **What still works without hooks:**
 
@@ -335,7 +335,7 @@ bash uninstall.sh
 - Settings backups at `~/.claude/backups/`
 - Project-local `CLAUDE.md` files — remove the appended persona block manually
 
-Third-party hooks in `settings.json` (GitNexus, RTK, etc.) are never touched.
+Third-party hooks in `settings.json` (RTK, etc.) are never touched.
 
 ---
 
@@ -415,20 +415,6 @@ Supports `--domain <name>` for domain-specific principles (e.g., `financial` add
 
 **Backend** — add `--backend codex` (or set `PICKLE_BACKEND=codex`) to swap the per-iteration fix spawn from `claude` to `codex exec`. Useful when Codex catches violations a Claude pass missed.
 
-### 🕸️ Graph Preflight — Code Graph Index Refresh
-
-Before long pipeline phases (setup, refinement, anatomy-park, szechuan-sauce), Pickle Rick runs a **graph preflight**: it ensures `gitnexus` is installed (pinned version from `pickle_settings.json:gitnexus_pinned_version`) and re-runs `gitnexus analyze` to keep the code graph index fresh. Workers that find a `.gitnexus` index get a GitNexus block in their prompt; workers that don't (or when gitnexus is unavailable) proceed without it.
-
-**Graceful degradation** — if gitnexus is unavailable or `analyze` fails, the preflight logs to stderr and continues. The pipeline never blocks on a missing index. `hasGitNexusIndex()` in `spawn-morty.ts` remains the sole gate controlling whether the GitNexus block appears in worker prompts — the preflight does not inject it directly.
-
-**Opt-out options:**
-
-| Option | Scope |
-|--------|-------|
-| `--no-graph` on `/pickle-tmux`, `/pickle-refine-prd` | Per-run: skip preflight for this invocation |
-| `enable_graph_preflight: false` in `pickle_settings.json` | Global: disable preflight across all runs |
-
----
 
 ### 🏥 Anatomy Park — Deep Subsystem Review
 

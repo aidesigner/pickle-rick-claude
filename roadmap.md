@@ -28,7 +28,7 @@ Minification and bundle analysis. Shrinks code down to its smallest, most energe
 Universal search-and-replace across the entire monorepo with preview, rollback, and regex support.
 
 ### /death-crystal
-Predictive impact analysis. Shows all possible futures (code paths) affected by a current change. Builds on GitNexus impact analysis with forward-looking path exploration.
+Predictive impact analysis. Shows all possible futures (code paths) affected by a current change, with forward-looking path exploration.
 
 ### /get-schwifty
 Performance benchmarking suite. Runs load tests, profiles memory, and judges code performance.
