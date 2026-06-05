@@ -41,13 +41,13 @@ GitNexus is the shipped "Pipeline Graph Intelligence" feature (R-PGI-*): a knowl
 - `bin/spawn-refinement-team.ts` — `hasGitNexusIndex`, `readGitNexusRepoNameForRefinement`, R-PGI-8 impact-slice context (~lines 158-214), plus the `ensureGraph` consumer path.
 - `types/index.ts` — `graph_preflight_completed` + `graph_preflight_degraded` in `VALID_ACTIVITY_EVENTS` (~lines 651-652).
 
-**Skills:** `.claude/skills/gitnexus/` (7 SKILL.md: gitnexus-cli, gitnexus-debugging, gitnexus-exploring, gitnexus-guide, gitnexus-impact-analysis, gitnexus-refactoring, gitnexus-bdd).
+**Skills:** .claude/skills/gitnexus/ (dir) (7 SKILL.md: gitnexus-cli, gitnexus-debugging, gitnexus-exploring, gitnexus-guide, gitnexus-impact-analysis, gitnexus-refactoring, gitnexus-bdd).
 
 **Commands:** GitNexus references in `.claude/commands/council-of-ricks.md`, `portal-gun.md`, `help-pickle.md`.
 
 **Top-level docs:** `CLAUDE.md` ("# GitNexus — Code Intelligence" section + the injected stat block — the #96 drift source), `AGENTS.md`, `COMMANDS.md`, `README.md`, `roadmap.md`, `internals.md`.
 
-**Config / on-disk (full teardown):** `mcp__gitnexus__*` permission entries in `.claude/settings.local.json`; the `.gitnexus/` on-disk index directory.
+**Config / on-disk (full teardown):** `mcp__gitnexus__*` permission entries in `.claude/settings.local.json`; the .gitnexus/ (dir) on-disk index directory.
 
 **Tests:** gitnexus-only suites to delete (`graph-preflight.test.js`, `graph-preflight-wiring.test.js`, `spawn-morty-gitnexus-mcp-config.test.js`, `spawn-morty-graph-context.test.js`, `spawn-refinement-team-graph-context.test.js`); shared suites to de-gitnexus without losing non-GitNexus coverage (`spawn-morty.test.js`, `spawn-morty-helpers.test.js`, `activity-event-payload.test.js`).
 
@@ -106,7 +106,7 @@ GitNexus is the shipped "Pipeline Graph Intelligence" feature (R-PGI-*): a knowl
 - **AC-GNXR-6-2:** the CLAUDE.md "GitNexus" section AND its symbol/relationship/stat line (e.g. ``indexed by GitNexus as **pickle-rick-claude** (NNNNN symbols, …)``) are both gone — this is the line `gitnexus analyze` used to rewrite.
 
 ### R-GNXR-7 (small) — Full teardown: index dir + MCP perms
-- **Scope:** delete the on-disk `.gitnexus/` index directory; strip every `mcp__gitnexus__*` entry from `.claude/settings.local.json` (preserve all non-GitNexus permissions). Add `.gitnexus/` to `.gitignore` if present there is removed, so a stray re-index does not re-dirty the tree.
+- **Scope:** delete the on-disk .gitnexus/ (dir) index directory; strip every `mcp__gitnexus__*` entry from `.claude/settings.local.json` (preserve all non-GitNexus permissions). Add .gitnexus/ (dir) to `.gitignore` if present there is removed, so a stray re-index does not re-dirty the tree.
 - **AC-GNXR-7-1:** `test ! -d .gitnexus`.
 - **AC-GNXR-7-2:** `grep -n "mcp__gitnexus" .claude/settings.local.json` returns zero matches; the file remains valid JSON (`node -e "JSON.parse(require('fs').readFileSync('.claude/settings.local.json','utf8'))"`).
 
