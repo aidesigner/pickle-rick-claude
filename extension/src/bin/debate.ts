@@ -74,6 +74,7 @@ interface ResolvedDebateRun {
   backend: Backend;
   mode: DebateMode;
   declinedAutoPromote: boolean;
+  stateInfo: LoadedDebateState;
 }
 
 interface LoadedDebateState {
@@ -623,9 +624,9 @@ function defaultConfirmAutoPromote(banner: string): boolean {
   }
 }
 
-function resolveDebateRun(input: DebateArgs, opts: DebateRunOptions, out: (message: string) => void): ResolvedDebateRun {
-  const stateManager = opts.stateManager ?? new StateManager();
-  const { state, statePath } = loadDebateState(input.sessionDir, stateManager);
+function resolveDebateRun(input: DebateArgs, opts: DebateRunOptions, stateManager: StateManager, out: (message: string) => void): ResolvedDebateRun {
+  const stateInfo = loadDebateState(input.sessionDir, stateManager);
+  const { state, statePath } = stateInfo;
   const backend = resolveBackend(state);
   const inheritedStrictTeams = state?.flags?.strict_teams === true;
   const strictTeams = input.noStrictTeams ? false : input.strictTeams || inheritedStrictTeams;
@@ -636,19 +637,19 @@ function resolveDebateRun(input: DebateArgs, opts: DebateRunOptions, out: (messa
   }
 
   if (backend === 'codex' && strictTeams) {
-    return { args, backend, mode: 'teams', declinedAutoPromote: false };
+    return { args, backend, mode: 'teams', declinedAutoPromote: false, stateInfo };
   }
 
   if (backend === 'codex' && !args.solo) {
     const confirm = opts.confirmAutoPromote ?? defaultConfirmAutoPromote;
     out(AUTO_PROMOTE_BANNER);
     const accepted = confirm(AUTO_PROMOTE_BANNER);
-    if (!accepted) return { args, backend, mode: 'teams', declinedAutoPromote: true };
+    if (!accepted) return { args, backend, mode: 'teams', declinedAutoPromote: true, stateInfo };
     const autoArgs = { ...args, solo: true };
-    return { args: autoArgs, backend, mode: 'solo (auto)', declinedAutoPromote: false };
+    return { args: autoArgs, backend, mode: 'solo (auto)', declinedAutoPromote: false, stateInfo };
   }
 
-  return { args, backend, mode: args.solo ? 'solo' : 'teams', declinedAutoPromote: false };
+  return { args, backend, mode: args.solo ? 'solo' : 'teams', declinedAutoPromote: false, stateInfo };
 }
 
 export function runDebate(input: DebateArgs, opts: DebateRunOptions = {}): DebateRunResult {
@@ -656,13 +657,13 @@ export function runDebate(input: DebateArgs, opts: DebateRunOptions = {}): Debat
   const out = opts.stdout ?? ((message: string) => process.stdout.write(`${message}\n`));
   const err = opts.stderr ?? ((message: string) => process.stderr.write(`${message}\n`));
   const stateManager = opts.stateManager ?? new StateManager();
-  const resolved = resolveDebateRun(input, opts, out);
+  const resolved = resolveDebateRun(input, opts, stateManager, out);
   const preflightResult = finishResolvedPreflight(input, resolved, opts, err);
   if (preflightResult) return preflightResult;
 
   const createdAt = now();
   const briefPath = path.join(input.sessionDir, `debate_${isoCompactStamp(createdAt)}_brief.md`);
-  const stateInfo = loadDebateState(input.sessionDir, stateManager);
+  const stateInfo = resolved.stateInfo;
   const settings = loadDebateSettings(opts.extensionRoot ?? getExtensionRoot(), opts.settings);
   const prepared = prepareDebateRound(
     resolved.args,
