@@ -69,7 +69,7 @@ Per-subsystem `/anatomy-park` → `/szechuan-sauce`, scoped, claude, `--target e
 | HS-7 | Dot codegen | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session 8b44ad0f, iter 2, 6m54s; scope=2 real files, stale dot-builder-cli.ts dropped) | ✅ converged (1 deslop: `dc509a8b` YAGNI — drop 5 unused fields from DotBuilder._emitDot return; session 7930ef9b, iter 4, one regressed attempt at iter 3 correctly rolled back) |
 | HS-8 | Scope resolution | ✅ **2 HIGH fixes** (converged iter 5, consecutive_clean=2, session 3f85c88f, 29m44s): `d9417135` HIGH — rg-empty-vs-failure conflation in one-hop import walk (+ trap door), `afc6d741` HIGH — rg/grep importer-walk extension parity for mjs/cjs (+ trap door) | ✅ converged (1 deslop: `54d5c8a6` DRY — single-read pipeline-status.json in lock-scope patch; session ae066e0f, iter 2, baseline score 4→0) |
 | HS-9 | Monitoring / TUI | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session aaf715ef, iter 2, 9m27s) | ✅ converged (5 deslop: `f3451579` KISS single-write stderr, `484749c0`+`9e838465` Self-Doc JSDoc reattach (startRespawnWatchdog, buildTicketLines), `f61f2ece` DRY truncate() helper (Rule-of-Three, 4 sites in monitor.ts), `59f610d1` YAGNI drop dead '❌' roleStatus variant; session 85e203fd, iter 10, 83m incl 16min API-429 wait, metric 12→9) |
-| HS-10 | Session lifecycle | ⏳ LAUNCHED (session 9ed609df) | — |
+| HS-10 | Session lifecycle | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session 9ed609df, iter 2, 7m44s) | ⏳ LAUNCHED (session 40ba57c6) |
 | HS-11 | Hooks | — | — |
 | HS-12 | Citadel (incl. new B-HRP analyzers) | — | — |
 | HS-13 | Reporting | — | — |
