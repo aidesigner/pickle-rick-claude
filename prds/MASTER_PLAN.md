@@ -63,7 +63,7 @@ Per-subsystem `/anatomy-park` → `/szechuan-sauce`, scoped, claude, `--target e
 | HS-1 | Orchestration core (mux/pipeline/jar-runner, manager-relaunch, circuit-breaker, classifier) | ✅ clean (converged, 0 commits — well-hardened by prior sweeps) | ✅ converged (1 deslop: `6a1a8d04` DRY validateStartupState) |
 | HS-2 | Worker spawning + backends | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session 9a1fe0b6) | ✅ converged (2 deslop: `bdc6b9fa` Single-Source-of-Truth fileURLToPath in spawn-gate-remediator, `c8df2c37` Cognitive-Load flatten nested ternary in spawn-morty applyHeuristicBackendRouting; session d9cbe5de, iter 11; .js mirror recompiled at sweep-end release) |
 | HS-3 | Microverse | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session f54d4fed; 2 sub-threshold drops conf=50 incl. structurally-dead compareMetricSetOps intersectionSize pinned by R-SLLJ-4) | ✅ converged (1 deslop: `8a93a27c` Self-Documenting-Code name MAX_PRIOR_VIOLATIONS_IN_PROMPT judge cap; session 115880a3, iter 2; .js mirror recompiled at sweep-end release) |
-| HS-4 | State + transactions | ⏳ LAUNCHED (session 80113120) | — |
+| HS-4 | State + transactions | ✅ clean (converged, 0 commits / 0 trap doors — 2 consecutive clean passes, session 80113120) | ⏳ LAUNCHED (session 5bca70ee) |
 | HS-5 | Gates | — | — |
 | HS-6 | Shared core lib | — | — |
 | HS-7 | Dot codegen | — | — |
