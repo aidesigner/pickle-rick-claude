@@ -380,6 +380,56 @@ test('R-WSRC-3: blocks Bash fd-prefixed `1>|` clobber-override redirect to state
   assert.equal(result.decision, 'block');
 });
 
+test('R-WSRC-3: blocks Bash `>&` dup-to-file redirect to state.json', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo '{}' >&${target}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+test('R-WSRC-3: blocks Bash `>& <space>` dup-to-file redirect to state.json', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo '{}' >& ${target}` },
+  });
+  assert.equal(result.decision, 'block');
+});
+
+// Negative cases: `>&<digit>` / `>&-` are fd-dup/close, NOT file writes. The
+// `(?![\d-])` lookahead must leave them alone so legitimate redirections that
+// happen to run in an active session are never falsely blocked.
+test('R-WSRC-3: approves Bash `2>&1` fd-dup (not a state-file write)', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const target = path.join(sessionDir, 'state.json');
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `cat ${target} 2>&1` },
+  });
+  assert.equal(result.decision, 'approve');
+});
+
+test('R-WSRC-3: approves Bash `>&2` fd-dup to stderr (not a state-file write)', () => {
+  const { tmpDir, sessionDir, stateFile } = bootstrapSession();
+  const result = runHandler({
+    tmpDir,
+    stateFile,
+    toolName: 'Bash',
+    toolInput: { command: `echo state.json >&2` },
+  });
+  assert.equal(result.decision, 'approve');
+});
+
 test('R-WSRC-3: blocks Bash `tee` writing to circuit_breaker.json', () => {
   const { tmpDir, sessionDir, stateFile } = bootstrapSession();
   const target = path.join(sessionDir, 'circuit_breaker.json');

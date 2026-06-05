@@ -246,8 +246,19 @@ function tokenizeBashCommand(command: string): string[] {
   // destination (`>|state.json` → tokens `['>', '|state.json']`), the
   // protected-basename match never sees `state.json`, and the state-write
   // guard is bypassed. Same redirect class as `>`/`>>`, same R-WSRC-3 invariant.
+  // `>&word` is bash's dup-or-write fork. When `word` is a filename (not a
+  // digit and not `-`), it is the `&>`-equivalent that redirects BOTH stdout
+  // and stderr to that file — a real write (`>&state.json`, `>& state.json`).
+  // When `word` is a digit or `-` it is an fd-dup/close (`2>&1`, `>&2`, `>&-`,
+  // `1>&2`) and MUST NOT be treated as a write. The negative lookahead
+  // `(?![\d-])` makes that split: only the file-write form normalizes to ` > `,
+  // so the protected basename is no longer glued behind `&` (`>&state.json` →
+  // tokens `['>', '&state.json']` pre-fix bypassed the guard) while the
+  // ubiquitous fd-dup forms pass through untouched. Same R-WSRC-3 invariant as
+  // `>`/`>>`/`>|`; runs BEFORE the general `>` pass so the `&` never glues.
   const spaced = command
     .replace(/>\|/g, ' > ')
+    .replace(/>&(?![\d-])/g, ' > ')
     .replace(/>>/g, ' >> ')
     .replace(/(^|[^>])>/g, '$1 > ');
   for (const raw of spaced.split(/[\s'"]+/)) {
