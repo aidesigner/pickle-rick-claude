@@ -392,6 +392,45 @@ export function scanGitRepos(repoRoot, since, until) {
 function emptyTotals() {
     return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0, commits: 0, added: 0, removed: 0 };
 }
+function buildProjectTotals(tokens, loc) {
+    const projectTotals = new Map();
+    for (const [slug, dateMap] of tokens) {
+        const t = emptyTotals();
+        for (const dt of dateMap.values()) {
+            t.turns += dt.turns;
+            t.input += dt.input;
+            t.output += dt.output;
+            t.cache_read += dt.cache_read;
+            t.cache_create += dt.cache_create;
+        }
+        projectTotals.set(slug, t);
+    }
+    for (const [slug, dateMap] of loc) {
+        if (!projectTotals.has(slug))
+            projectTotals.set(slug, emptyTotals());
+        const target = projectTotals.get(slug);
+        for (const dl of dateMap.values()) {
+            target.commits += dl.commits;
+            target.added += dl.added;
+            target.removed += dl.removed;
+        }
+    }
+    return projectTotals;
+}
+function sumProjectTotals(projects) {
+    const totals = emptyTotals();
+    for (const p of projects) {
+        totals.turns += p.totals.turns;
+        totals.input += p.totals.input;
+        totals.output += p.totals.output;
+        totals.cache_read += p.totals.cache_read;
+        totals.cache_create += p.totals.cache_create;
+        totals.commits += p.totals.commits;
+        totals.added += p.totals.added;
+        totals.removed += p.totals.removed;
+    }
+    return totals;
+}
 function aggregateBackendTotals(tokens) {
     const totals = emptyBackendTokenBuckets();
     for (const dateMap of tokens.values()) {
@@ -434,43 +473,11 @@ export function buildReport(tokens, loc, since, until, grouping) {
         }
         return { date, projects, loc: locData };
     });
-    const projectTotals = new Map();
-    for (const [slug, dateMap] of tokens) {
-        const t = emptyTotals();
-        for (const dt of dateMap.values()) {
-            t.turns += dt.turns;
-            t.input += dt.input;
-            t.output += dt.output;
-            t.cache_read += dt.cache_read;
-            t.cache_create += dt.cache_create;
-        }
-        projectTotals.set(slug, t);
-    }
-    for (const [slug, dateMap] of loc) {
-        if (!projectTotals.has(slug))
-            projectTotals.set(slug, emptyTotals());
-        const target = projectTotals.get(slug);
-        for (const dl of dateMap.values()) {
-            target.commits += dl.commits;
-            target.added += dl.added;
-            target.removed += dl.removed;
-        }
-    }
-    const projects = [...projectTotals.entries()].map(([slug, totals]) => ({
+    const projects = [...buildProjectTotals(tokens, loc).entries()].map(([slug, totals]) => ({
         slug,
         label: shortenSlug(slug),
         totals,
     }));
-    const totals = emptyTotals();
-    for (const p of projects) {
-        totals.turns += p.totals.turns;
-        totals.input += p.totals.input;
-        totals.output += p.totals.output;
-        totals.cache_read += p.totals.cache_read;
-        totals.cache_create += p.totals.cache_create;
-        totals.commits += p.totals.commits;
-        totals.added += p.totals.added;
-        totals.removed += p.totals.removed;
-    }
+    const totals = sumProjectTotals(projects);
     return { since, until, grouping, rows, projects, totals, tokens_per_backend: aggregateBackendTotals(tokens) };
 }

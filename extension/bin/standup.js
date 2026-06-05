@@ -102,6 +102,50 @@ function displayRangeEnd(untilExclusive) {
     displayEnd.setDate(displayEnd.getDate() - 1);
     return dateToFilename(displayEnd);
 }
+const MAX_ACTIVITY_FILE_BYTES = 10 * 1024 * 1024; // 10 MB guard
+/**
+ * Parse one activity JSONL file, keeping only events whose timestamp falls in
+ * the half-open `[sinceMs, untilMs)` window. The per-event range recheck is
+ * intentional: filename prefiltering is coarse, so mispartitioned lines must be
+ * re-validated here (standup activity-filtering trap door).
+ */
+function parseActivityFile(filePath, sinceMs, untilMs) {
+    const events = [];
+    let totalLines = 0;
+    let corruptLines = 0;
+    try {
+        const stat = fs.statSync(filePath);
+        if (stat.size > MAX_ACTIVITY_FILE_BYTES) {
+            console.error(`Warning: skipping ${path.basename(filePath)} (${Math.round(stat.size / 1024 / 1024)}MB exceeds 10MB limit).`);
+            return { events, totalLines, corruptLines };
+        }
+    }
+    catch {
+        return { events, totalLines, corruptLines };
+    }
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const lines = content.split('\n').filter((l) => l.trim());
+    for (const line of lines) {
+        totalLines++;
+        try {
+            const parsed = JSON.parse(line);
+            if (typeof parsed.ts === 'string' && typeof parsed.event === 'string') {
+                const eventMs = new Date(parsed.ts).getTime();
+                if (!Number.isFinite(eventMs) || eventMs < sinceMs || eventMs >= untilMs) {
+                    continue;
+                }
+                events.push(parsed);
+            }
+            else {
+                corruptLines++;
+            }
+        }
+        catch {
+            corruptLines++;
+        }
+    }
+    return { events, totalLines, corruptLines };
+}
 export function readActivityFiles(activityDir, since, until) {
     if (!fs.existsSync(activityDir))
         return [];
@@ -122,40 +166,11 @@ export function readActivityFiles(activityDir, since, until) {
     const events = [];
     let totalLines = 0;
     let corruptLines = 0;
-    const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB guard
     for (const file of matchingFiles) {
-        const filePath = path.join(activityDir, file);
-        try {
-            const stat = fs.statSync(filePath);
-            if (stat.size > MAX_FILE_BYTES) {
-                console.error(`Warning: skipping ${file} (${Math.round(stat.size / 1024 / 1024)}MB exceeds 10MB limit).`);
-                continue;
-            }
-        }
-        catch {
-            continue;
-        }
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const lines = content.split('\n').filter((l) => l.trim());
-        for (const line of lines) {
-            totalLines++;
-            try {
-                const parsed = JSON.parse(line);
-                if (typeof parsed.ts === 'string' && typeof parsed.event === 'string') {
-                    const eventMs = new Date(parsed.ts).getTime();
-                    if (!Number.isFinite(eventMs) || eventMs < sinceMs || eventMs >= untilMs) {
-                        continue;
-                    }
-                    events.push(parsed);
-                }
-                else {
-                    corruptLines++;
-                }
-            }
-            catch {
-                corruptLines++;
-            }
-        }
+        const parsed = parseActivityFile(path.join(activityDir, file), sinceMs, untilMs);
+        events.push(...parsed.events);
+        totalLines += parsed.totalLines;
+        corruptLines += parsed.corruptLines;
     }
     if (totalLines > 0 && corruptLines / totalLines > 0.1) {
         console.error(`Warning: ${corruptLines}/${totalLines} lines (${Math.round(100 * corruptLines / totalLines)}%) could not be parsed.`);
@@ -314,22 +329,21 @@ export function classifyStandupNoise(sid, prompt) {
 }
 function buildSessionEntries(sessionEvents, sessionCommits) {
     const LIFECYCLE_ONLY = new Set(['session_start', 'session_end']);
-    const sessionEntries = [...sessionEvents.entries()]
-        .filter(([sid, sevts]) => {
+    const keptSessions = [];
+    for (const [sid, sevts] of sessionEvents.entries()) {
         const commits = sessionCommits.get(sid) || [];
         const hasMeaningfulEvents = sevts.some((e) => !LIFECYCLE_ONLY.has(e.event));
         if (!(commits.length > 0 || hasMeaningfulEvents))
-            return false;
+            continue;
         const startEvent = sevts.find((e) => e.event === 'session_start');
-        const prompt = startEvent?.original_prompt;
-        const noise = classifyStandupNoise(sid, prompt);
+        const noise = classifyStandupNoise(sid, startEvent?.original_prompt);
         if (noise.dropped) {
             process.stderr.write(`[standup] dropped session ${sid}: ${noise.reason}\n`);
-            return false;
+            continue;
         }
-        return true;
-    })
-        .map(([sid, sevts]) => buildSessionEntry(sid, sevts, sessionCommits.get(sid) || []));
+        keptSessions.push([sid, sevts]);
+    }
+    const sessionEntries = keptSessions.map(([sid, sevts]) => buildSessionEntry(sid, sevts, sessionCommits.get(sid) || []));
     sessionEntries.sort((a, b) => (a.firstTs > b.firstTs ? -1 : a.firstTs < b.firstTs ? 1 : 0));
     return sessionEntries;
 }

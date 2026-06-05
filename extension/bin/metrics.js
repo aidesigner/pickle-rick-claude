@@ -259,6 +259,40 @@ function buildWeekBuckets(report) {
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([, bucket]) => bucket);
 }
+function topProjectForWeek(week) {
+    let maxSlug = '';
+    let maxOut = 0;
+    for (const [slug, out] of week.projectOutput) {
+        if (out > maxOut) {
+            maxSlug = slug;
+            maxOut = out;
+        }
+    }
+    return maxSlug ? shortenSlug(maxSlug) : '—';
+}
+function formatWeeklyDelta(weeks, i) {
+    if (i === 0)
+        return '—';
+    const diff = weeks[i].output - weeks[i - 1].output;
+    const sign = diff >= 0 ? '+' : '';
+    return sign + formatNumber(diff);
+}
+function buildWeeklyColumns(weeks) {
+    const cols = {
+        labels: [], turns: [], output: [], added: [], removed: [], delta: [], topProject: [],
+    };
+    for (let i = 0; i < weeks.length; i++) {
+        const w = weeks[i];
+        cols.labels.push(w.label);
+        cols.turns.push(formatNumber(w.turns));
+        cols.output.push(formatNumber(w.output));
+        cols.added.push('+' + formatNumber(w.added));
+        cols.removed.push('-' + formatNumber(w.removed));
+        cols.delta.push(formatWeeklyDelta(weeks, i));
+        cols.topProject.push(topProjectForWeek(w));
+    }
+    return cols;
+}
 function printWeeklyTable(report) {
     printMinimalPanel(`Metrics (Weekly) — ${report.since} to ${report.until}`, {
         Weeks: String(new Set(report.rows.map((r) => toDateStr(getISOWeekMonday(r.date)))).size),
@@ -269,48 +303,16 @@ function printWeeklyTable(report) {
     const weeks = buildWeekBuckets(report);
     if (weeks.length === 0)
         return;
-    const labels = [];
-    const turns = [];
-    const output = [];
-    const added = [];
-    const removed = [];
-    const delta = [];
-    const topProject = [];
-    for (let i = 0; i < weeks.length; i++) {
-        const w = weeks[i];
-        labels.push(w.label);
-        turns.push(formatNumber(w.turns));
-        output.push(formatNumber(w.output));
-        added.push('+' + formatNumber(w.added));
-        removed.push('-' + formatNumber(w.removed));
-        if (i === 0) {
-            delta.push('—');
-        }
-        else {
-            const prev = weeks[i - 1].output;
-            const diff = w.output - prev;
-            const sign = diff >= 0 ? '+' : '';
-            delta.push(sign + formatNumber(diff));
-        }
-        let maxSlug = '';
-        let maxOut = 0;
-        for (const [slug, out] of w.projectOutput) {
-            if (out > maxOut) {
-                maxSlug = slug;
-                maxOut = out;
-            }
-        }
-        topProject.push(maxSlug ? shortenSlug(maxSlug) : '—');
-    }
+    const cols = buildWeeklyColumns(weeks);
     printTable([
-        { header: 'Week', align: 'left', values: labels },
-        { header: 'Turns', align: 'right', values: turns },
-        { header: 'Output', align: 'right', values: output },
+        { header: 'Week', align: 'left', values: cols.labels },
+        { header: 'Turns', align: 'right', values: cols.turns },
+        { header: 'Output', align: 'right', values: cols.output },
         ...buildBackendColumns(weeks.map((w) => w.backendOutput)),
-        { header: '+Lines', align: 'right', values: added },
-        { header: '-Lines', align: 'right', values: removed },
-        { header: 'Δ Output', align: 'right', values: delta },
-        { header: 'Top Project', align: 'left', values: topProject },
+        { header: '+Lines', align: 'right', values: cols.added },
+        { header: '-Lines', align: 'right', values: cols.removed },
+        { header: 'Δ Output', align: 'right', values: cols.delta },
+        { header: 'Top Project', align: 'left', values: cols.topProject },
     ]);
     process.stdout.write('\n');
 }

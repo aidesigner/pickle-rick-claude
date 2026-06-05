@@ -204,25 +204,26 @@ export function appendMonitorStderrLog(opts) {
     const payload = normalizeStderrChunk(opts.chunk);
     const header = opts.firstWriteForProcess === false ? Buffer.alloc(0) : Buffer.from(buildMonitorStderrHeader(opts.sessionDir, pid, ts), 'utf8');
     const appended = header.length > 0 ? Buffer.concat([header, payload]) : payload;
-    let existing = Buffer.alloc(0);
+    // Append unconditionally, then trim from the front only when the file has
+    // grown past the cap. The common path is a single append + stat; the whole
+    // file is re-read solely on the (rare) rotation path. The previous
+    // implementation read the entire log on every write and double-wrote on
+    // rotation (append followed by an overwrite that partially undid it).
+    fs.appendFileSync(logPath, appended);
+    let onDiskSize = appended.length;
     try {
-        if (fs.existsSync(logPath)) {
-            existing = fs.readFileSync(logPath);
-        }
+        onDiskSize = fs.statSync(logPath).size;
     }
-    catch {
-        existing = Buffer.alloc(0);
-    }
-    const combined = Buffer.concat([existing, appended]);
-    let next = combined;
+    catch { /* keep the append length as a best-effort estimate */ }
     let bytesDropped = 0;
-    if (combined.length > capBytes) {
-        bytesDropped = combined.length - capBytes;
-        next = combined.subarray(bytesDropped);
-    }
-    fs.appendFileSync(logPath, appended, 'utf8');
-    if (bytesDropped > 0) {
-        fs.writeFileSync(logPath, next);
+    if (onDiskSize > capBytes) {
+        bytesDropped = onDiskSize - capBytes;
+        let current = appended;
+        try {
+            current = fs.readFileSync(logPath);
+        }
+        catch { /* fall back to the just-appended buffer */ }
+        fs.writeFileSync(logPath, current.subarray(bytesDropped));
         logFn({
             event: 'monitor_stderr_rotated',
             source: 'pickle',
@@ -326,10 +327,20 @@ function mvTruncate(s) {
         return s;
     return s.slice(0, s.length - (bare.length - MV_WIDTH + 1)) + '…';
 }
+/**
+ * Truncate `s` to at most `limit` characters, appending '…' when cut.
+ * `reserve` characters are dropped before the ellipsis (default 1) so the
+ * result — ellipsis included — stays within `limit`. Plain-length counterpart
+ * to the ANSI-aware {@link mvTruncate}; use this for raw content truncated
+ * before being wrapped in color codes.
+ */
+function truncate(s, limit, reserve = 1) {
+    return s.length > limit ? s.slice(0, limit - reserve) + '…' : s;
+}
 function mvSubsystemLine(name, clean, target, findingsMap) {
     const findings = Array.isArray(findingsMap[name]) ? findingsMap[name] : [];
     const rawLast = findings.length > 0 ? String(findings[findings.length - 1]) : '--';
-    const lastAction = rawLast.length > 20 ? rawLast.slice(0, 19) + '…' : rawLast;
+    const lastAction = truncate(rawLast, 20);
     return mvTruncate(`  ${MX.GREEN}${name}${MX.R} ${MX.DIM}${clean}/${target}${MX.R} ${lastAction}`);
 }
 function mvSubsystems(sessionDir) {
@@ -446,20 +457,9 @@ export function formatCurrentField(currentTicketId, tickets, width) {
     const raw = title ? `${currentTicketId}: ${title}` : String(currentTicketId);
     // Reserve ~16 cols for the "  Current: " label + padding
     const maxLen = Math.max(8, width - 16);
-    const display = raw.length > maxLen ? raw.slice(0, maxLen - 1) + '…' : raw;
+    const display = truncate(raw, maxLen);
     return `${MX.BRIGHT}${display}${MX.R}`;
 }
-/**
- * Build the ticket list section as an array of pre-formatted lines (each
- * ending in `\n`). When `tickets.length` fits within `budget`, renders the
- * full list. Otherwise, windows the slice around the current (or last-done)
- * ticket, keeping the current ticket visible with a trailing buffer of
- * upcoming tickets, and emits `... N more above/below ...` indicators.
- *
- * Exported for unit testing. `budget` is the max number of ticket body lines
- * available (including any indicator lines). Caller accounts for the
- * "Tickets:" section header separately.
- */
 function colorTicketStatus(ticket) {
     const status = (ticket.status || '').toLowerCase();
     const sym = statusSymbol(ticket.status);
@@ -490,6 +490,17 @@ function findTicketWindowAnchor(tickets, currentTicketId) {
     }
     return lastDone >= 0 ? lastDone : 0;
 }
+/**
+ * Build the ticket list section as an array of pre-formatted lines (each
+ * ending in `\n`). When `tickets.length` fits within `budget`, renders the
+ * full list. Otherwise, windows the slice around the current (or last-done)
+ * ticket, keeping the current ticket visible with a trailing buffer of
+ * upcoming tickets, and emits `... N more above/below ...` indicators.
+ *
+ * Exported for unit testing. `budget` is the max number of ticket body lines
+ * available (including any indicator lines). Caller accounts for the
+ * "Tickets:" section header separately.
+ */
 export function buildTicketLines(tickets, currentTicketId, budget) {
     if (tickets.length === 0)
         return [];
@@ -649,7 +660,7 @@ function buildHeaderFields(state, tickets, width, sessionDir, nowMs) {
     const workDir = state.working_dir || '';
     const project = workDir ? path.basename(workDir) : 'unknown';
     const task = state.original_prompt || '';
-    const taskDisplay = task.length > width - 20 ? task.slice(0, width - 23) + '…' : (task || 'none');
+    const taskDisplay = truncate(task, width - 20, 3) || 'none';
     const fields = [
         ['Project', `${MX.BRIGHT}${project}${MX.R}`],
         ['Task', `${MX.GREEN}${taskDisplay}${MX.R}`],
@@ -682,7 +693,7 @@ function buildRecentOutput(sessionDir, width, sep) {
             return recentOut;
         recentOut.push(`\n${sep}\n${MX.DIM}Recent output:${MX.R}\n`);
         for (const logLine of summaryLines) {
-            const truncated = logLine.length > width - 2 ? logLine.slice(0, width - 5) + '…' : logLine;
+            const truncated = truncate(logLine, width - 2, 3);
             recentOut.push(`${MX.GREEN}  ${truncated}${MX.R}\n`);
         }
     }
@@ -786,6 +797,18 @@ export async function render(sessionDir, mode, sink = process.stdout, _renderDas
     return state.active === true;
 }
 /**
+ * R-MWR-2: env kill-switch. When `PICKLE_MONITOR_WATCHDOG === 'off'` the
+ * dead-pane respawn watchdog is fully disabled — no setInterval is
+ * armed, no tmux probes fire, no log lines are emitted. Operators flip
+ * this when they need to debug a frozen pane manually without the
+ * watchdog reviving it underfoot.
+ *
+ * Returns `true` when the watchdog is disabled.
+ */
+export function isRespawnWatchdogDisabled(env = process.env) {
+    return env.PICKLE_MONITOR_WATCHDOG === 'off';
+}
+/**
  * R-MWR-1: register a continuous watchdog inside the monitor pane that
  * re-runs `restartDeadWatcherPanes` every {@link RESPAWN_WATCHDOG_INTERVAL_MS}.
  *
@@ -804,18 +827,6 @@ export async function render(sessionDir, mode, sink = process.stdout, _renderDas
  * Returns the timer handle for tests / explicit shutdown; the
  * production `main()` discards it.
  */
-/**
- * R-MWR-2: env kill-switch. When `PICKLE_MONITOR_WATCHDOG === 'off'` the
- * dead-pane respawn watchdog is fully disabled — no setInterval is
- * armed, no tmux probes fire, no log lines are emitted. Operators flip
- * this when they need to debug a frozen pane manually without the
- * watchdog reviving it underfoot.
- *
- * Returns `true` when the watchdog is disabled.
- */
-export function isRespawnWatchdogDisabled(env = process.env) {
-    return env.PICKLE_MONITOR_WATCHDOG === 'off';
-}
 export function startRespawnWatchdog(opts) {
     // R-MWR-2: env kill-switch. Bail before scheduling so disabling the
     // watchdog truly disables it — no timer, no logs, no tmux calls.

@@ -76,35 +76,33 @@ function validateCliPayloadShape(eventType, payload, gatePayload) {
         process.exit(1);
     }
 }
-if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
-    const argv = process.argv.slice(2);
+function requireFlagValue(value, flag) {
+    if (!value || value.startsWith('--')) {
+        console.error(`${flag} requires a value.`);
+        process.exit(1);
+    }
+    return value;
+}
+function parseCliFlags(argv) {
     const positional = [];
     let gatePayload;
     let backend;
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
         if (arg === '--gate-payload') {
-            const next = argv[i + 1];
-            if (!next || next.startsWith('--')) {
-                console.error('--gate-payload requires a JSON-object value.');
-                process.exit(1);
-            }
-            gatePayload = parseGatePayload(next);
-            i++;
+            gatePayload = parseGatePayload(requireFlagValue(argv[++i], '--gate-payload'));
         }
         else if (arg === '--backend') {
-            const next = argv[i + 1];
-            if (!next || next.startsWith('--')) {
-                console.error('--backend requires a value.');
-                process.exit(1);
-            }
-            backend = parseBackend(next);
-            i++;
+            backend = parseBackend(requireFlagValue(argv[++i], '--backend'));
         }
         else {
             positional.push(arg);
         }
     }
+    return { positional, gatePayload, backend };
+}
+function main() {
+    const { positional, gatePayload, backend } = parseCliFlags(process.argv.slice(2));
     const [eventType, rawTitle] = positional;
     if (!eventType || eventType.startsWith('--')) {
         console.error(USAGE);
@@ -140,4 +138,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
         console.error(`Failed to log activity: ${safeErrorMessage(err)}`);
         process.exit(1);
     }
+}
+if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
+    main();
 }
