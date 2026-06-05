@@ -539,17 +539,6 @@ export function formatCurrentField(
   return `${MX.BRIGHT}${display}${MX.R}`;
 }
 
-/**
- * Build the ticket list section as an array of pre-formatted lines (each
- * ending in `\n`). When `tickets.length` fits within `budget`, renders the
- * full list. Otherwise, windows the slice around the current (or last-done)
- * ticket, keeping the current ticket visible with a trailing buffer of
- * upcoming tickets, and emits `... N more above/below ...` indicators.
- *
- * Exported for unit testing. `budget` is the max number of ticket body lines
- * available (including any indicator lines). Caller accounts for the
- * "Tickets:" section header separately.
- */
 function colorTicketStatus(ticket: TicketInfo): string {
   const status = (ticket.status || '').toLowerCase();
   const sym = statusSymbol(ticket.status);
@@ -580,6 +569,17 @@ function findTicketWindowAnchor(tickets: TicketInfo[], currentTicketId: string |
   return lastDone >= 0 ? lastDone : 0;
 }
 
+/**
+ * Build the ticket list section as an array of pre-formatted lines (each
+ * ending in `\n`). When `tickets.length` fits within `budget`, renders the
+ * full list. Otherwise, windows the slice around the current (or last-done)
+ * ticket, keeping the current ticket visible with a trailing buffer of
+ * upcoming tickets, and emits `... N more above/below ...` indicators.
+ *
+ * Exported for unit testing. `budget` is the max number of ticket body lines
+ * available (including any indicator lines). Caller accounts for the
+ * "Tickets:" section header separately.
+ */
 export function buildTicketLines(
   tickets: TicketInfo[],
   currentTicketId: string | null | undefined,
