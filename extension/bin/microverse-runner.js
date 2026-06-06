@@ -16,7 +16,7 @@ import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRate
 import { resolveCodexModel } from './spawn-morty.js';
 import { evaluateManagerRelaunch, recordManagerRelaunch, } from '../services/manager-relaunch.js';
 import { logActivity } from '../services/activity-logger.js';
-import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate, filterByScope } from '../services/convergence-gate.js';
+import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate, filterByScope, classifyNoDisown, getChangedExportedSymbols, getChangedFilesSince, } from '../services/convergence-gate.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 class MicroverseExitError extends Error {
     exitReason;
@@ -594,8 +594,70 @@ function resolveMetricType(currentMv) {
     const legacyMetric = currentMv;
     return legacyMetric.key_metric?.type ?? legacyMetric.metric?.type ?? legacyMetric.metric_type ?? 'none';
 }
+// R-ORSR-6 interface-change sweep. The per-iteration gate is scope-fenced (allowed_paths +
+// changed-since-preIterSha), so an out-of-scope consumer spec that still uses the OLD shape of a
+// changed exported interface is never type-checked there (Finding #103). When the phase's own
+// cumulative diff (state.start_commit..HEAD) changed an exported symbol, run a WHOLE-REPO tsc
+// (un-fenced) and keep only self-introduced failures via the no-disown classifier. A non-empty
+// result blocks convergence — the phase cannot disown its own break.
+export async function runInterfaceChangeSweep(opts) {
+    const getSymbols = opts.getChangedExportedSymbolsFn ?? getChangedExportedSymbols;
+    const getFiles = opts.getChangedFilesSinceFn ?? getChangedFilesSince;
+    const changedExportedSymbols = getSymbols(opts.workingDir, opts.startCommit);
+    if (changedExportedSymbols.size === 0) {
+        return { ran: false, selfIntroduced: [] };
+    }
+    const result = await opts.runGateFn({
+        workingDir: opts.workingDir,
+        mode: 'strict',
+        scope: 'full',
+        checks: ['typecheck'],
+        onEvent: (event, data) => opts.logActivityFn({
+            event: event,
+            source: 'pickle',
+            session: path.basename(opts.sessionDir),
+            gate_payload: { ...data, interface_change_sweep: true },
+        }),
+    });
+    const changedFiles = new Set(getFiles(opts.workingDir, opts.startCommit).map((f) => f.replace(/\\/g, '/')));
+    const { selfIntroduced } = classifyNoDisown(result.failures, {
+        changedFiles,
+        changedExportedSymbols,
+        workingDir: opts.workingDir,
+    });
+    return { ran: true, selfIntroduced };
+}
+function recordInterfaceSweepRegression(opts) {
+    const nextMv = {
+        ...opts.currentMv,
+        iteration_regressions: (opts.currentMv.iteration_regressions ?? 0) + 1,
+    };
+    opts.writeMicroverseStateFn(opts.sessionDir, nextMv);
+    opts.logActivityFn({
+        event: 'iteration_left_regression',
+        source: 'pickle',
+        session: path.basename(opts.sessionDir),
+        gate_payload: {
+            mode: 'strict',
+            scope: 'full',
+            interface_change_sweep: true,
+            failures_in: opts.selfIntroduced.length,
+            changed_exported_symbols: opts.changedExportedSymbolCount,
+            failures: opts.selfIntroduced.slice(0, 10).map((failure) => ({
+                check: failure.check,
+                file: failure.file,
+                line: failure.line,
+                ruleOrCode: failure.ruleOrCode,
+                message: failure.message,
+                severity: failure.severity,
+                occurrence_index: failure.occurrence_index,
+            })),
+        },
+    });
+    return nextMv;
+}
 export async function handleWorkerManagedIteration(opts) {
-    const { preIterSha, workingDir, sessionDir, enabledFiles, regressionWarningThreshold, backend, remediatorTimeoutS, log, iteration, minIterations, _deps, } = opts;
+    const { preIterSha, workingDir, sessionDir, enabledFiles, regressionWarningThreshold, backend, remediatorTimeoutS, log, iteration, minIterations, startCommit, _deps, } = opts;
     let currentMv = opts.currentMv;
     let converged = false;
     let reason = 'no reason';
@@ -638,6 +700,38 @@ export async function handleWorkerManagedIteration(opts) {
             converged: false,
             reason: 'per-iteration gate left unresolved regressions',
         };
+    }
+    // R-ORSR-6 interface-change sweep: before trusting a convergence signal, run a whole-repo tsc
+    // when the phase's own diff changed an exported symbol. A self-introduced out-of-scope consumer
+    // break blocks convergence and arms the no-disown bound on the deferral force-exit.
+    if (converged && typeof startCommit === 'string' && startCommit.trim().length > 0) {
+        const sweep = await runInterfaceChangeSweep({
+            workingDir,
+            sessionDir,
+            startCommit: startCommit.trim(),
+            runGateFn: _deps?.runGateFn ?? runGate,
+            logActivityFn: _deps?.logActivityFn ?? logActivity,
+            getChangedExportedSymbolsFn: _deps?.getChangedExportedSymbolsFn,
+            getChangedFilesSinceFn: _deps?.getChangedFilesSinceFn,
+        });
+        if (sweep.ran && sweep.selfIntroduced.length > 0) {
+            log(`Iteration ${iteration} — convergence blocked: interface-change sweep found ` +
+                `${sweep.selfIntroduced.length} self-introduced whole-repo break(s) — phase cannot disown its own regression`);
+            const sweptMv = recordInterfaceSweepRegression({
+                currentMv,
+                sessionDir,
+                selfIntroduced: sweep.selfIntroduced,
+                changedExportedSymbolCount: sweep.selfIntroduced.length,
+                writeMicroverseStateFn: _deps?.writeMicroverseStateFn ?? writeMicroverseState,
+                logActivityFn: _deps?.logActivityFn ?? logActivity,
+            });
+            return {
+                currentMv: sweptMv,
+                converged: false,
+                reason: 'per-iteration gate left unresolved regressions',
+                selfRedOpen: true,
+            };
+        }
     }
     if (converged) {
         if (resolveMetricType(currentMv) === 'none') {
@@ -2536,9 +2630,23 @@ function handlePostConvergenceGateDeferral(workerResult, ctx) {
     const GATE_DEFERRED_REASON = 'per-iteration gate left unresolved regressions';
     if (workerResult.reason !== GATE_DEFERRED_REASON) {
         ctx.postConvergenceDeferralCount = 0;
+        ctx.postConvergenceSelfRedOpen = false;
         return null;
     }
+    // R-ORSR-6: once a self-introduced red is observed it stays open until a non-deferred
+    // iteration clears it (handled above). A worker cannot disown its own break by simply
+    // re-asserting "pre-existing" on later deferrals.
+    ctx.postConvergenceSelfRedOpen =
+        workerResult.selfRedOpen === true || ctx.postConvergenceSelfRedOpen === true;
     ctx.postConvergenceDeferralCount = (ctx.postConvergenceDeferralCount ?? 0) + 1;
+    if (ctx.postConvergenceSelfRedOpen) {
+        // INV-NO-SELF-DISOWN / INV-NO-DEFERRAL-FORCE-EXIT-ON-SELF-RED: a phase that turned the
+        // whole-repo gate red can NEVER be force-converged by attrition. Keep iterating so the
+        // worker must actually fix the break.
+        ctx.log(`[R-ORSR-6] self-introduced red gate open (deferral ${ctx.postConvergenceDeferralCount}) — ` +
+            `refusing trust-the-worker force-exit; the phase must resolve its own break`);
+        return null;
+    }
     if (ctx.postConvergenceDeferralCount >= POST_CONVERGENCE_GATE_DEFERRAL_LIMIT) {
         ctx.log(`[R-APXG-3] Post-convergence gate deferred ${ctx.postConvergenceDeferralCount} consecutive time(s) ` +
             `(limit=${POST_CONVERGENCE_GATE_DEFERRAL_LIMIT}); convergence signal trusted — exiting cleanly`);

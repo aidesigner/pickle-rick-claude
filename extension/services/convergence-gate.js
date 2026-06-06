@@ -157,9 +157,104 @@ async function inspectBaselinePath(baselinePath) {
         };
     }
 }
-export function subtractBaseline(current, baseline) {
+/** Extract identifier-shaped tokens a `tsc` failure references: every quoted token in the
+ * message (tsc quotes symbol/type names) plus the basename stem of the failing file. */
+export function extractTscFailureIdentifiers(failure) {
+    const ids = new Set();
+    const idShape = /^[A-Za-z_$][\w$]*$/;
+    const quoted = failure.message.match(/['"]([^'"]+)['"]/g) ?? [];
+    for (const q of quoted) {
+        const inner = q.slice(1, -1).trim();
+        if (idShape.test(inner))
+            ids.add(inner);
+    }
+    const stem = path.basename(failure.file).replace(/\.[^.]+$/, '');
+    if (idShape.test(stem))
+        ids.add(stem);
+    return Array.from(ids);
+}
+/** True when a failure intersects the phase's own diff (by changed file OR changed exported
+ * symbol). Returns false when no context is supplied (the no-guard default). */
+export function isSelfIntroducedFailure(failure, ctx) {
+    if (!ctx)
+        return false;
+    if (ctx.changedFiles.size > 0) {
+        const rel = ctx.workingDir
+            ? normalizeScopePath(path.relative(ctx.workingDir, failure.file))
+            : normalizeScopePath(failure.file);
+        if (ctx.changedFiles.has(rel) || ctx.changedFiles.has(normalizeScopePath(failure.file))) {
+            return true;
+        }
+    }
+    if (ctx.changedExportedSymbols.size > 0) {
+        for (const id of extractTscFailureIdentifiers(failure)) {
+            if (ctx.changedExportedSymbols.has(id))
+                return true;
+        }
+    }
+    return false;
+}
+/** Partition failures into self-introduced (intersect the phase's own diff) and other. */
+export function classifyNoDisown(failures, ctx) {
+    const selfIntroduced = [];
+    const other = [];
+    for (const f of failures) {
+        (isSelfIntroducedFailure(f, ctx) ? selfIntroduced : other).push(f);
+    }
+    return { selfIntroduced, other };
+}
+// `selfGuard` (R-ORSR-6): a baseline-matching failure is dropped as pre-existing ONLY when it is
+// NOT self-introduced. A failure intersecting the phase's own diff is never subtracted, so a
+// self-introduced break can never be disowned as a coincidental baseline match.
+export function subtractBaseline(current, baseline, selfGuard) {
     const baselineSet = new Set(baseline.failures.map(buildFingerprint));
-    return current.filter(f => !baselineSet.has(buildFingerprint(f)));
+    return current.filter(f => {
+        if (!baselineSet.has(buildFingerprint(f)))
+            return true;
+        return isSelfIntroducedFailure(f, selfGuard);
+    });
+}
+/** Repo-relative changed files in `sinceCommit..HEAD` (R-ORSR-6 exported wrapper). */
+export function getChangedFilesSince(workingDir, sinceCommit) {
+    return getChangedSince(workingDir, sinceCommit);
+}
+/** Parse a unified `git diff` for exported declarations added or removed on changed lines.
+ * Pure — operates on diff text so it is unit-testable without a git repo. */
+export function parseChangedExportedSymbolsFromDiff(diffText) {
+    const symbols = new Set();
+    const declRe = /^\s*export\s+(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?(?:interface|type|class|enum|function|const|let|var)\s+([A-Za-z_$][\w$]*)/;
+    const namedReExportRe = /^\s*export\s+(?:type\s+)?\{([^}]*)\}/;
+    for (const raw of diffText.split('\n')) {
+        // Only changed lines; skip the +++/--- file headers.
+        if (!/^[+-]/.test(raw) || /^[+-]{3}\s/.test(raw))
+            continue;
+        const line = raw.slice(1);
+        const decl = line.match(declRe);
+        if (decl?.[1])
+            symbols.add(decl[1]);
+        const named = line.match(namedReExportRe);
+        if (named?.[1]) {
+            for (const part of named[1].split(',')) {
+                const token = part.trim();
+                if (!token)
+                    continue;
+                // `A` or `A as C` → bind the externally-visible name (C if aliased, else A).
+                const asMatch = token.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+                if (asMatch?.[2])
+                    symbols.add(asMatch[2]);
+                else if (/^[A-Za-z_$][\w$]*$/.test(token))
+                    symbols.add(token);
+            }
+        }
+    }
+    return symbols;
+}
+/** Exported identifiers whose declaration changed in `sinceCommit..HEAD` (TS/TSX only). */
+export function getChangedExportedSymbols(workingDir, sinceCommit) {
+    const result = spawnSync('git', ['diff', `${sinceCommit}..HEAD`, '--', '*.ts', '*.tsx'], { cwd: workingDir, encoding: 'utf-8', timeout: 30_000, maxBuffer: 32 * 1024 * 1024 });
+    if ((result.status ?? 1) !== 0)
+        return new Set();
+    return parseChangedExportedSymbolsFromDiff(result.stdout || '');
 }
 export function assertBaselineFresh(baselinePath, opts) {
     if (!fs.existsSync(baselinePath)) {
