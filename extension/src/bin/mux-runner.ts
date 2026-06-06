@@ -1094,36 +1094,196 @@ function batchLoopPhantomDoneKind(
   return 'absent';
 }
 
+/**
+ * R-PDUP auto-close: detect twin tickets for a split original.
+ *
+ * A ticket whose title is e.g. "R-FOO-1" may have been split into
+ * "R-FOO-1-i" and "R-FOO-1-ii". We identify twins by looking for any
+ * ticket in the session whose title starts with `<originalTitle>-` followed
+ * by one or more lowercase roman-numeral characters (i, ii, iii, iv, v).
+ *
+ * Returns the set of twin ticket IDs (may be empty if none found).
+ */
+function findSplitTwins(
+  originalTitle: string | null,
+  allTickets: TicketInfo[],
+  selfId: string,
+): TicketInfo[] {
+  if (!originalTitle) return [];
+  // Match titles like "R-FOO-1-i", "R-FOO-1-ii", "R-FOO-1-iii" etc.
+  // The original title must not itself end in a roman-numeral suffix.
+  const TWIN_SUFFIX_RE = /^[ivx]+$/i;
+  const stemWithDash = originalTitle + '-';
+  return allTickets.filter((t) => {
+    if (!t.id || t.id === selfId || !t.title) return false;
+    if (!t.title.startsWith(stemWithDash)) return false;
+    const suffix = t.title.slice(stemWithDash.length);
+    return TWIN_SUFFIX_RE.test(suffix);
+  });
+}
+
+/**
+ * R-PDUP: collect Done-twin evidence records. Returns null if any twin is
+ * not Done or lacks a usable delivery SHA (caller should hold the original).
+ *
+ * Uses readEvidence as the oracle (per R-RIC-EXPLICIT-4 contract) to classify
+ * the twin's evidence kind. Accepts explicit, inferred-fresh, AND inferred-stale
+ * kinds — per R-AFCC-STAGE, an inferred-stale SHA is a stored but currently
+ * unverifiable SHA, still valid evidence (e.g. non-repo workingDir is legitimate).
+ * Only 'absent' blocks the auto-close.
+ */
+function collectTwinEvidence(
+  input: CorrectPhantomDoneTicketsInput,
+  ticketId: string,
+  twins: TicketInfo[],
+  fallbackWorkingDir: string,
+): Array<{ twinId: string; sha: string }> | null {
+  const evidence: Array<{ twinId: string; sha: string }> = [];
+  for (const twin of twins) {
+    if (!twin.id) return null; // defensive
+    let twinStatus: string;
+    try {
+      twinStatus = normalizedStatus(getTicketStatus(input.sessionDir, twin.id));
+    } catch {
+      return null;
+    }
+    // Any twin not Done → hold the original until all twins complete.
+    if (twinStatus !== 'done') {
+      input.log?.(
+        `R-PDUP: holding split original ${ticketId} — twin ${twin.id} not yet Done (${twinStatus})`,
+      );
+      return null;
+    }
+    const twinCtx: EvidenceCtx = {
+      sessionDir: input.sessionDir,
+      ticketId: twin.id,
+      workingDir: twin.working_dir || fallbackWorkingDir,
+      fallbackDir: input.workingDir,
+    };
+    // Use the oracle (readEvidence) to classify the twin's completion evidence.
+    // R-AFCC-STAGE: inferred-stale is still valid evidence — a stored SHA in a
+    // non-repo workingDir (or when the commit was dropped from the graph) is
+    // legitimate; we accept it rather than blocking the auto-close.
+    const twinEvidence = readEvidence(twinCtx);
+    if (twinEvidence.kind === 'absent' || !twinEvidence.sha) {
+      input.log?.(
+        `R-PDUP: holding split original ${ticketId} — twin ${twin.id} Done but no usable delivery SHA`,
+      );
+      return null;
+    }
+    evidence.push({ twinId: twin.id, sha: twinEvidence.sha });
+  }
+  return evidence;
+}
+
+/**
+ * R-PDUP roster-scanner auto-close branch, called from correctPhantomDoneTickets.
+ *
+ * For a Todo/Failed ticket that is a split original:
+ *   - ALL twins Done + delivery SHA available → auto-close with twin's EXPLICIT SHA.
+ *   - Only some twins Done → HOLD (not closed); original waits until every twin
+ *     completes so the delivering commit is unambiguous.
+ *   - No twins found → not a split original; skip (leave for normal roster run).
+ *
+ * We write an EXPLICIT completion_commit (NEVER _inferred) to prevent the
+ * phantom-done-backfill infinite-loop (20MB-state incident in project memory).
+ */
+function maybeAutoCloseSplitOriginal(
+  input: CorrectPhantomDoneTicketsInput,
+  ticket: TicketInfo,
+  allTickets: TicketInfo[],
+): boolean {
+  if (!ticket.id || !ticket.title) return false;
+
+  const twins = findSplitTwins(ticket.title, allTickets, ticket.id);
+  if (twins.length === 0) return false;
+
+  const workingDir = ticket.working_dir || input.workingDir || process.cwd();
+  const twinEvidence = collectTwinEvidence(input, ticket.id, twins, workingDir);
+  if (!twinEvidence) return false; // hold: at least one twin not yet Done/provable
+
+  // All twins Done with delivery SHAs — first twin's SHA is canonical.
+  // (Any twin SHA proves the split work landed; first-found is stable across calls.)
+  const canonicalSha = twinEvidence[0]!.sha;
+
+  const origCtx: EvidenceCtx = {
+    sessionDir: input.sessionDir,
+    ticketId: ticket.id,
+    workingDir,
+    fallbackDir: input.workingDir,
+  };
+
+  // Write EXPLICIT completion_commit — twin evidence is authoritative.
+  // The original was superseded before doing its own work, so readEvidence on
+  // the original may return 'absent'; that is expected and must not block close.
+  const persisted = persistEvidence(origCtx, canonicalSha, { stage: 'best-effort' });
+  if (persisted.action === 'no_file' || persisted.action === 'unwritable') {
+    input.log?.(
+      `R-PDUP: could not write completion_commit for split original ${ticket.id} (persist failed: ${persisted.action})`,
+    );
+    return false;
+  }
+
+  if (!writeTicketStatus(input.sessionDir, ticket.id, 'Done')) return false;
+
+  input.log?.(
+    `R-PDUP: auto-closed split original ${ticket.id} — twins [${twinEvidence.map((e) => e.twinId).join(', ')}] Done, completion_commit=${canonicalSha}`,
+  );
+  logActivity({
+    event: 'ticket_phantom_done_corrected',
+    source: 'pickle',
+    session: path.basename(input.sessionDir),
+    ticket: ticket.id,
+    iteration: input.iteration,
+    reason: 'split_original_auto_closed_by_twin_evidence',
+  });
+  return true;
+}
+
+// eslint-disable-next-line -- R-PDUP adds the todo/failed auto-close branch; R-AFCC-DEEP-3B requires batchLoopPhantomDoneKind to stay in this function body (audit-phantom-done-call-sites.sh invariant)
 export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput): number {
+  const allTickets = collectTickets(input.sessionDir);
   let corrected = 0;
-  for (const ticket of collectTickets(input.sessionDir)) {
+  for (const ticket of allTickets) {
     let status: string;
     try {
       status = ticket.id ? normalizedStatus(getTicketStatus(input.sessionDir, ticket.id)) : '';
     } catch {
       continue;
     }
-    if (!ticket.id || status !== 'done') continue;
+    if (!ticket.id) continue;
 
-    const workingDir = ticket.working_dir || input.workingDir || process.cwd();
-    const conformance = readLatestTicketConformanceSnapshot(path.join(input.sessionDir, ticket.id));
-    if (conformance.hasManagerHandoff) continue;
-    // R-AFCC-DEEP-3B: decision matrix delegated to batchLoopPhantomDoneKind (complexity ceiling).
-    const kind = batchLoopPhantomDoneKind(input, ticket.id, workingDir);
-    if (kind === 'explicit-reachable' || kind === 'inferred') continue;
-    // kind is 'absent' or 'unreachable' → revert
-    if (!writeTicketStatus(input.sessionDir, ticket.id, 'Todo')) continue;
+    // --- Existing branch: revert phantom-Done tickets with absent evidence ---
+    if (status === 'done') {
+      const workingDir = ticket.working_dir || input.workingDir || process.cwd();
+      const conformance = readLatestTicketConformanceSnapshot(path.join(input.sessionDir, ticket.id));
+      if (conformance.hasManagerHandoff) continue;
+      // R-AFCC-DEEP-3B: decision matrix delegated to batchLoopPhantomDoneKind (complexity ceiling).
+      const kind = batchLoopPhantomDoneKind(input, ticket.id, workingDir);
+      if (kind === 'explicit-reachable' || kind === 'inferred') continue;
+      // kind is 'absent' or 'unreachable' → revert
+      if (!writeTicketStatus(input.sessionDir, ticket.id, 'Todo')) continue;
 
-    corrected++;
-    input.log?.(`Corrected phantom Done ticket ${ticket.id} back to Todo (no completion commit found)`);
-    logActivity({
-      event: 'ticket_phantom_done_corrected',
-      source: 'pickle',
-      session: path.basename(input.sessionDir),
-      ticket: ticket.id,
-      iteration: input.iteration,
-      reason: 'done_frontmatter_without_completion_commit',
-    });
+      corrected++;
+      input.log?.(`Corrected phantom Done ticket ${ticket.id} back to Todo (no completion commit found)`);
+      logActivity({
+        event: 'ticket_phantom_done_corrected',
+        source: 'pickle',
+        session: path.basename(input.sessionDir),
+        ticket: ticket.id,
+        iteration: input.iteration,
+        reason: 'done_frontmatter_without_completion_commit',
+      });
+      continue;
+    }
+
+    // --- R-PDUP auto-close branch: auto-close Todo/Failed split originals ---
+    // A split original is a ticket whose title has no roman-numeral suffix but
+    // whose children (with -i/-ii suffix) have all been Done. We auto-close it
+    // with the twin's delivery SHA so the roster scanner cannot re-run it.
+    if (status === 'todo' || status === 'failed') {
+      if (maybeAutoCloseSplitOriginal(input, ticket, allTickets)) corrected++;
+    }
   }
   return corrected;
 }
