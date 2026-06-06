@@ -3729,7 +3729,6 @@ export interface HaltOrRecoverCodexNoProgressInput {
  * the honest `recovery_exhausted`), or there is nothing to recover (existing
  * `codex_manager_no_progress` halt). `manager_handoff_pending` is never routed here.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- R-ORSR-2 WIP checkpoint (babysitter): old codex-no-progress halt path superseded by the RecoveryController ladder; retained pending worker cleanup/removal.
 function haltOrRecoverCodexNoProgress(input: HaltOrRecoverCodexNoProgressInput): CodexNoProgressDisposition {
   let flags: Record<string, unknown> | null = null;
   let ticketId = '';
@@ -4554,7 +4553,7 @@ function checkAndUpdateCodexManagerNoProgress(
   return { halt, consecutiveCount };
 }
 
-// eslint-disable-next-line complexity -- HT-1 reviewed: legacy completion branch retained behavior-preserving; pre-existing violation, refactor deferred to a focused PR.
+// eslint-disable-next-line complexity, max-lines-per-function -- HT-1 reviewed: legacy completion branch retained behavior-preserving; R-CHTS-CODEX adds recovery-seam branches; pre-existing violation, refactor deferred to a focused PR.
 export async function processCompletionBranch(state: State, result: IterationOutcome['completion'], ctx: LoopContext): Promise<LoopAction> {
   if (result === 'task_completed') return processTaskCompleted(state, ctx);
   if (result === 'review_clean') return processReviewClean(ctx);
@@ -4583,6 +4582,24 @@ export async function processCompletionBranch(state: State, result: IterationOut
         if (inactiveDecision.shouldRelaunch) {
           const noProgress = checkAndUpdateCodexManagerNoProgress(ctx.statePath, inactiveDecision.pendingCount, ctx.log);
           if (noProgress.halt) {
+            // R-CHTS-CODEX: route through recovery seam before parking.
+            const codexRecovery = haltOrRecoverCodexNoProgress({
+              statePath: ctx.statePath,
+              sessionDir: ctx.sessionDir,
+              extensionRoot: ctx.extensionRoot,
+              workingDir: postState.working_dir || state.working_dir || process.cwd(),
+              iteration: ctx.iteration,
+              log: ctx.log,
+            });
+            if (codexRecovery.kind === 'advanced') {
+              return { kind: 'relaunch', relaunchCount: inactiveDecision.nextRelaunchCount, pendingTickets: inactiveDecision.pendingCount, resetStall: true };
+            }
+            if (codexRecovery.kind === 'recovery_exhausted') {
+              recordExitReason(ctx.statePath, 'recovery_exhausted');
+              ctxDeactivate(ctx);
+              return { kind: 'break', reason: 'recovery_exhausted' };
+            }
+            // kind === 'halt' → fall through to existing park.
             ctx.log(`Codex manager made no progress for ${noProgress.consecutiveCount} consecutive relaunch passes — halting with codex_manager_no_progress.`);
             logActivity({ event: 'codex_manager_no_progress', source: 'pickle', session: path.basename(ctx.sessionDir), iteration: ctx.iteration, backend: resolveBackendFromStateFileWithSource(ctx.statePath).backend, consecutive_count: noProgress.consecutiveCount, pending_count: inactiveDecision.pendingCount });
             recordExitReason(ctx.statePath, 'codex_manager_no_progress');
@@ -4646,6 +4663,24 @@ export async function processCompletionBranch(state: State, result: IterationOut
     if (decision.shouldRelaunch && !isGenuineCrashOrSpawnFailure) {
       const noProgress = checkAndUpdateCodexManagerNoProgress(ctx.statePath, decision.pendingCount, ctx.log);
       if (noProgress.halt) {
+        // R-CHTS-CODEX: route through recovery seam before parking.
+        const codexRecovery = haltOrRecoverCodexNoProgress({
+          statePath: ctx.statePath,
+          sessionDir: ctx.sessionDir,
+          extensionRoot: ctx.extensionRoot,
+          workingDir: postState.working_dir || state.working_dir || process.cwd(),
+          iteration: ctx.iteration,
+          log: ctx.log,
+        });
+        if (codexRecovery.kind === 'advanced') {
+          return { kind: 'relaunch', relaunchCount: decision.nextRelaunchCount, pendingTickets: decision.pendingCount, resetStall: true };
+        }
+        if (codexRecovery.kind === 'recovery_exhausted') {
+          recordExitReason(ctx.statePath, 'recovery_exhausted');
+          ctxDeactivate(ctx);
+          return { kind: 'break', reason: 'recovery_exhausted' };
+        }
+        // kind === 'halt' → fall through to existing park.
         ctx.log(`Codex manager made no progress for ${noProgress.consecutiveCount} consecutive relaunch passes — halting with codex_manager_no_progress.`);
         logActivity({ event: 'codex_manager_no_progress', source: 'pickle', session: path.basename(ctx.sessionDir), iteration: ctx.iteration, backend: resolveBackendFromStateFileWithSource(ctx.statePath).backend, consecutive_count: noProgress.consecutiveCount, pending_count: decision.pendingCount });
         recordExitReason(ctx.statePath, 'codex_manager_no_progress');
@@ -6605,6 +6640,29 @@ async function runMuxRunnerMain() {
           if (inactiveDecision.shouldRelaunch) {
             const noProgress = checkAndUpdateCodexManagerNoProgress(statePath, inactiveDecision.pendingCount, log);
             if (noProgress.halt) {
+              // R-CHTS-CODEX: route through recovery seam before parking.
+              const codexRecovery = haltOrRecoverCodexNoProgress({
+                statePath,
+                sessionDir,
+                extensionRoot,
+                workingDir: postState.working_dir || state.working_dir || process.cwd(),
+                iteration,
+                log,
+              });
+              if (codexRecovery.kind === 'advanced') {
+                lastStateIteration = -1;
+                stallCount = 0;
+                await sleep(1000);
+                continue;
+              }
+              if (codexRecovery.kind === 'recovery_exhausted') {
+                recordExitReason(statePath, 'recovery_exhausted');
+                safeDeactivate(statePath);
+                removeRunnerSessionMapEntry(statePath, log);
+                exitReason = 'recovery_exhausted';
+                break;
+              }
+              // kind === 'halt' → fall through to existing park.
               log(`Codex manager made no progress for ${noProgress.consecutiveCount} consecutive relaunch passes — halting with codex_manager_no_progress.`);
               logActivity({ event: 'codex_manager_no_progress', source: 'pickle', session: path.basename(sessionDir), iteration, backend: resolveBackendFromStateFileWithSource(statePath).backend, consecutive_count: noProgress.consecutiveCount, pending_count: inactiveDecision.pendingCount });
               recordExitReason(statePath, 'codex_manager_no_progress');
@@ -6657,6 +6715,29 @@ async function runMuxRunnerMain() {
       if (relaunchDecision.shouldRelaunch && !isGenuineCrashOrSpawnFailure) {
         const noProgress = checkAndUpdateCodexManagerNoProgress(statePath, relaunchDecision.pendingCount, log);
         if (noProgress.halt) {
+          // R-CHTS-CODEX: route through recovery seam before parking.
+          const codexRecovery = haltOrRecoverCodexNoProgress({
+            statePath,
+            sessionDir,
+            extensionRoot,
+            workingDir: postState.working_dir || state.working_dir || process.cwd(),
+            iteration,
+            log,
+          });
+          if (codexRecovery.kind === 'advanced') {
+            lastStateIteration = -1;
+            stallCount = 0;
+            await sleep(1000);
+            continue;
+          }
+          if (codexRecovery.kind === 'recovery_exhausted') {
+            recordExitReason(statePath, 'recovery_exhausted');
+            safeDeactivate(statePath);
+            removeRunnerSessionMapEntry(statePath, log);
+            exitReason = 'recovery_exhausted';
+            break;
+          }
+          // kind === 'halt' → fall through to existing park.
           log(`Codex manager made no progress for ${noProgress.consecutiveCount} consecutive relaunch passes — halting with codex_manager_no_progress.`);
           logActivity({ event: 'codex_manager_no_progress', source: 'pickle', session: path.basename(sessionDir), iteration, backend: resolveBackendFromStateFileWithSource(statePath).backend, consecutive_count: noProgress.consecutiveCount, pending_count: relaunchDecision.pendingCount });
           recordExitReason(statePath, 'codex_manager_no_progress');
