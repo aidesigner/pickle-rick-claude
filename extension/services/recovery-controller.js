@@ -125,6 +125,86 @@ export function runRecoveryLadder(deps) {
     record('escalate', 'failed', 'recovery ladder exhausted without a recoverable signal');
     return { kind: 'exhausted', reason: 'ladder_exhausted' };
 }
+/**
+ * Classify recovery evidence into its taxonomy string. The three evidence booleans are
+ * mutually exclusive by construction (`planConvergedUncommitted` and `noWorkProduced`
+ * both require `!treeDirty`), so the precedence here only formalises that ordering.
+ * Returns null when no stalled-class signal is present.
+ */
+export function classifyRecoveryTaxonomy(evidence) {
+    if (evidence.treeDirty)
+        return 'work_uncommitted';
+    if (evidence.planConvergedUncommitted)
+        return 'plan_converged_uncommitted';
+    if (evidence.noWorkProduced)
+        return 'no_work_produced';
+    return null;
+}
+/**
+ * R-ORSR-3 approval predicate: a converged plan is eligible for execute-converged-plan
+ * iff a `plan_*.md` artifact exists AND the co-located `plan_review.md` carries APPROVED.
+ * Pure, so the runtime evidence assessor (mux-runner) and the unit tests share one
+ * definition rather than drifting two copies of the eligibility rule.
+ */
+export function isConvergedPlanEligible(inputs) {
+    return inputs.planArtifactExists && inputs.planReviewApproved;
+}
+const PLAN_PHASE_SPLIT_RE = /^(?=## Phase \d+)/m;
+const PLAN_PHASE_HEADER_RE = /^## Phase (\d+)\s*(?:[—-]\s*(.*))?$/m;
+const PLAN_PHASE_VERIFY_RE = /\*\*Verify:\*\*[^`\n]*`([^`]+)`/;
+/**
+ * Parse the authored `## Phase N — Title` blocks (each with an optional
+ * `**Verify:** \`cmd\`` line) out of an approved plan's markdown. The Phase is the plan's
+ * authored unit (spawn-morty plan template), NOT a finding. Blocks without a parseable
+ * header are skipped; a block with no verify command yields `verify: null`.
+ */
+export function parsePlanPhases(planMarkdown) {
+    const phases = [];
+    for (const block of planMarkdown.split(PLAN_PHASE_SPLIT_RE)) {
+        const header = block.match(PLAN_PHASE_HEADER_RE);
+        if (!header)
+            continue;
+        const verify = block.match(PLAN_PHASE_VERIFY_RE);
+        phases.push({
+            index: Number(header[1]),
+            title: (header[2] ?? '').trim(),
+            verify: verify ? verify[1].trim() : null,
+        });
+    }
+    return phases;
+}
+/**
+ * Execute the approved plan one Phase at a time: each phase that runs ok is committed
+ * immediately (one fix per commit, bounding cost by Phase count). The FIRST phase whose
+ * `executePhase` or `commitPhase` returns not-ok stops the loop — phases `0..committed-1`
+ * are already committed, the failing phase is not, and `{ ok:false }` propagates so the
+ * caller never marks the ticket Done (R-ORSR-3 partial-failure contract). An empty plan
+ * is `{ ok:false }`: nothing to execute, so the rung honestly fails. An adapter that
+ * throws is contained as a not-ok step (INV-RUNG-ERROR-CONTAINED parity).
+ */
+export function executePhaseLoop(deps) {
+    if (deps.phases.length === 0)
+        return { ok: false, committed: 0, failedIndex: null };
+    let committed = 0;
+    for (let i = 0; i < deps.phases.length; i++) {
+        const phase = deps.phases[i];
+        if (!safeStep(() => deps.executePhase(phase, i)))
+            return { ok: false, committed, failedIndex: i };
+        if (!safeStep(() => deps.commitPhase(phase, i)))
+            return { ok: false, committed, failedIndex: i };
+        committed += 1;
+    }
+    return { ok: true, committed, failedIndex: null };
+}
+/** Run one DI step, treating a throw as a not-ok result (INV-RUNG-ERROR-CONTAINED parity). */
+function safeStep(fn) {
+    try {
+        return fn().ok;
+    }
+    catch {
+        return false;
+    }
+}
 function errText(err) {
     return err instanceof Error ? err.message : String(err);
 }

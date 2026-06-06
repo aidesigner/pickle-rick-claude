@@ -17,7 +17,7 @@ import { updateTicketStatusInTransaction } from '../services/transaction-ticket-
 import { emitCrossTicketRegressionLinearComment } from '../lib/linear-comment.js';
 import { evaluateManagerRelaunch, recordManagerRelaunch, } from '../services/manager-relaunch.js';
 import { getHeadBranch, updateTicketFrontmatter, isWorkingTreeDirty } from '../services/git-utils.js';
-import { runRecoveryLadder } from '../services/recovery-controller.js';
+import { runRecoveryLadder, parsePlanPhases, executePhaseLoop, isConvergedPlanEligible } from '../services/recovery-controller.js';
 import { detectArtifactProgress, resolveNoProgressWindowSeconds } from '../services/artifact-progress-detector.js';
 import { readEvidence, persistEvidence, gateForPhantomDoneRevert } from '../services/ticket-completion-evidence.js';
 export { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream } from '../services/classifier-utils.js';
@@ -2971,7 +2971,7 @@ function assessRecoveryEvidence(sessionDir, workingDir, ticketId) {
     catch { /* ticket dir unreadable → no plan evidence */ }
     return {
         treeDirty,
-        planConvergedUncommitted: !treeDirty && planArtifactExists && planApproved,
+        planConvergedUncommitted: !treeDirty && isConvergedPlanEligible({ planArtifactExists, planReviewApproved: planApproved }),
         noWorkProduced: !treeDirty && !planArtifactExists,
     };
 }
@@ -3018,12 +3018,74 @@ function spawnRecoveryRemediator(input, gateFailures) {
         return false;
     }
 }
+/** R-ORSR-3 per-Phase verify-command budget (ms). Finite per subsystem invariant #3. */
+const CONVERGED_PLAN_VERIFY_TIMEOUT_MS = 600_000;
+/** R-ORSR-3 per-Phase git add/commit budget (ms). */
+const CONVERGED_PLAN_GIT_TIMEOUT_MS = 30_000;
+/**
+ * R-ORSR-3 execute-converged-plan executor — the runtime adapter behind the
+ * `RecoveryDeps.executeConvergedPlan` seam. Reads the approved plan from the ticket dir,
+ * parses its authored Phases, and runs each Phase's verify command as one atomic commit
+ * via `executePhaseLoop`. Partial failure (phase k fails) commits phases `0..k-1` and
+ * returns `{ ok:false }` so the ladder records the failed attempt and falls through —
+ * the ticket is never marked Done. A clean tree (the `planConvergedUncommitted` case)
+ * has nothing to commit, so the per-Phase `git commit` fails and the rung honestly
+ * reports `ok:false`; that is the documented down-scope, not a bug.
+ */
+function executeConvergedPlanAdapter(input) {
+    const ticketDir = path.join(input.sessionDir, input.ticketId);
+    let phases;
+    try {
+        const planFile = fs.readdirSync(ticketDir)
+            .filter(f => /^plan_.*\.md$/.test(f))
+            .sort()
+            .pop();
+        if (!planFile)
+            return { ok: false };
+        phases = parsePlanPhases(fs.readFileSync(path.join(ticketDir, planFile), 'utf-8'));
+    }
+    catch {
+        return { ok: false };
+    }
+    if (phases.length === 0)
+        return { ok: false };
+    const result = executePhaseLoop({
+        phases,
+        executePhase: (phase) => {
+            if (!phase.verify)
+                return { ok: false };
+            const r = spawnSync(phase.verify, {
+                cwd: input.workingDir,
+                shell: true,
+                encoding: 'utf-8',
+                timeout: CONVERGED_PLAN_VERIFY_TIMEOUT_MS,
+            });
+            return { ok: r.status === 0 };
+        },
+        commitPhase: (phase) => {
+            const add = spawnSync('git', ['add', '-A'], {
+                cwd: input.workingDir, encoding: 'utf-8', timeout: CONVERGED_PLAN_GIT_TIMEOUT_MS,
+            });
+            if (add.status !== 0)
+                return { ok: false };
+            const title = phase.title ? ` — ${phase.title}` : '';
+            const commit = spawnSync('git', ['commit', '-m', `fix(${input.ticketId}): execute-converged-plan phase ${phase.index}${title}`], {
+                cwd: input.workingDir, encoding: 'utf-8', timeout: CONVERGED_PLAN_GIT_TIMEOUT_MS,
+            });
+            return { ok: commit.status === 0 };
+        },
+    });
+    const stoppedAt = result.failedIndex !== null ? ` (stopped at phase ${phases[result.failedIndex].index})` : '';
+    input.log(`recovery: execute-converged-plan ran ${result.committed}/${phases.length} phase(s) for ${input.ticketId}${stoppedAt}`);
+    return { ok: result.ok };
+}
 /**
  * Build the RecoveryDeps bound to the runtime and run the ladder. The ARMED gate is
  * `runBetweenTicketFastTests` — it runs the real whole-repo `test:fast` and ignores
  * `flags.skip_quality_gates_reason` by construction (never a skip-flagged green).
- * The execute-converged-plan executor is intentionally left undefined: R-ORSR-3
- * (e8f46d84) owns that contract; until it lands the rung records + falls through.
+ * The execute-converged-plan executor (R-ORSR-3, e8f46d84) reads the approved plan and
+ * runs each Phase as one atomic commit; on a clean converged tree it honestly reports
+ * not-ok and the ladder falls through.
  */
 export function attemptRecoveryBeforeTerminal(input) {
     const extensionDir = path.join(input.workingDir, 'extension');
@@ -3048,6 +3110,12 @@ export function attemptRecoveryBeforeTerminal(input) {
             log: input.log,
         }),
         spawnRemediator: () => spawnRecoveryRemediator(input, lastGateFailures),
+        executeConvergedPlan: () => executeConvergedPlanAdapter({
+            sessionDir: input.sessionDir,
+            ticketId: input.ticketId,
+            workingDir: input.workingDir,
+            log: input.log,
+        }),
         appendAttempt: (attempt) => {
             try {
                 sm.update(input.statePath, s => {

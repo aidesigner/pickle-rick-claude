@@ -207,6 +207,117 @@ export function runRecoveryLadder(deps: RecoveryDeps): RecoveryOutcome {
   return { kind: 'exhausted', reason: 'ladder_exhausted' };
 }
 
+/**
+ * R-ORSR-3 taxonomy: the three distinct stalled-iteration failure classes the ladder
+ * must NOT conflate. `work_uncommitted` (dirty tree) and `no_work_produced` (clean tree,
+ * no plan) already routed; `plan_converged_uncommitted` (clean tree, approved plan, no
+ * diff) is the class this ticket gives a real recovery rung instead of a blind Failed-flip.
+ */
+export type RecoveryTaxonomy =
+  | 'work_uncommitted'
+  | 'plan_converged_uncommitted'
+  | 'no_work_produced';
+
+/**
+ * Classify recovery evidence into its taxonomy string. The three evidence booleans are
+ * mutually exclusive by construction (`planConvergedUncommitted` and `noWorkProduced`
+ * both require `!treeDirty`), so the precedence here only formalises that ordering.
+ * Returns null when no stalled-class signal is present.
+ */
+export function classifyRecoveryTaxonomy(evidence: RecoveryEvidence): RecoveryTaxonomy | null {
+  if (evidence.treeDirty) return 'work_uncommitted';
+  if (evidence.planConvergedUncommitted) return 'plan_converged_uncommitted';
+  if (evidence.noWorkProduced) return 'no_work_produced';
+  return null;
+}
+
+/**
+ * R-ORSR-3 approval predicate: a converged plan is eligible for execute-converged-plan
+ * iff a `plan_*.md` artifact exists AND the co-located `plan_review.md` carries APPROVED.
+ * Pure, so the runtime evidence assessor (mux-runner) and the unit tests share one
+ * definition rather than drifting two copies of the eligibility rule.
+ */
+export function isConvergedPlanEligible(inputs: { planArtifactExists: boolean; planReviewApproved: boolean }): boolean {
+  return inputs.planArtifactExists && inputs.planReviewApproved;
+}
+
+/** A single executable plan phase parsed from an approved plan's `## Phase N` block. */
+export interface PlanPhase {
+  /** 1-based phase number from the `## Phase N` header. */
+  index: number;
+  /** Phase title (text after the `—`/`-` separator), or '' when absent. */
+  title: string;
+  /** First backticked command on the `**Verify:**` line, or null when none parses. */
+  verify: string | null;
+}
+
+const PLAN_PHASE_SPLIT_RE = /^(?=## Phase \d+)/m;
+const PLAN_PHASE_HEADER_RE = /^## Phase (\d+)\s*(?:[—-]\s*(.*))?$/m;
+const PLAN_PHASE_VERIFY_RE = /\*\*Verify:\*\*[^`\n]*`([^`]+)`/;
+
+/**
+ * Parse the authored `## Phase N — Title` blocks (each with an optional
+ * `**Verify:** \`cmd\`` line) out of an approved plan's markdown. The Phase is the plan's
+ * authored unit (spawn-morty plan template), NOT a finding. Blocks without a parseable
+ * header are skipped; a block with no verify command yields `verify: null`.
+ */
+export function parsePlanPhases(planMarkdown: string): PlanPhase[] {
+  const phases: PlanPhase[] = [];
+  for (const block of planMarkdown.split(PLAN_PHASE_SPLIT_RE)) {
+    const header = block.match(PLAN_PHASE_HEADER_RE);
+    if (!header) continue;
+    const verify = block.match(PLAN_PHASE_VERIFY_RE);
+    phases.push({
+      index: Number(header[1]),
+      title: (header[2] ?? '').trim(),
+      verify: verify ? verify[1].trim() : null,
+    });
+  }
+  return phases;
+}
+
+/** Outcome of `executePhaseLoop`: how many phases committed and the index that broke (if any). */
+export interface ExecutePhaseLoopResult {
+  ok: boolean;
+  committed: number;
+  failedIndex: number | null;
+}
+
+/** Adapters for `executePhaseLoop` — every side-effect is injected (DI), like RecoveryDeps. */
+export interface ExecutePhaseLoopDeps {
+  phases: PlanPhase[];
+  /** Run phase k's verify. ok=false stops the loop at k (k is NOT committed). */
+  executePhase: (phase: PlanPhase, index: number) => { ok: boolean };
+  /** Commit phase k's work as one atomic commit. ok=false stops the loop at k. */
+  commitPhase: (phase: PlanPhase, index: number) => { ok: boolean };
+}
+
+/**
+ * Execute the approved plan one Phase at a time: each phase that runs ok is committed
+ * immediately (one fix per commit, bounding cost by Phase count). The FIRST phase whose
+ * `executePhase` or `commitPhase` returns not-ok stops the loop — phases `0..committed-1`
+ * are already committed, the failing phase is not, and `{ ok:false }` propagates so the
+ * caller never marks the ticket Done (R-ORSR-3 partial-failure contract). An empty plan
+ * is `{ ok:false }`: nothing to execute, so the rung honestly fails. An adapter that
+ * throws is contained as a not-ok step (INV-RUNG-ERROR-CONTAINED parity).
+ */
+export function executePhaseLoop(deps: ExecutePhaseLoopDeps): ExecutePhaseLoopResult {
+  if (deps.phases.length === 0) return { ok: false, committed: 0, failedIndex: null };
+  let committed = 0;
+  for (let i = 0; i < deps.phases.length; i++) {
+    const phase = deps.phases[i];
+    if (!safeStep(() => deps.executePhase(phase, i))) return { ok: false, committed, failedIndex: i };
+    if (!safeStep(() => deps.commitPhase(phase, i))) return { ok: false, committed, failedIndex: i };
+    committed += 1;
+  }
+  return { ok: true, committed, failedIndex: null };
+}
+
+/** Run one DI step, treating a throw as a not-ok result (INV-RUNG-ERROR-CONTAINED parity). */
+function safeStep(fn: () => { ok: boolean }): boolean {
+  try { return fn().ok; } catch { return false; }
+}
+
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
