@@ -260,3 +260,59 @@ test('R-APXG-3: deferral counter resets on non-deferred iteration', async () => 
         fs.rmSync(workingDir, { recursive: true, force: true });
     }
 });
+
+// R-ORSR-6 INV-NO-DEFERRAL-FORCE-EXIT-ON-SELF-RED: a scripted worker that disowns its OWN tsc
+// red (the interface-change sweep flags a self-introduced break → selfRedOpen: true) MUST be
+// force-converged at NEITHER deferral 1 NOR deferral 3. The phase cannot win by attrition; it
+// must actually resolve its own break. This is the #103 anatomy-park regression: the worker
+// kept asserting "pre-existing" and the attrition force-exit converged on a red gate.
+test('R-ORSR-6: self-introduced red gate is NEVER force-converged (no disown by attrition)', async () => {
+    const sessionDir = makeTempDir('pickle-orsr6-selfred-');
+    const workingDir = makeTempDir('pickle-orsr6-selfred-w-');
+    const origRunWorker = _deps.runWorkerManagedIteration;
+    const origGetHead = _deps.getHeadSha;
+    const origSleep = _deps.sleep;
+    try {
+        const { runnerState, mv } = setupSession(sessionDir, workingDir);
+
+        // Every iteration the worker signals the gate-deferral reason AND the sweep reports a
+        // self-introduced whole-repo break (selfRedOpen: true) — i.e. the worker disowns its
+        // own regression. This is exactly the disown-by-attrition the bound must refuse.
+        _deps.runWorkerManagedIteration = async () => ({
+            currentMv: mv,
+            converged: false,
+            reason: 'per-iteration gate left unresolved regressions',
+            selfRedOpen: true,
+        });
+        _deps.getHeadSha = () => 'selfred1';
+        _deps.sleep = async () => {};
+
+        const ctx = makeWorkerCtx(sessionDir, workingDir, runnerState);
+        const outcome = { completion: 'task_completed', timedOut: false, exitCode: 0, wallSeconds: 1 };
+        const baseline = { raw: '', score: 0 };
+
+        // Drive well past POST_CONVERGENCE_GATE_DEFERRAL_LIMIT (3). The self-red bound must keep
+        // returning "keep iterating" (null/continue) — never 'converged'.
+        const results = [];
+        for (let i = 1; i <= 6; i++) {
+            ctx.iteration = i;
+            const result = await handleIterationOutcome(mv, baseline, ctx, outcome);
+            results.push(result);
+        }
+
+        // Deferral 1 (i=1) and deferral 3 (i=3) — the two the AC names explicitly — and every
+        // iteration through 6 MUST NOT be a trust-the-worker force-exit.
+        assert.notEqual(results[0], 'converged', 'must NOT force-converge at deferral 1 on a self-introduced red');
+        assert.notEqual(results[2], 'converged', 'must NOT force-converge at deferral 3 on a self-introduced red');
+        assert.ok(
+            results.every((r) => r !== 'converged'),
+            `self-introduced red must never be force-converged by attrition; got ${JSON.stringify(results)}`,
+        );
+    } finally {
+        _deps.runWorkerManagedIteration = origRunWorker;
+        _deps.getHeadSha = origGetHead;
+        _deps.sleep = origSleep;
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(workingDir, { recursive: true, force: true });
+    }
+});
