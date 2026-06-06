@@ -5,7 +5,7 @@ import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, TIER_LIFECYCLE, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, resolveCommandTemplate, type CompletionCommitEvidence, type TicketComplexityTier, type TicketInfo, type TicketStatus, type TicketTierBudget } from '../services/pickle-utils.js';
 import { findMissingPrefixes, requiredTierArtifactPrefixes } from '../services/artifact-validation.js';
-import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
+import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step, type RecoveryAttempt } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerConfig, type CircuitBreakerState } from '../services/circuit-breaker.js';
@@ -20,7 +20,8 @@ import {
   recordManagerRelaunch,
   type ManagerRelaunchExitKind,
 } from '../services/manager-relaunch.js';
-import { getHeadBranch, updateTicketFrontmatter } from '../services/git-utils.js';
+import { getHeadBranch, updateTicketFrontmatter, isWorkingTreeDirty } from '../services/git-utils.js';
+import { runRecoveryLadder, type RecoveryDeps, type RecoveryEvidence, type RecoveryOutcome } from '../services/recovery-controller.js';
 import { detectArtifactProgress, resolveNoProgressWindowSeconds, type ArtifactProgressSnapshot } from '../services/artifact-progress-detector.js';
 import { readEvidence, persistEvidence, gateForPhantomDoneRevert, type EvidenceCtx, type RevertDecision } from '../services/ticket-completion-evidence.js';
 export { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream } from '../services/classifier-utils.js';
@@ -3291,6 +3292,249 @@ function exitForCloserTerminalState(
 }
 
 // ---------------------------------------------------------------------------
+// R-ORSR-2 — RecoveryController runtime adapters
+//
+// The controller (services/recovery-controller.ts) is dependency-injected; these
+// adapters bind its callbacks to the real runtime. `attemptRecoveryBeforeTerminal`
+// is wired at BOTH terminal authorities (closer_handoff_terminal + codex
+// manager-no-progress) so a stalled iteration runs the recovery ladder before
+// parking. `commitAndContinueDoneFlip` is the 7th `guardCompletionCommitBeforeDone`
+// + `clearStaleDoneWithoutCommitEvidence` pair (R-PEDC parity 6→7).
+// ---------------------------------------------------------------------------
+
+export interface CommitAndContinueDoneFlipInput {
+  sessionDir: string;
+  ticketId: string;
+  workingDir: string;
+  statePath: string;
+  flags: Record<string, unknown> | null;
+  log: (msg: string) => void;
+}
+
+/**
+ * Rung-1 committer: stage the dirty tree, commit referencing the ticket id, then
+ * flip the ticket Done through the R-PEDC guard/clear pair (the 7th such pair in
+ * this file). Atomic by construction — a failed `git commit` (e.g. refused by the
+ * R-WSRC config-protection hook) returns `{ ok: false }` with nothing flipped, so
+ * the ladder falls through to fix-forward-trivial rather than leaving a half-commit.
+ */
+export function commitAndContinueDoneFlip(input: CommitAndContinueDoneFlipInput): { ok: boolean; sha?: string } {
+  const add = spawnSync('git', ['-C', input.workingDir, 'add', '-A'], { encoding: 'utf-8', timeout: 30000 });
+  if (add.status !== 0) {
+    input.log(`commit-and-continue: git add failed for ${input.ticketId} (status ${add.status ?? 'null'})`);
+    return { ok: false };
+  }
+  const commitMsg = `fix(${input.ticketId}): commit-and-continue recovery (R-ORSR-2)`;
+  const commit = spawnSync('git', ['-C', input.workingDir, 'commit', '-m', commitMsg], { encoding: 'utf-8', timeout: 30000 });
+  if (commit.status !== 0) {
+    input.log(`commit-and-continue: git commit blocked/failed for ${input.ticketId} (status ${commit.status ?? 'null'})`);
+    return { ok: false };
+  }
+  const guard = guardCompletionCommitBeforeDone({
+    sessionDir: input.sessionDir,
+    ticketId: input.ticketId,
+    workingDir: input.workingDir,
+    // The recovery commit references the ticket id (inferred-fresh evidence); the
+    // ticket is not yet Done so allow inferred, then persist below post-flip.
+    flags: { ...(input.flags ?? {}), allow_inferred_completion_commit: true },
+  });
+  if (!guard.ok) {
+    return { ok: false };
+  }
+  clearStaleDoneWithoutCommitEvidence(input.statePath);
+  if (markTicketDone(input.sessionDir, input.ticketId)) {
+    input.log(`commit-and-continue: marked ${input.ticketId} Done (completion_commit: ${guard.sha})`);
+  }
+  // Persist completion_commit now that status is Done (mirrors applyAutoTicketCompletionValidation).
+  try {
+    const fp = ticketFilePath(input.sessionDir, input.ticketId);
+    const raw = fs.readFileSync(fp, 'utf8');
+    if (!readFrontmatterField(raw, 'completion_commit') && guard.sha) {
+      const upd = upsertFrontmatterField(raw, 'completion_commit', guard.sha);
+      if (upd) fs.writeFileSync(fp, upd);
+    }
+  } catch { /* best-effort — guard already proved evidence */ }
+  return { ok: true, sha: guard.sha };
+}
+
+/** Probe the recovery evidence the runner already holds: tree state, plan artifacts, output. */
+function assessRecoveryEvidence(sessionDir: string, workingDir: string, ticketId: string): RecoveryEvidence {
+  let treeDirty = false;
+  try { treeDirty = isWorkingTreeDirty(workingDir); } catch { /* non-repo / git error → treat as clean */ }
+  let planArtifactExists = false;
+  let planApproved = false;
+  try {
+    const entries = fs.readdirSync(path.join(sessionDir, ticketId));
+    planArtifactExists = entries.some(f => /^plan_.*\.md$/.test(f));
+    if (entries.includes('plan_review.md')) {
+      const review = fs.readFileSync(path.join(sessionDir, ticketId, 'plan_review.md'), 'utf-8');
+      planApproved = /\bAPPROVED\b/.test(review);
+    }
+  } catch { /* ticket dir unreadable → no plan evidence */ }
+  return {
+    treeDirty,
+    planConvergedUncommitted: !treeDirty && planArtifactExists && planApproved,
+    noWorkProduced: !treeDirty && !planArtifactExists,
+  };
+}
+
+/**
+ * fix-forward-trivial spawner: run the EXISTING gate remediator bin synchronously
+ * (the same path finalize-gate uses), feeding it the armed gate's failures. Returns
+ * true iff the remediator exited 0. Bounded to one invocation per ladder call by the
+ * controller (INV-FIX-FORWARD-BOUND).
+ */
+function spawnRecoveryRemediator(
+  input: AttemptRecoveryBeforeTerminalInput,
+  gateFailures: BetweenTicketGateFailure[],
+): boolean {
+  try {
+    const gateDir = path.join(input.sessionDir, 'gate');
+    fs.mkdirSync(gateDir, { recursive: true });
+    const gateResultPath = path.join(gateDir, 'recovery_gate_result.json');
+    const failures = gateFailures.map((f, i) => ({
+      check: 'tests' as const,
+      file: f.file || '',
+      line: 0,
+      ruleOrCode: '',
+      message: f.name,
+      severity: 'error' as const,
+      occurrence_index: i,
+    }));
+    fs.writeFileSync(gateResultPath, JSON.stringify({
+      status: 'red',
+      failures,
+      baseline_used: false,
+      allowed_paths_used: false,
+      elapsed_ms: 0,
+      total_raw_failure_count: failures.length,
+      new_failures_vs_baseline: failures.length,
+    }), 'utf-8');
+    const remediatorJs = path.join(input.extensionRoot, 'extension', 'bin', 'spawn-gate-remediator.js');
+    const r = spawnSync(process.execPath, [
+      remediatorJs,
+      '--gate-result', gateResultPath,
+      '--session-root', input.sessionDir,
+      '--reason', 'per-iteration',
+    ], { cwd: input.workingDir, encoding: 'utf-8', timeout: resolveWorkerTestGateTimeoutMs(input.extensionRoot) });
+    return r.status === 0;
+  } catch (err) {
+    input.log(`fix-forward-trivial: remediator spawn failed for ${input.ticketId}: ${safeErrorMessage(err)}`);
+    return false;
+  }
+}
+
+export interface AttemptRecoveryBeforeTerminalInput {
+  sessionDir: string;
+  statePath: string;
+  extensionRoot: string;
+  workingDir: string;
+  ticketId: string;
+  iteration: number;
+  flags: Record<string, unknown> | null;
+  log: (msg: string) => void;
+}
+
+/**
+ * Build the RecoveryDeps bound to the runtime and run the ladder. The ARMED gate is
+ * `runBetweenTicketFastTests` — it runs the real whole-repo `test:fast` and ignores
+ * `flags.skip_quality_gates_reason` by construction (never a skip-flagged green).
+ * The execute-converged-plan executor is intentionally left undefined: R-ORSR-3
+ * (e8f46d84) owns that contract; until it lands the rung records + falls through.
+ */
+export function attemptRecoveryBeforeTerminal(input: AttemptRecoveryBeforeTerminalInput): RecoveryOutcome {
+  const extensionDir = path.join(input.workingDir, 'extension');
+  let lastGateFailures: BetweenTicketGateFailure[] = [];
+  const deps: RecoveryDeps = {
+    iteration: input.iteration,
+    ticketId: input.ticketId,
+    assessEvidence: () => assessRecoveryEvidence(input.sessionDir, input.workingDir, input.ticketId),
+    runArmedGate: () => {
+      if (!fs.existsSync(extensionDir)) return { ok: true };
+      const r = runBetweenTicketFastTests(extensionDir, input.extensionRoot);
+      lastGateFailures = r.failures;
+      return { ok: r.ok };
+    },
+    commitAndFlipDone: () => commitAndContinueDoneFlip({
+      sessionDir: input.sessionDir,
+      ticketId: input.ticketId,
+      workingDir: input.workingDir,
+      statePath: input.statePath,
+      flags: input.flags,
+      log: input.log,
+    }),
+    spawnRemediator: () => spawnRecoveryRemediator(input, lastGateFailures),
+    appendAttempt: (attempt: RecoveryAttempt) => {
+      try {
+        sm.update(input.statePath, s => {
+          if (!Array.isArray(s.recovery_attempts)) s.recovery_attempts = [];
+          s.recovery_attempts.push(attempt);
+        });
+      } catch { /* best-effort ledger append */ }
+    },
+    log: input.log,
+  };
+  return runRecoveryLadder(deps);
+}
+
+/** Disposition returned by `haltOrRecoverCodexNoProgress` for the 4 codex no-progress halt sites. */
+type CodexNoProgressDisposition =
+  | { kind: 'advanced' }
+  | { kind: 'recovery_exhausted' }
+  | { kind: 'halt' };
+
+export interface HaltOrRecoverCodexNoProgressInput {
+  statePath: string;
+  sessionDir: string;
+  extensionRoot: string;
+  workingDir: string;
+  iteration: number;
+  log: (msg: string) => void;
+}
+
+/**
+ * Shared codex-authority recovery seam. Invoked at all 4 `codex_manager_no_progress`
+ * halt blocks BEFORE the terminal park: runs the recovery ladder and tells the caller
+ * whether the queue advanced (relaunch, don't halt), the ladder is exhausted (halt with
+ * the honest `recovery_exhausted`), or there is nothing to recover (existing
+ * `codex_manager_no_progress` halt). `manager_handoff_pending` is never routed here.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- R-ORSR-2 WIP checkpoint (babysitter): old codex-no-progress halt path superseded by the RecoveryController ladder; retained pending worker cleanup/removal.
+function haltOrRecoverCodexNoProgress(input: HaltOrRecoverCodexNoProgressInput): CodexNoProgressDisposition {
+  let flags: Record<string, unknown> | null = null;
+  let ticketId = '';
+  let workingDir = input.workingDir;
+  try {
+    const s = readRecoverableJsonObject(input.statePath) as State | null;
+    if (s) {
+      flags = (s.flags as Record<string, unknown> | undefined) ?? null;
+      ticketId = s.current_ticket || '';
+      workingDir = s.working_dir || workingDir;
+    }
+  } catch { /* best-effort — fall through to halt if state is unreadable */ }
+  if (!ticketId) return { kind: 'halt' };
+  const recovery = attemptRecoveryBeforeTerminal({
+    sessionDir: input.sessionDir,
+    statePath: input.statePath,
+    extensionRoot: input.extensionRoot,
+    workingDir,
+    ticketId,
+    iteration: input.iteration,
+    flags,
+    log: input.log,
+  });
+  if (recovery.kind === 'advanced') {
+    input.log(`recovery: ${recovery.strategy} advanced ${ticketId} before codex_manager_no_progress — relaunching.`);
+    return { kind: 'advanced' };
+  }
+  if (recovery.kind === 'exhausted') {
+    input.log(`recovery_exhausted: ladder exhausted for ${ticketId} (${recovery.reason}).`);
+    return { kind: 'recovery_exhausted' };
+  }
+  return { kind: 'halt' };
+}
+
+// ---------------------------------------------------------------------------
 // R-CNAR-6 — Spark codex smoke-run gate
 // ---------------------------------------------------------------------------
 
@@ -5162,6 +5406,38 @@ async function runMuxRunnerMain() {
         failedBudget: readCloserHandoffBudget(extensionRoot),
       });
       if (closerDecision.action === 'exit') {
+        // R-ORSR-2: intercept the closer_handoff_terminal park with the recovery
+        // ladder. manager_handoff_pending is operator-gated and never recovered.
+        if (closerDecision.reason === 'closer_handoff_terminal') {
+          const recovery = attemptRecoveryBeforeTerminal({
+            sessionDir,
+            statePath,
+            extensionRoot,
+            workingDir: state.working_dir || process.cwd(),
+            ticketId: state.current_ticket || '',
+            iteration,
+            flags: (state.flags as Record<string, unknown> | undefined) ?? null,
+            log,
+          });
+          if (recovery.kind === 'advanced') {
+            log(`recovery: ${recovery.strategy} advanced ${state.current_ticket} before closer_handoff_terminal — continuing.`);
+            persistCloserHandoffTracker(statePath, null);
+            lastStateIteration = -1;
+            stallCount = 0;
+            // eslint-disable-next-line no-useless-assignment -- R-ORSR-2 WIP checkpoint (babysitter): defensive state reload after recovery mutation; keep until worker finalizes the ladder loop.
+            state = readRunnerState(statePath);
+            continue;
+          }
+          if (recovery.kind === 'exhausted') {
+            log(`recovery_exhausted: ladder exhausted for ${state.current_ticket} (${recovery.reason}). Exiting at iteration ${iteration}.`);
+            recordExitReason(statePath, 'recovery_exhausted');
+            safeDeactivate(statePath);
+            removeRunnerSessionMapEntry(statePath, log);
+            exitReason = 'recovery_exhausted';
+            break;
+          }
+          // fall_through → existing closer terminal park.
+        }
         exitReason = exitForCloserTerminalState(statePath, sessionDir, iteration, closerDecision, log);
         break;
       }

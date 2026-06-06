@@ -76,6 +76,87 @@ export interface RecoveryDeps {
   maxRemediatorSpawns?: number;
 }
 
+/** Append one `RecoveryAttempt` to the ledger. Best-effort — never blocks recovery. */
+type RecordAttemptFn = (strategy: RecoveryStrategy, outcome: 'success' | 'failed', reason: string) => void;
+
+/**
+ * Rung 1 — commit-and-continue: the ARMED gate is consulted directly (skip-flag-blind
+ * by construction). Returns `advanced` on a committed Done flip, or `null` to fall
+ * through to fix-forward-trivial (gate red, commit blocked, or adapter threw).
+ */
+function attemptCommitAndContinue(deps: RecoveryDeps, record: RecordAttemptFn): RecoveryOutcome | null {
+  try {
+    if (deps.runArmedGate().ok) {
+      const r = deps.commitAndFlipDone();
+      if (r.ok) {
+        record('commit-and-continue', 'success', `committed gate-passing tree for ${deps.ticketId}`);
+        deps.log(`recovery: commit-and-continue advanced ${deps.ticketId}${r.sha ? ` (${r.sha})` : ''}`);
+        return { kind: 'advanced', strategy: 'commit-and-continue', sha: r.sha };
+      }
+      // INV-LADDER-RUNG-FAILURE: commit blocked (e.g. config-protection hook) →
+      // record + fall through to fix-forward-trivial, NOT to a terminal.
+      record('commit-and-continue', 'failed', `armed gate passed but commit was blocked for ${deps.ticketId}`);
+    }
+    // gate red — not a commit-and-continue case; fix-forward-trivial owns it.
+  } catch (err) {
+    record('commit-and-continue', 'failed', `commit-and-continue threw: ${errText(err)}`);
+  }
+  return null;
+}
+
+/**
+ * Rung 2 — fix-forward-trivial: spawn the remediator once (bounded by `maxSpawns`),
+ * re-gate, retry the commit. Returns `advanced` on success or `null` to fall through.
+ * INV-FIX-FORWARD-BOUND: at most one remediator spawn per call; `maxSpawns < 1` disables it.
+ */
+function attemptFixForwardTrivial(deps: RecoveryDeps, record: RecordAttemptFn, maxSpawns: number): RecoveryOutcome | null {
+  if (maxSpawns < 1) {
+    deps.log(`recovery: fix-forward-trivial bound (M=${maxSpawns}) reached for ${deps.ticketId}`);
+    return null;
+  }
+  try {
+    const remediated = deps.spawnRemediator();
+    if (remediated && deps.runArmedGate().ok) {
+      const r = deps.commitAndFlipDone();
+      if (r.ok) {
+        record('fix-forward-trivial', 'success', `remediated + committed ${deps.ticketId}`);
+        deps.log(`recovery: fix-forward-trivial advanced ${deps.ticketId}${r.sha ? ` (${r.sha})` : ''}`);
+        return { kind: 'advanced', strategy: 'fix-forward-trivial', sha: r.sha };
+      }
+      record('fix-forward-trivial', 'failed', `remediated + gate green but commit still blocked for ${deps.ticketId}`);
+    } else {
+      record('fix-forward-trivial', 'failed', `remediator ${remediated ? 're-gate still red' : 'failed'} for ${deps.ticketId}`);
+    }
+  } catch (err) {
+    record('fix-forward-trivial', 'failed', `fix-forward-trivial threw: ${errText(err)}`);
+  }
+  return null;
+}
+
+/**
+ * Rung 3 — execute-converged-plan (R-ORSR-3 seam): approved plan + artifacts, no diff.
+ * Returns `advanced` when the injected executor succeeds, else `null`. Until R-ORSR-3
+ * (e8f46d84) wires the executor, records the attempt and falls down the ladder.
+ */
+function attemptExecuteConvergedPlan(deps: RecoveryDeps, record: RecordAttemptFn): RecoveryOutcome | null {
+  if (!deps.executeConvergedPlan) {
+    record('execute-converged-plan', 'failed', 'R-ORSR-3 converged-plan executor not wired yet');
+    return null;
+  }
+  try {
+    const r = deps.executeConvergedPlan();
+    if (r.ok) {
+      record('execute-converged-plan', 'success', `executed converged plan for ${deps.ticketId}`);
+      deps.log(`recovery: execute-converged-plan advanced ${deps.ticketId}`);
+      return { kind: 'advanced', strategy: 'execute-converged-plan' };
+    }
+    record('execute-converged-plan', 'failed', `converged-plan execution returned not-ok for ${deps.ticketId}`);
+  } catch (err) {
+    record('execute-converged-plan', 'failed', `execute-converged-plan threw: ${errText(err)}`);
+  }
+  return null;
+}
+
 /**
  * Run the ordered recovery ladder. Each rung is attempted at most once per call and
  * appends a `RecoveryAttempt` to the ledger on every outcome. A rung whose adapter
@@ -86,9 +167,8 @@ export function runRecoveryLadder(deps: RecoveryDeps): RecoveryOutcome {
   const maxSpawns = Number.isInteger(deps.maxRemediatorSpawns) && (deps.maxRemediatorSpawns as number) >= 0
     ? (deps.maxRemediatorSpawns as number)
     : 1;
-  let remediatorSpawns = 0;
 
-  const record = (strategy: RecoveryStrategy, outcome: 'success' | 'failed', reason: string): void => {
+  const record: RecordAttemptFn = (strategy, outcome, reason) => {
     try {
       deps.appendAttempt({ strategy, outcome, reason, iteration: deps.iteration });
     } catch { /* ledger append is best-effort — never block recovery on a state write */ }
@@ -102,68 +182,16 @@ export function runRecoveryLadder(deps: RecoveryDeps): RecoveryOutcome {
     return { kind: 'exhausted', reason: 'evidence_unreadable' };
   }
 
-  // Rung 1 — commit-and-continue: dirty tree + ARMED gate passes → commit, flip Done.
   if (evidence.treeDirty) {
-    try {
-      if (deps.runArmedGate().ok) {
-        const r = deps.commitAndFlipDone();
-        if (r.ok) {
-          record('commit-and-continue', 'success', `committed gate-passing tree for ${deps.ticketId}`);
-          deps.log(`recovery: commit-and-continue advanced ${deps.ticketId}${r.sha ? ` (${r.sha})` : ''}`);
-          return { kind: 'advanced', strategy: 'commit-and-continue', sha: r.sha };
-        }
-        // INV-LADDER-RUNG-FAILURE: commit blocked (e.g. config-protection hook) →
-        // record + fall through to fix-forward-trivial, NOT to a terminal.
-        record('commit-and-continue', 'failed', `armed gate passed but commit was blocked for ${deps.ticketId}`);
-      }
-      // gate red — not a commit-and-continue case; fix-forward-trivial owns it.
-    } catch (err) {
-      record('commit-and-continue', 'failed', `commit-and-continue threw: ${errText(err)}`);
-    }
-
-    // Rung 2 — fix-forward-trivial: spawn the remediator (bounded), re-gate, retry commit.
-    if (remediatorSpawns < maxSpawns) {
-      try {
-        remediatorSpawns += 1;
-        const remediated = deps.spawnRemediator();
-        if (remediated && deps.runArmedGate().ok) {
-          const r = deps.commitAndFlipDone();
-          if (r.ok) {
-            record('fix-forward-trivial', 'success', `remediated + committed ${deps.ticketId}`);
-            deps.log(`recovery: fix-forward-trivial advanced ${deps.ticketId}${r.sha ? ` (${r.sha})` : ''}`);
-            return { kind: 'advanced', strategy: 'fix-forward-trivial', sha: r.sha };
-          }
-          record('fix-forward-trivial', 'failed', `remediated + gate green but commit still blocked for ${deps.ticketId}`);
-        } else {
-          record('fix-forward-trivial', 'failed', `remediator ${remediated ? 're-gate still red' : 'failed'} for ${deps.ticketId}`);
-        }
-      } catch (err) {
-        record('fix-forward-trivial', 'failed', `fix-forward-trivial threw: ${errText(err)}`);
-      }
-    } else {
-      deps.log(`recovery: fix-forward-trivial bound (M=${maxSpawns}) reached for ${deps.ticketId}`);
-    }
+    const committed = attemptCommitAndContinue(deps, record);
+    if (committed) return committed;
+    const fixedForward = attemptFixForwardTrivial(deps, record, maxSpawns);
+    if (fixedForward) return fixedForward;
   }
 
-  // Rung 3 — execute-converged-plan: approved plan + artifacts, no diff (R-ORSR-3 seam).
   if (evidence.planConvergedUncommitted) {
-    if (deps.executeConvergedPlan) {
-      try {
-        const r = deps.executeConvergedPlan();
-        if (r.ok) {
-          record('execute-converged-plan', 'success', `executed converged plan for ${deps.ticketId}`);
-          deps.log(`recovery: execute-converged-plan advanced ${deps.ticketId}`);
-          return { kind: 'advanced', strategy: 'execute-converged-plan' };
-        }
-        record('execute-converged-plan', 'failed', `converged-plan execution returned not-ok for ${deps.ticketId}`);
-      } catch (err) {
-        record('execute-converged-plan', 'failed', `execute-converged-plan threw: ${errText(err)}`);
-      }
-    } else {
-      // R-ORSR-3 (e8f46d84) owns the executor contract; until it lands, record the
-      // attempt and fall down the ladder rather than parking.
-      record('execute-converged-plan', 'failed', 'R-ORSR-3 converged-plan executor not wired yet');
-    }
+    const planned = attemptExecuteConvergedPlan(deps, record);
+    if (planned) return planned;
   }
 
   // Rung 4 — auto-split (DOWN-SCOPED): genuine zero-output → fall through to the
