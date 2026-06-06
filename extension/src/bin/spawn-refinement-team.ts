@@ -301,6 +301,14 @@ export interface TicketQualityWarning {
   file_line?: string | null;
 }
 
+export interface DecompositionQualityFlag {
+  ticket_id: string;
+  reason: 'large_tier' | 'open_ended_derivation';
+  evidence: string;
+  action: 'bounded_reframe' | 'pre_split';
+  suggested_reframe: string;
+}
+
 export interface RefinementManifest {
   prd_path: string;
   refinement_dir: string;
@@ -311,6 +319,7 @@ export interface RefinementManifest {
   ac_shape_smells: AcShapeSmell[];
   tickets: RefinementTicketManifestEntry[];
   ticket_quality_warnings?: TicketQualityWarning[];
+  decomposition_quality_flags?: DecompositionQualityFlag[];
   prd_advisory_shape_concerns?: string[];
   workers: {
     role: RoleId;
@@ -2015,6 +2024,7 @@ export function buildRefinementManifest(args: RefinementArgs, results: CycleResu
     ...t,
     complexity_tier: classifyTicketTier(buildClassifierInfoForEntry(t)),
   }));
+  const decompQualityFlags = detectDecompositionQualityFlags(classifiedTickets);
   const manifest: RefinementManifest = {
     prd_path: args.prdPath,
     refinement_dir: results.refinementDir,
@@ -2024,6 +2034,7 @@ export function buildRefinementManifest(args: RefinementArgs, results: CycleResu
     max_turns_per_worker: results.maxTurns,
     ac_shape_smells: shapeData.acShapeSmells,
     tickets: classifiedTickets,
+    decomposition_quality_flags: decompQualityFlags,
     workers: results.finalResults.map((r) => {
       const outputFile = path.join(results.refinementDir, `analysis_${r.roleId}.md`);
       return {
@@ -2039,6 +2050,11 @@ export function buildRefinementManifest(args: RefinementArgs, results: CycleResu
   };
   if (ticketQualityWarnings !== undefined) {
     manifest.ticket_quality_warnings = ticketQualityWarnings;
+  }
+  if (decompQualityFlags.length > 0) {
+    process.stderr.write(
+      `[pickle-rick] decomposition_quality_flags: ${decompQualityFlags.length} ticket(s) flagged (large_tier or open-ended derivation) — see refinement_manifest.json\n`,
+    );
   }
   return manifest;
 }
@@ -2164,6 +2180,40 @@ export function detectBundleOfBundlesOverCollapse(
   } catch {
     return { detected: false };
   }
+}
+
+const OPEN_ENDED_DERIVATION_RE = /author\s+\d+|review\s+(the\s+)?whole|against\s+\d+\s+principles|all\s+\w+\s+rows/i;
+
+export function detectDecompositionQualityFlags(
+  tickets: RefinementTicketManifestEntry[],
+): DecompositionQualityFlag[] {
+  const flags: DecompositionQualityFlag[] = [];
+  for (const ticket of tickets) {
+    const text = [ticket.title, ticket.acceptance_test, ticket.justification]
+      .filter((s): s is string => Boolean(s))
+      .join(' ');
+    if (ticket.complexity_tier === 'large') {
+      flags.push({
+        ticket_id: ticket.id,
+        reason: 'large_tier',
+        evidence: 'complexity_tier=large',
+        action: 'pre_split',
+        suggested_reframe: `Split "${ticket.title}" into two bounded sub-tickets, each targeting a distinct bounded scope`,
+      });
+    } else {
+      const match = text.match(OPEN_ENDED_DERIVATION_RE);
+      if (match) {
+        flags.push({
+          ticket_id: ticket.id,
+          reason: 'open_ended_derivation',
+          evidence: match[0],
+          action: 'bounded_reframe',
+          suggested_reframe: `Re-frame "${ticket.title}" to target a fixed, enumerable artifact (e.g. "transcribe X" instead of "derive X")`,
+        });
+      }
+    }
+  }
+  return flags;
 }
 
 async function main() {
