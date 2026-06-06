@@ -979,6 +979,98 @@ function recordInterfaceSweepRegression(opts: {
   return nextMv;
 }
 
+// Read the worker-written convergence file and decide whether the worker signaled convergence.
+// A missing/unparseable/non-converged file is "not converged", never an error.
+function readWorkerConvergenceSignal(
+  cfPath: string,
+  iteration: number,
+  log: (msg: string) => void,
+): { converged: boolean; reason: string } {
+  try {
+    const raw = readRecoverableJsonObject(cfPath) as Record<string, unknown> | null;
+    if (!raw) throw new Error('convergence file empty or invalid');
+    if (raw.converged === true) {
+      const reason = typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason : 'no reason';
+      log(`Iteration ${iteration} — worker convergence signaled; running per-iteration gate before exit`);
+      return { converged: true, reason };
+    }
+    log(`Iteration ${iteration} — worker convergence: not yet`);
+  } catch {
+    log(`Iteration ${iteration} — convergence file not found/unparseable — continuing`);
+  }
+  return { converged: false, reason: 'no reason' };
+}
+
+// R-ORSR-6: at convergence-signal time, run the whole-repo interface-change sweep. A non-empty
+// self-introduced break records a regression and blocks convergence with `selfRedOpen: true`
+// (which arms the no-disown bound on the deferral force-exit). Returns null when nothing blocks.
+async function applyInterfaceChangeSweepGuard(opts: {
+  currentMv: MicroverseSessionState;
+  workingDir: string;
+  sessionDir: string;
+  startCommit: string;
+  iteration: number;
+  log: (msg: string) => void;
+  _deps?: PerIterationGateDeps;
+}): Promise<{ currentMv: MicroverseSessionState; converged: false; reason: string; selfRedOpen: true } | null> {
+  const { currentMv, workingDir, sessionDir, startCommit, iteration, log, _deps } = opts;
+  const sweep = await runInterfaceChangeSweep({
+    workingDir,
+    sessionDir,
+    startCommit,
+    runGateFn: _deps?.runGateFn ?? runGate,
+    logActivityFn: _deps?.logActivityFn ?? logActivity,
+    getChangedExportedSymbolsFn: _deps?.getChangedExportedSymbolsFn,
+    getChangedFilesSinceFn: _deps?.getChangedFilesSinceFn,
+  });
+  if (!(sweep.ran && sweep.selfIntroduced.length > 0)) return null;
+  log(
+    `Iteration ${iteration} — convergence blocked: interface-change sweep found ` +
+    `${sweep.selfIntroduced.length} self-introduced whole-repo break(s) — phase cannot disown its own regression`,
+  );
+  const sweptMv = recordInterfaceSweepRegression({
+    currentMv,
+    sessionDir,
+    selfIntroduced: sweep.selfIntroduced,
+    changedExportedSymbolCount: sweep.selfIntroduced.length,
+    writeMicroverseStateFn: _deps?.writeMicroverseStateFn ?? writeMicroverseState,
+    logActivityFn: _deps?.logActivityFn ?? logActivity,
+  });
+  return {
+    currentMv: sweptMv,
+    converged: false,
+    reason: 'per-iteration gate left unresolved regressions',
+    selfRedOpen: true,
+  };
+}
+
+// Apply the post-sweep convergence guard: metric-less ('none') phases converge immediately;
+// metric phases must clear the worker convergence-history guard. Returns the terminal result.
+function applyWorkerConvergenceGuard(opts: {
+  currentMv: MicroverseSessionState;
+  reason: string;
+  minIterations?: number;
+  iteration: number;
+  sessionDir: string;
+  log: (msg: string) => void;
+  _deps?: PerIterationGateDeps;
+}): { currentMv: MicroverseSessionState; converged: boolean; reason: string; exitReason?: ExitReason } {
+  const { currentMv, reason, minIterations, iteration, sessionDir, log, _deps } = opts;
+  if (resolveMetricType(currentMv) === 'none') {
+    return { currentMv, converged: true, reason };
+  }
+  const guardResult = validateWorkerConvergenceHistory({
+    currentMv,
+    minIterations,
+    iteration,
+    sessionDir,
+    log,
+    logActivityFn: _deps?.logActivityFn ?? logActivity,
+  });
+  if (guardResult) return { currentMv, ...guardResult };
+  return { currentMv, converged: true, reason };
+}
+
 export async function handleWorkerManagedIteration(opts: {
   currentMv: MicroverseSessionState;
   preIterSha: string;
@@ -1011,24 +1103,10 @@ export async function handleWorkerManagedIteration(opts: {
     _deps,
   } = opts;
   let currentMv = opts.currentMv;
-  let converged = false;
-  let reason = 'no reason';
   const priorIterationRegressions = Number(currentMv.iteration_regressions ?? 0);
 
   const cfPath = path.join(sessionDir, currentMv.convergence_file!);
-  try {
-    const raw = readRecoverableJsonObject(cfPath) as Record<string, unknown> | null;
-    if (!raw) throw new Error('convergence file empty or invalid');
-    if (raw.converged === true) {
-      converged = true;
-      reason = typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason : 'no reason';
-      log(`Iteration ${iteration} — worker convergence signaled; running per-iteration gate before exit`);
-    } else {
-      log(`Iteration ${iteration} — worker convergence: not yet`);
-    }
-  } catch {
-    log(`Iteration ${iteration} — convergence file not found/unparseable — continuing`);
-  }
+  const { converged, reason } = readWorkerConvergenceSignal(cfPath, iteration, log);
 
   currentMv = await runPerIterationGateHook({
     currentMv,
@@ -1044,9 +1122,13 @@ export async function handleWorkerManagedIteration(opts: {
     _deps,
   });
 
+  if (!converged) {
+    return { currentMv, converged, reason };
+  }
+
   const iterationLeftRegression =
     Number(currentMv.iteration_regressions ?? 0) > priorIterationRegressions;
-  if (converged && iterationLeftRegression) {
+  if (iterationLeftRegression) {
     log(
       `Iteration ${iteration} — convergence deferred: per-iteration gate left unresolved regressions`,
     );
@@ -1060,54 +1142,28 @@ export async function handleWorkerManagedIteration(opts: {
   // R-ORSR-6 interface-change sweep: before trusting a convergence signal, run a whole-repo tsc
   // when the phase's own diff changed an exported symbol. A self-introduced out-of-scope consumer
   // break blocks convergence and arms the no-disown bound on the deferral force-exit.
-  if (converged && typeof startCommit === 'string' && startCommit.trim().length > 0) {
-    const sweep = await runInterfaceChangeSweep({
+  if (typeof startCommit === 'string' && startCommit.trim().length > 0) {
+    const sweepBlock = await applyInterfaceChangeSweepGuard({
+      currentMv,
       workingDir,
       sessionDir,
       startCommit: startCommit.trim(),
-      runGateFn: _deps?.runGateFn ?? runGate,
-      logActivityFn: _deps?.logActivityFn ?? logActivity,
-      getChangedExportedSymbolsFn: _deps?.getChangedExportedSymbolsFn,
-      getChangedFilesSinceFn: _deps?.getChangedFilesSinceFn,
-    });
-    if (sweep.ran && sweep.selfIntroduced.length > 0) {
-      log(
-        `Iteration ${iteration} — convergence blocked: interface-change sweep found ` +
-        `${sweep.selfIntroduced.length} self-introduced whole-repo break(s) — phase cannot disown its own regression`,
-      );
-      const sweptMv = recordInterfaceSweepRegression({
-        currentMv,
-        sessionDir,
-        selfIntroduced: sweep.selfIntroduced,
-        changedExportedSymbolCount: sweep.selfIntroduced.length,
-        writeMicroverseStateFn: _deps?.writeMicroverseStateFn ?? writeMicroverseState,
-        logActivityFn: _deps?.logActivityFn ?? logActivity,
-      });
-      return {
-        currentMv: sweptMv,
-        converged: false,
-        reason: 'per-iteration gate left unresolved regressions',
-        selfRedOpen: true,
-      };
-    }
-  }
-
-  if (converged) {
-    if (resolveMetricType(currentMv) === 'none') {
-      return { currentMv, converged: true, reason };
-    }
-    const guardResult = validateWorkerConvergenceHistory({
-      currentMv,
-      minIterations,
       iteration,
-      sessionDir,
       log,
-      logActivityFn: _deps?.logActivityFn ?? logActivity,
+      _deps,
     });
-    if (guardResult) return { currentMv, ...guardResult };
+    if (sweepBlock) return sweepBlock;
   }
 
-  return { currentMv, converged, reason };
+  return applyWorkerConvergenceGuard({
+    currentMv,
+    reason,
+    minIterations,
+    iteration,
+    sessionDir,
+    log,
+    _deps,
+  });
 }
 
 function normalizeExcludePrefixes(excludePrefixes: readonly string[]): string[] {
