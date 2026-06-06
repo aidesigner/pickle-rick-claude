@@ -2650,8 +2650,10 @@ export function appendPipelineRunnerMarker(sessionDir, message) {
     }
     catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
-const isHaltExit = (r) => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat' || r === 'closer_handoff_terminal' || r === 'manager_handoff_pending' || r === 'done_without_commit_evidence';
-const isFailureExit = (r) => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead' || r === 'done_without_commit_evidence' || r === 'codex_manager_no_progress';
+/** R-CNAR-4(c): halt exits pause/defer — auto-resume.sh may retry. Does NOT include 'recovery_exhausted' (fatal, non-recoverable). */
+export const isHaltExit = (r) => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat' || r === 'closer_handoff_terminal' || r === 'manager_handoff_pending' || r === 'done_without_commit_evidence';
+/** R-CNAR-4(c): failure exits stop auto-resume.sh. Includes 'recovery_exhausted' — a non-recoverable terminal state. */
+export const isFailureExit = (r) => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead' || r === 'done_without_commit_evidence' || r === 'codex_manager_no_progress' || r === 'recovery_exhausted';
 /**
  * Returns true only when the conformance has a `## Manager Handoff` section AND
  * its body is substantive (not "None", "N/A", "Nothing", empty, etc.).

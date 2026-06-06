@@ -394,6 +394,7 @@ function normalizeV4StateDefaults(state: State): void {
 function normalizeV5StateDefaults(state: State): void {
   if (!isRecord(state.worker_artifact_progress)) state.worker_artifact_progress = {};
   if (typeof state.codex_manager_consecutive_no_progress !== 'number') state.codex_manager_consecutive_no_progress = 0;
+  if (!Array.isArray(state.recovery_attempts)) state.recovery_attempts = [];
 }
 
 function normalizeUpToVersion(state: State, schemaVersion: number): void {

@@ -3002,10 +3002,12 @@ export function appendPipelineRunnerMarker(sessionDir: string, message: string):
   } catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
 
-export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally' | 'state_schema_version_ahead' | 'closer_handoff_terminal' | 'manager_handoff_pending' | 'done_without_commit_evidence' | 'codex_manager_no_progress';
+export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally' | 'state_schema_version_ahead' | 'closer_handoff_terminal' | 'manager_handoff_pending' | 'done_without_commit_evidence' | 'codex_manager_no_progress' | 'recovery_exhausted';
 
-const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat' || r === 'closer_handoff_terminal' || r === 'manager_handoff_pending' || r === 'done_without_commit_evidence';
-const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead' || r === 'done_without_commit_evidence' || r === 'codex_manager_no_progress';
+/** R-CNAR-4(c): halt exits pause/defer — auto-resume.sh may retry. Does NOT include 'recovery_exhausted' (fatal, non-recoverable). */
+export const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat' || r === 'closer_handoff_terminal' || r === 'manager_handoff_pending' || r === 'done_without_commit_evidence';
+/** R-CNAR-4(c): failure exits stop auto-resume.sh. Includes 'recovery_exhausted' — a non-recoverable terminal state. */
+export const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead' || r === 'done_without_commit_evidence' || r === 'codex_manager_no_progress' || r === 'recovery_exhausted';
 
 interface CloserHandoffTracker {
   ticket_id: string;
@@ -3024,7 +3026,7 @@ interface TicketConformanceSnapshot {
 
 type CloserTerminalDecision =
   | { action: 'continue'; tracker: CloserHandoffTracker | null }
-  | { action: 'exit'; reason: Extract<ExitReason, 'closer_handoff_terminal' | 'manager_handoff_pending'>; tracker: CloserHandoffTracker | null; detail: string };
+  | { action: 'exit'; reason: Extract<ExitReason, 'closer_handoff_terminal' | 'manager_handoff_pending' | 'recovery_exhausted'>; tracker: CloserHandoffTracker | null; detail: string };
 
 /**
  * Returns true only when the conformance has a `## Manager Handoff` section AND

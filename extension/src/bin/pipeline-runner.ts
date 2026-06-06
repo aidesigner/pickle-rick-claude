@@ -2699,6 +2699,8 @@ function maybeStampPhaseIncompleteTickets(
  * verbatim — folding them into the generic `failed` mislabels a clean handoff
  * as a fatal failure to anyone reading `state.exit_reason`.
  */
+// 'recovery_exhausted' is intentionally absent here — it is a fatal non-recoverable failure
+// (isFailureExit=true), NOT an operator handoff; auto-resume.sh R-CNAR-4(c) stops on it.
 const PIPELINE_HANDOFF_EXIT_REASONS = new Set(['manager_handoff_pending', 'closer_handoff_terminal']);
 
 function readHandoffExitReason(statePath: string): string | null {

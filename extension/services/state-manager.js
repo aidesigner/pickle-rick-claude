@@ -342,6 +342,8 @@ function normalizeV5StateDefaults(state) {
         state.worker_artifact_progress = {};
     if (typeof state.codex_manager_consecutive_no_progress !== 'number')
         state.codex_manager_consecutive_no_progress = 0;
+    if (!Array.isArray(state.recovery_attempts))
+        state.recovery_attempts = [];
 }
 function normalizeUpToVersion(state, schemaVersion) {
     if (schemaVersion >= 3)

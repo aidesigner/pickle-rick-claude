@@ -153,6 +153,16 @@ export interface State {
       zero_progress_count: number;
     };
   };
+  /** R-ORSR-1 (schema-neutral v5): recovery controller attempt ledger. Defaulted to [] via normalizeV5StateDefaults. */
+  recovery_attempts?: RecoveryAttempt[];
+}
+
+/** Per-entry shape for the recovery controller attempt ledger (R-ORSR-1). */
+export interface RecoveryAttempt {
+  strategy: string;
+  outcome: 'success' | 'failed';
+  reason: string;
+  iteration: number;
 }
 
 /**
