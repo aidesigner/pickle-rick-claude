@@ -23,6 +23,7 @@ import { auditStaleReferences } from './stale-reference-audit.js';
 import { auditBannedConstructs } from './banned-constructs-audit.js';
 import { auditBannedCasts } from './banned-casts-audit.js';
 import { auditPatternConformance } from './pattern-conformance-audit.js';
+import { runSkepticLens } from './skeptic-lens.js';
 import { readRecoverableJsonObject } from '../recoverable-json.js';
 export async function runCitadelAudit(options) {
     const report = buildCitadelAuditReport(options);
@@ -34,6 +35,17 @@ export async function runCitadelAudit(options) {
         mkdirSync(path.dirname(reportPath), { recursive: true });
         writeFileSync(reportPath, `${stableJson(report.json)}\n`, 'utf-8');
     });
+    if (options.sessionDir) {
+        try {
+            const repoRoot = path.resolve(options.repoRoot ?? process.cwd());
+            const diff = walkDiff(options.diffRange, { repoRoot });
+            const skepticReport = runSkepticLens(diff.changedFiles, repoRoot);
+            writeFileSync(path.join(options.sessionDir, 'skeptic_findings.json'), `${JSON.stringify(skepticReport, null, 2)}\n`, 'utf-8');
+        }
+        catch {
+            // report-only: failures never surface to the pipeline
+        }
+    }
     return report;
 }
 const NO_PRD_SKIPPED = {
