@@ -2,8 +2,10 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { runGit } from '../git-utils.js';
 import { slugify, uniqueSortedStrings } from './reporter.js';
+const STALE_REF_SEVERITY = 'Low';
 const BACKTICK_SPAN_RE = /`([^`]+)`/g;
 const CODE_IDENTIFIER_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(\))?$/;
+const BARE_CODE_WORD_RE = /\b([A-Za-z_$][\w$]*(?:\.[\w$]+)*(?:\(\))?)\b/g;
 export function isCommentLine(line) {
     const trimmed = line.trim();
     return (trimmed.startsWith('//')
@@ -28,6 +30,19 @@ export function extractBacktickedIdentifiers(line) {
     }
     return out;
 }
+/** Extract code-shaped words from a comment line that are NOT enclosed in backticks.
+ * Handles the cited-symbol mismatch case where identifiers are referenced as bare prose
+ * (e.g. `// via isCompoundRulesEnabled` without backtick delimiters). */
+export function extractBareIdentifiers(line) {
+    const masked = line.replace(new RegExp(BACKTICK_SPAN_RE.source, BACKTICK_SPAN_RE.flags), '``');
+    const out = [];
+    for (const match of masked.matchAll(new RegExp(BARE_CODE_WORD_RE.source, BARE_CODE_WORD_RE.flags))) {
+        const candidate = match[1];
+        if (looksLikeCode(candidate))
+            out.push(candidate);
+    }
+    return out;
+}
 function commentIdentifiersInRanges(content, ranges) {
     const lines = content.split(/\r?\n/);
     const identifiers = [];
@@ -37,6 +52,7 @@ function commentIdentifiersInRanges(content, ranges) {
             if (line === undefined || !isCommentLine(line))
                 continue;
             identifiers.push(...extractBacktickedIdentifiers(line));
+            identifiers.push(...extractBareIdentifiers(line));
         }
     }
     return uniqueSortedStrings(identifiers);
@@ -49,9 +65,9 @@ export function findStaleReferences(items, isPresentAtHead) {
                 continue;
             findings.push({
                 id: `stale-reference:${slugify(item.file)}:${slugify(identifier)}`,
-                severity: 'Low',
+                severity: STALE_REF_SEVERITY,
                 file: item.file,
-                message: `Backticked reference \`${identifier}\` in a changed comment is absent from HEAD (renamed or stale).`,
+                message: `Reference \`${identifier}\` in a changed comment is absent from HEAD (renamed or stale).`,
             });
         }
     }

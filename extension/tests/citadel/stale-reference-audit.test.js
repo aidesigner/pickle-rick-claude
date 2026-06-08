@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   isCommentLine,
   extractBacktickedIdentifiers,
+  extractBareIdentifiers,
   findStaleReferences,
   auditStaleReferences,
 } from '../../services/citadel/stale-reference-audit.js';
@@ -31,6 +32,31 @@ describe('stale-reference-audit: helpers', () => {
     assert.ok(ids.includes('resolveScope'));
     assert.ok(ids.includes('state.json'));
     assert.ok(!ids.includes('the'));
+  });
+});
+
+describe('stale-reference-audit: bare cited-symbol mismatch (#14)', () => {
+  test('extractBareIdentifiers picks up a non-backticked code identifier in a comment', () => {
+    const ids = extractBareIdentifiers('// guarded by isCompoundRulesEnabled when flagged');
+    assert.ok(ids.includes('isCompoundRulesEnabled'), 'bare camelCase identifier must be extracted');
+    // Plain English prose words are not code-shaped → not extracted.
+    assert.ok(!ids.includes('guarded'));
+    assert.ok(!ids.includes('flagged'));
+  });
+
+  test('a bare identifier already inside backticks is NOT double-counted as bare', () => {
+    const ids = extractBareIdentifiers('// see `resolveScope` for details');
+    assert.ok(!ids.includes('resolveScope'), 'backticked identifiers are masked out of the bare scan');
+  });
+
+  test('findStaleReferences flags a HEAD-absent bare identifier at severity Low', () => {
+    const identifiers = extractBareIdentifiers('// via isCompoundRulesEnabled');
+    assert.ok(identifiers.length > 0, 'fixture must yield a bare identifier');
+    const items = [{ file: 'src/rules.ts', identifiers }];
+    const findings = findStaleReferences(items, () => false); // none present at HEAD
+    const hit = findings.find((f) => f.message.includes('isCompoundRulesEnabled'));
+    assert.ok(hit, 'bare HEAD-absent cited symbol must produce a stale-reference finding');
+    assert.equal(hit.severity, 'Low');
   });
 });
 

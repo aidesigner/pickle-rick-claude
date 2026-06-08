@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { escapeTableCell, slugify, uniqueSortedStrings } from './reporter.js';
+const PARITY_SEVERITY = 'Medium';
 const CODE_FILE_PATTERN = /\.[cm]?tsx?$/i;
 const DECORATOR_PATTERN = /^\s*@([A-Za-z_][\w.]*)\s*\((.*)\)\s*$/;
 const HTTP_DECORATOR_PATTERN = /^(Get|Post|Put|Patch|Delete|Head|Options)$/i;
@@ -134,6 +135,10 @@ function guardPrefix(decorators, body) {
     const tokens = decorators.flatMap(decoratorGuardTokens);
     if (body.some((line) => /featureFlag|flagGate|isFeatureEnabled|requireFeature/i.test(line)))
         tokens.push('flag-check');
+    if (body.some((line) => /budget|checkBudget|validateBudget|budgetGuard|assertBudget/i.test(line)))
+        tokens.push('budget-check');
+    if (body.some((line) => /csrf|verifyCsrf|validateCsrf|checkCsrf|csrfToken/i.test(line)))
+        tokens.push('csrf-validation');
     if (body.some((line) => /ownership|owner|ownedBy|assertOwner|requireOwner/i.test(line)))
         tokens.push('ownership-lookup');
     if (body.some((line) => /status|state|assertStatus|validateStatus|requireStatus/i.test(line)))
@@ -164,7 +169,7 @@ function findGuardParityFindings(routes) {
         const first = group[0];
         return [{
                 id: `citadel-sibling-guard-parity-${slug(first.file)}-${slug(first.resourcePrefix)}`,
-                severity: 'Medium',
+                severity: PARITY_SEVERITY,
                 message: `Sibling guard/precondition drift under ${first.resourcePrefix}.`,
                 controller: first.file,
                 resourcePrefix: first.resourcePrefix,

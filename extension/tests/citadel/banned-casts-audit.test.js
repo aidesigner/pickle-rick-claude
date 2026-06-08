@@ -32,6 +32,36 @@ describe('banned-casts: detectors', () => {
   });
 });
 
+describe('banned-casts: as-never detector (#9)', () => {
+  test('hasAsNeverCast fires on a real as never cast', () => {
+    assert.ok(hasAsNeverCast('const x = foo as never;'));
+    assert.ok(hasAsNeverCast('return value as never;'));
+  });
+  test('hasAsNeverCast is silent on safe and string-literal forms', () => {
+    // The line-level detector strips string literals but is comment-agnostic by
+    // design — comment exclusion is findBannedCasts's job (via isCommentLine),
+    // mirroring hasAsAnyCast/hasAsErrorCast.
+    assert.ok(!hasAsNeverCast('const x = foo as Foo;'));
+    assert.ok(!hasAsNeverCast('const label = "treat it as never below";'));
+  });
+  test('findBannedCasts emits an as-never finding with an enum-valid severity', () => {
+    const ENUM = new Set(['Critical', 'High', 'Medium', 'Low']);
+    const findings = findBannedCasts([{
+      file: 'src/z.ts',
+      lines: [
+        { no: 11, text: 'const x = foo as never;' },
+        { no: 12, text: 'const safe = bar as Foo;' },
+        { no: 13, text: '// const c = baz as never; — comment ignored' },
+      ],
+    }]);
+    const hit = findings.find((f) => f.id.startsWith('banned-cast:as-never:'));
+    assert.ok(hit, 'as-never finding must be emitted');
+    assert.ok(ENUM.has(hit.severity), `severity ${hit.severity} must be an enum value`);
+    // Only the real cast on line 11 fires (safe form + comment are silent).
+    assert.equal(findings.filter((f) => f.id.startsWith('banned-cast:as-never:')).length, 1);
+  });
+});
+
 describe('banned-casts: findBannedCasts', () => {
   test('flags both classes on a positive fixture and is silent on clean lines', () => {
     const findings = findBannedCasts([{
