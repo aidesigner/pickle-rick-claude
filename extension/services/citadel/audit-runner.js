@@ -35,23 +35,33 @@ export async function runCitadelAudit(options) {
     });
     return report;
 }
+const NO_PRD_SKIPPED = {
+    findings: [],
+    skipped: 'no_prd',
+    reason: 'no PRD path provided for standalone run',
+};
 export function buildCitadelAuditReport(options) {
     const repoRoot = path.resolve(options.repoRoot ?? process.cwd());
-    const prdPath = path.resolve(repoRoot, options.prdPath);
-    const prdMarkdown = readFileSync(prdPath, 'utf-8');
+    const resolvedPrdPath = options.prdPath !== undefined
+        ? path.resolve(repoRoot, options.prdPath)
+        : undefined;
+    const prdMarkdown = resolvedPrdPath ? readFileSync(resolvedPrdPath, 'utf-8') : '';
     // ticket 98dc9bed F3.1: parseWithComposes already handles PRDs without a
     // composes: front-matter block. Swallowing ComposesError here masks malformed
     // compose graphs and audits the wrong PRD scope.
-    const parsedPrd = parseWithComposes(prdPath, { repoRoot });
+    const parsedPrd = resolvedPrdPath
+        ? parseWithComposes(resolvedPrdPath, { repoRoot })
+        : { decisions: [], acceptanceCriteria: [], endpoints: [], allowlistEntries: [], statusCodeRows: [], transitionAuditRows: [], composedRcodes: new Map() };
     const diff = walkDiff(options.diffRange, { repoRoot });
     const projectShapes = detectProjectShapes(repoRoot);
     const siblingAuth = auditSiblingAuthPreconditions(diff, { projectShapes });
     const frontendPropDrift = safeRunAnalyzer('citadel-frontend-prop-drift', () => auditFrontendPropDrift(diff), { analyzerCompatibility: ['react-frontend'], projectShapes });
-    const acShape = auditAcShape({
-        prdPath,
-        sessionDir: options.sessionDir,
-    });
-    const ruleSetInvariants = auditRuleSetInvariants(diff, { repoRoot, prdMarkdown });
+    const acShape = resolvedPrdPath
+        ? auditAcShape({ prdPath: resolvedPrdPath, sessionDir: options.sessionDir })
+        : { findings: [], decisionsRequired: [], summary: { decisionsRequired: 0, highFindings: 0 } };
+    const ruleSetInvariants = resolvedPrdPath
+        ? auditRuleSetInvariants(diff, { repoRoot, prdMarkdown })
+        : NO_PRD_SKIPPED;
     const crossPhase = readCrossPhaseFindings(options.sessionDir);
     const crossPhaseReport = {
         findings: crossPhase.findings,
@@ -59,11 +69,17 @@ export function buildCitadelAuditReport(options) {
     };
     const diffHygiene = auditDiffHygiene(diff, { szechuanFindings: crossPhase.szechuan_findings });
     const divergenceReconciliation = reconcileDivergences(diff);
-    const acCoverage = safeRunAnalyzer('citadel-ac-coverage', () => buildAcCoverageScorecard(parsedPrd.acceptanceCriteria, diff, { repoRoot }));
+    const acCoverage = resolvedPrdPath
+        ? safeRunAnalyzer('citadel-ac-coverage', () => buildAcCoverageScorecard(parsedPrd.acceptanceCriteria, diff, { repoRoot }))
+        : NO_PRD_SKIPPED;
     const allowlistDead = safeRunAnalyzer('citadel-allowlist-dead', () => detectAllowlistDeadEntries(diff, { repoRoot }));
-    const stateTransitions = safeRunAnalyzer('citadel-state-transitions', () => auditStateTransitions(parsedPrd.transitionAuditRows, diff, { repoRoot }));
+    const stateTransitions = resolvedPrdPath
+        ? safeRunAnalyzer('citadel-state-transitions', () => auditStateTransitions(parsedPrd.transitionAuditRows, diff, { repoRoot }))
+        : NO_PRD_SKIPPED;
     const trapDoorCoverage = safeRunAnalyzer('citadel-trap-door', () => auditTrapDoorCoverage(diff));
-    const endpointContractConformance = safeRunAnalyzer('citadel-endpoint-contract', () => checkEndpointContractConformance(parsedPrd.endpoints, parsedPrd.statusCodeRows, { repoRoot }), { analyzerCompatibility: ['nestjs-api'], projectShapes });
+    const endpointContractConformance = resolvedPrdPath
+        ? safeRunAnalyzer('citadel-endpoint-contract', () => checkEndpointContractConformance(parsedPrd.endpoints, parsedPrd.statusCodeRows, { repoRoot }), { analyzerCompatibility: ['nestjs-api'], projectShapes })
+        : NO_PRD_SKIPPED;
     const schemaRegistryDrift = safeRunAnalyzer('citadel-schema-registry-drift', () => auditSchemaRegistryDrift(diff));
     const testAuthenticity = safeRunAnalyzer('citadel-test-authenticity', () => auditTestAuthenticity(diff));
     const staleReference = safeRunAnalyzer('citadel-stale-reference', () => auditStaleReferences(diff));
@@ -112,7 +128,7 @@ export function buildCitadelAuditReport(options) {
     };
     const reporter = new Reporter();
     return reporter.build({
-        prdPath,
+        prdPath: resolvedPrdPath ?? '',
         diffRange: options.diffRange,
         header: buildCitadelReportHeader(options.sessionDir),
         sections,
@@ -120,6 +136,15 @@ export function buildCitadelAuditReport(options) {
         decisions: decisionRequired,
         strict: options.strict,
     });
+}
+export async function runCitadelStandalone(target, outputDir) {
+    const repoRoot = path.resolve(target.workingDir);
+    const reportDir = outputDir !== undefined ? path.resolve(outputDir) : repoRoot;
+    const reportPath = path.join(reportDir, 'citadel_report.json');
+    const result = buildCitadelAuditReport({ diffRange: target.diffRange, repoRoot, reportPath });
+    mkdirSync(path.dirname(reportPath), { recursive: true });
+    writeFileSync(reportPath, `${stableJson(result.json)}\n`, 'utf-8');
+    return result;
 }
 function stableJson(value) {
     return JSON.stringify(value, null, 2);
