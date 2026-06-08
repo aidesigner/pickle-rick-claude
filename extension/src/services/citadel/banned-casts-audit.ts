@@ -1,4 +1,4 @@
-import { CitadelFinding, slugify } from './reporter.js';
+import { CitadelFinding, CitadelSeverity, slugify } from './reporter.js';
 import { DiffSummary } from './diff-walker.js';
 import {
   ChangedSource,
@@ -13,6 +13,9 @@ export interface BannedCastsResult {
 
 const AS_ERROR_ACCESS_RE = /\(\s*[\w$.[\]]+\s+as\s+Error\s*\)\s*\./;
 const AS_ANY_RE = /\bas\s+any\b/;
+const AS_NEVER_RE = /\bas\s+never\b/;
+
+const CAST_SEVERITY: CitadelSeverity = 'Medium';
 
 export function hasAsErrorCast(line: string): boolean {
   return AS_ERROR_ACCESS_RE.test(stripStringLiterals(line));
@@ -20,6 +23,10 @@ export function hasAsErrorCast(line: string): boolean {
 
 export function hasAsAnyCast(line: string): boolean {
   return AS_ANY_RE.test(stripStringLiterals(line));
+}
+
+export function hasAsNeverCast(line: string): boolean {
+  return AS_NEVER_RE.test(stripStringLiterals(line));
 }
 
 export function findBannedCasts(sources: ChangedSource[]): CitadelFinding[] {
@@ -30,7 +37,7 @@ export function findBannedCasts(sources: ChangedSource[]): CitadelFinding[] {
       if (hasAsErrorCast(text)) {
         findings.push({
           id: `banned-cast:as-error:${slugify(source.file)}:${no}`,
-          severity: 'Medium',
+          severity: CAST_SEVERITY,
           file: source.file,
           line: no,
           message:
@@ -41,12 +48,23 @@ export function findBannedCasts(sources: ChangedSource[]): CitadelFinding[] {
       if (hasAsAnyCast(text)) {
         findings.push({
           id: `banned-cast:as-any:${slugify(source.file)}:${no}`,
-          severity: 'Medium',
+          severity: CAST_SEVERITY,
           file: source.file,
           line: no,
           message:
             `\`as any\` cast at ${source.file}:${no} is banned by CLAUDE.md; `
             + 'replace it with the project type or `unknown` plus a narrowing guard.',
+        });
+      }
+      if (hasAsNeverCast(text)) {
+        findings.push({
+          id: `banned-cast:as-never:${slugify(source.file)}:${no}`,
+          severity: CAST_SEVERITY,
+          file: source.file,
+          line: no,
+          message:
+            `\`as never\` cast at ${source.file}:${no} is banned; `
+            + 'use a proper type guard or narrow the union explicitly instead of casting through `never`.',
         });
       }
     }

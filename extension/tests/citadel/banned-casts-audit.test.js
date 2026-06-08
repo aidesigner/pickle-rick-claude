@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   hasAsErrorCast,
   hasAsAnyCast,
+  hasAsNeverCast,
   findBannedCasts,
   auditBannedCasts,
 } from '../../services/citadel/banned-casts-audit.js';
