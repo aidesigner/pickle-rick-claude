@@ -236,6 +236,17 @@ export async function runCitadelStandalone(
   const result = buildCitadelAuditReport({ diffRange: target.diffRange, repoRoot, reportPath });
   mkdirSync(path.dirname(reportPath), { recursive: true });
   writeFileSync(reportPath, `${stableJson(result.json)}\n`, 'utf-8');
+  try {
+    const diff = walkDiff(target.diffRange, { repoRoot });
+    const skepticReport = runSkepticLens(diff.changedFiles, repoRoot);
+    writeFileSync(
+      path.join(reportDir, 'skeptic_findings.json'),
+      `${JSON.stringify(skepticReport, null, 2)}\n`,
+      'utf-8',
+    );
+  } catch {
+    // report-only: failures never surface to the pipeline
+  }
   return result;
 }
 

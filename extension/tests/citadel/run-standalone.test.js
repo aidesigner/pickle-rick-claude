@@ -64,6 +64,7 @@ describe('runCitadelStandalone', () => {
       'stale_reference',
       'banned_constructs',
       'banned_casts',
+      'pattern_conformance',
     ];
 
     const missing = EXPECTED_SECTIONS.filter(
