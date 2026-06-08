@@ -156,3 +156,22 @@ Drawn directly from this month's reliability ledger — every one of these is a 
 - It validates keeping a human reviewer in the loop for large/architectural PRs **and** gives the finders two general dimensions plus a flywheel, so the human reviews *taste*, not Critical-severity NaN-to-DB and leaked-pool defects — and every catch they do make becomes a permanent automated check. The 2026 corpus adds urgency: for a large fraction of PRs (octy 10/10, ~25% of loanlight-api) **there is no substantive human review at all** — the automated gate is the only reviewer, so its blind spots ship unfiltered.
 - **The gates find the obvious; the human finds the load-bearing "why."** #15 was caught not by a reviewer reading the diff but by a human asking a *follow-up question about behavior* ("why are we not doing ATTOM on 1004?") — after the 14 were already fixed and the symptom (#8) had been waved off as intentional. That is the irreducible human contribution this PRD is designed to *amplify*, not replace: M2 operationalizes the "does this make sense?" question into concrete shapes (resolve-the-constants, diff-the-enabling-conditions) so the gate surfaces the load-bearing ones too, leaving the human to ask the questions no checklist anticipates.
 - Seed record: **`docs/review-defect-taxonomy.md`** (the flywheel's append-only memory, populated from the 63-PR 2026 corpus). It is both the evidence base for this PRD and the live target for AC-6.
+
+---
+
+## Implementation Task Breakdown
+
+| Order | ID | Title | Priority | Tier | Mapped |
+|---|---|---|---|---|---|
+| 10 | 28af5d15 | Extract state-free runCitadelStandalone + wire standalone invocation | High | small | AC-1 |
+| 20 | 3c7619fd | Extend banned-casts / sibling-auth / stale-reference | High | small | AC-2 |
+| 30 | 1c1d094c | New pattern-conformance-audit.ts (PATTERN_SHAPE + SQL) + flywheel + count/dedup | High | medium | AC-3, AC-7, AC-8 |
+| 40 | c3a969a1 | M2 report-only skeptic lens → skeptic_findings.json sink + safety proof | High | small | AC-5 |
+| 50 | 548559f1 | PR#1707 dirty + clean fixtures, deterministic/structural split, G1/G2 | High | small | AC-6 |
+| 60 | 1eb80f18 | Wire: integrate standalone + new analyzer + M2 sink end-to-end | High | medium | AC-1/3/5 |
+| 70 | 3284688f | Harden: code quality review | High | large | AC-8 |
+| 80 | bb9f76d1 | Audit: data flow integrity | High | large | AC-5/8 |
+| 90 | 05e86ab7 | Harden: test quality review | High | large | AC-6 |
+| 100 | ec79dcca | Audit: cross-reference consistency | High | medium | AC-7 |
+
+(AC-4 descoped — target-repo eslint follow-up, not in this bundle.)
