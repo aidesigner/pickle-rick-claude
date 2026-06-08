@@ -161,6 +161,12 @@ describe('citadel-analyzer-wiring: invocation probe', () => {
     'state_transitions',
     'trap_door_coverage',
     'endpoint_contract_conformance',
+    'schema_registry_drift',
+    'test_authenticity',
+    'stale_reference',
+    'banned_constructs',
+    'banned_casts',
+    'pattern_conformance',
   ];
 
   test('buildCitadelAuditReport produces all expected section keys on HEAD..HEAD', () => {

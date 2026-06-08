@@ -22,6 +22,7 @@ import { auditTestAuthenticity } from './test-authenticity-audit.js';
 import { auditStaleReferences } from './stale-reference-audit.js';
 import { auditBannedConstructs } from './banned-constructs-audit.js';
 import { auditBannedCasts } from './banned-casts-audit.js';
+import { auditPatternConformance } from './pattern-conformance-audit.js';
 import { readRecoverableJsonObject } from '../recoverable-json.js';
 
 interface FindingLike extends CitadelFinding {
@@ -151,6 +152,8 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     auditBannedConstructs(diff));
   const bannedCasts = safeRunAnalyzer('citadel-banned-casts', () =>
     auditBannedCasts(diff));
+  const patternConformance = safeRunAnalyzer('citadel-pattern-conformance', () =>
+    auditPatternConformance(diff));
   const decisionRequired: DecisionRequired[] = [
     ...acShape.decisionsRequired,
     ...divergenceReconciliation.decisionsRequired,
@@ -172,6 +175,7 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     ...staleReference.findings.map((finding) => withFindingSource(finding as FindingLike, 'stale_reference')),
     ...bannedConstructs.findings.map((finding) => withFindingSource(finding as FindingLike, 'banned_constructs')),
     ...bannedCasts.findings.map((finding) => withFindingSource(finding as FindingLike, 'banned_casts')),
+    ...patternConformance.findings.map((finding) => withFindingSource(finding as FindingLike, 'pattern_conformance')),
   ]);
   const sections = {
     sibling_auth_preconditions: siblingAuth,
@@ -191,6 +195,7 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     stale_reference: staleReference,
     banned_constructs: bannedConstructs,
     banned_casts: bannedCasts,
+    pattern_conformance: patternConformance,
   };
   const reporter = new Reporter();
   return reporter.build({
