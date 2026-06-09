@@ -62,7 +62,7 @@ trap door (or an eslint rule where marked) so Mechanism 1 catches it on every fu
 | Drizzle timestamp columns return **strings**, not `Date` — no `.toISOString()` on them | octy #1 | M1 framework-contract trap door |
 | `NEXT_PUBLIC_*` env vars are inlined at **build** time — runtime changes are no-ops | octy #28, #31 | M1 trap door |
 | Deterministic IDs inside a message-queue handler (no `randomUUID()` on a retry-able insert that relies on `ON CONFLICT`) | integrations #398 | M1 trap door |
-| Added/changed comment must still match the symbol/flag it cites in the same hunk | **1586 → 1602 (carry-forward)**, 1235, 14 | M2 lens + flywheel |
+| Added/changed comment must still match the symbol/flag it cites in the same hunk | **1586 → 1602 (carry-forward)**, 1235, 14 | **M1** (`stale-reference-audit` — deterministic cited-symbol match) |
 
 ---
 

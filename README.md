@@ -165,7 +165,7 @@ The auto-refine trigger fires on `refine-prd` / `prd refinement`, on `refine`/`r
 
 **Mid-flight scope recovery (`lock-scope.js`)** — if a pipeline launched without `--scope`, use `lock-scope.js` to patch all three session files atomically without restarting: `node ~/.claude/pickle-rick/extension/bin/lock-scope.js <session-root> --mode branch [--scope-base main]`. Refuses to run while `pipeline-runner.js` is alive. Collapses the 6-step manual state patch to one command. See `PRD_GUIDE.md § Pipeline Scope — Mid-Flight Recovery` for full usage.
 
-**Citadel** — audits the implemented branch against the PRD before deeper review phases. It reads PRD acceptance criteria, interface contracts, changed files, trap-door notes, and sibling phase artifacts when present. Findings are grouped by audit surface: PRD coverage, endpoint contract drift, trap-door enforcement, sibling route divergence, state-machine drift, frontend prop drift, cross-phase findings, and diff hygiene.
+**Citadel** — audits the implemented branch against the PRD before deeper review phases. It reads PRD acceptance criteria, interface contracts, changed files, trap-door notes, and sibling phase artifacts when present. Findings are grouped by audit surface: PRD coverage, endpoint contract drift, trap-door enforcement, sibling route divergence, state-machine drift, frontend prop drift, cross-phase findings, pattern conformance, and diff hygiene.
 
 ```bash
 # Slash-command alternative:
