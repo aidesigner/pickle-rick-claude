@@ -20,7 +20,7 @@ import {
   recordManagerRelaunch,
   type ManagerRelaunchExitKind,
 } from '../services/manager-relaunch.js';
-import { getHeadBranch, updateTicketFrontmatter, isWorkingTreeDirty } from '../services/git-utils.js';
+import { getHeadBranch, updateTicketFrontmatter, isWorkingTreeDirty, listWorkingTreeDirtyPaths } from '../services/git-utils.js';
 import { runRecoveryLadder, parsePlanPhases, executePhaseLoop, isConvergedPlanEligible, type PlanPhase, type RecoveryDeps, type RecoveryEvidence, type RecoveryOutcome } from '../services/recovery-controller.js';
 import { detectArtifactProgress, resolveNoProgressWindowSeconds, type ArtifactProgressSnapshot } from '../services/artifact-progress-detector.js';
 import { readEvidence, persistEvidence, gateForPhantomDoneRevert, type EvidenceCtx, type RevertDecision } from '../services/ticket-completion-evidence.js';
@@ -988,7 +988,16 @@ function isOversizedNoProgressFailed(sessionDir: string, ticketId: string | null
     const raw = fs.readFileSync(ticketFilePath(sessionDir, ticketId), 'utf-8');
     if (normalizeTicketStatus(readFrontmatterField(raw, 'status')) !== 'failed') return false;
     return (readFrontmatterField(raw, 'failed_reason') ?? '').trim() === 'oversized_no_progress';
-  } catch {
+  } catch (err) {
+    // M4: a missing/unreadable/corrupt ticket file is no longer silently
+    // swallowed. We still return false (conservative — an unreadable ticket is
+    // NOT treated as a terminal no-progress flip, so selection behavior is
+    // unchanged), but surface the read failure so corrupt/missing tickets are
+    // observable instead of vanishing into a blanket catch.
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `[warn] [${new Date().toISOString()}] ⚠ isOversizedNoProgressFailed: could not read ticket ${ticketId} — ${msg}\n`,
+    );
     return false;
   }
 }
@@ -1038,6 +1047,23 @@ export function findFirstPendingTicket(sessionDir: string): TicketInfo | null {
     }
   }
   return null;
+}
+
+/**
+ * L5: true when the session HAS tickets but NONE are SELECTABLE for work — i.e.
+ * `findNextPendingTicketId` (the same selection predicate `resolvePreTicket` uses:
+ * `isPendingMuxTicket && !isOversizedNoProgressFailed`) finds nothing. This is the
+ * all-terminal case the model can reach when every pending ticket flipped
+ * `oversized_no_progress` Failed. Distinct from `applyAllTicketsDoneCompletion`
+ * (which fires only when ALL are Done): this catches the all-terminal-Failed case
+ * where the loop would otherwise enter `runIteration` with a null ticket. Returns
+ * false for an empty session (no tickets) so a not-yet-populated session is never
+ * misclassified as terminal.
+ */
+export function noRunnableTicketsRemain(sessionDir: string): boolean {
+  const tickets = collectTickets(sessionDir);
+  if (tickets.length === 0) return false;
+  return findNextPendingTicketId(sessionDir) === null;
 }
 
 function withFreshTicketStatuses(sessionDir: string, tickets: readonly TicketInfo[]): TicketInfo[] {
@@ -3163,6 +3189,32 @@ export function resolveIdleStallThresholdSeconds(): number {
 
 const DEFAULT_MUX_IDLE_STALL_SECONDS = 900;
 
+/** L2 default consecutive idle-stall self-recovery cap before escalation. */
+const DEFAULT_MUX_IDLE_STALL_RECOVERY_CAP = 3;
+
+/**
+ * L2: resolve the consecutive idle-stall recovery cap. Honors
+ * PICKLE_MUX_IDLE_STALL_RECOVERY_CAP (strict positive integer); falls back to the
+ * default when unset/invalid. Mirrors resolveIdleStallThresholdSeconds.
+ */
+export function resolveIdleStallRecoveryCap(): number {
+  const raw = Number(process.env.PICKLE_MUX_IDLE_STALL_RECOVERY_CAP);
+  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MUX_IDLE_STALL_RECOVERY_CAP;
+}
+
+/**
+ * L2: decide whether a consecutive idle-stall recovery streak has EXCEEDED the cap
+ * and must escalate (record idle_stall_unrecoverable + deactivate). The watchdog
+ * self-recovery is bounded so a genuinely wedged loop that re-arms the stall every
+ * pass cannot spin forever — `recoveryCount` is the count of recoveries attempted
+ * THIS streak (including the current one); escalate once it climbs past `cap`.
+ * Any real forward progress resets the streak to 0, so a transient stall that the
+ * recovery clears never escalates.
+ */
+export function evaluateIdleStallRecoveryCap(recoveryCount: number, cap: number): boolean {
+  return recoveryCount > cap;
+}
+
 export interface MuxReadinessGateInput {
   sessionDir: string;
   repoRoot: string;
@@ -3331,12 +3383,12 @@ export function appendPipelineRunnerMarker(sessionDir: string, message: string):
   } catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
 
-export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally' | 'state_schema_version_ahead' | 'closer_handoff_terminal' | 'manager_handoff_pending' | 'done_without_commit_evidence' | 'codex_manager_no_progress' | 'recovery_exhausted';
+export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | 'codex_unhealthy_consecutive_failures' | 'ticket_audit_failed' | 'working_tree_modified_externally' | 'state_schema_version_ahead' | 'closer_handoff_terminal' | 'manager_handoff_pending' | 'done_without_commit_evidence' | 'codex_manager_no_progress' | 'recovery_exhausted' | 'idle_stall_unrecoverable' | 'all_tickets_terminal';
 
 /** R-CNAR-4(c): halt exits pause/defer — auto-resume.sh may retry. Does NOT include 'recovery_exhausted' (fatal, non-recoverable). */
 export const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat' || r === 'closer_handoff_terminal' || r === 'manager_handoff_pending' || r === 'done_without_commit_evidence';
 /** R-CNAR-4(c): failure exits stop auto-resume.sh. Includes 'recovery_exhausted' — a non-recoverable terminal state. */
-export const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead' || r === 'done_without_commit_evidence' || r === 'codex_manager_no_progress' || r === 'recovery_exhausted';
+export const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead' || r === 'done_without_commit_evidence' || r === 'codex_manager_no_progress' || r === 'recovery_exhausted' || r === 'idle_stall_unrecoverable';
 
 interface CloserHandoffTracker {
   ticket_id: string;
@@ -3624,9 +3676,11 @@ function exitForCloserTerminalState(
 //
 // The controller (services/recovery-controller.ts) is dependency-injected; these
 // adapters bind its callbacks to the real runtime. `attemptRecoveryBeforeTerminal`
-// is wired at BOTH terminal authorities (closer_handoff_terminal + codex
-// manager-no-progress) so a stalled iteration runs the recovery ladder before
-// parking. `commitAndContinueDoneFlip` is the 7th `guardCompletionCommitBeforeDone`
+// is wired at THREE terminal authorities — (1) closer_handoff_terminal,
+// (2) codex manager-no-progress, and (3) wmw-auto-skip (oversized_no_progress) —
+// so a stalled iteration runs the recovery ladder before parking. (Keep this
+// count in sync with the three call sites; see mux-runner-fix-b.test.js L6.)
+// `commitAndContinueDoneFlip` is the 7th `guardCompletionCommitBeforeDone`
 // + `clearStaleDoneWithoutCommitEvidence` pair (R-PEDC parity 6→7).
 // ---------------------------------------------------------------------------
 
@@ -3637,6 +3691,14 @@ export interface CommitAndContinueDoneFlipInput {
   statePath: string;
   flags: Record<string, unknown> | null;
   log: (msg: string) => void;
+  /**
+   * Optional ownership-scoped staging (M1). When provided (non-empty), `git add`
+   * stages ONLY these repo-relative paths instead of the whole tree (`-A`), so a
+   * shared-dir exit-path commit cannot sweep a sibling ticket's dirty work into a
+   * commit attributed to `ticketId`. Absent → default whole-tree `git add -A`
+   * (the Done-flip path semantics are unchanged).
+   */
+  stagePaths?: readonly string[];
 }
 
 /**
@@ -3647,7 +3709,12 @@ export interface CommitAndContinueDoneFlipInput {
  * the ladder falls through to fix-forward-trivial rather than leaving a half-commit.
  */
 export function commitAndContinueDoneFlip(input: CommitAndContinueDoneFlipInput): { ok: boolean; sha?: string } {
-  const add = spawnSync('git', ['-C', input.workingDir, 'add', '-A'], { encoding: 'utf-8', timeout: 30000 });
+  // M1: ownership-scoped staging when stagePaths is provided (exit-path commit);
+  // otherwise the default whole-tree add (Done-flip path, unchanged).
+  const addArgs = input.stagePaths && input.stagePaths.length > 0
+    ? ['-C', input.workingDir, 'add', '--', ...input.stagePaths]
+    : ['-C', input.workingDir, 'add', '-A'];
+  const add = spawnSync('git', addArgs, { encoding: 'utf-8', timeout: 30000 });
   if (add.status !== 0) {
     input.log(`commit-and-continue: git add failed for ${input.ticketId} (status ${add.status ?? 'null'})`);
     return { ok: false };
@@ -3718,11 +3785,53 @@ export type CommitGatePassingDeliverableReason =
   | 'no-ticket'
   | 'already-terminal'
   | 'clean-tree'
+  | 'clean-ticket-tree'
   | 'no-extension-dir'
   | 'gate-failed'
   | 'committed'
   | 'commit-failed'
   | 'error';
+
+/**
+ * M1 (R-MWIS-3 / R-WCUC ownership pre-check): partition the working-tree dirty
+ * paths into work OWNED by `ticketId` versus work that belongs to a DIFFERENT
+ * ticket's session directory.
+ *
+ * The exit-path committer reuses `commitAndContinueDoneFlip`, whose `git add -A`
+ * would otherwise stage the WHOLE dirty tree under `ticketId` — misattributing a
+ * lagging sibling ticket's work when the session dir is shared (e.g. pickle-rick
+ * self-build, where ticket artifacts under `<sessionDir>/<otherTicketId>/` are
+ * tracked in the same repo).
+ *
+ * A dirty path is FOREIGN iff it resolves under `<sessionDir>/<otherTicketId>/`
+ * for some ticket id other than `ticketId`; everything else (source deliverables,
+ * the current ticket's own artifacts) is OWNED. This is deliberately conservative:
+ * it never strands a source-file deliverable, it only refuses to commit work it
+ * can positively attribute to another ticket.
+ */
+export function partitionExitPathDirtyByOwnership(
+  dirtyPaths: readonly string[],
+  workingDir: string,
+  sessionDir: string,
+  ticketId: string,
+  allTicketIds: readonly string[],
+): { owned: string[]; foreign: string[] } {
+  // Absolute prefixes of OTHER tickets' session dirs (with trailing separator).
+  const foreignPrefixes = allTicketIds
+    .filter(id => id && id !== ticketId)
+    .map(id => path.resolve(sessionDir, id) + path.sep);
+  const owned: string[] = [];
+  const foreign: string[] = [];
+  for (const rel of dirtyPaths) {
+    const abs = path.resolve(workingDir, rel);
+    if (foreignPrefixes.some(prefix => abs.startsWith(prefix))) {
+      foreign.push(rel);
+    } else {
+      owned.push(rel);
+    }
+  }
+  return { owned, foreign };
+}
 
 export interface CommitGatePassingDeliverableResult {
   committed: boolean;
@@ -3745,6 +3854,30 @@ export function commitGatePassingDeliverableOnExitPath(
     if (!isWorkingTreeDirty(workingDir)) return { committed: false, reason: 'clean-tree' };
     const extensionDir = path.join(workingDir, 'extension');
     if (!fs.existsSync(extensionDir)) return { committed: false, reason: 'no-extension-dir' };
+    // M1: ownership pre-check. The shared committer would `git add -A` the whole
+    // dirty tree under `ticketId`; on a shared working dir that misattributes a
+    // lagging sibling ticket's work. Partition the dirty set and refuse to commit
+    // when NOTHING is owned by this ticket; otherwise stage ONLY owned paths.
+    let stagePaths: string[] | undefined;
+    try {
+      const dirtyPaths = listWorkingTreeDirtyPaths(workingDir);
+      const allTicketIds = collectTickets(sessionDir).map(t => t.id).filter((id): id is string => Boolean(id));
+      const { owned, foreign } = partitionExitPathDirtyByOwnership(dirtyPaths, workingDir, sessionDir, ticketId, allTicketIds);
+      if (owned.length === 0) {
+        log(`[exit-commit] ticket ${ticketId}: no ticket-owned dirty work (${foreign.length} foreign path(s)) — not committing under this ticket`);
+        return { committed: false, reason: 'clean-ticket-tree' };
+      }
+      // Only scope staging when there IS foreign work to exclude; otherwise leave
+      // stagePaths undefined so the committer keeps its whole-tree add behavior.
+      if (foreign.length > 0) {
+        stagePaths = owned;
+        log(`[exit-commit] ticket ${ticketId}: staging ${owned.length} owned path(s), excluding ${foreign.length} foreign path(s)`);
+      }
+    } catch (err) {
+      // Ownership probe is best-effort; on git error fall through to the existing
+      // whole-tree behavior rather than stranding genuinely-owned work.
+      log(`[exit-commit] ownership probe failed (ignored, falling back to whole-tree): ${safeErrorMessage(err)}`);
+    }
     // REUSE the existing #99 armed gate — only commit gate-PASSING work.
     const gateResult = gate(extensionDir, extensionRoot);
     if (!gateResult.ok) {
@@ -3752,7 +3885,7 @@ export function commitGatePassingDeliverableOnExitPath(
       return { committed: false, reason: 'gate-failed' };
     }
     // REUSE the existing #99 committer (git add/commit + R-PEDC guard + Done flip).
-    const r = commitAndContinueDoneFlip({ sessionDir, ticketId, workingDir, statePath, flags, log });
+    const r = commitAndContinueDoneFlip({ sessionDir, ticketId, workingDir, statePath, flags, log, stagePaths });
     if (r.ok) {
       log(`[exit-commit] ticket ${ticketId}: committed gate-passing deliverable (completion_commit: ${r.sha})`);
       return { committed: true, reason: 'committed', sha: r.sha };
@@ -5182,14 +5315,27 @@ export function countWorkerArtifacts(ticketDir: string): number {
  * file still counts as progress. Combines `git status --porcelain` (covers untracked
  * + staged + unstaged path set) with `git diff --numstat` (covers per-file line
  * churn on tracked files) into one comparable string. Returns `null` when git is
- * unavailable or both probes fail, in which case the caller falls back to the
- * artifact-count signal alone (never a false zero-progress from a missing signature).
+ * unavailable or EITHER probe fails (L1) -- a half-signature from one successful
+ * probe would silently drop the other probe's signal and could read as a spurious
+ * change/no-change against a prior COMPLETE signature. The caller's `?? prev`
+ * fallback then preserves the prior complete signature instead of corrupting it.
+ * `spawnSync` reports a timeout as `status === null` plus `error.code === 'ETIMEDOUT'`
+ * (no thrown error), so an OR-in on the ETIMEDOUT codes catches a timed-out probe.
  */
 export function computeSourceTreeSignature(workingDir: string): string | null {
   try {
     const status = spawnSync('git', ['-C', workingDir, 'status', '--porcelain'], { encoding: 'utf-8', timeout: 10_000 });
     const numstat = spawnSync('git', ['-C', workingDir, 'diff', '--numstat'], { encoding: 'utf-8', timeout: 10_000 });
-    if (status.status !== 0 && numstat.status !== 0) return null;
+    const statusErr = (status.error as NodeJS.ErrnoException | undefined)?.code;
+    const numstatErr = (numstat.error as NodeJS.ErrnoException | undefined)?.code;
+    if (
+      status.status !== 0
+      || numstat.status !== 0
+      || statusErr === 'ETIMEDOUT'
+      || numstatErr === 'ETIMEDOUT'
+    ) {
+      return null;
+    }
     return `${status.stdout ?? ''} ${numstat.stdout ?? ''}`;
   } catch {
     return null;
@@ -5235,17 +5381,29 @@ export function recordWorkerArtifactProgress(
       : (s.worker_artifact_progress = {});
     const prev = map[ticketId] ?? { spawn_count: 0, last_artifact_count: 0, zero_progress_count: 0 };
     const artifactProgressed = delta > 0;
+    // AC-R-WMNP-1 (M2/M3): a non-null signature counts as forward progress when
+    // (a) no prior signature was ever captured (FIRST capture — spawn 1 that lands
+    // only source work must seed the baseline, not be scored zero-progress), or
+    // (b) a prior null sentinel recorded a git-unavailable spawn and this probe
+    // finally succeeded (gap recovery — the prior `undefined` guard hid this until
+    // spawn 3), or (c) the signature actually changed since the prior spawn.
     const sourceProgressed = sourceSignature !== null
-      && prev.last_source_signature !== undefined
-      && sourceSignature !== prev.last_source_signature;
+      && (prev.last_source_signature === undefined
+        || prev.last_source_signature === null
+        || sourceSignature !== prev.last_source_signature);
     const progressed = artifactProgressed || sourceProgressed;
     map[ticketId] = {
       spawn_count: prev.spawn_count + 1,
       last_artifact_count: afterCount,
       zero_progress_count: progressed ? 0 : prev.zero_progress_count + 1,
-      // Carry the freshest signature forward; preserve the prior one when this
-      // probe failed (null) so a transient git hiccup cannot reset the baseline.
-      last_source_signature: sourceSignature ?? prev.last_source_signature,
+      // Carry the freshest signature forward. On a probe failure persist an
+      // explicit `null` sentinel (M3) — not the prior value, and not `undefined` —
+      // so a later successful probe is detected as gap-recovery progress rather
+      // than staying invisible behind a missing-baseline guard. Only preserve a
+      // prior COMPLETE (non-null) signature when there was no prior at all.
+      last_source_signature: sourceSignature !== null
+        ? sourceSignature
+        : (prev.last_source_signature ?? null),
     };
   });
 
@@ -5775,6 +5933,11 @@ async function runMuxRunnerMain() {
   // in any legitimate wait state and self-recovers instead of sitting at 0% CPU.
   const muxNow = (): number => Date.now();
   const idleStallThresholdSeconds = resolveIdleStallThresholdSeconds();
+  // L2: bound consecutive idle-stall self-recoveries. A genuinely wedged loop that
+  // re-arms the stall every pass must escalate instead of spinning forever; any
+  // real forward progress resets the streak.
+  const idleStallRecoveryCap = resolveIdleStallRecoveryCap();
+  let idleStallRecoveryCount = 0;
   // Seeded so the watchdog never trips on a fresh loop; the iteration-advance write
   // (below) always refreshes it before the watchdog reads it each pass.
   // eslint-disable-next-line no-useless-assignment -- declaration-required seed; refreshed at iteration_start before any read
@@ -6061,6 +6224,21 @@ async function runMuxRunnerMain() {
       break;
     }
 
+    // L5: all-terminal short-circuit. `applyAllTicketsDoneCompletion` only fires
+    // when every ticket is Done; it does NOT catch the all-terminal-Failed case
+    // (e.g. every pending ticket flipped oversized_no_progress). When `preTicket`
+    // resolved to null AND no runnable ticket remains, exit CLEANLY here rather
+    // than entering `runIteration` with a null ticket (which spawns a manager with
+    // no work and re-arms the idle-stall watchdog every pass). Matches the all-Done
+    // clean-deactivation pattern but with a distinct, non-failure exit reason.
+    if (templateName !== 'meeseeks.md' && !preTicket && noRunnableTicketsRemain(sessionDir)) {
+      log('all tickets terminal (no runnable ticket and no all-Done completion) — clean exit before runIteration.');
+      recordExitReason(statePath, 'all_tickets_terminal');
+      finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'completed' });
+      exitReason = 'all_tickets_terminal';
+      break;
+    }
+
     // R-BUNDLE-1: bundle bootstrap mode — auto-apply both skip reasons for allowlisted sessions.
     // Updates local state.flags so the two gate checks below read the derived skip reasons.
     if (!bundleBootstrapApplied && curIter === 0) {
@@ -6297,7 +6475,22 @@ async function runMuxRunnerMain() {
         consecutiveSubprocessErrors: state.last_subprocess_error != null ? 1 : 0,
       });
       if (idleDecision.stalled) {
-        log(`[idle-stall] no forward progress for ${idleDecision.idleSeconds}s (>= ${idleStallThresholdSeconds}s) with clean wait-state — emitting mux_idle_stall_detected and self-recovering`);
+        // L2: bound consecutive self-recoveries. The streak increments per stall;
+        // a single recovery that clears the wedge advances the loop (resetting the
+        // streak), but a loop that re-arms the stall every pass climbs the streak
+        // and escalates once it exceeds the cap rather than spinning forever.
+        idleStallRecoveryCount += 1;
+        if (evaluateIdleStallRecoveryCap(idleStallRecoveryCount, idleStallRecoveryCap)) {
+          const msg = `[idle-stall] self-recovery exceeded cap (${idleStallRecoveryCount} > ${idleStallRecoveryCap}) — escalating idle_stall_unrecoverable at iteration ${iteration}`;
+          log(msg);
+          process.stderr.write(`[mux-runner] ${msg}\n`);
+          recordExitReason(statePath, 'idle_stall_unrecoverable');
+          safeDeactivate(statePath);
+          removeRunnerSessionMapEntry(statePath, log);
+          exitReason = 'idle_stall_unrecoverable';
+          break;
+        }
+        log(`[idle-stall] no forward progress for ${idleDecision.idleSeconds}s (>= ${idleStallThresholdSeconds}s) with clean wait-state — emitting mux_idle_stall_detected and self-recovering (attempt ${idleStallRecoveryCount}/${idleStallRecoveryCap})`);
         process.stderr.write(`[mux-runner] idle-stall watchdog: ${idleDecision.idleSeconds}s idle, re-evaluating current ticket\n`);
         logActivity({
           event: 'mux_idle_stall_detected',
@@ -6370,7 +6563,11 @@ async function runMuxRunnerMain() {
         flags: (state.flags as Record<string, unknown> | undefined) ?? null,
         log,
       });
-      if (exitCommit.committed) lastProgressEpoch = muxNow();
+      if (exitCommit.committed) {
+        lastProgressEpoch = muxNow();
+        // L2: a committed deliverable is genuine forward progress — reset the streak.
+        idleStallRecoveryCount = 0;
+      }
     } catch { /* best-effort — never block iteration on exit-path commit */ }
 
     // R-WSWA-2: persist the post-spawn artifact-count delta and emit
@@ -6379,6 +6576,9 @@ async function runMuxRunnerMain() {
     try {
       if (apTicketId) apProgressResult = recordWorkerArtifactProgress(statePath, sessionDir, apTicketId, apBeforeCount, { iteration, log, workingDir: state.working_dir || process.cwd() });
     } catch { /* best-effort observability — never block iteration on progress tracking */ }
+    // L2: a worker that produced NEW artifacts (non-zero delta) made genuine
+    // progress — reset the consecutive idle-stall recovery streak.
+    if (apProgressResult && apProgressResult.zeroProgressCount === 0) idleStallRecoveryCount = 0;
 
     // R-WSWA-3: at PICKLE_WMW_SKIP_K (default 5) consecutive zero-progress spawns, flip the
     // ticket to Failed/oversized_no_progress (dirty tree preserved) and advance the loop.

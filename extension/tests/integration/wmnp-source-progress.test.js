@@ -94,16 +94,21 @@ test('AC-R-WMNP-1 inverse: identical source signature + no artifacts accrues zer
   const { sessionDir, statePath } = setupSession('wmnp-stuck-');
   const ticketId = 'stuck01';
   try {
+    // M2: spawn 1 SEEDS the baseline signature (no prior to compare against) and
+    // is NOT scored zero-progress; the frozen tree only accrues zero-progress from
+    // spawn 2 onward. With K=3 the threshold therefore fires on the 4th spawn
+    // (1 seed + 3 frozen). This is the intended M2 trade-off — a first spawn that
+    // establishes a signature must not be punished as no-progress.
     let r;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       r = recordWorkerArtifactProgress(statePath, sessionDir, ticketId, 0, {
         k: 3,
         workingDir: sessionDir,
         sourceSignatureFn: () => 'frozen-tree', // never changes → genuinely stuck
       });
     }
-    assert.equal(r.zeroProgressCount, 3, 'frozen source + no artifacts accrues zero-progress');
-    assert.ok(r.fired, 'fires at exactly K=3');
+    assert.equal(r.zeroProgressCount, 3, 'frozen source + no artifacts accrues zero-progress after the seed spawn');
+    assert.ok(r.fired, 'fires at exactly K=3 (on the 4th spawn: 1 seed + 3 frozen)');
     assert.equal(countEmissions(statePath).length, 1, 'exactly one emission at the threshold');
   } finally {
     fs.rmSync(sessionDir, { recursive: true, force: true });
@@ -128,7 +133,9 @@ test('AC-R-WMNP-1: null signature (git unavailable) falls back to artifact-count
     assert.equal(r.zeroProgressCount, 3, 'null signature does not mask a genuinely stuck worker');
     assert.ok(r.fired, 'still fires at K under null-signature fallback');
     const persisted = readProgress(statePath, ticketId);
-    assert.equal(persisted.last_source_signature, undefined, 'no signature persisted when every probe returned null');
+    // M3: a first-spawn git failure persists an explicit `null` sentinel (not
+    // `undefined`) so a later successful probe is detected as gap-recovery.
+    assert.equal(persisted.last_source_signature, null, 'explicit null sentinel persisted when every probe returned null');
   } finally {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
@@ -168,5 +175,104 @@ test('AC-R-WMNP-1: computeSourceTreeSignature detects a real working-tree delta'
     if (prevDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
     else process.env.PICKLE_DATA_ROOT = prevDataRoot;
     fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// M2: a worker that lands ONLY source work (no artifacts) on spawn 1 must seed the
+// baseline (NOT be scored zero-progress), and a forward source change on spawn 2
+// must be detected as progress. The pre-fix `prev.last_source_signature !== undefined`
+// guard counted spawn 1 as zero-progress because no prior signature existed.
+test('M2: spawn-1 source-only change seeds baseline (zpc 0), spawn-2 forward change = progress', async () => {
+  const { recordWorkerArtifactProgress } = await import('../../bin/mux-runner.js');
+  const { sessionDir, statePath } = setupSession('wmnp-m2-firstspawn-');
+  const ticketId = 'm2t01';
+  let sig = 'sig-spawn-1';
+  const sigFn = () => sig;
+  try {
+    // Spawn 1: source-only change, no artifacts. First capture seeds the baseline.
+    let r = recordWorkerArtifactProgress(statePath, sessionDir, ticketId, 0, {
+      k: 3, workingDir: sessionDir, sourceSignatureFn: sigFn,
+    });
+    assert.equal(r.zeroProgressCount, 0, 'spawn-1 source-only change is NOT scored zero-progress (M2)');
+    // Spawn 2: the source signature advances → forward progress detected.
+    sig = 'sig-spawn-2';
+    r = recordWorkerArtifactProgress(statePath, sessionDir, ticketId, 0, {
+      k: 3, workingDir: sessionDir, sourceSignatureFn: sigFn,
+    });
+    assert.equal(r.zeroProgressCount, 0, 'spawn-2 forward source change detected as progress');
+    assert.equal(countEmissions(statePath).length, 0, 'no zero-progress emission across two productive spawns');
+    assert.equal(readProgress(statePath, ticketId).last_source_signature, 'sig-spawn-2', 'freshest signature persisted');
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+// M3: spawn 1 has git unavailable (signature null) → an explicit null sentinel is
+// persisted; spawn 2 has a working git + a real source change → progress MUST be
+// detected, not stay invisible behind the pre-fix `!== undefined` guard (which only
+// recovered at spawn 3). Folds into the M2 predicate.
+test('M3: spawn-1 null sentinel → spawn-2 valid signature change detected as gap-recovery progress', async () => {
+  const { recordWorkerArtifactProgress } = await import('../../bin/mux-runner.js');
+  const { sessionDir, statePath } = setupSession('wmnp-m3-gaprecovery-');
+  const ticketId = 'm3t01';
+  try {
+    // Spawn 1: git unavailable.
+    let r = recordWorkerArtifactProgress(statePath, sessionDir, ticketId, 0, {
+      k: 3, workingDir: sessionDir, sourceSignatureFn: () => null,
+    });
+    assert.equal(r.zeroProgressCount, 1, 'spawn-1 with null signature accrues one zero-progress (no usable signal)');
+    assert.equal(readProgress(statePath, ticketId).last_source_signature, null, 'explicit null sentinel persisted on spawn-1 git failure');
+    // Spawn 2: git is back and reports a real source signature.
+    r = recordWorkerArtifactProgress(statePath, sessionDir, ticketId, 0, {
+      k: 3, workingDir: sessionDir, sourceSignatureFn: () => 'real-sig-after-recovery',
+    });
+    assert.equal(r.zeroProgressCount, 0, 'spawn-2 valid signature after a null sentinel counts as progress (NOT invisible until spawn 3)');
+    assert.equal(readProgress(statePath, ticketId).last_source_signature, 'real-sig-after-recovery', 'recovered signature persisted');
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+// L1: computeSourceTreeSignature must return null when EITHER git probe fails,
+// never a partial half-signature. A non-repo dir makes BOTH probes fail; an
+// EISDIR / bogus path makes them exit non-zero. We assert the OR semantics by
+// pointing at a path where `git status`/`git diff` cannot both succeed.
+test('L1: computeSourceTreeSignature returns null (not a half-signature) when a probe fails', async () => {
+  const { computeSourceTreeSignature } = await import('../../bin/mux-runner.js');
+  // A path that is not a git repo: both probes exit non-zero → null.
+  const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'wmnp-l1-nonrepo-'));
+  try {
+    assert.equal(computeSourceTreeSignature(nonRepo), null, 'non-repo dir → null (both probes fail under the OR guard)');
+    // A path that does not exist at all → git -C fails → null, never a partial string.
+    assert.equal(computeSourceTreeSignature(path.join(nonRepo, 'does-not-exist')), null, 'missing dir → null');
+  } finally {
+    fs.rmSync(nonRepo, { recursive: true, force: true });
+  }
+});
+
+// M4: a missing/corrupt/unreadable ticket file MUST NOT be silently swallowed.
+// isOversizedNoProgressFailed (reached via resolvePreTicket) returns false
+// (conservative — selection behavior unchanged) but logs a [warn] to stderr.
+test('M4: unreadable/corrupt ticket file → resolvePreTicket keeps the ticket AND logs a warning', async () => {
+  const { resolvePreTicket } = await import('../../bin/mux-runner.js');
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wmnp-m4-corrupt-'));
+  const ticketId = 'corruptt01';
+  // Make the ticket PATH a directory where the .md file is itself a directory →
+  // readFileSync throws EISDIR (an unreadable, non-ENOENT corruption case).
+  fs.mkdirSync(path.join(sessionDir, ticketId), { recursive: true });
+  fs.mkdirSync(path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`));
+  const writes = [];
+  const origWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk, ...rest) => { writes.push(String(chunk)); return origWrite(chunk, ...rest); };
+  try {
+    // current_ticket is the corrupt ticket: oversized-no-progress check fails to
+    // read it → returns false → resolvePreTicket returns the ticket unchanged.
+    const resolved = resolvePreTicket(sessionDir, ticketId);
+    assert.equal(resolved, ticketId, 'unreadable ticket is NOT treated as a terminal no-progress flip (selection unchanged)');
+    const warned = writes.some((w) => w.includes('isOversizedNoProgressFailed') && w.includes('[warn]') && w.includes(ticketId));
+    assert.ok(warned, 'a [warn] is logged naming the unreadable ticket (M4 observability)');
+  } finally {
+    process.stderr.write = origWrite;
+    fs.rmSync(sessionDir, { recursive: true, force: true });
   }
 });

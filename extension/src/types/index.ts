@@ -156,8 +156,11 @@ export interface State {
        * (git `status --porcelain` + `diff --numstat`) captured at the prior spawn.
        * OR'd with the artifact-count delta so a worker landing real source work
        * but no new lifecycle artifact files does NOT accrue zero_progress_count.
+       * An explicit `null` sentinel (M3) records a spawn whose git probe failed so
+       * a later successful probe is detected as gap-recovery progress; `undefined`
+       * means no spawn has captured a signature yet.
        */
-      last_source_signature?: string;
+      last_source_signature?: string | null;
     };
   };
   /** R-ORSR-1 (schema-neutral v5): recovery controller attempt ledger. Defaulted to [] via normalizeV5StateDefaults. */

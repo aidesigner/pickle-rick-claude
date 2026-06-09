@@ -1,6 +1,7 @@
 {
   "entries": [
     "tests/integration/pntr-teams-tmux.test.js",
+    "tests/integration/pntr-pickle-deprecated.test.js",
     "tests/integration/spawn-morty-backend-resolution.test.js",
     "tests/integration/spawn-morty-actual-session-bug.test.js",
     "tests/integration/process-cleanup.test.js",
@@ -34,6 +35,7 @@
     "tests/council-publish.test.js",
     "tests/mux-runner.output-stall.test.js",
     "tests/mux-silent-worker-exit.test.js",
+    "tests/mux-runner-fix-b.test.js",
     "tests/check-update.test.js",
     "tests/dispatch.test.js",
     "tests/auto-resume-stop-conditions.test.js",
