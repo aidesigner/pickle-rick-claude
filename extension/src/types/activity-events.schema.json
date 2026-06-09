@@ -860,6 +860,27 @@
         }
       }
     },
+    "mux_idle_stall_detected": {
+      "type": "object",
+      "required": ["event", "ts", "session", "iteration", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "mux_idle_stall_detected" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "iteration": { "type": "integer", "minimum": 0 },
+        "gate_payload": {
+          "type": "object",
+          "required": ["threshold_seconds", "idle_seconds", "observed_iteration", "current_ticket", "step"],
+          "properties": {
+            "threshold_seconds": { "type": "integer", "minimum": 1 },
+            "idle_seconds": { "type": "integer", "minimum": 0 },
+            "observed_iteration": { "type": "integer", "minimum": 0 },
+            "current_ticket": { "type": ["string", "null"] },
+            "step": { "type": "string" }
+          }
+        }
+      }
+    },
     "child_mux_runner_wedge_detected": {
       "type": "object",
       "required": ["event", "ts", "session", "gate_payload"],
@@ -1499,6 +1520,7 @@
     { "$ref": "#/definitions/judge_json_parse_failed" },
     { "$ref": "#/definitions/consecutive_no_progress_warning" },
     { "$ref": "#/definitions/mux_runner_stall_detected" },
+    { "$ref": "#/definitions/mux_idle_stall_detected" },
     { "$ref": "#/definitions/child_mux_runner_wedge_detected" },
     { "$ref": "#/definitions/monitor_respawn_started" },
     { "$ref": "#/definitions/monitor_respawn_failed" },

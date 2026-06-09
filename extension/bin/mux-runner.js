@@ -2700,6 +2700,34 @@ export function commitPendingProbe(input) {
     log(`commit-pending probe FIRED: stagnation=${stagnation} (>= threshold ${threshold}), uncommitted edits present — handoff.txt written`);
     return 'fired';
 }
+export function evaluateMuxIdleStallWatchdog(input) {
+    const idleSeconds = Math.max(0, Math.floor((input.nowMs - input.lastProgressMs) / 1000));
+    if (!input.active) {
+        return { stalled: false, idleSeconds, reason: 'inactive' };
+    }
+    // Reuse the existing wait-state predicates as the gate: a legitimate wait is
+    // never an idle stall.
+    if (input.rateLimitWaiting ||
+        !input.circuitBreakerExecutable ||
+        input.lastError != null ||
+        input.consecutiveSubprocessErrors > 0) {
+        return { stalled: false, idleSeconds, reason: 'in_wait_state' };
+    }
+    if (idleSeconds >= input.thresholdSeconds) {
+        return { stalled: true, idleSeconds, reason: 'idle_no_progress' };
+    }
+    return { stalled: false, idleSeconds, reason: 'within_threshold' };
+}
+/**
+ * Resolve the idle-stall threshold (seconds). Honors PICKLE_MUX_IDLE_STALL_SECONDS
+ * (strict positive integer); falls back to the default when unset/invalid. Mirrors
+ * the commit-pending-probe threshold parse convention.
+ */
+export function resolveIdleStallThresholdSeconds() {
+    const raw = Number(process.env.PICKLE_MUX_IDLE_STALL_SECONDS);
+    return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MUX_IDLE_STALL_SECONDS;
+}
+const DEFAULT_MUX_IDLE_STALL_SECONDS = 900;
 const QUALITY_GATE_SUBPROCESS_TIMEOUT_MS = 60_000;
 export function runMuxReadinessGate(input) {
     const localBinPath = path.join(input.extensionRoot, 'extension', 'bin', 'check-readiness.js');
@@ -4887,6 +4915,16 @@ async function runMuxRunnerMain() {
     const probeSettings = loadSettingsBag(extensionRoot, 'mux-runner:commit-pending-probe:settings');
     const rawProbeThreshold = Number(probeSettings.commit_pending_probe_threshold);
     const commitPendingProbeThreshold = Number.isFinite(rawProbeThreshold) && rawProbeThreshold > 0 ? rawProbeThreshold : 2;
+    // R-MWIS-2: main-loop idle-stall watchdog. lastProgressEpoch is bumped on every
+    // forward-progress marker (iteration advance / state write, worker spawn). The
+    // gated watchdog check before each worker spawn detects a wedged loop that is NOT
+    // in any legitimate wait state and self-recovers instead of sitting at 0% CPU.
+    const muxNow = () => Date.now();
+    const idleStallThresholdSeconds = resolveIdleStallThresholdSeconds();
+    // Seeded so the watchdog never trips on a fresh loop; the iteration-advance write
+    // (below) always refreshes it before the watchdog reads it each pass.
+    // eslint-disable-next-line no-useless-assignment -- declaration-required seed; refreshed at iteration_start before any read
+    let lastProgressEpoch = muxNow();
     let readinessGateChecked = false;
     let ticketAuditGateChecked = false;
     let smokeGateBypassEmitted = false;
@@ -5059,6 +5097,8 @@ async function runMuxRunnerMain() {
             catch { /* best-effort */ }
         }
         state = updateMuxLifecycleState(statePath, { iteration, currentTicket: preTicket, step: preStep });
+        // R-MWIS-2: iteration advance + state write is a forward-progress marker.
+        lastProgressEpoch = muxNow();
         state = reconcileTicketStateDesync(statePath, sessionDir, state.current_ticket || null, iteration, log);
         if (templateName !== 'meeseeks.md') {
             state = sm.update(statePath, s => {
@@ -5363,6 +5403,56 @@ async function runMuxRunnerMain() {
                     continue; // skip runIteration — no manager spawn
                 }
             }
+        }
+        // R-MWIS-2: main-loop idle-stall watchdog. Before each worker spawn, check whether
+        // the loop has made no forward progress for longer than the bounded threshold while
+        // in NO legitimate wait state (rate-limit wait, breaker OPEN, last_error, subprocess
+        // errors). If wedged, emit a diagnostic event and self-recover (re-evaluate the
+        // current ticket / re-spawn) rather than sit silently at 0% CPU.
+        try {
+            const idleDecision = evaluateMuxIdleStallWatchdog({
+                active: state.active === true,
+                nowMs: muxNow(),
+                lastProgressMs: lastProgressEpoch,
+                thresholdSeconds: idleStallThresholdSeconds,
+                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+                rateLimitWaiting: fs.existsSync(path.join(sessionDir, 'rate_limit_wait.json')),
+                circuitBreakerExecutable: !cbEnabled || !cbState || canExecute(cbState),
+                lastError: state.last_error ?? null,
+                // mux state.json carries last_subprocess_error (ErrorRecord|null), the
+                // worker-error wait-state signal; treat a present record as 1 accumulated error.
+                consecutiveSubprocessErrors: state.last_subprocess_error != null ? 1 : 0,
+            });
+            if (idleDecision.stalled) {
+                log(`[idle-stall] no forward progress for ${idleDecision.idleSeconds}s (>= ${idleStallThresholdSeconds}s) with clean wait-state — emitting mux_idle_stall_detected and self-recovering`);
+                process.stderr.write(`[mux-runner] idle-stall watchdog: ${idleDecision.idleSeconds}s idle, re-evaluating current ticket\n`);
+                logActivity({
+                    event: 'mux_idle_stall_detected',
+                    source: 'pickle',
+                    session: path.basename(sessionDir),
+                    iteration,
+                    gate_payload: {
+                        threshold_seconds: idleStallThresholdSeconds,
+                        idle_seconds: idleDecision.idleSeconds,
+                        observed_iteration: curIter,
+                        current_ticket: state.current_ticket ?? null,
+                        step: typeof state.step === 'string' ? state.step : 'unknown',
+                    },
+                });
+                // Self-recovery: re-evaluate the current ticket so the next pass re-selects a
+                // pending ticket and re-spawns a worker. Reset the stall trackers + progress
+                // epoch so the watchdog re-arms cleanly. Mirrors the recovery-advanced reset.
+                const nextPending = findNextPendingTicketId(sessionDir);
+                updateMuxLifecycleState(statePath, { currentTicket: nextPending ?? null });
+                lastStateIteration = -1;
+                stallCount = 0;
+                lastProgressEpoch = muxNow();
+                continue;
+            }
+        }
+        catch (err) {
+            // Watchdog is best-effort — never crash the loop on a watchdog failure.
+            log(`idle-stall watchdog threw (ignored): ${safeErrorMessage(err)}`);
         }
         const iterWorkingDir = state.working_dir || process.cwd();
         const preIterSha = readHeadCommit(iterWorkingDir);
