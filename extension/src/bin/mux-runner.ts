@@ -6384,6 +6384,46 @@ async function runMuxRunnerMain() {
     // ticket to Failed/oversized_no_progress (dirty tree preserved) and advance the loop.
     const skipK = resolveWmwSkipK();
     if (apTicketId && apProgressResult && apProgressResult.zeroProgressCount >= skipK) {
+      // AC-R-WMNP-4: route the terminal no-progress trigger through the SAME
+      // RecoveryController ladder as closer_handoff_terminal BEFORE the bare Failed
+      // flip / respawn. A near-green diff (fix-forward-trivial / execute-converged-plan
+      // / auto-split) advances the ticket instead of being respawned indefinitely;
+      // only a genuinely exhausted ladder escalates to recovery_exhausted. A
+      // fall_through (nothing to recover) proceeds to the existing terminal flip.
+      if (templateName !== 'meeseeks.md') {
+        const wmwRecovery = attemptRecoveryBeforeTerminal({
+          sessionDir,
+          statePath,
+          extensionRoot,
+          workingDir: state.working_dir || process.cwd(),
+          ticketId: apTicketId,
+          iteration,
+          flags: (state.flags as Record<string, unknown> | undefined) ?? null,
+          log,
+        });
+        if (wmwRecovery.kind === 'advanced') {
+          log(`recovery: ${wmwRecovery.strategy} advanced ${apTicketId} before wmw-auto-skip Failed flip — continuing.`);
+          // Reset the zero-progress counter so a recovered ticket is not re-skipped on the next spawn.
+          try {
+            sm.update(statePath, s => {
+              const entry = s.worker_artifact_progress?.[apTicketId];
+              if (entry) entry.zero_progress_count = 0;
+            });
+          } catch { /* best-effort */ }
+          lastStateIteration = -1;
+          stallCount = 0;
+          continue;
+        }
+        if (wmwRecovery.kind === 'exhausted') {
+          log(`recovery_exhausted: ladder exhausted for ${apTicketId} (${wmwRecovery.reason}) at wmw-auto-skip — exiting at iteration ${iteration}.`);
+          recordExitReason(statePath, 'recovery_exhausted');
+          safeDeactivate(statePath);
+          removeRunnerSessionMapEntry(statePath, log);
+          exitReason = 'recovery_exhausted';
+          break;
+        }
+        // fall_through → proceed to the existing terminal Failed flip below.
+      }
       const skipMsg = `[wmw-auto-skip] ticket ${apTicketId}: ${apProgressResult.zeroProgressCount}/${skipK} consecutive zero-progress spawns — flipping to Failed/oversized_no_progress`;
       log(skipMsg);
       process.stderr.write(`${skipMsg}\n`);
