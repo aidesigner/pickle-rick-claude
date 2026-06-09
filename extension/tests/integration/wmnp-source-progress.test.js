@@ -137,6 +137,10 @@ test('AC-R-WMNP-1: null signature (git unavailable) falls back to artifact-count
 test('AC-R-WMNP-1: computeSourceTreeSignature detects a real working-tree delta', async () => {
   const { computeSourceTreeSignature } = await import('../../bin/mux-runner.js');
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wmnp-realgit-'));
+  // PICKLE_DATA_ROOT sandbox: this test only spawns `git` in the throwaway repo,
+  // but keep any session writes off the live data dir for isolation hygiene.
+  const prevDataRoot = process.env.PICKLE_DATA_ROOT;
+  process.env.PICKLE_DATA_ROOT = repo;
   const git = (...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf-8', timeout: 10_000 });
   try {
     git('init', '-q');
@@ -161,6 +165,8 @@ test('AC-R-WMNP-1: computeSourceTreeSignature detects a real working-tree delta'
 
     assert.equal(computeSourceTreeSignature(path.join(repo, 'nope')), null, 'non-repo dir → null (artifact-count fallback)');
   } finally {
+    if (prevDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+    else process.env.PICKLE_DATA_ROOT = prevDataRoot;
     fs.rmSync(repo, { recursive: true, force: true });
   }
 });
