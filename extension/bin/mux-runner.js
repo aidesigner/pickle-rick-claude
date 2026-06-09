@@ -4417,10 +4417,33 @@ export function countWorkerArtifacts(ticketDir) {
     return n;
 }
 /**
- * Persist the post-spawn artifact-count delta for one ticket and, on exactly the
- * K-th consecutive zero-delta spawn, emit `worker_artifact_progress_zero`.
+ * AC-R-WMNP-1: digest of the working-tree source state so a worker that lands real
+ * source work (new/grown files, changed diff) but writes no new lifecycle artifact
+ * file still counts as progress. Combines `git status --porcelain` (covers untracked
+ * + staged + unstaged path set) with `git diff --numstat` (covers per-file line
+ * churn on tracked files) into one comparable string. Returns `null` when git is
+ * unavailable or both probes fail, in which case the caller falls back to the
+ * artifact-count signal alone (never a false zero-progress from a missing signature).
+ */
+export function computeSourceTreeSignature(workingDir) {
+    try {
+        const status = spawnSync('git', ['-C', workingDir, 'status', '--porcelain'], { encoding: 'utf-8', timeout: 10_000 });
+        const numstat = spawnSync('git', ['-C', workingDir, 'diff', '--numstat'], { encoding: 'utf-8', timeout: 10_000 });
+        if (status.status !== 0 && numstat.status !== 0)
+            return null;
+        return `${status.stdout ?? ''} ${numstat.stdout ?? ''}`;
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Persist the post-spawn progress delta for one ticket and, on exactly the
+ * K-th consecutive zero-PROGRESS spawn, emit `worker_artifact_progress_zero`.
  * `beforeCount` is the snapshot taken BEFORE the spawn; the AFTER snapshot is read
- * here. A non-positive delta (no new artifacts) increments `zero_progress_count`;
+ * here. Progress = artifact-count grew (`delta > 0`) OR the working-tree source
+ * signature changed since the prior spawn (AC-R-WMNP-1). Only a spawn that produced
+ * NEITHER a new artifact NOR a source-tree change increments `zero_progress_count`;
  * any forward progress resets it to 0. Firing uses `=== k` so it emits once at the
  * threshold (not re-spamming at k+1) and re-arms after a reset.
  */
@@ -4428,15 +4451,28 @@ export function recordWorkerArtifactProgress(statePath, sessionDir, ticketId, be
     const k = opts.k ?? resolveWmwObserveK();
     const afterCount = countWorkerArtifacts(path.join(sessionDir, ticketId));
     const delta = afterCount - beforeCount;
+    // AC-R-WMNP-1: capture the current source-tree signature. A non-null signature
+    // that differs from the prior spawn's stored signature counts as progress even
+    // when no new artifact file appeared.
+    const sigFn = opts.sourceSignatureFn ?? computeSourceTreeSignature;
+    const sourceSignature = opts.workingDir ? sigFn(opts.workingDir) : null;
     const updated = sm.update(statePath, s => {
         const map = (s.worker_artifact_progress && typeof s.worker_artifact_progress === 'object')
             ? s.worker_artifact_progress
             : (s.worker_artifact_progress = {});
         const prev = map[ticketId] ?? { spawn_count: 0, last_artifact_count: 0, zero_progress_count: 0 };
+        const artifactProgressed = delta > 0;
+        const sourceProgressed = sourceSignature !== null
+            && prev.last_source_signature !== undefined
+            && sourceSignature !== prev.last_source_signature;
+        const progressed = artifactProgressed || sourceProgressed;
         map[ticketId] = {
             spawn_count: prev.spawn_count + 1,
             last_artifact_count: afterCount,
-            zero_progress_count: delta <= 0 ? prev.zero_progress_count + 1 : 0,
+            zero_progress_count: progressed ? 0 : prev.zero_progress_count + 1,
+            // Carry the freshest signature forward; preserve the prior one when this
+            // probe failed (null) so a transient git hiccup cannot reset the baseline.
+            last_source_signature: sourceSignature ?? prev.last_source_signature,
         };
     });
     const entry = updated.worker_artifact_progress?.[ticketId]
@@ -5538,7 +5574,7 @@ async function runMuxRunnerMain() {
         let apProgressResult = null;
         try {
             if (apTicketId)
-                apProgressResult = recordWorkerArtifactProgress(statePath, sessionDir, apTicketId, apBeforeCount, { iteration, log });
+                apProgressResult = recordWorkerArtifactProgress(statePath, sessionDir, apTicketId, apBeforeCount, { iteration, log, workingDir: state.working_dir || process.cwd() });
         }
         catch { /* best-effort observability — never block iteration on progress tracking */ }
         // R-WSWA-3: at PICKLE_WMW_SKIP_K (default 5) consecutive zero-progress spawns, flip the

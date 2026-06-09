@@ -151,6 +151,13 @@ export interface State {
       spawn_count: number;
       last_artifact_count: number;
       zero_progress_count: number;
+      /**
+       * AC-R-WMNP-1 (schema-neutral): digest of the working-tree source state
+       * (git `status --porcelain` + `diff --numstat`) captured at the prior spawn.
+       * OR'd with the artifact-count delta so a worker landing real source work
+       * but no new lifecycle artifact files does NOT accrue zero_progress_count.
+       */
+      last_source_signature?: string;
     };
   };
   /** R-ORSR-1 (schema-neutral v5): recovery controller attempt ledger. Defaulted to [] via normalizeV5StateDefaults. */
