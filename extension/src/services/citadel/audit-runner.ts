@@ -84,21 +84,27 @@ export async function runCitadelAudit(options: CitadelAuditOptions): Promise<Cit
   });
 
   if (options.sessionDir) {
-    try {
-      const repoRoot = path.resolve(options.repoRoot ?? process.cwd());
-      const diff = walkDiff(options.diffRange, { repoRoot });
-      const skepticReport = runSkepticLens(diff.changedFiles, repoRoot);
-      writeFileSync(
-        path.join(options.sessionDir, 'skeptic_findings.json'),
-        `${JSON.stringify(skepticReport, null, 2)}\n`,
-        'utf-8',
-      );
-    } catch {
-      // report-only: failures never surface to the pipeline
-    }
+    writeSkepticSink(options.sessionDir, options.diffRange, path.resolve(options.repoRoot ?? process.cwd()));
   }
 
   return report;
+}
+
+// Report-only skeptic lens sink: walks the diff, runs the lens, and writes a
+// non-ingested skeptic_findings.json next to the citadel report. Failures are
+// swallowed by design so they never surface to the pipeline.
+function writeSkepticSink(outDir: string, diffRange: string, repoRoot: string): void {
+  try {
+    const diff = walkDiff(diffRange, { repoRoot });
+    const skepticReport = runSkepticLens(diff.changedFiles, repoRoot);
+    writeFileSync(
+      path.join(outDir, 'skeptic_findings.json'),
+      `${JSON.stringify(skepticReport, null, 2)}\n`,
+      'utf-8',
+    );
+  } catch {
+    // report-only: failures never surface to the pipeline
+  }
 }
 
 const NO_PRD_SKIPPED: AnalyzerSkippedResult = {
@@ -236,17 +242,7 @@ export async function runCitadelStandalone(
   const result = buildCitadelAuditReport({ diffRange: target.diffRange, repoRoot, reportPath });
   mkdirSync(path.dirname(reportPath), { recursive: true });
   writeFileSync(reportPath, `${stableJson(result.json)}\n`, 'utf-8');
-  try {
-    const diff = walkDiff(target.diffRange, { repoRoot });
-    const skepticReport = runSkepticLens(diff.changedFiles, repoRoot);
-    writeFileSync(
-      path.join(reportDir, 'skeptic_findings.json'),
-      `${JSON.stringify(skepticReport, null, 2)}\n`,
-      'utf-8',
-    );
-  } catch {
-    // report-only: failures never surface to the pipeline
-  }
+  writeSkepticSink(reportDir, target.diffRange, repoRoot);
   return result;
 }
 
