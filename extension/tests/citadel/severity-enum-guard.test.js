@@ -4,9 +4,14 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { findBannedCasts } from '../../services/citadel/banned-casts-audit.js';
 import { findStaleReferences, extractBareIdentifiers } from '../../services/citadel/stale-reference-audit.js';
 import { auditSiblingAuthPreconditions } from '../../services/citadel/sibling-auth-audit.js';
+import { buildCitadelAuditReport } from '../../services/citadel/audit-runner.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, '../../..');
 
 // Single source of truth for the CitadelSeverity enum (reporter.ts).
 const SEVERITY_ENUM = new Set(['Critical', 'High', 'Medium', 'Low']);
@@ -81,6 +86,23 @@ export class WidgetsController {
       assertSeverities(report.findings, 'sibling-auth');
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  // AC-3 end-to-end: the assembled report is the real boundary. The three tests above
+  // exercise analyzers in isolation; this one proves the native coercion guard
+  // (audit-runner withFindingSource → 'Medium') and the cross-phase drop-filter
+  // (readPhaseFindings isSeverity) together close the enum end-to-end — no analyzer leaks
+  // an out-of-enum severity into buildCitadelAuditReport().findings. A clean HEAD..HEAD
+  // diff may legitimately yield zero findings, so the invariant is asserted over whatever
+  // findings exist (no forced length > 0, unlike the per-analyzer fixtures).
+  test('assembled report severity is enum-valid end-to-end (no :340 coercion leak, no :271 drop leak)', () => {
+    const report = buildCitadelAuditReport({ diffRange: 'HEAD..HEAD', repoRoot: REPO_ROOT });
+    for (const f of report.findings) {
+      assert.ok(
+        SEVERITY_ENUM.has(f.severity),
+        `assembled-report finding ${f.id} has out-of-enum severity ${JSON.stringify(f.severity)}`,
+      );
     }
   });
 });
