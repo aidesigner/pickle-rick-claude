@@ -3627,6 +3627,85 @@ export function commitAndContinueDoneFlip(input: CommitAndContinueDoneFlipInput)
   return { ok: true, sha: guard.sha };
 }
 
+// ---------------------------------------------------------------------------
+// R-MWIS-3 — commit a gate-passing uncommitted deliverable on the worker-exit /
+// idle-stall recovery path.
+//
+// This is a WIRING module: it REUSES the existing #99 R-WCUC commit-before-failing
+// behavior — the armed gate `runBetweenTicketFastTests` (only-passing, ignores
+// skip-flags) plus the committer `commitAndContinueDoneFlip` (git add/commit +
+// R-PEDC guard/clear + markTicketDone). It does NOT reimplement the gate or the
+// commit. A silent (0-byte) worker exit or an idle-stall self-recovery that leaves
+// a gate-passing deliverable in the tree no longer strands that work for manual
+// recovery: it is committed before the loop advances / relaunches.
+//
+// Best-effort by construction: any throw → `{ committed:false, reason:'error' }`.
+// Only gate-PASSING work is committed; gate-failing/clean/already-terminal cases
+// are no-ops so the existing failure/skip/Done paths keep their behavior.
+// ---------------------------------------------------------------------------
+
+export interface CommitGatePassingDeliverableInput {
+  sessionDir: string;
+  statePath: string;
+  workingDir: string;
+  ticketId: string | null;
+  extensionRoot: string;
+  flags: Record<string, unknown> | null;
+  log: (msg: string) => void;
+  /** Test seam: defaults to the production #99 gate `runBetweenTicketFastTests`. */
+  runGate?: (extensionDir: string, extensionRoot: string) => BetweenTicketGateResult;
+}
+
+export type CommitGatePassingDeliverableReason =
+  | 'no-ticket'
+  | 'already-terminal'
+  | 'clean-tree'
+  | 'no-extension-dir'
+  | 'gate-failed'
+  | 'committed'
+  | 'commit-failed'
+  | 'error';
+
+export interface CommitGatePassingDeliverableResult {
+  committed: boolean;
+  reason: CommitGatePassingDeliverableReason;
+  sha?: string;
+}
+
+export function commitGatePassingDeliverableOnExitPath(
+  input: CommitGatePassingDeliverableInput,
+): CommitGatePassingDeliverableResult {
+  const { sessionDir, statePath, workingDir, ticketId, extensionRoot, flags, log } = input;
+  const gate = input.runGate ?? runBetweenTicketFastTests;
+  try {
+    if (!ticketId) return { committed: false, reason: 'no-ticket' };
+    // The model-driven Done flip (worker self-attested) is handled by the existing
+    // guardCompletionCommitBeforeDone callsite — don't double-commit it here.
+    if (isTerminalTicketStatus(getTicketStatus(sessionDir, ticketId))) {
+      return { committed: false, reason: 'already-terminal' };
+    }
+    if (!isWorkingTreeDirty(workingDir)) return { committed: false, reason: 'clean-tree' };
+    const extensionDir = path.join(workingDir, 'extension');
+    if (!fs.existsSync(extensionDir)) return { committed: false, reason: 'no-extension-dir' };
+    // REUSE the existing #99 armed gate — only commit gate-PASSING work.
+    const gateResult = gate(extensionDir, extensionRoot);
+    if (!gateResult.ok) {
+      log(`[exit-commit] ticket ${ticketId}: gate not green — leaving uncommitted work for the failure/skip path`);
+      return { committed: false, reason: 'gate-failed' };
+    }
+    // REUSE the existing #99 committer (git add/commit + R-PEDC guard + Done flip).
+    const r = commitAndContinueDoneFlip({ sessionDir, ticketId, workingDir, statePath, flags, log });
+    if (r.ok) {
+      log(`[exit-commit] ticket ${ticketId}: committed gate-passing deliverable (completion_commit: ${r.sha})`);
+      return { committed: true, reason: 'committed', sha: r.sha };
+    }
+    return { committed: false, reason: 'commit-failed' };
+  } catch (err) {
+    log(`[exit-commit] threw (ignored): ${safeErrorMessage(err)}`);
+    return { committed: false, reason: 'error' };
+  }
+}
+
 /** Probe the recovery evidence the runner already holds: tree state, plan artifacts, output. */
 function assessRecoveryEvidence(sessionDir: string, workingDir: string, ticketId: string): RecoveryEvidence {
   let treeDirty = false;
@@ -6133,6 +6212,18 @@ async function runMuxRunnerMain() {
             step: typeof state.step === 'string' ? state.step : 'unknown',
           },
         });
+        // R-MWIS-3: before self-recovering past the current ticket, commit any
+        // gate-passing uncommitted deliverable via the existing #99 R-WCUC path so
+        // the re-select/relaunch below cannot strand completed work.
+        commitGatePassingDeliverableOnExitPath({
+          sessionDir,
+          statePath,
+          workingDir: state.working_dir || process.cwd(),
+          ticketId: state.current_ticket ?? null,
+          extensionRoot,
+          flags: (state.flags as Record<string, unknown> | undefined) ?? null,
+          log,
+        });
         // Self-recovery: re-evaluate the current ticket so the next pass re-selects a
         // pending ticket and re-spawns a worker. Reset the stall trackers + progress
         // epoch so the watchdog re-arms cleanly. Mirrors the recovery-advanced reset.
@@ -6163,6 +6254,24 @@ async function runMuxRunnerMain() {
       }
     );
     const result = outcome.completion;
+
+    // R-MWIS-3: worker-exit path. A silent/0-byte worker exit may leave a
+    // gate-passing deliverable uncommitted in the tree; route it through the
+    // existing #99 R-WCUC commit path BEFORE the loop advances (a clean-tree
+    // relaunch would otherwise discard it). No-op when the tree is clean, the gate
+    // is red, or the model already flipped the ticket terminal.
+    try {
+      const exitCommit = commitGatePassingDeliverableOnExitPath({
+        sessionDir,
+        statePath,
+        workingDir: state.working_dir || process.cwd(),
+        ticketId: previousTicket,
+        extensionRoot,
+        flags: (state.flags as Record<string, unknown> | undefined) ?? null,
+        log,
+      });
+      if (exitCommit.committed) lastProgressEpoch = muxNow();
+    } catch { /* best-effort — never block iteration on exit-path commit */ }
 
     // R-WSWA-2: persist the post-spawn artifact-count delta and emit
     // worker_artifact_progress_zero at exactly K consecutive zero-delta spawns.
