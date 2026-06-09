@@ -20,6 +20,22 @@ function tmpDir(prefix) {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
+// Isolation-critical: mux-runner's gate-passing exit path (commitGatePassingDeliverableOnExitPath
+// -> commitAndContinueDoneFlip) runs `git -C <working_dir> add -A && commit` (+ resetToSha).
+// working_dir MUST be a throwaway tmp git repo — NEVER REPO_ROOT/process.cwd(), or the runner
+// commits the operator's uncommitted tree into the real repo (the R-WTIV incident).
+function makeWorkingDir(prefix) {
+  const dir = tmpDir(prefix);
+  spawnSync('git', ['init', '-q'], { cwd: dir });
+  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+  spawnSync('git', ['config', 'user.name', 'Pickle Tests'], { cwd: dir });
+  fs.mkdirSync(path.join(dir, 'extension'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'seed.txt'), 'seed\n');
+  spawnSync('git', ['add', '-A'], { cwd: dir });
+  spawnSync('git', ['commit', '-q', '-m', 'init', '--no-gpg-sign'], { cwd: dir });
+  return dir;
+}
+
 function readActivityLines(dataRoot) {
   const activityDir = path.join(dataRoot, 'activity');
   if (!fs.existsSync(activityDir)) return [];
@@ -126,9 +142,10 @@ test('mux-runner skip flags emit ticket_audit_bypassed on the audit bypass path'
   const sessionDir = tmpDir('pickle-gate-skip-audit-session-');
   const dataRoot = tmpDir('pickle-gate-skip-audit-data-');
   const stubBinDir = tmpDir('pickle-gate-skip-audit-bin-');
+  const workingDir = makeWorkingDir('pickle-gate-skip-audit-wd-');
   try {
     writeClaudeStub(stubBinDir);
-    writeAlignedSession(sessionDir, REPO_ROOT, {
+    writeAlignedSession(sessionDir, workingDir, {
       skip_ticket_audit_reason: 'historical drift acknowledged',
     });
 
@@ -148,6 +165,7 @@ test('mux-runner skip flags emit ticket_audit_bypassed on the audit bypass path'
     fs.rmSync(sessionDir, { recursive: true, force: true });
     fs.rmSync(dataRoot, { recursive: true, force: true });
     fs.rmSync(stubBinDir, { recursive: true, force: true });
+    fs.rmSync(workingDir, { recursive: true, force: true });
   }
 });
 
@@ -155,9 +173,10 @@ test('clean gate pass emits neither readiness_skipped nor ticket_audit_bypassed'
   const sessionDir = tmpDir('pickle-gate-clean-session-');
   const dataRoot = tmpDir('pickle-gate-clean-data-');
   const stubBinDir = tmpDir('pickle-gate-clean-bin-');
+  const workingDir = makeWorkingDir('pickle-gate-clean-wd-');
   try {
     writeClaudeStub(stubBinDir);
-    writeAlignedSession(sessionDir, REPO_ROOT, {});
+    writeAlignedSession(sessionDir, workingDir, {});
 
     const result = runMuxRunner(sessionDir, dataRoot, stubBinDir);
     assert.doesNotMatch(result.stderr, /READINESS HALT|TICKET AUDIT HALT/);
@@ -169,5 +188,6 @@ test('clean gate pass emits neither readiness_skipped nor ticket_audit_bypassed'
     fs.rmSync(sessionDir, { recursive: true, force: true });
     fs.rmSync(dataRoot, { recursive: true, force: true });
     fs.rmSync(stubBinDir, { recursive: true, force: true });
+    fs.rmSync(workingDir, { recursive: true, force: true });
   }
 });
