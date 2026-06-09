@@ -244,6 +244,9 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // B-CXOR: R-CXOR-1 emits this when a post-iteration HEAD regression
         // (worker git reset below the pre-iteration commit) is detected + recovered.
         'worker_head_regression_detected',
+        // B-MWIS: R-MWIS-2 emits this when the mux main-loop idle-stall watchdog
+        // detects a worker that exited without advancing (process-exit primary signal).
+        'mux_idle_stall_detected',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
