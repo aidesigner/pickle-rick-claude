@@ -209,6 +209,13 @@ const TASK_NOTE_PRIORITY = {
 const TASK_NOTE_TRUNC_MARKER = '[truncated]';
 const MANAGER_TURN_HEARTBEAT_POLL_MS = 20_000;
 const HEARTBEAT_ARTIFACT_PREFIXES = ['research_', 'plan_', 'conformance_'];
+// R-MWIS-1: bounded stdio-drain window after the child's 'exit' event. Node's
+// 'close' event (the legacy completion signal) is gated on stdio-pipe closure,
+// which can lag indefinitely on a silent 0-byte worker exit (render-lag or an
+// inherited fd) and hang the mux loop at 0% CPU. 'exit' is the PRIMARY signal;
+// after it fires we give the pipes this brief window to flush any imminent
+// 'close' (avoids truncating buffered worker output) before finalizing.
+const EXIT_DRAIN_FALLBACK_MS = 250;
 export function maybeEmitManagerTurnProgress(opts) {
     const { sessionDir, statePath, ticketId, lastSeenMtimeMs } = opts;
     if (!ticketId)
@@ -2465,8 +2472,13 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
             timeoutStderrClosed = true;
             scheduleTimeoutResolutionFinish();
         });
-        // eslint-disable-next-line complexity -- HT-1 reviewed: R-OMS-1 clearActivePidFile adds one branch to the timeout-resolution close handler (R-APMW-6 ordering preserved); behavior-preserving, surrounding-flow refactor deferred to a focused PR.
-        proc.on('close', (code) => {
+        // R-MWIS-1: shared finalize body, reachable from BOTH the legacy stdio
+        // 'close' handler AND the PRIMARY 'exit' observer below. The `settled` guard
+        // (single-resolution invariant) means whichever fires first wins; the other
+        // short-circuits. Extracting this keeps the resolution logic single-sourced
+        // so the exit-driven path cannot drift from the close-driven path.
+        // eslint-disable-next-line complexity -- HT-1 reviewed: R-OMS-1 clearActivePidFile adds one branch to the resolution finalize (R-APMW-6 ordering preserved); behavior-preserving, surrounding-flow refactor deferred to a focused PR.
+        function finalizeOnChildEnd(code) {
             if (settled)
                 return;
             settled = true;
@@ -2533,6 +2545,25 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
                 ...normalizedOutcome,
                 completion: isMaxTurnsExit ? 'error' : completion,
             });
+        }
+        proc.on('close', (code) => finalizeOnChildEnd(code));
+        // R-MWIS-1: process exit is the PRIMARY worker-completion signal — observed
+        // directly via 'exit', INDEPENDENT of stdio-pipe closure, log bytes, or any
+        // promise/completion token. A silent 0-byte worker exit whose stdio 'close'
+        // lags (render-lag / inherited fd) no longer hangs the loop at 0% CPU: the
+        // 'exit' event fires on child termination and, after a bounded stdio-drain
+        // window, finalizes the outcome. If 'close' fires first (the common case,
+        // when the child flushed output), `settled` short-circuits this path so no
+        // double-resolution and no log truncation occurs.
+        proc.on('exit', (code) => {
+            if (settled)
+                return;
+            const drainTimer = setTimeout(() => {
+                if (settled)
+                    return;
+                finalizeOnChildEnd(code ?? null);
+            }, EXIT_DRAIN_FALLBACK_MS);
+            drainTimer.unref();
         });
         proc.on('error', (err) => {
             if (settled)

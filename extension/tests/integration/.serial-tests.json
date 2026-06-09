@@ -33,6 +33,7 @@
     "tests/install-script-real.test.js",
     "tests/council-publish.test.js",
     "tests/mux-runner.output-stall.test.js",
+    "tests/mux-silent-worker-exit.test.js",
     "tests/check-update.test.js",
     "tests/dispatch.test.js",
     "tests/auto-resume-stop-conditions.test.js",
