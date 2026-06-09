@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { execFileSync, spawnSync } from 'child_process';
 import { runCmd, extractFrontmatter, formatLocalDateKey } from './pickle-utils.js';
 import { syncLinearTicketStatus } from './linear-integration.js';
@@ -186,7 +187,24 @@ function buildCleanArgs(preservePrefixes?: string[]): string[] {
   return args;
 }
 
+function gitRealpathOrSelf(p: string): string {
+  try { return fs.realpathSync(p); } catch { return p; }
+}
+
+/** R-WSRC-4: assert cwd resolves under os.tmpdir() when PICKLE_TEST_MODE=1. No-op in production. */
+function assertWorkingDirUnderTmpdirIfTestMode(cwd: string): void {
+  if (process.env.PICKLE_TEST_MODE !== '1') return;
+  const tmpdirRealpath = gitRealpathOrSelf(os.tmpdir());
+  const resolved = gitRealpathOrSelf(cwd);
+  const under = resolved === tmpdirRealpath || resolved.startsWith(tmpdirRealpath + path.sep);
+  if (!under) throw new Error(
+    `R-WSRC-4: PICKLE_TEST_MODE=1 but resetToSha cwd is outside os.tmpdir() (${tmpdirRealpath}): ${cwd}. ` +
+    `Test fixtures must root working_dir under os.tmpdir() to prevent git mutations against the real repo.`,
+  );
+}
+
 export function resetToSha(sha: string, cwd: string, preservePrefixes?: string[]): void {
+  assertWorkingDirUnderTmpdirIfTestMode(cwd);
   runGit(['reset', '--hard', sha], cwd);
   runGit(buildCleanArgs(preservePrefixes), cwd);
 }

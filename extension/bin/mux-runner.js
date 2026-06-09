@@ -2954,7 +2954,14 @@ export function appendPipelineRunnerMarker(sessionDir, message) {
 /** R-CNAR-4(c): halt exits pause/defer — auto-resume.sh may retry. Does NOT include 'recovery_exhausted' (fatal, non-recoverable). */
 export const isHaltExit = (r) => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat' || r === 'closer_handoff_terminal' || r === 'manager_handoff_pending' || r === 'done_without_commit_evidence';
 /** R-CNAR-4(c): failure exits stop auto-resume.sh. Includes 'recovery_exhausted' — a non-recoverable terminal state. */
-export const isFailureExit = (r) => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed' || r === 'working_tree_modified_externally' || r === 'state_schema_version_ahead' || r === 'done_without_commit_evidence' || r === 'codex_manager_no_progress' || r === 'recovery_exhausted' || r === 'idle_stall_unrecoverable';
+const FAILURE_EXIT_REASONS = new Set([
+    'error', 'stall', 'circuit_open', 'rate_limit_exhausted', 'timeout_repeat',
+    'manager_persistent_hallucination', 'iteration_cap_exhausted', 'codex_unhealthy_consecutive_failures',
+    'ticket_audit_failed', 'working_tree_modified_externally', 'state_schema_version_ahead',
+    'done_without_commit_evidence', 'codex_manager_no_progress', 'recovery_exhausted',
+    'idle_stall_unrecoverable', 'state_working_dir_missing',
+]);
+export const isFailureExit = (r) => FAILURE_EXIT_REASONS.has(r);
 /**
  * Returns true only when the conformance has a `## Manager Handoff` section AND
  * its body is substantive (not "None", "N/A", "Nothing", empty, etc.).
@@ -3211,7 +3218,27 @@ function exitForCloserTerminalState(statePath, sessionDir, iteration, decision, 
  * R-WSRC config-protection hook) returns `{ ok: false }` with nothing flipped, so
  * the ladder falls through to fix-forward-trivial rather than leaving a half-commit.
  */
+function muxRealpathOrSelf(p) {
+    try {
+        return fs.realpathSync(p);
+    }
+    catch {
+        return p;
+    }
+}
+/** R-WSRC-4: assert workingDir resolves under os.tmpdir() when PICKLE_TEST_MODE=1. No-op in production. */
+function assertWorkingDirUnderTmpdirIfTestMode(workingDir) {
+    if (process.env.PICKLE_TEST_MODE !== '1')
+        return;
+    const tmpdirRealpath = muxRealpathOrSelf(os.tmpdir());
+    const resolved = muxRealpathOrSelf(workingDir);
+    const under = resolved === tmpdirRealpath || resolved.startsWith(tmpdirRealpath + path.sep);
+    if (!under)
+        throw new Error(`R-WSRC-4: PICKLE_TEST_MODE=1 but workingDir is outside os.tmpdir() (${tmpdirRealpath}): ${workingDir}. ` +
+            `Test fixtures must root working_dir under os.tmpdir() to prevent git mutations against the real repo.`);
+}
 export function commitAndContinueDoneFlip(input) {
+    assertWorkingDirUnderTmpdirIfTestMode(input.workingDir);
     // M1: ownership-scoped staging when stagePaths is provided (exit-path commit);
     // otherwise the default whole-tree add (Done-flip path, unchanged).
     const addArgs = input.stagePaths && input.stagePaths.length > 0
@@ -4254,12 +4281,20 @@ export async function processCompletionBranch(state, result, ctx) {
                 if (inactiveDecision.shouldRelaunch) {
                     const noProgress = checkAndUpdateCodexManagerNoProgress(ctx.statePath, inactiveDecision.pendingCount, ctx.log);
                     if (noProgress.halt) {
+                        // AC-2 fail-safe: a missing working_dir on this git-mutating recovery
+                        // seam must halt, never fall back to process.cwd() (the real repo).
+                        const workingDir4R = postState.working_dir || state.working_dir;
+                        if (!workingDir4R) {
+                            recordExitReason(ctx.statePath, 'state_working_dir_missing');
+                            ctxDeactivate(ctx);
+                            return { kind: 'break', reason: 'state_working_dir_missing' };
+                        }
                         // R-CHTS-CODEX: route through recovery seam before parking.
                         const codexRecovery = haltOrRecoverCodexNoProgress({
                             statePath: ctx.statePath,
                             sessionDir: ctx.sessionDir,
                             extensionRoot: ctx.extensionRoot,
-                            workingDir: postState.working_dir || state.working_dir || process.cwd(),
+                            workingDir: workingDir4R,
                             iteration: ctx.iteration,
                             log: ctx.log,
                         });
@@ -4324,12 +4359,20 @@ export async function processCompletionBranch(state, result, ctx) {
         if (decision.shouldRelaunch && !isGenuineCrashOrSpawnFailure) {
             const noProgress = checkAndUpdateCodexManagerNoProgress(ctx.statePath, decision.pendingCount, ctx.log);
             if (noProgress.halt) {
+                // AC-2 fail-safe: a missing working_dir on this git-mutating recovery
+                // seam must halt, never fall back to process.cwd() (the real repo).
+                const workingDir4Rerr = postState.working_dir || state.working_dir;
+                if (!workingDir4Rerr) {
+                    recordExitReason(ctx.statePath, 'state_working_dir_missing');
+                    ctxDeactivate(ctx);
+                    return { kind: 'break', reason: 'state_working_dir_missing' };
+                }
                 // R-CHTS-CODEX: route through recovery seam before parking.
                 const codexRecovery = haltOrRecoverCodexNoProgress({
                     statePath: ctx.statePath,
                     sessionDir: ctx.sessionDir,
                     extensionRoot: ctx.extensionRoot,
-                    workingDir: postState.working_dir || state.working_dir || process.cwd(),
+                    workingDir: workingDir4Rerr,
                     iteration: ctx.iteration,
                     log: ctx.log,
                 });
@@ -5383,11 +5426,19 @@ async function runMuxRunnerMain() {
                 // R-ORSR-2: intercept the closer_handoff_terminal park with the recovery
                 // ladder. manager_handoff_pending is operator-gated and never recovered.
                 if (closerDecision.reason === 'closer_handoff_terminal') {
+                    // AC-2 fail-safe: missing working_dir must halt this git-mutating
+                    // recovery call, never fall back to process.cwd() (the real repo).
+                    if (!state.working_dir) {
+                        recordExitReason(statePath, 'state_working_dir_missing');
+                        safeDeactivate(statePath);
+                        exitReason = 'state_working_dir_missing';
+                        break;
+                    }
                     const recovery = attemptRecoveryBeforeTerminal({
                         sessionDir,
                         statePath,
                         extensionRoot,
-                        workingDir: state.working_dir || process.cwd(),
+                        workingDir: state.working_dir,
                         ticketId: state.current_ticket || '',
                         iteration,
                         flags: state.flags ?? null,
@@ -5737,10 +5788,18 @@ async function runMuxRunnerMain() {
                 // R-MWIS-3: before self-recovering past the current ticket, commit any
                 // gate-passing uncommitted deliverable via the existing #99 R-WCUC path so
                 // the re-select/relaunch below cannot strand completed work.
+                // AC-2 fail-safe: missing working_dir must halt this git-mutating commit,
+                // never fall back to process.cwd() (the real repo).
+                if (!state.working_dir) {
+                    recordExitReason(statePath, 'state_working_dir_missing');
+                    safeDeactivate(statePath);
+                    exitReason = 'state_working_dir_missing';
+                    break;
+                }
                 commitGatePassingDeliverableOnExitPath({
                     sessionDir,
                     statePath,
-                    workingDir: state.working_dir || process.cwd(),
+                    workingDir: state.working_dir,
                     ticketId: state.current_ticket ?? null,
                     extensionRoot,
                     flags: state.flags ?? null,
@@ -5779,11 +5838,21 @@ async function runMuxRunnerMain() {
         // existing #99 R-WCUC commit path BEFORE the loop advances (a clean-tree
         // relaunch would otherwise discard it). No-op when the tree is clean, the gate
         // is red, or the model already flipped the ticket terminal.
+        // AC-2 fail-safe: missing working_dir must halt this git-mutating commit,
+        // never fall back to process.cwd() (the real repo). The guard sits OUTSIDE
+        // the best-effort try so the break targets the main loop (a break inside the
+        // try would still target the loop, but the catch must not swallow the halt).
+        if (!state.working_dir) {
+            recordExitReason(statePath, 'state_working_dir_missing');
+            safeDeactivate(statePath);
+            exitReason = 'state_working_dir_missing';
+            break;
+        }
         try {
             const exitCommit = commitGatePassingDeliverableOnExitPath({
                 sessionDir,
                 statePath,
-                workingDir: state.working_dir || process.cwd(),
+                workingDir: state.working_dir,
                 ticketId: previousTicket,
                 extensionRoot,
                 flags: state.flags ?? null,
@@ -5819,11 +5888,19 @@ async function runMuxRunnerMain() {
             // only a genuinely exhausted ladder escalates to recovery_exhausted. A
             // fall_through (nothing to recover) proceeds to the existing terminal flip.
             if (templateName !== 'meeseeks.md') {
+                // AC-2 fail-safe: missing working_dir must halt this git-mutating
+                // recovery call, never fall back to process.cwd() (the real repo).
+                if (!state.working_dir) {
+                    recordExitReason(statePath, 'state_working_dir_missing');
+                    safeDeactivate(statePath);
+                    exitReason = 'state_working_dir_missing';
+                    break;
+                }
                 const wmwRecovery = attemptRecoveryBeforeTerminal({
                     sessionDir,
                     statePath,
                     extensionRoot,
-                    workingDir: state.working_dir || process.cwd(),
+                    workingDir: state.working_dir,
                     ticketId: apTicketId,
                     iteration,
                     flags: state.flags ?? null,
@@ -6494,12 +6571,20 @@ async function runMuxRunnerMain() {
                     if (inactiveDecision.shouldRelaunch) {
                         const noProgress = checkAndUpdateCodexManagerNoProgress(statePath, inactiveDecision.pendingCount, log);
                         if (noProgress.halt) {
+                            // AC-2 fail-safe: missing working_dir must halt this git-mutating
+                            // recovery seam, never fall back to process.cwd() (the real repo).
+                            if (!postState.working_dir && !state.working_dir) {
+                                recordExitReason(statePath, 'state_working_dir_missing');
+                                safeDeactivate(statePath);
+                                exitReason = 'state_working_dir_missing';
+                                break;
+                            }
                             // R-CHTS-CODEX: route through recovery seam before parking.
                             const codexRecovery = haltOrRecoverCodexNoProgress({
                                 statePath,
                                 sessionDir,
                                 extensionRoot,
-                                workingDir: postState.working_dir || state.working_dir || process.cwd(),
+                                workingDir: postState.working_dir || state.working_dir,
                                 iteration,
                                 log,
                             });
@@ -6567,12 +6652,20 @@ async function runMuxRunnerMain() {
             if (relaunchDecision.shouldRelaunch && !isGenuineCrashOrSpawnFailure) {
                 const noProgress = checkAndUpdateCodexManagerNoProgress(statePath, relaunchDecision.pendingCount, log);
                 if (noProgress.halt) {
+                    // AC-2 fail-safe: missing working_dir must halt this git-mutating
+                    // recovery seam, never fall back to process.cwd() (the real repo).
+                    if (!postState.working_dir && !state.working_dir) {
+                        recordExitReason(statePath, 'state_working_dir_missing');
+                        safeDeactivate(statePath);
+                        exitReason = 'state_working_dir_missing';
+                        break;
+                    }
                     // R-CHTS-CODEX: route through recovery seam before parking.
                     const codexRecovery = haltOrRecoverCodexNoProgress({
                         statePath,
                         sessionDir,
                         extensionRoot,
-                        workingDir: postState.working_dir || state.working_dir || process.cwd(),
+                        workingDir: postState.working_dir || state.working_dir,
                         iteration,
                         log,
                     });
