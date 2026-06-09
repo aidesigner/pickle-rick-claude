@@ -29,7 +29,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MUX_RUNNER_JS = path.resolve(__dirname, '..', 'bin', 'mux-runner.js');
@@ -168,15 +168,20 @@ test('AC5: every non-cap-check sm.read(statePath) call site routes through readR
   }
 });
 
-test('AC6: state_schema_version_ahead is in ExitReason union AND isFailureExit set', () => {
+test('AC6: state_schema_version_ahead is in ExitReason union AND isFailureExit set', async () => {
   const source = fs.readFileSync(MUX_RUNNER_TS, 'utf-8');
   assert.ok(
     /export type ExitReason =[\s\S]*'state_schema_version_ahead'/.test(source),
     'ExitReason union must include state_schema_version_ahead',
   );
-  assert.ok(
-    /isFailureExit[\s\S]{0,800}r === 'state_schema_version_ahead'/.test(source),
-    'isFailureExit set must include state_schema_version_ahead so auto-resume.sh R-CNAR-4(c) stops',
+  // Behavioral check (refactor-proof): isFailureExit may be an inline `r === ...`
+  // chain OR a FAILURE_EXIT_REASONS set membership — assert the classification,
+  // not the syntax, so auto-resume.sh R-CNAR-4(c) stops on this exit.
+  const { isFailureExit } = await import(pathToFileURL(MUX_RUNNER_JS).href);
+  assert.equal(
+    isFailureExit('state_schema_version_ahead'),
+    true,
+    'isFailureExit must classify state_schema_version_ahead as a failure exit so auto-resume.sh R-CNAR-4(c) stops',
   );
 });
 
