@@ -21,6 +21,10 @@ SERIAL_MANIFEST_PATH="$EXTENSION_ROOT/tests/integration/.serial-tests.json"
 #   @tier: expensive (gated behind RUN_EXPENSIVE_TESTS=1, not part of c=8 surface)
 
 SUBPROCESS_HEAVY_TIMEOUT_MS=5000
+# Load-sensitive WARN tier: non-serialized subprocess spawns with a timeout in the
+# (5000, 15000] band are flagged with a NON-failing WARN (closes the 10s blind spot,
+# e.g. the pntr-pickle-deprecated ~10004ms-under-c=8 class) without hard-failing the gate.
+SUBPROCESS_HEAVY_WARN_MS=15000
 
 if [ ! -d "$TEST_ROOT" ]; then
   echo "[skipped: tests not deployed]" >&2
@@ -50,16 +54,21 @@ process.exit(manifest.entries.some((e) => e === normalized) ? 0 : 1);
 NODE
 }
 
-# find_heavy_candidate <file> <timeout_ms>
-# Prints a reason string and exits 0 if the file is a subprocess-heavy candidate.
-# Exits 1 if no candidate pattern found.
+# find_heavy_candidate <file> <fail_threshold_ms> <warn_threshold_ms>
+# Classifies the strongest subprocess-heavy spawn in the file by its timeout N:
+#   N <= FAIL_THRESHOLD            -> prints "FAIL <reason>", exit 0
+#   FAIL_THRESHOLD < N <= WARN     -> prints "WARN <reason>", exit 0
+#   N > WARN                       -> not a candidate, exit 1
+# FAIL takes precedence over WARN when both bands are present in one file.
 find_heavy_candidate() {
   local file="$1"
-  local timeout_ms="$2"
-  node - "$file" "$timeout_ms" <<'NODE'
+  local fail_ms="$2"
+  local warn_ms="$3"
+  node - "$file" "$fail_ms" "$warn_ms" <<'NODE'
 const fs = require('fs');
-const [, , filePath, timeoutMs] = process.argv;
-const THRESHOLD = parseInt(timeoutMs, 10);
+const [, , filePath, failMs, warnMs] = process.argv;
+const FAIL_THRESHOLD = parseInt(failMs, 10);
+const WARN_THRESHOLD = parseInt(warnMs, 10);
 const content = fs.readFileSync(filePath, 'utf8');
 
 // Skip @tier: expensive — not part of the --test-concurrency=8 surface.
@@ -67,22 +76,32 @@ const firstLine = content.split('\n')[0];
 if (firstLine.includes('@tier: expensive')) process.exit(1);
 
 // SUBPROCESS_HEAVY_PATTERN:
-//   spawnSync('bash'|'sh', [nonFlagFirstArg, ...]) with explicit timeout <= THRESHOLD
+//   spawnSync('bash'|'sh', [nonFlagFirstArg, ...]) with explicit timeout
 //
 // The '-' exclusion prevents false positives on inline commands like:
 //   spawnSync('bash', ['-lc', 'command -v git'])
 //   spawnSync('bash', ['-c', 'echo test'])
 const bashSpawnRe = /\bspawnSync\s*\(\s*['"](?:bash|sh)['"]\s*,\s*\[(?!\s*['"][^'"]*-)/g;
+let warnReason = null; // first WARN-band candidate, used only if no FAIL found
 let m;
 while ((m = bashSpawnRe.exec(content)) !== null) {
   const block = content.slice(m.index, m.index + 600);
   const timeoutMatch = block.match(/\btimeout\s*:\s*([0-9][0-9_]*)\b/);
   if (!timeoutMatch) continue; // no explicit timeout: not flagged by this audit
   const t = parseInt(timeoutMatch[1].replace(/_/g, ''), 10);
-  if (t <= THRESHOLD) {
-    process.stdout.write(`spawnSync(bash/sh, script, { timeout: ${t} })\n`);
+  const reason = `spawnSync(bash/sh, script, { timeout: ${t} })`;
+  if (t <= FAIL_THRESHOLD) {
+    process.stdout.write(`FAIL ${reason}\n`);
     process.exit(0);
   }
+  if (t <= WARN_THRESHOLD && warnReason === null) {
+    warnReason = reason; // remember; keep scanning in case a FAIL-band spawn exists
+  }
+}
+
+if (warnReason !== null) {
+  process.stdout.write(`WARN ${warnReason}\n`);
+  process.exit(0);
 }
 
 process.exit(1); // not a candidate
@@ -101,18 +120,27 @@ audit_file() {
   # Derive relative path from EXTENSION_ROOT (e.g. tests/foo.test.js)
   file_rel="${file#"$EXTENSION_ROOT/"}"
 
-  # Run pattern matcher; exit 1 means not a candidate
-  candidate_reason="$(find_heavy_candidate "$file" "$SUBPROCESS_HEAVY_TIMEOUT_MS" 2>/dev/null)"
+  # Run pattern matcher; exit 1 means not a candidate.
+  # Output is "<TAG> <reason>" where TAG is FAIL (N <= 5000) or WARN (5000 < N <= 15000).
+  candidate_out="$(find_heavy_candidate "$file" "$SUBPROCESS_HEAVY_TIMEOUT_MS" "$SUBPROCESS_HEAVY_WARN_MS" 2>/dev/null)"
   candidate_exit=$?
   [ "$candidate_exit" -ne 0 ] && return
 
-  # Check allowlist: serial manifest
+  local candidate_tag="${candidate_out%% *}"      # FAIL | WARN
+  local candidate_reason="${candidate_out#* }"    # reason string
+
+  # Allowlist (silences BOTH bands): serial manifest
   if is_in_manifest "$file_rel"; then
     return
   fi
 
-  # Check allowlist: // SERIAL: comment in file
+  # Allowlist (silences BOTH bands): // SERIAL: comment in file
   if grep -q '// SERIAL:' "$file"; then
+    return
+  fi
+
+  if [ "$candidate_tag" = "WARN" ]; then
+    echo "WARN: $file_rel: load-sensitive subprocess spawn ($candidate_reason) in 6000-15000ms band — consider serialization" >&2
     return
   fi
 
