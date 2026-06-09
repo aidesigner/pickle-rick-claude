@@ -256,6 +256,11 @@ audit_session_bin_sandbox() {
       continue
     fi
 
+    if printf '%s\n' "$window" | grep -Eq "working_dir[^A-Za-z_].*REPO_ROOT|working_dir[^A-Za-z_].*process\.cwd\(\)"; then
+      report_violation "$file" "$line_number" "session-writing bin with real-repo working_dir"
+      continue
+    fi
+
     if printf '%s\n' "$window" | grep -Fq "PICKLE_DATA_ROOT"; then
       continue
     fi
