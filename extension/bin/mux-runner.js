@@ -1378,13 +1378,30 @@ export function stalePerTicketCacheDiagnostic(state) {
 function shouldEmitStalePerTicketCapSkip(state) {
     return hasStalePerTicketCacheFields(state) && !isValidPerTicketCapCache(state);
 }
-export function clearStalePerTicketCacheAtIterationStart(statePath, state, log) {
-    if (state.current_ticket !== null || !hasStalePerTicketCacheFields(state))
-        return state;
-    log('clearing stale per-ticket cache fields (current_ticket=null)');
-    return sm.update(statePath, s => {
-        clearStaleTicketCacheFields(s);
-    });
+export function clearStalePerTicketCacheAtIterationStart(statePath, state, log, sessionDir) {
+    const hasTicket = typeof state.current_ticket === 'string' && state.current_ticket.length > 0;
+    if (!hasTicket) {
+        // Clear-on-null: stale per-ticket cache left over from a completed ticket.
+        if (!hasStalePerTicketCacheFields(state))
+            return state;
+        log('clearing stale per-ticket cache fields (current_ticket=null)');
+        return sm.update(statePath, s => {
+            clearStaleTicketCacheFields(s);
+        });
+    }
+    // AC-R-WMNP-2: a SET current_ticket whose per-ticket cap cache is missing or
+    // invalid MUST be REPOPULATED from the ticket's complexity tier — not left
+    // perpetually skipped. Without this, the per-ticket cap-check at runMuxLoop is
+    // skipped every iteration and nothing bounds a wedged respawn loop (the
+    // `cap-check skipped: stale cache (... max_iter=undefined ...)` incident).
+    if (!isValidPerTicketCapCache(state)) {
+        log(`repopulating per-ticket cap cache from ticket tier (current_ticket=${state.current_ticket})`);
+        return sm.update(statePath, s => {
+            clearStaleTicketCacheFields(s);
+            applyTicketTierBudget(s, sessionDir);
+        });
+    }
+    return state;
 }
 /**
  * Proactive empty-queue completion check, run at iteration_start before any
@@ -5019,7 +5036,7 @@ async function runMuxRunnerMain() {
             exitReason = 'cancelled';
             break;
         }
-        state = clearStalePerTicketCacheAtIterationStart(statePath, state, log);
+        state = clearStalePerTicketCacheAtIterationStart(statePath, state, log, sessionDir);
         const rawGlobalMaxIter = Number(state.max_iterations);
         const globalMaxIter = Number.isFinite(rawGlobalMaxIter) ? rawGlobalMaxIter : 0;
         const ticketCacheValid = isValidPerTicketCapCache(state);
