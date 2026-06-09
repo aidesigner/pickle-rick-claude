@@ -972,8 +972,48 @@ function isPendingMuxTicket(sessionDir: string, ticket: TicketInfo): boolean {
   return !!ticket.id && status !== 'done' && status !== 'skipped';
 }
 
+/**
+ * AC-R-WMNP-3: true iff the ticket's frontmatter is a TERMINAL no-progress flip
+ * (status Failed + failed_reason 'oversized_no_progress'). Such a ticket is NOT
+ * selectable for work — it must neither be respawned in-phase forever nor
+ * re-engaged via a stale `state.current_ticket` after a relaunch. It stays Failed
+ * and visible; the operator re-queues by setting `status: Todo`. Scoped to the
+ * oversized_no_progress reason so a generic Failed ticket retains its retry
+ * semantics — this is selection-layer filtering, NOT a change to the canonical
+ * `isPendingMuxTicket` pendingness contract (R-RMBS-1).
+ */
+function isOversizedNoProgressFailed(sessionDir: string, ticketId: string | null | undefined): boolean {
+  if (!ticketId) return false;
+  try {
+    const raw = fs.readFileSync(ticketFilePath(sessionDir, ticketId), 'utf-8');
+    if (normalizeTicketStatus(readFrontmatterField(raw, 'status')) !== 'failed') return false;
+    return (readFrontmatterField(raw, 'failed_reason') ?? '').trim() === 'oversized_no_progress';
+  } catch {
+    return false;
+  }
+}
+
 function findNextPendingTicketId(sessionDir: string): string | null {
-  return collectTickets(sessionDir).find(ticket => isPendingMuxTicket(sessionDir, ticket))?.id ?? null;
+  return collectTickets(sessionDir).find(ticket =>
+    isPendingMuxTicket(sessionDir, ticket) && !isOversizedNoProgressFailed(sessionDir, ticket.id),
+  )?.id ?? null;
+}
+
+/**
+ * AC-R-WMNP-3: resolve the ticket to work this iteration. Preserves the legacy
+ * `state.current_ticket || findNextPendingTicketId(...)` behavior — a SET
+ * current_ticket is honored (including a Done closer ticket, whose manager-handoff
+ * work is still detected downstream) — with ONE new exclusion: a terminal
+ * no-progress Failed flip (oversized_no_progress) is never re-engaged, breaking
+ * the order-deadlock where the manager re-spawned the flipped ticket forever.
+ * When current_ticket is the flipped ticket (or null), fall through to the next
+ * selectable pending ticket.
+ */
+export function resolvePreTicket(sessionDir: string, currentTicket: string | null | undefined): string | null {
+  if (currentTicket && !isOversizedNoProgressFailed(sessionDir, currentTicket)) {
+    return currentTicket;
+  }
+  return findNextPendingTicketId(sessionDir);
 }
 
 /**
@@ -5888,7 +5928,7 @@ async function runMuxRunnerMain() {
     }
     const preTicket = templateName === 'meeseeks.md'
       ? null
-      : (state.current_ticket || findNextPendingTicketId(sessionDir));
+      : resolvePreTicket(sessionDir, state.current_ticket);
     const preStep = templateName === 'meeseeks.md'
       ? 'review'
       : inferTicketLifecycleStep(sessionDir, preTicket, state.step);
@@ -6367,8 +6407,11 @@ async function runMuxRunnerMain() {
           },
         });
       } catch { /* best-effort */ }
-      const nextAfterSkip = findNextPendingTicketId(sessionDir);
-      updateMuxLifecycleState(statePath, { currentTicket: nextAfterSkip ?? null });
+      // AC-R-WMNP-3: a terminal no-progress flip clears current_ticket (+ the
+      // per-ticket cache, via updateMuxLifecycleState's ticket-change path) so the
+      // next iteration's resolvePreTicket selects the next pending ticket rather
+      // than re-engaging the just-flipped Failed ticket (order-deadlock).
+      updateMuxLifecycleState(statePath, { currentTicket: null });
       continue;
     }
 
