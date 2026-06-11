@@ -33,6 +33,8 @@
     "tests/integration/chaos/state-manager-sigkill.test.js",
     "tests/integration/chaos/state-corruption.test.js",
     "tests/integration/chaos/lock-contention.test.js",
+    "tests/integration/chaos/worker-silent-death.test.js",
+    "tests/integration/chaos/orphan-chain-reattach.chaos.test.js",
     "tests/mux-runner-claude-max-turns-relaunch.test.js",
     "tests/install-script-real.test.js",
     "tests/council-publish.test.js",
