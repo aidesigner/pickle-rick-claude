@@ -2,12 +2,15 @@
 // Ticket 0780b805 (H3/CUJ-9): archiveBeforeDestructive — fail-closed pre-reset
 // archival of staged + unstaged + untracked work, .codegraph exclusion, and the
 // extended resetToSha archive context.
+// Ticket 0d1590f4 (H3): callsite adoption (spawn-morty gate-fail reset,
+// microverse rollback) + audit-guarded-reset.sh enforcement.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 import {
   archiveBeforeDestructive,
@@ -273,5 +276,167 @@ test('resetToSha without archive context behaves as before (no patch, no event)'
     assert.equal(readActivity(f.statePath).filter((e) => String(e.event).startsWith('pre_reset')).length, 0);
   } finally {
     cleanupFixture(f.root);
+  }
+});
+
+// ===========================================================================
+// Ticket 0d1590f4 — callsite adoption + audit-guarded-reset.sh
+// ===========================================================================
+
+const extensionRoot = fileURLToPath(new URL('..', import.meta.url));
+const auditScript = path.join(extensionRoot, 'scripts', 'audit-guarded-reset.sh');
+
+function readSourcePair(relTs, relJs) {
+  return {
+    ts: fs.readFileSync(path.join(extensionRoot, relTs), 'utf-8'),
+    js: fs.readFileSync(path.join(extensionRoot, relJs), 'utf-8'),
+  };
+}
+
+// --- adoption: spawn-morty gate-fail reset is archive-first, ticket-scoped ---
+
+test('adoption: spawn-morty gate-fail resetToSha passes ticket-scoped archive context with reason pre_reset (source + compiled mirror)', () => {
+  const { ts, js } = readSourcePair('src/bin/spawn-morty.ts', 'bin/spawn-morty.js');
+  const callShape = /resetToSha\(args\.preWorkerHead, args\.workingDir, preservePrefixes, \{[\s\S]{0,400}?reason: 'pre_reset',?[\s\S]{0,100}?\}\)/;
+  assert.match(ts, callShape, 'TS source: gate-fail reset must pass an archive context');
+  assert.match(js, callShape, 'compiled mirror: gate-fail reset must pass an archive context');
+  // ticket-scoped: ticketDir derived from sessionDir + ticketId, sessionDir from statePath
+  assert.match(ts, /const sessionDir = path\.dirname\(args\.statePath\);\s*\n\s*const ticketDir = path\.join\(sessionDir, args\.ticketId\);/);
+  // fail-closed handling stays visible: ArchiveAbortError branch in the catch
+  assert.match(ts, /catch \(err\) \{\s*\n\s*if \(err instanceof ArchiveAbortError\)/);
+  assert.match(js, /err instanceof ArchiveAbortError/);
+});
+
+// --- adoption: microverse rollback archives to session-level fallback ---
+
+test('adoption: microverse rollback resetToSha passes session-level archive context with reason microverse_rollback (source + compiled mirror)', () => {
+  const { ts, js } = readSourcePair('src/bin/microverse-runner.ts', 'bin/microverse-runner.js');
+  const callShape = /_deps\.resetToSha\(ctx\.preIterSha \?\? '', ctx\.workingDir, undefined, \{[\s\S]{0,200}?sessionDir: ctx\.sessionDir,[\s\S]{0,100}?ticketDir: null,[\s\S]{0,100}?reason: 'microverse_rollback',?[\s\S]{0,50}?\}\)/;
+  assert.match(ts, callShape, 'TS source: rollback must pass a session-level archive context');
+  assert.match(js, callShape, 'compiled mirror: rollback must pass a session-level archive context');
+});
+
+// --- behavior: microverse-shaped context — session-level patch, rollback reason ---
+
+test('microverse-shaped context: patch lands in sessionDir with reason microverse_rollback before the reset destroys the work', () => {
+  const f = makeFixture();
+  try {
+    fs.writeFileSync(path.join(f.repo, 'iteration-work.txt'), 'ROLLBACK-MARKER\n');
+    resetToSha(f.baseline, f.repo, undefined, {
+      cwd: f.repo,
+      sessionDir: f.sessionDir,
+      ticketDir: null,
+      reason: 'microverse_rollback',
+    });
+
+    assert.equal(gitStatusPorcelain(f.repo), '', 'tree reset after archival');
+    const patches = patchFilesIn(f.sessionDir);
+    assert.equal(patches.length, 1, 'patch archived at session level');
+    assert.match(fs.readFileSync(path.join(f.sessionDir, patches[0]), 'utf-8'), /ROLLBACK-MARKER/);
+
+    const events = readActivity(f.statePath).filter((e) => e.event === 'pre_reset_diff_archived');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].reason, 'microverse_rollback');
+    assert.equal(events[0].ticket, null);
+  } finally {
+    cleanupFixture(f.root);
+  }
+});
+
+// --- audit-guarded-reset.sh ---
+
+function runAudit(srcOverride) {
+  const env = { ...process.env };
+  delete env.GUARDED_RESET_SRC_OVERRIDE;
+  if (srcOverride) env.GUARDED_RESET_SRC_OVERRIDE = srcOverride;
+  return spawnSync('bash', [auditScript], { encoding: 'utf-8', timeout: 30000, env });
+}
+
+function makeAuditFixture(files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-guarded-audit-'));
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = path.join(root, 'src', rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, content);
+  }
+  return { root, srcDir: path.join(root, 'src') };
+}
+
+test('audit: exits 0 against the real src/ tree (adopted HEAD)', () => {
+  const result = runAudit(null);
+  assert.equal(result.status, 0, `expected exit 0, stderr: ${result.stderr}`);
+  assert.match(result.stdout, /no unguarded destructive callsites/);
+});
+
+test('audit: seeded raw git reset --hard → exit 1 naming file:line', () => {
+  const f = makeAuditFixture({
+    'bin/bad.ts': "import { runGit } from '../services/git-utils.js';\nexport function nuke(cwd: string): void {\n  runGit(['reset', '--hard', 'HEAD~1'], cwd);\n}\n",
+  });
+  try {
+    const result = runAudit(f.srcDir);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /bin\/bad\.ts:3: raw `git reset --hard`/);
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('audit: seeded shell-string git reset --hard → exit 1 naming file:line', () => {
+  const f = makeAuditFixture({
+    'services/sneaky.ts': "export const cmd = `git reset --hard ${'HEAD'}`;\n",
+  });
+  try {
+    const result = runAudit(f.srcDir);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /services\/sneaky\.ts:1: raw `git reset --hard`/);
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('audit: seeded resetToSha without archive context → exit 1 naming file:line', () => {
+  const f = makeAuditFixture({
+    'bin/unguarded.ts': "import { resetToSha } from '../services/git-utils.js';\nexport function rollback(sha: string, cwd: string): void {\n  resetToSha(sha, cwd);\n}\n",
+  });
+  try {
+    const result = runAudit(f.srcDir);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /bin\/unguarded\.ts:3: resetToSha\(\) without archive context/);
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('audit: seeded directory-scoped git restore and git clean → exit 1 naming each file:line', () => {
+  const f = makeAuditFixture({
+    'bin/restore-dir.ts': "export const a = 'git restore extension/';\n",
+    'bin/cleaner.ts': "import { runGit } from '../services/git-utils.js';\nexport const wipe = (cwd: string) => runGit(['clean', '-fd'], cwd);\n",
+  });
+  try {
+    const result = runAudit(f.srcDir);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /bin\/restore-dir\.ts:1: directory-scoped `git restore`/);
+    assert.match(result.stderr, /bin\/cleaner\.ts:2: raw `git clean`/);
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('audit: guarded call, path-scoped ops, comments, and allowlisted helper internals → exit 0', () => {
+  const f = makeAuditFixture({
+    // guarded resetToSha call (multi-line archive context)
+    'bin/guarded.ts': "import { resetToSha } from '../services/git-utils.js';\nexport function safeRollback(sha: string, cwd: string, sessionDir: string): void {\n  resetToSha(sha, cwd, undefined, {\n    cwd,\n    sessionDir,\n    ticketDir: null,\n    reason: 'pre_reset',\n  });\n}\n",
+    // path-scoped checkout (R-WSRC-GR allowed form) + path-scoped restore message
+    'bin/path-scoped.ts': "export const recover = (paths: string[]) => ['checkout', '--', ...paths];\nexport const msg = 'use git restore <paths> instead';\n",
+    // comment mentions must not trip
+    'bin/commented.ts': "// a worker may `git reset --hard` to the pre-ticket sha\n/* never run git clean here */\nexport const x = 1;\n",
+    // helper internals are allowlisted
+    'services/git-utils.ts': "export function resetToSha(sha: string, cwd: string): void {\n  runGit(['reset', '--hard', sha], cwd);\n  runGit(['clean', '-fd'], cwd);\n}\n",
+  });
+  try {
+    const result = runAudit(f.srcDir);
+    assert.equal(result.status, 0, `expected exit 0, stderr: ${result.stderr}`);
+  } finally {
+    fs.rmSync(f.root, { recursive: true, force: true });
   }
 });

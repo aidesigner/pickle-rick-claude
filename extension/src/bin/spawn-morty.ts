@@ -25,7 +25,7 @@ import {
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS, type Backend, type BackendResolutionSource, type LastToolErrorState, type PickleSettings, type State } from '../types/index.js';
 import { isRecord } from '../lib/is-record.js';
-import { getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
+import { ArchiveAbortError, getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
 import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
@@ -1184,8 +1184,23 @@ export async function runWorkerGate(changedFiles: string[], args: {
         const preservePrefixes = (args.preservePaths ?? [])
           .map(preservePath => toRepoRelativePath(args.workingDir, preservePath))
           .filter((prefix): prefix is string => prefix !== null);
-        resetToSha(args.preWorkerHead, args.workingDir, preservePrefixes);
-      } catch { /* best-effort */ }
+        const sessionDir = path.dirname(args.statePath);
+        const ticketDir = path.join(sessionDir, args.ticketId);
+        resetToSha(args.preWorkerHead, args.workingDir, preservePrefixes, {
+          cwd: args.workingDir,
+          sessionDir,
+          ticketDir: fs.existsSync(ticketDir) ? ticketDir : null,
+          reason: 'pre_reset',
+        });
+      } catch (err) {
+        if (err instanceof ArchiveAbortError) {
+          // Fail-closed: archival failed, so resetToSha never ran the reset.
+          // Leave the dirty tree in place and surface the abort loudly.
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[spawn-morty] gate-fail reset ABORTED (pre-reset archive failed): ${msg} — uncommitted work left in place`);
+        }
+        /* reset is best-effort; gate result below still reports the failure */
+      }
     }
     return {
       ok: false,

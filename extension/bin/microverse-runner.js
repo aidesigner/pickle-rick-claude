@@ -2472,7 +2472,12 @@ export async function measureAndClassifyIteration(state, baseline, ctx) {
             metricClassification: classification,
         }));
         ctx.log(`Regression detected — rolling back to ${ctx.preIterSha}`);
-        _deps.resetToSha(ctx.preIterSha ?? '', ctx.workingDir);
+        _deps.resetToSha(ctx.preIterSha ?? '', ctx.workingDir, undefined, {
+            cwd: ctx.workingDir,
+            sessionDir: ctx.sessionDir,
+            ticketDir: null,
+            reason: 'microverse_rollback',
+        });
         replaceMicroverseState(state, recordFailedApproach(state, `Iteration ${ctx.iteration}: score dropped from ${previousScore} to ${metricResult.score}`));
     }
     replaceMicroverseState(state, stateRecordIteration(state, entry, classification));
