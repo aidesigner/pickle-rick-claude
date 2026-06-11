@@ -89,6 +89,16 @@ test('R-CXOR-1: detectAndRecoverHeadRegression reattaches orphaned commit via ff
   assert.equal(headSha(repoDir), orphanCommit, 'HEAD should be at orphanCommit after reattach');
   assert.ok(log.some(l => l.includes('ff-only reattach to') && l.includes('succeeded')), 'should log reattach success');
 
+  // e56ed23f: orphan_commit_reattached must be emitted with the resolved tip
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  const event = (state.activity || []).find((e) => e.event === 'orphan_commit_reattached');
+  assert.ok(event, 'orphan_commit_reattached event must be emitted on successful reattach');
+  assert.equal(event.ticket, ticketId);
+  assert.equal(event.sha, orphanCommit, 'event.sha must be the reattached tip');
+  assert.equal(event.chain_length, 1, 'single-commit orphan has chain_length 1');
+  assert.ok(event.prev_head, 'prev_head must be present');
+  assert.ok(event.ts, 'ts must be present');
+
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -124,13 +134,25 @@ test('R-CXOR-1: detectAndRecoverHeadRegression marks ticket Failed when orphan u
 
   assert.equal(result.detected, true, 'regression should be detected (HEAD equals startCommit)');
   assert.equal(result.recovered, false, 'recovery should fail with invalid SHA');
-  assert.equal(result.action, 'marked_failed', 'action should be marked_failed');
-  assert.equal(headSha(repoDir), startCommit, 'HEAD should still be at startCommit');
+  // e56ed23f: an explicit-but-unreachable SHA with NO salvage evidence still
+  // ends at marked_failed via the hold path's evidence-absent branch, BUT
+  // orphan_commit_unreattachable is emitted first.
+  assert.equal(result.action, 'marked_failed', 'evidence-absent, unreachable SHA still marks Failed');
+  assert.equal(headSha(repoDir), startCommit, 'HEAD should still be at startCommit (no history mutation)');
 
   // Verify ticket was flipped to Failed
   const ticketPath = path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
   const ticketContent = fs.readFileSync(ticketPath, 'utf-8');
   assert.ok(ticketContent.includes('status: "Failed"') || ticketContent.includes("status: 'Failed'"), 'ticket status should be Failed');
+
+  // orphan_commit_unreattachable must be emitted before the hold/flip decision
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  const event = (state.activity || []).find((e) => e.event === 'orphan_commit_unreattachable');
+  assert.ok(event, 'orphan_commit_unreattachable event must be emitted for an unreachable candidate SHA');
+  assert.equal(event.ticket, ticketId);
+  assert.equal(event.sha, invalidSha, 'event.sha must be the best-known (unreachable) candidate');
+  assert.ok(event.reason, 'reason must be present');
+  assert.ok(event.ts, 'ts must be present');
 
   fs.rmSync(tmp, { recursive: true, force: true });
 });
@@ -169,11 +191,24 @@ test('R-CXOR-1: NEVER leaves ticket Done at baseline — either reattached or Fa
   const finalHead = headSha(repoDir);
   if (result.action === 'ff_reattached') {
     assert.notEqual(finalHead, startCommit, 'HEAD must have advanced past baseline on reattach');
+    // e56ed23f: success path emits orphan_commit_reattached
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.ok((state.activity || []).some((e) => e.event === 'orphan_commit_reattached'),
+      'orphan_commit_reattached must be emitted on reattach');
   } else {
-    assert.equal(result.action, 'marked_failed', 'must mark Failed if not reattached');
+    // e56ed23f: the non-reattach outcomes are the hold variants OR the
+    // evidence-absent marked_failed — never Done-at-baseline.
+    assert.ok(
+      result.action === 'flip_suppressed' || result.action === 'suppression_cap_escalate' || result.action === 'marked_failed',
+      `non-reattach action must be a hold variant or marked_failed, got: ${result.action}`,
+    );
     const ticketPath = path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
     const ticketContent = fs.readFileSync(ticketPath, 'utf-8');
     assert.ok(!ticketContent.includes('status: "Done"') && !ticketContent.includes("status: 'Done'"), 'ticket must not be Done at baseline');
+    // orphan_commit_unreattachable accompanies the non-reattach hold/flip
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.ok((state.activity || []).some((e) => e.event === 'orphan_commit_unreattachable'),
+      'orphan_commit_unreattachable must be emitted on non-reattach');
   }
 
   fs.rmSync(tmp, { recursive: true, force: true });

@@ -1742,13 +1742,165 @@ function isHeadAtOrBelowCommit(headSha, refSha, workingDir) {
     return r.status === 0;
 }
 /**
- * R-CXOR-1: detect and recover from a worker HEAD regression.
+ * Returns dangling commit SHAs from `git fsck --no-reflogs --lost-found`.
+ * Only chain tips are reported dangling (interior commits stay reachable from
+ * the descendant that points at them). `--no-reflogs` is REQUIRED — without it a
+ * reset-orphaned commit stays reflog-reachable and is never reported dangling.
+ */
+function resolveFsckDanglingTips(workingDir) {
+    const out = silentDeathGit(['fsck', '--no-reflogs', '--lost-found'], workingDir);
+    if (!out)
+        return [];
+    return out.split('\n')
+        .filter((l) => l.startsWith('dangling commit '))
+        .map((l) => l.slice('dangling commit '.length).trim())
+        .filter(Boolean);
+}
+/**
+ * Resolve the TIP of the orphaned chain that `candidate` belongs to:
+ *   - candidate is its own tip when no fsck tip has it as an ancestor (single-commit orphan)
+ *   - exactly one dangling tip with `candidate` as an ancestor → that tip
+ *   - >1 such tips → 'ambiguous' (operator must resolve; runner holds)
+ */
+function resolveChainTip(candidate, tips, workingDir) {
+    const matching = tips.filter((tip) => {
+        if (tip === candidate)
+            return true;
+        const r = spawnSync('git', ['-C', workingDir, 'merge-base', '--is-ancestor', candidate, tip], {
+            encoding: 'utf-8',
+            timeout: 5000,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        return r.status === 0;
+    });
+    if (matching.length === 0)
+        return candidate; // single-commit orphan: candidate IS the tip
+    if (matching.length === 1)
+        return matching[0];
+    return 'ambiguous'; // >1 tips contain candidate as ancestor → operator territory
+}
+/**
+ * SHA precedence for orphan tip resolution:
+ *   1. Explicit completionCommitSha (authoritative, never window/scope-filtered)
+ *   2. `git fsck --no-reflogs` discovery scoped to the iteration window + allowed_paths
+ *
+ * Returns `{ sha, discovered }` or null when nothing recoverable is found.
+ */
+function resolveOrphanSha(input) {
+    const { completionCommitSha, workingDir, sessionDir, iterationStartMs, log } = input;
+    const SKEW_MS = 30_000; // ±30s clock-skew tolerance for fsck discovery
+    // Priority 1: explicit SHA — never window/scope-filtered.
+    if (completionCommitSha)
+        return { sha: completionCommitSha, discovered: false };
+    // Priority 2: fsck discovery — only when no explicit SHA.
+    const tips = resolveFsckDanglingTips(workingDir);
+    if (tips.length === 0)
+        return null;
+    const allowed = readScopeAllowedPaths(sessionDir);
+    const nowMs = Date.now();
+    const filtered = tips.filter((tip) => {
+        // Window filter: commit timestamp within [iterationStartMs - skew, now + skew].
+        if (iterationStartMs !== null && iterationStartMs !== undefined) {
+            const epochSec = gitCommitEpoch(workingDir, tip);
+            if (epochSec !== null) {
+                const commitMs = epochSec * 1000;
+                if (commitMs < iterationStartMs - SKEW_MS || commitMs > nowMs + SKEW_MS) {
+                    log(`[head-regression] fsck tip ${tip.slice(0, 8)} outside iteration window — skipping`);
+                    return false;
+                }
+            }
+        }
+        // Scope filter: touched paths ⊆ allowed_paths (unscoped session → all pass).
+        if (allowed && allowed.length > 0) {
+            const diff = silentDeathGit(['diff', '--name-only', `HEAD..${tip}`], workingDir);
+            if (diff === null)
+                return false;
+            const touched = diff.split('\n').map((s) => s.trim()).filter(Boolean);
+            if (touched.some((f) => !isWithinAllowedPaths(f, allowed))) {
+                log(`[head-regression] fsck tip ${tip.slice(0, 8)} touches out-of-scope paths — skipping`);
+                return false;
+            }
+        }
+        return true;
+    });
+    if (filtered.length === 0)
+        return null;
+    if (filtered.length === 1)
+        return { sha: filtered[0], discovered: true };
+    // Multiple in-window tips: prefer the most recent commit time.
+    const ranked = filtered
+        .map((tip) => ({ tip, epoch: gitCommitEpoch(workingDir, tip) ?? 0 }))
+        .sort((a, b) => b.epoch - a.epoch);
+    log(`[head-regression] multiple fsck tips found, using most recent: ${ranked[0].tip.slice(0, 8)}`);
+    return { sha: ranked[0].tip, discovered: true };
+}
+/**
+ * e56ed23f: resolve an orphan SHA (explicit → fsck-discovered), walk to the
+ * chain TIP, and `git merge --ff-only` HEAD up to it. Pure reattach — NEVER
+ * resets or rewrites history; an ambiguous chain or a divergent HEAD (ff-only
+ * refusal) returns `recovered: false` and the caller routes to the hold path.
+ * `candidateSha` is the reattached tip on success, or the best-known unverified
+ * candidate otherwise (drives the `orphan_commit_unreattachable` emit), `null`
+ * when nothing was discoverable.
+ */
+function attemptOrphanChainReattach(input) {
+    const { ticketId, workingDir, sessionDir, statePath, completionCommitSha, prevHead, iterationStartMs, log } = input;
+    const resolved = resolveOrphanSha({ completionCommitSha, workingDir, sessionDir, iterationStartMs, log });
+    if (!resolved)
+        return { recovered: false, candidateSha: null };
+    const verifyR = spawnSync('git', ['-C', workingDir, 'cat-file', '-t', resolved.sha], { encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] });
+    if (verifyR.status !== 0 || (verifyR.stdout || '').trim() !== 'commit') {
+        log(`[head-regression] resolved orphan SHA ${resolved.sha.slice(0, 8)} not accessible as commit — holding`);
+        return { recovered: false, candidateSha: resolved.sha };
+    }
+    // The candidate may be an interior commit of a multi-commit orphan chain;
+    // resolve the descendant-most tip so ff-only lands HEAD at the chain TIP.
+    const tip = resolveChainTip(resolved.sha, resolveFsckDanglingTips(workingDir), workingDir);
+    if (tip === 'ambiguous') {
+        log(`[head-regression] ambiguous orphan chain (multiple dangling tips contain ${resolved.sha.slice(0, 8)}) — holding for operator`);
+        return { recovered: false, candidateSha: resolved.sha };
+    }
+    // Archive a dirty tree BEFORE ff-only (self-no-ops on a clean tree). ff-only
+    // refuses a dirty tree, so a still-dirty tree after archive falls to the hold.
+    archiveDirtyTreeBeforeFlip({ workingDir, sessionDir, ticketId, log });
+    const statusR = spawnSync('git', ['-C', workingDir, 'status', '--porcelain'], { encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] });
+    if (statusR.status === 0 && (statusR.stdout || '').trim().length > 0) {
+        log(`[head-regression] working tree still dirty after archive — cannot ff-only to ${tip.slice(0, 8)}; holding`);
+        return { recovered: false, candidateSha: tip };
+    }
+    const chainLenR = spawnSync('git', ['-C', workingDir, 'rev-list', '--count', `${prevHead}..${tip}`], { encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const chainLength = chainLenR.status === 0 ? (parseInt((chainLenR.stdout || '').trim(), 10) || 1) : 1;
+    const mergeR = spawnSync('git', ['-C', workingDir, 'merge', '--ff-only', tip], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] });
+    if (mergeR.status !== 0) {
+        // ff-only refused → divergent HEAD. NEVER reset/rewrite — hold.
+        log(`[head-regression] ff-only to ${tip.slice(0, 8)} failed (divergent HEAD): ${(mergeR.stderr || '').trim()} — holding`);
+        return { recovered: false, candidateSha: tip };
+    }
+    log(`[head-regression] ff-only reattach to chain tip ${tip.slice(0, 8)} succeeded (chain_length=${chainLength})`);
+    try {
+        const reattachPayload = { ticket: ticketId, sha: tip, prev_head: prevHead, chain_length: chainLength, ts: new Date().toISOString() };
+        writeActivityEntry(statePath, { event: 'orphan_commit_reattached', ...reattachPayload });
+    }
+    catch { /* best-effort telemetry */ }
+    return { recovered: true, candidateSha: tip };
+}
+/**
+ * R-CXOR-1 / e56ed23f: detect and recover from a worker HEAD regression.
  *
  * A codex worker may commit real work then `git reset --hard` to the pre-ticket
  * baseline on gate failure, leaving the ticket frontmatter Done but HEAD frozen.
- * This function detects that case and attempts ff-only reattachment of the orphaned
- * tip via the ticket's completion_commit SHA.  Falls back to marking the ticket
- * Failed so the pipeline never accepts Done at baseline.
+ * This function detects that case and resolves the orphan chain TIP via:
+ *   1. Ticket frontmatter completion_commit (authoritative, not window-filtered)
+ *   2. `git fsck --no-reflogs` discovery scoped to the iteration window + allowed_paths
+ * Then `git merge --ff-only` reattaches HEAD to the chain tip. On divergence or
+ * ambiguity it emits `orphan_commit_unreattachable` and routes through the
+ * 7eb9fa20 hold path (operator-hold) — it NEVER rewrites history (no `git reset`,
+ * no `--force`). The hold path SUPPRESSES the Failed flip whenever there is
+ * salvage evidence (fresh artifacts or a ticket-scoped commit) → `flip_suppressed`
+ * / `suppression_cap_escalate`; only an evidence-absent, undiscoverable orphan
+ * falls through to `marked_failed` (a non-destructive frontmatter write).
+ * Success → `orphan_commit_reattached` with chain_length.
+ * Divergent/ambiguous/undiscovered → `orphan_commit_unreattachable`, then hold.
  */
 export function detectAndRecoverHeadRegression(input) {
     const { ticketId, workingDir, startCommit, completionCommitSha, sessionDir, statePath, iteration, log } = input;
@@ -1759,24 +1911,31 @@ export function detectAndRecoverHeadRegression(input) {
         return { detected: false, recovered: false, action: 'none' };
     }
     log(`[head-regression] ticket ${ticketId} iter=${iteration}: HEAD=${currentHead} at/below start_commit=${startCommit}`);
-    let recovered = false;
+    // The regressed HEAD before any recovery — base for chain_length and the
+    // prev_head field of both orphan events.
+    const prevHead = currentHead;
     let action = 'marked_failed';
-    if (completionCommitSha) {
-        const verifyR = spawnSync('git', ['-C', workingDir, 'cat-file', '-t', completionCommitSha], { encoding: 'utf-8', timeout: 5000 });
-        if (verifyR.status === 0 && (verifyR.stdout || '').trim() === 'commit') {
-            const mergeR = spawnSync('git', ['-C', workingDir, 'merge', '--ff-only', completionCommitSha], { encoding: 'utf-8', timeout: 15000 });
-            if (mergeR.status === 0) {
-                recovered = true;
-                action = 'ff_reattached';
-                log(`[head-regression] ff-only reattach to ${completionCommitSha} succeeded`);
-            }
-            else {
-                log(`[head-regression] ff-only reattach failed: ${(mergeR.stderr || '').trim()}`);
-            }
+    // --- e56ed23f: SHA precedence + chain-tip resolution + ff-only reattach ---
+    const reattach = attemptOrphanChainReattach({ ticketId, workingDir, sessionDir, statePath, completionCommitSha, prevHead, iterationStartMs: input.iterationStartMs, log });
+    const recovered = reattach.recovered;
+    // Best-known SHA (reattached tip or unverifiable candidate) for telemetry.
+    const candidateSha = reattach.candidateSha;
+    if (recovered)
+        action = 'ff_reattached';
+    // Divergent / ambiguous / undiscovered non-reattach with a known candidate →
+    // emit orphan_commit_unreattachable BEFORE routing to the hold path.
+    if (!recovered && candidateSha) {
+        try {
+            writeActivityEntry(statePath, {
+                event: 'orphan_commit_unreattachable',
+                ts: new Date().toISOString(),
+                ticket: ticketId,
+                sha: candidateSha,
+                prev_head: prevHead,
+                reason: 'divergent_or_ambiguous',
+            });
         }
-        else {
-            log(`[head-regression] orphan SHA ${completionCommitSha} not accessible as commit`);
-        }
+        catch { /* best-effort telemetry */ }
     }
     if (!recovered) {
         // 7eb9fa20: evidence-backed flip-intents are suppressed (held) instead of
@@ -1822,7 +1981,7 @@ export function detectAndRecoverHeadRegression(input) {
             gate_payload: {
                 start_commit: startCommit,
                 current_head_sha: currentHead,
-                orphan_tip_sha: completionCommitSha,
+                orphan_tip_sha: candidateSha ?? completionCommitSha,
                 action,
             },
         });
@@ -5093,8 +5252,12 @@ export function applySilentDeathRecoveryPolicy(input) {
 // ---------------------------------------------------------------------------
 // Ticket 7eb9fa20 (H4) — Failed-flip evidence suppression with bounded
 // non-runnable hold. ONE shared policy guards the three real Failed-flip
-// callsites: (1) detectAndRecoverHeadRegression `marked_failed`, (2) the
-// R-WMW-5 wmw-auto-skip flip, (3) spawn-morty's gate-fail reset+flip
+// callsites: (1) detectAndRecoverHeadRegression's evidence-absent fallback
+// (e56ed23f: the head-regression DIVERGENCE/ambiguous/undiscovered path now
+// first emits `orphan_commit_unreattachable` and routes here to the hold path;
+// it NEVER rewrites history — no `git reset`, no `--force`; `marked_failed` is
+// reachable only when this shared policy returns `proceed` with NO evidence),
+// (2) the R-WMW-5 wmw-auto-skip flip, (3) spawn-morty's gate-fail reset+flip
 // (spawn-morty imports `evaluateFailedFlipSuppression` from this module —
 // runtime-only usage, so the existing mux-runner→spawn-morty import of
 // `resolveCodexModel` does not create an ESM evaluation-order hazard).

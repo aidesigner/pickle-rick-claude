@@ -157,6 +157,11 @@ test('R-CXOR-3: codex-spawn-shaped git reset --hard is detected and recovered �
   makeTicketFile(sessionDir, ticketId, 'Done', completionCommit);
   const statePath = makeStatePath(sessionDir);
 
+  // e56ed23f: capture the reachable-object count before recovery. ff-only and
+  // the hold path may only ADVANCE HEAD or no-op — neither may rewrite history,
+  // so the count of all commit objects must never decrease.
+  const objCountBefore = execFileSync('git', ['rev-list', '--all', '--count'], { cwd: repoDir, encoding: 'utf-8' }).trim();
+
   // The post-iteration audit (R-CXOR-1) is the authoritative guard for codex workers
   const result = detectAndRecoverHeadRegression({
     ticketId,
@@ -172,22 +177,34 @@ test('R-CXOR-3: codex-spawn-shaped git reset --hard is detected and recovered �
   // Must detect the regression
   assert.equal(result.detected, true, 'post-iteration audit must detect the HEAD regression');
 
-  // No silent orphan: either reattached OR ticket marked Failed
+  // No silent orphan: reattached OR held (e56ed23f added flip_suppressed /
+  // suppression_cap_escalate as hold outcomes; marked_failed survives only on
+  // the evidence-absent branch).
   assert.ok(
-    result.action === 'ff_reattached' || result.action === 'marked_failed',
-    `action must be ff_reattached or marked_failed, got: ${result.action}`,
+    result.action === 'ff_reattached'
+      || result.action === 'flip_suppressed'
+      || result.action === 'suppression_cap_escalate'
+      || result.action === 'marked_failed',
+    `action must be ff_reattached or a hold variant, got: ${result.action}`,
+  );
+
+  // History is NEVER rewritten — the reachable-object count must not decrease.
+  const objCountAfter = execFileSync('git', ['rev-list', '--all', '--count'], { cwd: repoDir, encoding: 'utf-8' }).trim();
+  assert.ok(
+    Number(objCountAfter) >= Number(objCountBefore),
+    `history must not be rewritten: object count ${objCountBefore} -> ${objCountAfter}`,
   );
 
   if (result.action === 'ff_reattached') {
     assert.equal(result.recovered, true, 'ff-reattach must succeed when SHA is valid');
     assert.equal(headSha(repoDir), completionCommit, 'HEAD must advance to completion commit after reattach');
   } else {
-    // Ticket marked Failed — no silent Done-at-baseline
+    // Held — ticket must not be Done-at-baseline; status preserved or Failed
     const ticketPath = path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
     const content = fs.readFileSync(ticketPath, 'utf-8');
     assert.ok(
-      content.includes('status: "Failed"') || content.includes("status: 'Failed'"),
-      'ticket must be marked Failed when reattach not possible',
+      !content.includes('status: "Done"') && !content.includes("status: 'Done'"),
+      'ticket must not remain Done-at-baseline when reattach not possible',
     );
   }
 
