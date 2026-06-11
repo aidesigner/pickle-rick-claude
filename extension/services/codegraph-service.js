@@ -1,0 +1,328 @@
+import * as fs from 'fs';
+import { logActivity } from './activity-logger.js';
+const KILL_SWITCH_ENV = 'PICKLE_CODEGRAPH';
+const KILL_SWITCH_VALUE = 'off';
+function classifyError(message) {
+    const m = message.toLowerCase();
+    if (m.includes('database is locked'))
+        return 'locked';
+    if (m.includes('not a database') || m.includes('malformed') || m.includes('corrupt'))
+        return 'corrupt';
+    if (m.includes('schema') || m.includes('migration') || m.includes('version'))
+        return 'schema_skew';
+    return 'error';
+}
+function errMessage(err) {
+    return err instanceof Error ? err.message : String(err);
+}
+/** Lazy-load the upstream default bag (CJS dynamic re-export — must default-import). */
+async function loadCodegraphBag() {
+    const mod = (await import('@colbymchenry/codegraph'));
+    const bag = mod.default ?? mod;
+    return bag;
+}
+/**
+ * Fail-open wrapper around `@colbymchenry/codegraph`. Never throws to callers,
+ * never loads the dependency when killed, races async ops against settings
+ * timeouts, classifies failures, quarantines+rebuilds-once on corruption, and
+ * latches the session disabled when the index is unrecoverable.
+ */
+export class CodegraphService {
+    workingDir;
+    settings;
+    deps;
+    killSwitch;
+    impl = null;
+    loadFailed = false;
+    loadDegradeEmitted = false;
+    latched = false;
+    rebuildAttempted = false;
+    counters = { ops: 0, degraded: 0, latched: 0 };
+    constructor(workingDir, settings, deps) {
+        this.workingDir = workingDir;
+        this.settings = settings;
+        this.deps = deps;
+        const env = deps.env ?? process.env;
+        this.killSwitch = env[KILL_SWITCH_ENV] === KILL_SWITCH_VALUE;
+        if (deps.impl)
+            this.impl = deps.impl;
+    }
+    static create(workingDir, settings, deps = {}) {
+        return new CodegraphService(workingDir, settings, deps);
+    }
+    getSessionCounters() {
+        return { ...this.counters };
+    }
+    /** True while the instance answers every call with null and emits nothing. */
+    get inert() {
+        return this.killSwitch || this.latched;
+    }
+    close() {
+        // Sync per inventory. Never load the dependency just to close it.
+        if (this.killSwitch || !this.impl)
+            return;
+        try {
+            this.impl.close();
+        }
+        catch {
+            // Releasing resources must never throw to the caller.
+        }
+        this.impl = null;
+    }
+    async indexAll() {
+        const impl = await this.beginOp();
+        if (!impl)
+            return null;
+        const result = await this.runWithTimeout('indexAll', this.settings.index_timeout_ms, () => impl.indexAll());
+        if (result.ok)
+            this.emit({ event: 'codegraph_index_built', ts: this.now(), operation: 'indexAll' });
+        return result.ok ? result.value : null;
+    }
+    async sync() {
+        const impl = await this.beginOp();
+        if (!impl)
+            return null;
+        const result = await this.runWithTimeout('sync', this.settings.sync_timeout_ms, () => impl.sync());
+        if (result.ok)
+            this.emit({ event: 'codegraph_sync_completed', ts: this.now(), operation: 'sync' });
+        return result.ok ? result.value : null;
+    }
+    async buildContext(task) {
+        const impl = await this.beginOp();
+        if (!impl)
+            return null;
+        const result = await this.runWithTimeout('buildContext', this.settings.query_timeout_ms, () => impl.buildContext(task));
+        return result.ok ? result.value : null;
+    }
+    searchNodes(query) {
+        // SYNC impl (inventory) — no timeout race; query_timeout_ms claim is forfeit.
+        return this.runSyncQuery('searchNodes', (impl) => impl.searchNodes(query));
+    }
+    getCallers(nodeId) {
+        // SYNC impl (inventory) — "do NOT await in C1"; no timeout race.
+        return this.runSyncQuery('getCallers', (impl) => impl.getCallers(nodeId));
+    }
+    getImpactRadius(nodeId) {
+        // SYNC impl (inventory) — no timeout race.
+        return this.runSyncQuery('getImpactRadius', (impl) => impl.getImpactRadius(nodeId));
+    }
+    // --- internals -----------------------------------------------------------
+    now() {
+        return this.deps.now ? this.deps.now() : new Date().toISOString();
+    }
+    emit(event) {
+        try {
+            if (this.deps.emit) {
+                this.deps.emit(event);
+                return;
+            }
+            defaultEmit(event);
+        }
+        catch {
+            // Telemetry must never break the caller.
+        }
+    }
+    /** Gate the op (inert short-circuit), resolve the impl, and count a live op. */
+    async beginOp() {
+        if (this.inert)
+            return null;
+        const impl = await this.resolveImpl();
+        if (!impl) {
+            // Dependency unavailable while enabled = a degraded op, not a crash.
+            // Emit ONCE — a persistently absent dependency must not spam one degrade
+            // per call for the rest of the session.
+            if (!this.loadDegradeEmitted) {
+                this.loadDegradeEmitted = true;
+                this.degrade('load', 'error');
+            }
+            return null;
+        }
+        this.counters.ops += 1;
+        return impl;
+    }
+    async runSyncQuery(op, call) {
+        const impl = await this.beginOp();
+        if (!impl)
+            return null;
+        try {
+            return call(impl);
+        }
+        catch (err) {
+            await this.handleError(op, err);
+            return null;
+        }
+    }
+    async resolveImpl() {
+        if (this.killSwitch)
+            return null;
+        if (this.impl)
+            return this.impl;
+        if (this.loadFailed)
+            return null;
+        try {
+            const loaded = this.deps.loadImpl ? await this.deps.loadImpl() : await defaultLoadImpl(this.workingDir);
+            if (!loaded) {
+                this.loadFailed = true;
+                return null;
+            }
+            this.impl = loaded;
+            return loaded;
+        }
+        catch {
+            this.loadFailed = true;
+            return null;
+        }
+    }
+    /**
+     * Race an async op against `timeoutMs`. The `done` latch guarantees EXACTLY ONE
+     * terminal outcome: timeout-degrade, success, or error-degrade. A timed-out op is
+     * orphaned — its later settle hits the `done` guard and is swallowed (no second
+     * event, no unhandledRejection because both handlers are attached up front).
+     */
+    runWithTimeout(op, timeoutMs, start) {
+        return new Promise((resolve) => {
+            let done = false;
+            const timer = setTimeout(() => {
+                if (done)
+                    return;
+                done = true;
+                this.degrade(op, 'timeout');
+                resolve({ ok: false });
+            }, timeoutMs);
+            if (typeof timer.unref === 'function')
+                timer.unref();
+            let work;
+            try {
+                work = Promise.resolve(start());
+            }
+            catch (err) {
+                // Synchronous throw from the op factory.
+                if (!done) {
+                    done = true;
+                    clearTimeout(timer);
+                    void this.handleError(op, err).then(() => resolve({ ok: false }));
+                }
+                return;
+            }
+            work.then((value) => {
+                if (done)
+                    return;
+                done = true;
+                clearTimeout(timer);
+                resolve({ ok: true, value });
+            }, (err) => {
+                if (done)
+                    return; // orphan rejected after timeout — swallow
+                done = true;
+                clearTimeout(timer);
+                void this.handleError(op, err).then(() => resolve({ ok: false }));
+            });
+        });
+    }
+    degrade(op, reason) {
+        this.counters.degraded += 1;
+        this.emit({ event: 'codegraph_degraded', ts: this.now(), operation: op, reason });
+    }
+    async handleError(op, err) {
+        const reason = classifyError(errMessage(err));
+        this.degrade(op, reason);
+        if (reason === 'corrupt')
+            await this.onCorrupt();
+    }
+    /** Quarantine + rebuild ONCE under a file lock; a second corrupt or a failed rebuild latches. */
+    async onCorrupt() {
+        if (this.rebuildAttempted) {
+            this.latch(); // second corrupt after a successful rebuild
+            return;
+        }
+        this.rebuildAttempted = true;
+        try {
+            const rebuilt = await this.withFileLock(async () => {
+                this.quarantine(this.dbPath());
+                return this.rebuild();
+            });
+            if (!rebuilt) {
+                this.latch();
+                return;
+            }
+            this.impl = rebuilt;
+        }
+        catch {
+            this.latch();
+        }
+    }
+    /** Session-sticky disable. Emits exactly one terminal event, then stays inert. */
+    latch() {
+        if (this.latched)
+            return;
+        this.latched = true;
+        this.counters.latched = 1;
+        this.impl = null;
+        this.emit({ event: 'codegraph_degraded', ts: this.now(), operation: 'latch', reason: 'error' });
+    }
+    quarantine(dbPath) {
+        if (this.deps.quarantine) {
+            this.deps.quarantine(dbPath);
+            return;
+        }
+        fs.renameSync(dbPath, `${dbPath}.corrupt-${Date.now()}`);
+    }
+    async rebuild() {
+        if (this.deps.rebuild)
+            return this.deps.rebuild();
+        return defaultLoadImpl(this.workingDir);
+    }
+    async withFileLock(fn) {
+        if (this.deps.withFileLock)
+            return this.deps.withFileLock(fn);
+        return defaultWithFileLock(this.dbPath(), fn);
+    }
+    dbPath() {
+        // Conventional path from the inventory (`.codegraph/codegraph.db`); the
+        // injected `dbPath` wins so production can pass `getDatabasePath(workingDir)`.
+        return this.deps.dbPath ?? `${this.workingDir}/.codegraph/codegraph.db`;
+    }
+}
+/** Default lazy loader: open an existing graph, falling back to init. */
+async function defaultLoadImpl(workingDir) {
+    const bag = await loadCodegraphBag();
+    const CodeGraph = bag.CodeGraph;
+    if (!CodeGraph)
+        return null;
+    const graph = CodeGraph.open ? await CodeGraph.open(workingDir) : await CodeGraph.init?.(workingDir);
+    return (graph ?? null);
+}
+/** Default file-lock wrapper using upstream `FileLock`. */
+async function defaultWithFileLock(dbPath, fn) {
+    const bag = await loadCodegraphBag();
+    const FileLock = bag.FileLock;
+    if (!FileLock)
+        return fn();
+    const lock = new FileLock(`${dbPath}.lock`);
+    await lock.acquire();
+    try {
+        return await fn();
+    }
+    finally {
+        await lock.release();
+    }
+}
+/** Default event sink: best-effort `logActivity`, mapped to the schema shape. */
+function defaultEmit(event) {
+    const payload = {
+        event: event.event,
+        source: 'pickle',
+        ts: event.ts,
+    };
+    if (event.reason)
+        payload.reason = event.reason;
+    if (event.error)
+        payload.error = event.error;
+    if (event.operation || event.gate_payload) {
+        payload.gate_payload = {
+            ...(event.operation ? { operation: event.operation } : {}),
+            ...(event.gate_payload ?? {}),
+        };
+    }
+    logActivity(payload);
+}
