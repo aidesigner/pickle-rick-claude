@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { StringDecoder } from 'string_decoder';
-import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent, type PickleSettings, type Backend, type HardeningSettings } from '../types/index.js';
+import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent, type PickleSettings, type Backend, type HardeningSettings, type CodegraphSettings } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
@@ -772,6 +772,54 @@ export function resolveHardeningSettings(bag: PickleSettings | null | undefined)
   if (typeof suppressionCap === 'number' && Number.isInteger(suppressionCap) && suppressionCap >= 0) {
     settings.failed_flip_suppression_cap = suppressionCap;
   }
+  return settings;
+}
+
+function parseSettingBool(v: unknown): boolean | undefined {
+  return typeof v === 'boolean' ? v : undefined;
+}
+
+function parseSettingIntFloor(v: unknown, floor: number): number | undefined {
+  if (typeof v !== 'number' || !Number.isFinite(v) || !Number.isInteger(v)) return undefined;
+  return Math.max(floor, v);
+}
+
+function parseSettingIntClamp(v: unknown, floor: number, ceiling: number): number | undefined {
+  if (typeof v !== 'number' || !Number.isFinite(v) || !Number.isInteger(v)) return undefined;
+  return Math.max(floor, Math.min(ceiling, v));
+}
+
+export function resolveCodegraphSettings(bag: unknown): CodegraphSettings {
+  const settings: CodegraphSettings = {
+    enabled: false,
+    index_at_setup: false,
+    staleness_max_age_minutes: 30,
+    context_max_bytes: 8192,
+    expose_mcp_to_workers: false,
+    index_timeout_ms: 120000,
+    sync_timeout_ms: 30000,
+    query_timeout_ms: 5000,
+  };
+  if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return settings;
+  const block = (bag as Record<string, unknown>).codegraph;
+  if (!block || typeof block !== 'object' || Array.isArray(block)) return settings;
+  const b = block as Record<string, unknown>;
+  const enabled = parseSettingBool(b.enabled);
+  if (enabled !== undefined) settings.enabled = enabled;
+  const indexAtSetup = parseSettingBool(b.index_at_setup);
+  if (indexAtSetup !== undefined) settings.index_at_setup = indexAtSetup;
+  const exposeMcp = parseSettingBool(b.expose_mcp_to_workers);
+  if (exposeMcp !== undefined) settings.expose_mcp_to_workers = exposeMcp;
+  const staleness = parseSettingIntFloor(b.staleness_max_age_minutes, 1);
+  if (staleness !== undefined) settings.staleness_max_age_minutes = staleness;
+  const ctxBytes = parseSettingIntClamp(b.context_max_bytes, 1024, 65536);
+  if (ctxBytes !== undefined) settings.context_max_bytes = ctxBytes;
+  const indexMs = parseSettingIntFloor(b.index_timeout_ms, 5000);
+  if (indexMs !== undefined) settings.index_timeout_ms = indexMs;
+  const syncMs = parseSettingIntFloor(b.sync_timeout_ms, 1000);
+  if (syncMs !== undefined) settings.sync_timeout_ms = syncMs;
+  const queryMs = parseSettingIntFloor(b.query_timeout_ms, 500);
+  if (queryMs !== undefined) settings.query_timeout_ms = queryMs;
   return settings;
 }
 

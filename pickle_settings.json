@@ -1,7 +1,15 @@
 {
   "schema_version": 2,
-  "gitnexus_pinned_version": "1.6.5",
-  "enable_graph_preflight": true,
+  "codegraph": {
+    "enabled": false,
+    "index_at_setup": false,
+    "index_timeout_ms": 120000,
+    "sync_timeout_ms": 30000,
+    "query_timeout_ms": 5000,
+    "staleness_max_age_minutes": 30,
+    "context_max_bytes": 8192,
+    "expose_mcp_to_workers": false
+  },
   "microverse": {
     "judge_backend": "claude",
     "judge_backend_fallback": "codex",

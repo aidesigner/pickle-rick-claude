@@ -208,6 +208,17 @@ export interface HardeningSettings {
   failed_flip_suppression_cap: number;
 }
 
+export interface CodegraphSettings {
+  enabled: boolean;
+  index_at_setup: boolean;
+  staleness_max_age_minutes: number;
+  context_max_bytes: number;
+  expose_mcp_to_workers: boolean;
+  index_timeout_ms: number;
+  sync_timeout_ms: number;
+  query_timeout_ms: number;
+}
+
 /**
  * Threshold for consecutive false EPIC_COMPLETED emissions on the same ticket
  * before mux-runner gives up and exits with MANAGER_PERSISTENT_HALLUCINATION.
@@ -1016,6 +1027,8 @@ export interface PickleSettings {
   worker_mcp_snapshot_servers?: string[];
   /** Ticket 90574654: additive runtime-recovery hardening block (see HardeningSettings). */
   hardening?: { silent_death_respawn_cap?: number } | null;
+  /** C2: codegraph integration settings block (see CodegraphSettings). */
+  codegraph?: CodegraphSettings;
   [key: string]: unknown;
 }
 
