@@ -158,6 +158,13 @@ describe('R-WUWC Case A — HARD: untracked files, research APPROVED, no complet
     // Research artifacts: *.md + research_review.md ending in APPROVED
     fs.writeFileSync(path.join(ticketDir, 'research_2026-05-23.md'), '# Research\n\nFindings.\n');
     fs.writeFileSync(path.join(ticketDir, 'research_review.md'), '# Research Review\n\nAPPROVED');
+    // 90574654: a NONZERO worker log without the terminal promise token keeps this
+    // exit in the log_truncated sub-class, so AC-WUWC-04's worker_partial_lifecycle_exit
+    // assertion stays on the legacy event (0-byte/absent logs now emit worker_silent_death).
+    fs.writeFileSync(
+      path.join(ticketDir, 'worker_session_31337.log'),
+      'worker output truncated mid-lifecycle — no terminal token\n',
+    );
 
     // ≥2 synthetic source files (>100 LOC combined) — these represent the worker's
     // untracked work that was lost when the ticket flipped to Failed without a commit.

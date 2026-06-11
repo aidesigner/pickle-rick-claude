@@ -173,6 +173,29 @@ export interface RecoveryAttempt {
   outcome: 'success' | 'failed';
   reason: string;
   iteration: number;
+  /**
+   * Ticket 90574654 (additive, schema-neutral): the ticket the attempt was made
+   * for. Stamped by the silent-death respawn policy so its per-ticket cap can be
+   * counted from the persisted ledger; absent on pre-existing ladder entries.
+   */
+  ticket?: string;
+}
+
+/**
+ * Ticket 90574654 — runtime-recovery hardening knobs resolved from the additive
+ * `hardening:` block in `pickle_settings.json` (DISTINCT from `bmad_hardening`).
+ * Resolver: `resolveHardeningSettings(bag)` in `services/pickle-utils.ts` —
+ * absent/partial/malformed input falls back to compiled defaults per field.
+ */
+export interface HardeningSettings {
+  /**
+   * ONE shared respawn budget across both silent-death sub-classes
+   * (`log_empty` and `log_truncated`). Drawn down via the persistent
+   * `state.recovery_attempts` ledger (strategy `silent_death_respawn`) so the
+   * cap survives relaunch and `setup.js --resume`. `0` disables respawns.
+   * Compiled default: 1.
+   */
+  silent_death_respawn_cap: number;
 }
 
 /**
@@ -981,6 +1004,8 @@ export interface PickleSettings {
   worker_test_gate_timeout_ms?: number;
   worker_mcp_config_path?: string | null;
   worker_mcp_snapshot_servers?: string[];
+  /** Ticket 90574654: additive runtime-recovery hardening block (see HardeningSettings). */
+  hardening?: { silent_death_respawn_cap?: number } | null;
   [key: string]: unknown;
 }
 

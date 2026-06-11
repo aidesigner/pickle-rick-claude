@@ -590,6 +590,29 @@ export function loadPickleSettingsBag(extensionRoot = getExtensionRoot()) {
         return null;
     }
 }
+/** Compiled default for `hardening.silent_death_respawn_cap` (ticket 90574654). */
+export const DEFAULT_SILENT_DEATH_RESPAWN_CAP = 1;
+/**
+ * Ticket 90574654 — resolve the additive `hardening:` settings block (DISTINCT
+ * from `bmad_hardening`). Doctrine mirrors `loadRefinementSettings`
+ * (spawn-refinement-team.ts): start from compiled defaults; an absent, partial,
+ * or malformed bag/block/field never throws and falls back per field.
+ * `silent_death_respawn_cap` accepts non-negative integers only — `0` disables
+ * silent-death respawns entirely.
+ */
+export function resolveHardeningSettings(bag) {
+    const settings = { silent_death_respawn_cap: DEFAULT_SILENT_DEATH_RESPAWN_CAP };
+    if (!bag || typeof bag !== 'object')
+        return settings;
+    const block = bag.hardening;
+    if (!block || typeof block !== 'object' || Array.isArray(block))
+        return settings;
+    const cap = block.silent_death_respawn_cap;
+    if (typeof cap === 'number' && Number.isInteger(cap) && cap >= 0) {
+        settings.silent_death_respawn_cap = cap;
+    }
+    return settings;
+}
 export function resolveWorkerTestGateTimeoutMs(extensionRoot = getExtensionRoot(), settings, env = process.env) {
     // Env override wins. Parse strict int, clamp to >= WORKER_TEST_GATE_TIMEOUT_FLOOR_MS,
     // fall back to settings/default on parse failure or sub-floor value.

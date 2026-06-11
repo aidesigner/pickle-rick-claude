@@ -79,6 +79,10 @@
       "drift_threshold_pct": 5
     }
   },
+  "_hardening_doc": "90574654: runtime-recovery hardening knobs (DISTINCT from bmad_hardening). silent_death_respawn_cap is the ONE shared respawn budget across both silent-death sub-classes (log_empty/log_truncated), persisted via state.recovery_attempts so it survives relaunch/--resume; 0 disables respawn; absent/malformed falls back to compiled default 1.",
+  "hardening": {
+    "silent_death_respawn_cap": 1
+  },
   "commit_pending_probe_threshold": 2,
   "convergence_gate": {
     "commands": {},

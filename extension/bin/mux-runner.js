@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, TIER_LIFECYCLE, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, resolveCommandTemplate } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, TIER_LIFECYCLE, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, resolveCommandTemplate, loadPickleSettingsBag, resolveHardeningSettings } from '../services/pickle-utils.js';
 import { findMissingPrefixes, requiredTierArtifactPrefixes } from '../services/artifact-validation.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
@@ -16,7 +16,7 @@ import { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
 import { emitCrossTicketRegressionLinearComment } from '../lib/linear-comment.js';
 import { evaluateManagerRelaunch, recordManagerRelaunch, } from '../services/manager-relaunch.js';
-import { getHeadBranch, updateTicketFrontmatter, isWorkingTreeDirty, listWorkingTreeDirtyPaths } from '../services/git-utils.js';
+import { getHeadBranch, updateTicketFrontmatter, isWorkingTreeDirty, listWorkingTreeDirtyPaths, archiveBeforeDestructive, ArchiveAbortError } from '../services/git-utils.js';
 import { runRecoveryLadder, parsePlanPhases, executePhaseLoop, isConvergedPlanEligible } from '../services/recovery-controller.js';
 import { detectArtifactProgress, resolveNoProgressWindowSeconds } from '../services/artifact-progress-detector.js';
 import { readEvidence, persistEvidence, gateForPhantomDoneRevert } from '../services/ticket-completion-evidence.js';
@@ -4732,6 +4732,66 @@ export function recordWorkerArtifactProgress(statePath, sessionDir, ticketId, be
         fired,
     };
 }
+/** Worker terminal completion signal (promise-tokens.ts WORKER_DONE). */
+const WORKER_TERMINAL_PROMISE_RE = /<promise>\s*I AM DONE\s*<\/promise>/;
+const SILENT_DEATH_GIT_TIMEOUT_MS = 10_000;
+const LIFECYCLE_ARTIFACT_RE = /^(research|plan|conformance|code_review).*\.md$/;
+const SILENT_DEATH_RESPAWN_STRATEGY = 'silent_death_respawn';
+/**
+ * Sub-classify the worker exit by its session log(s). The LATEST
+ * `worker_session_<pid>.log` (mtime, filename tiebreak) decides the sub-class:
+ * absent or 0-byte → `log_empty`; nonzero without the terminal promise token →
+ * `log_truncated`; nonzero WITH the token → graceful (`null`).
+ * `sessionLogSize` stays the SUM across all logs (existing payload semantics).
+ */
+function classifyWorkerSessionLogs(ticketDir, files) {
+    const logs = [];
+    let sessionLogSize = 0;
+    for (const file of files) {
+        if (!/^worker_session_\d+\.log$/.test(file))
+            continue;
+        try {
+            const st = fs.statSync(path.join(ticketDir, file));
+            sessionLogSize += st.size;
+            logs.push({ file, size: st.size, mtimeMs: st.mtimeMs });
+        }
+        catch { /* ignore unreadable log */ }
+    }
+    logs.sort((a, b) => (a.mtimeMs - b.mtimeMs) || a.file.localeCompare(b.file));
+    const latest = logs.length > 0 ? logs[logs.length - 1] : null;
+    if (!latest) {
+        return { subClass: 'log_empty', sessionLogSize, logPath: path.join(ticketDir, 'worker_session_absent.log'), pid: null };
+    }
+    const pidMatch = latest.file.match(/^worker_session_(\d+)\.log$/);
+    const pid = pidMatch ? Number(pidMatch[1]) : null;
+    const logPath = path.join(ticketDir, latest.file);
+    if (latest.size === 0)
+        return { subClass: 'log_empty', sessionLogSize, logPath, pid };
+    let content = '';
+    try {
+        content = fs.readFileSync(logPath, 'utf-8');
+    }
+    catch { /* unreadable nonzero log → treat as truncated */ }
+    return { subClass: WORKER_TERMINAL_PROMISE_RE.test(content) ? null : 'log_truncated', sessionLogSize, logPath, pid };
+}
+/**
+ * Count successful silent-death respawns already drawn from the shared cap for
+ * THIS ticket (persisted ledger — survives relaunch and `setup.js --resume`).
+ * The cap is shared across both sub-classes (log_empty + log_truncated) but
+ * scoped per ticket, mirroring `worker_artifact_progress` keying: ticket B's
+ * silent death must not be charged against ticket A's budget.
+ */
+function countSilentDeathRespawns(statePath, ticketId) {
+    try {
+        const s = readRecoverableJsonObject(statePath);
+        if (!s || !Array.isArray(s.recovery_attempts))
+            return 0;
+        return s.recovery_attempts.filter((a) => a && a.strategy === SILENT_DEATH_RESPAWN_STRATEGY && a.outcome === 'success' && a.ticket === ticketId).length;
+    }
+    catch {
+        return 0;
+    }
+}
 /**
  * R-WSE-2 / R-PIAP-A4: Emit worker_partial_lifecycle_exit when a worker exits
  * mid-lifecycle leaving required artifacts missing. The required set is derived
@@ -4743,6 +4803,14 @@ export function recordWorkerArtifactProgress(statePath, sessionDir, ticketId, be
  * "research APPROVED" precondition (don't flag a worker still iterating on
  * research). Tiers without research (trivial/small) instead require at least one
  * gated artifact to be present so a not-started worker is never flagged.
+ *
+ * 90574654 delta: the exit is sub-classified by worker session log. `log_empty`
+ * (0-byte/absent log) emits the NEW `worker_silent_death` event instead;
+ * `log_truncated` and graceful exits keep the EXISTING event. Exactly ONE event
+ * fires per exit — the two events are mutually exclusive by construction. The
+ * classification is returned so the caller can route silent-death shapes into
+ * `applySilentDeathRecoveryPolicy`. Returns `null` when no partial-lifecycle
+ * exit was detected (no event emitted).
  */
 export function checkPartialLifecycleExit(sessionDir, statePath, ticketId) {
     const ticketDir = path.join(sessionDir, ticketId);
@@ -4751,7 +4819,7 @@ export function checkPartialLifecycleExit(sessionDir, statePath, ticketId) {
         files = fs.readdirSync(ticketDir);
     }
     catch {
-        return;
+        return null;
     }
     let tier = 'medium';
     try {
@@ -4762,40 +4830,225 @@ export function checkPartialLifecycleExit(sessionDir, statePath, ticketId) {
     const artifactsMissing = findMissingPrefixes(files, requiredPrefixes);
     if (TIER_LIFECYCLE[tier].includes('research_review')) {
         if (!files.includes('research_review.md'))
-            return;
+            return null;
         let reviewContent;
         try {
             reviewContent = fs.readFileSync(path.join(ticketDir, 'research_review.md'), 'utf-8');
         }
         catch {
-            return;
+            return null;
         }
         if (!reviewContent.trimEnd().endsWith('APPROVED'))
-            return;
+            return null;
     }
     else if (artifactsMissing.length === requiredPrefixes.length) {
         // No research gate (trivial/small): require ≥1 gated artifact present as
         // progress evidence so a not-started worker is never flagged.
-        return;
+        return null;
     }
     if (artifactsMissing.length === 0)
-        return;
-    let sessionLogSize = 0;
-    for (const file of files) {
-        if (/^worker_session_\d+\.log$/.test(file)) {
-            try {
-                sessionLogSize += fs.statSync(path.join(ticketDir, file)).size;
-            }
-            catch { /* ignore */ }
+        return null;
+    const { subClass, sessionLogSize, logPath, pid } = classifyWorkerSessionLogs(ticketDir, files);
+    if (subClass === 'log_empty') {
+        // 90574654: silent death — NEVER also the worker_partial_lifecycle_exit event.
+        writeActivityEntry(statePath, {
+            event: 'worker_silent_death',
+            ts: new Date().toISOString(),
+            ticket: ticketId,
+            pid,
+            log_path: logPath,
+            sub_class: 'log_empty',
+            respawn_attempt: countSilentDeathRespawns(statePath, ticketId),
+        });
+    }
+    else {
+        writeActivityEntry(statePath, {
+            event: 'worker_partial_lifecycle_exit',
+            ts: new Date().toISOString(),
+            source: 'pickle',
+            ticket: ticketId,
+            gate_payload: { artifacts_missing: artifactsMissing, session_log_size: sessionLogSize },
+        });
+    }
+    return { subClass, artifactsMissing, sessionLogSize, logPath, pid };
+}
+/** Best-effort git probe with a finite timeout (bin/ subsystem invariant #3). Returns null on any failure. */
+function silentDeathGit(args, cwd) {
+    try {
+        const r = spawnSync('git', args, {
+            cwd,
+            encoding: 'utf-8',
+            timeout: SILENT_DEATH_GIT_TIMEOUT_MS,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        if (r.error || r.status !== 0)
+            return null;
+        return (r.stdout || '').trim();
+    }
+    catch {
+        return null;
+    }
+}
+/** Read `allowed_paths` from the session-root scope.json; null when unscoped/unreadable. */
+function readScopeAllowedPaths(sessionDir) {
+    try {
+        const scope = readRecoverableJsonObject(path.join(sessionDir, 'scope.json'));
+        if (!scope || !Array.isArray(scope.allowed_paths))
+            return null;
+        return scope.allowed_paths.filter((p) => typeof p === 'string' && p.length > 0);
+    }
+    catch {
+        return null;
+    }
+}
+function isWithinAllowedPaths(file, allowed) {
+    return allowed.some((a) => {
+        const prefix = a.endsWith('/') ? a : `${a}/`;
+        return file === a || file.startsWith(prefix);
+    });
+}
+/** Salvage probe 1: ticket frontmatter carries an explicit completion sha (quoted forms accepted, R-CCQF parity). */
+function hasFrontmatterCompletionSha(sessionDir, ticketId) {
+    try {
+        const raw = fs.readFileSync(ticketFilePath(sessionDir, ticketId), 'utf-8');
+        for (const field of ['completion_commit', 'completion_commit_inferred']) {
+            const value = (readFrontmatterField(raw, field) ?? '').trim().replace(/^['"]+|['"]+$/g, '');
+            if (/^[0-9a-f]{7,40}$/i.test(value))
+                return true;
         }
     }
-    writeActivityEntry(statePath, {
-        event: 'worker_partial_lifecycle_exit',
-        ts: new Date().toISOString(),
-        source: 'pickle',
-        ticket: ticketId,
-        gate_payload: { artifacts_missing: artifactsMissing, session_log_size: sessionLogSize },
+    catch { /* missing/unreadable ticket file → no evidence */ }
+    return false;
+}
+/** Salvage probe 2: a commit landed in the iteration window touching only `allowed_paths` (unscoped session → any commit counts). */
+function hasScopedIterationWindowCommit(input) {
+    if (!input.preIterSha)
+        return false;
+    const head = silentDeathGit(['rev-parse', 'HEAD'], input.workingDir);
+    if (!head || head === input.preIterSha)
+        return false;
+    const diffOut = silentDeathGit(['diff', '--name-only', `${input.preIterSha}..HEAD`], input.workingDir);
+    if (diffOut === null)
+        return false;
+    const touched = diffOut.split('\n').map((s) => s.trim()).filter(Boolean);
+    if (touched.length === 0)
+        return false;
+    const allowed = readScopeAllowedPaths(input.sessionDir);
+    if (!allowed || allowed.length === 0)
+        return true;
+    return touched.every((f) => isWithinAllowedPaths(f, allowed));
+}
+/** Salvage probe 3: a lifecycle artifact was written inside the iteration window. */
+function hasFreshLifecycleArtifacts(input) {
+    if (typeof input.iterationStartMs !== 'number')
+        return false;
+    try {
+        const ticketDir = path.join(input.sessionDir, input.ticketId);
+        for (const file of fs.readdirSync(ticketDir)) {
+            if (!LIFECYCLE_ARTIFACT_RE.test(file))
+                continue;
+            try {
+                if (fs.statSync(path.join(ticketDir, file)).mtimeMs >= input.iterationStartMs)
+                    return true;
+            }
+            catch { /* ignore unstattable artifact */ }
+        }
+    }
+    catch { /* ticket dir unreadable → no evidence */ }
+    return false;
+}
+/** Append one silent-death entry to `state.recovery_attempts` (R-WMW-5 persistence pattern: state-backed, survives relaunch/--resume). */
+function appendSilentDeathAttempt(statePath, attempt) {
+    try {
+        sm.update(statePath, (s) => {
+            if (!Array.isArray(s.recovery_attempts))
+                s.recovery_attempts = [];
+            s.recovery_attempts.push(attempt);
+        });
+    }
+    catch { /* best-effort ledger append — never block recovery */ }
+}
+function detectSilentDeathAttributableWork(input) {
+    if (hasFrontmatterCompletionSha(input.sessionDir, input.ticketId))
+        return 'completion_commit';
+    if (hasScopedIterationWindowCommit(input))
+        return 'scoped_commit';
+    if (hasFreshLifecycleArtifacts(input))
+        return 'fresh_artifacts';
+    return null;
+}
+/**
+ * 90574654 — ONE shared recovery policy for both silent-death sub-classes,
+ * salvage FIRST:
+ *  (a) attributable work (frontmatter completion sha | iteration-window commit
+ *      touching only allowed_paths | fresh lifecycle artifacts) → `hold`: NO
+ *      respawn, no cap drawdown, ticket status untouched (H4 hold path —
+ *      ticket 7eb9fa20; until it lands, hold = suppress respawn only).
+ *  (b) dirty tree → `archiveBeforeDestructive` (reason `silent_death`,
+ *      `.codegraph/**` excluded via isCodegraphArtifact inside the helper).
+ *      `ArchiveAbortError` is fail-closed: respawn suppressed. Other archive
+ *      errors (e.g. non-repo workingDir) are fail-open per ticket contract.
+ *  (c) no attributable work → `respawn`, drawing down the ONE shared
+ *      `silent_death_respawn_cap` persisted in `state.recovery_attempts`
+ *      (strategy `silent_death_respawn`) so the budget survives relaunch and
+ *      `setup.js --resume`.
+ *  (d) cap exhausted → `halt` with the existing HALT-class `recovery_exhausted`.
+ *
+ * Never writes `worker_artifact_progress` (R-WMW-5 precedence) and never flips
+ * ticket status.
+ */
+export function applySilentDeathRecoveryPolicy(input) {
+    const cls = input.classification;
+    if (!cls || cls.subClass === null)
+        return { action: 'none' };
+    const subClass = cls.subClass;
+    const log = input.log ?? (() => { });
+    const evidence = detectSilentDeathAttributableWork(input);
+    if (evidence) {
+        log(`[silent-death] ${subClass} for ${input.ticketId}: attributable work (${evidence}) — hold, no respawn`);
+        return { action: 'hold', subClass, evidence };
+    }
+    try {
+        const archive = input.archive ?? archiveBeforeDestructive;
+        archive({
+            cwd: input.workingDir,
+            sessionDir: input.sessionDir,
+            ticketDir: path.join(input.sessionDir, input.ticketId),
+            reason: 'silent_death',
+        });
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (err instanceof ArchiveAbortError || (err instanceof Error && err.name === 'ArchiveAbortError')) {
+            log(`[silent-death] ${subClass} for ${input.ticketId}: pre-respawn archive failed (${msg}) — suppressing respawn (fail-closed)`);
+            return { action: 'hold', subClass, evidence: 'archive_failed' };
+        }
+        log(`[silent-death] dirty-tree archive probe failed for ${input.ticketId} (ignored): ${msg}`);
+    }
+    const settings = input.settings ?? resolveHardeningSettings(loadPickleSettingsBag());
+    const cap = settings.silent_death_respawn_cap;
+    const prior = countSilentDeathRespawns(input.statePath, input.ticketId);
+    if (prior < cap) {
+        const attempt = prior + 1;
+        appendSilentDeathAttempt(input.statePath, {
+            strategy: SILENT_DEATH_RESPAWN_STRATEGY,
+            outcome: 'success',
+            reason: `${subClass} respawn ${attempt}/${cap} for ${input.ticketId}`,
+            iteration: input.iteration,
+            ticket: input.ticketId,
+        });
+        log(`[silent-death] ${subClass} for ${input.ticketId}: no attributable work — respawn ${attempt}/${cap}`);
+        return { action: 'respawn', subClass, attempt, cap };
+    }
+    appendSilentDeathAttempt(input.statePath, {
+        strategy: SILENT_DEATH_RESPAWN_STRATEGY,
+        outcome: 'failed',
+        reason: `cap_exhausted (${prior}/${cap}) for ${input.ticketId} — falling through to no-progress halt`,
+        iteration: input.iteration,
+        ticket: input.ticketId,
     });
+    log(`[silent-death] ${subClass} for ${input.ticketId}: respawn cap ${cap} exhausted — halting`);
+    return { action: 'halt', subClass, exitReason: 'recovery_exhausted', cap };
 }
 /**
  * R-WSE-3: Emit a stderr breadcrumb when a ticket has status Failed
@@ -5822,6 +6075,8 @@ async function runMuxRunnerMain() {
         }
         const iterWorkingDir = state.working_dir || process.cwd();
         const preIterSha = readHeadCommit(iterWorkingDir);
+        // 90574654: iteration-window start — freshness base for silent-death salvage probes.
+        const iterStartMs = Date.now();
         // R-WSWA-2: snapshot the per-ticket review/conformance artifact count BEFORE the
         // worker spawn; the AFTER snapshot + delta persistence happen once it exits.
         const apTicketId = state.current_ticket || null;
@@ -5967,11 +6222,40 @@ async function runMuxRunnerMain() {
             continue;
         }
         // R-WSE-2: detect partial lifecycle exit (research-review APPROVED, downstream artifacts missing)
+        // 90574654: sub-classify the exit (log_empty → worker_silent_death |
+        // log_truncated → worker_partial_lifecycle_exit) and route BOTH sub-classes
+        // into the ONE salvage-first recovery policy. hold/respawn both continue the
+        // loop (hold drew no cap and left the ticket untouched — H4 lands the real
+        // hold semantics in 7eb9fa20; respawn lets the manager re-spawn under the
+        // drawn-down persistent cap). Cap exhausted falls through to the existing
+        // no-progress halt shape. Fail-open: any error → log + existing behavior.
         // R-WSE-3: emit stderr breadcrumb when ticket Failed after research APPROVED
         try {
             const iterTicket = state.current_ticket;
-            if (iterTicket)
-                checkPartialLifecycleExit(sessionDir, statePath, iterTicket);
+            if (iterTicket) {
+                const plExit = checkPartialLifecycleExit(sessionDir, statePath, iterTicket);
+                if (plExit && plExit.subClass) {
+                    const sdDecision = applySilentDeathRecoveryPolicy({
+                        sessionDir,
+                        statePath,
+                        ticketId: iterTicket,
+                        workingDir: iterWorkingDir,
+                        iteration,
+                        classification: plExit,
+                        preIterSha,
+                        iterationStartMs: iterStartMs,
+                        log,
+                    });
+                    if (sdDecision.action === 'halt') {
+                        log(`[silent-death] halting loop at iteration ${iteration}: respawn cap exhausted for ${iterTicket}.`);
+                        recordExitReason(statePath, sdDecision.exitReason);
+                        safeDeactivate(statePath);
+                        removeRunnerSessionMapEntry(statePath, log);
+                        exitReason = sdDecision.exitReason;
+                        break;
+                    }
+                }
+            }
             if (iterTicket)
                 checkFailedAfterResearchApproved(sessionDir, iterTicket);
         }

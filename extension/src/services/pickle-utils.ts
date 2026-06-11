@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { StringDecoder } from 'string_decoder';
-import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent, type PickleSettings, type Backend } from '../types/index.js';
+import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent, type PickleSettings, type Backend, type HardeningSettings } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
@@ -738,6 +738,29 @@ export function loadPickleSettingsBag(extensionRoot = getExtensionRoot()): Pickl
   } catch {
     return null;
   }
+}
+
+/** Compiled default for `hardening.silent_death_respawn_cap` (ticket 90574654). */
+export const DEFAULT_SILENT_DEATH_RESPAWN_CAP = 1;
+
+/**
+ * Ticket 90574654 — resolve the additive `hardening:` settings block (DISTINCT
+ * from `bmad_hardening`). Doctrine mirrors `loadRefinementSettings`
+ * (spawn-refinement-team.ts): start from compiled defaults; an absent, partial,
+ * or malformed bag/block/field never throws and falls back per field.
+ * `silent_death_respawn_cap` accepts non-negative integers only — `0` disables
+ * silent-death respawns entirely.
+ */
+export function resolveHardeningSettings(bag: PickleSettings | null | undefined): HardeningSettings {
+  const settings: HardeningSettings = { silent_death_respawn_cap: DEFAULT_SILENT_DEATH_RESPAWN_CAP };
+  if (!bag || typeof bag !== 'object') return settings;
+  const block = (bag as Record<string, unknown>).hardening;
+  if (!block || typeof block !== 'object' || Array.isArray(block)) return settings;
+  const cap = (block as Record<string, unknown>).silent_death_respawn_cap;
+  if (typeof cap === 'number' && Number.isInteger(cap) && cap >= 0) {
+    settings.silent_death_respawn_cap = cap;
+  }
+  return settings;
 }
 
 export function resolveWorkerTestGateTimeoutMs(

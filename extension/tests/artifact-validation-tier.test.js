@@ -107,6 +107,10 @@ test('no-regression: medium ticket missing conformance_*.md still fails validati
     writeFileSync(path.join(ticketDir, 'plan_review.md'), 'APPROVED');
     writeFileSync(path.join(ticketDir, 'code_review_2026-05-29.md'), 'PASS');
     // conformance_*.md deliberately MISSING.
+    // 90574654: nonzero log without the terminal promise token keeps this exit in
+    // the log_truncated sub-class → legacy worker_partial_lifecycle_exit event
+    // (absent/0-byte logs now emit worker_silent_death instead).
+    writeFileSync(path.join(ticketDir, 'worker_session_4242.log'), 'truncated worker output\n');
 
     checkPartialLifecycleExit(sessionDir, statePath, ticketId);
 
