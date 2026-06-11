@@ -1460,7 +1460,7 @@
             "start_commit": { "type": "string" },
             "current_head_sha": { "type": "string" },
             "orphan_tip_sha": { "type": ["string", "null"] },
-            "action": { "type": "string", "enum": ["ff_reattached", "marked_failed"] }
+            "action": { "type": "string", "enum": ["ff_reattached", "marked_failed", "flip_suppressed", "suppression_cap_escalate"] }
           }
         }
       }

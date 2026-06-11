@@ -68,7 +68,8 @@ if (${JSON.stringify(sleepMs)} > 0) {
   fs.chmodSync(shimPath, 0o755);
 }
 
-function writeCodexShim(binDir, fixtureName) {
+function writeCodexShim(binDir, fixtureName, options = {}) {
+  const writeArtifact = options.writeArtifact !== false;
   fs.mkdirSync(binDir, { recursive: true });
   const shimPath = path.join(binDir, 'codex');
   fs.writeFileSync(shimPath, `#!/usr/bin/env node
@@ -79,7 +80,7 @@ const { execFileSync } = require('child_process');
 const ticketDir = process.env.FAKE_TICKET_DIR;
 const ticketId = process.env.FAKE_TICKET_ID;
 fs.mkdirSync(ticketDir, { recursive: true });
-fs.writeFileSync(path.join(ticketDir, 'research_2026-05-06.md'), '# research\\n');
+${writeArtifact ? "fs.writeFileSync(path.join(ticketDir, 'research_2026-05-06.md'), '# research\\n');" : '// 7eb9fa20 evidence-absent variant: no fresh lifecycle artifact written by the worker'}
 const target = path.join(process.cwd(), 'extension', 'src', ${JSON.stringify(fixtureName)});
 fs.writeFileSync(target, 'export const workerGateFixture = 2;\\n');
 execFileSync('git', ['add', ${JSON.stringify(`extension/src/${fixtureName}`)}], { cwd: process.cwd() });
@@ -527,7 +528,10 @@ exit 0
   }
 });
 
-test('spawn-morty: test:fast failure marks ticket Failed, emits failure event, and resets HEAD without a completion commit', () => {
+// 7eb9fa20: a gate-fail whose worker produced fresh ticket artifacts AND a
+// ticket-scoped commit is evidence-backed — the Failed flip AND the gate-fail
+// reset are suppressed (work preserved; manager-side hold parks the ticket).
+test('spawn-morty: test:fast failure with work evidence suppresses the Failed flip and preserves the commit', () => {
   const root = makeTmpRoot();
   try {
     initWorkerFixtureRepo(root);
@@ -577,14 +581,89 @@ test('spawn-morty: test:fast failure marks ticket Failed, emits failure event, a
     }]);
     assert.equal(state.activity.some((entry) => entry.event === 'worker_lint_autofix_applied'), false);
 
+    // Suppression evidence: event emitted, ledger entry persisted.
+    const suppressedEvent = state.activity.find((entry) => entry.event === 'failed_flip_suppressed');
+    assert.ok(suppressedEvent, `missing failed_flip_suppressed in ${JSON.stringify(state.activity)}`);
+    assert.equal(suppressedEvent.ticket, ticketId);
+    assert.equal(suppressedEvent.suppression_count, 1);
+    assert.ok(Array.isArray(state.recovery_attempts)
+      && state.recovery_attempts.some((a) => a.strategy === 'failed_flip_suppressed' && a.ticket === ticketId));
+
+    // Frontmatter status preserved — no Failed flip, no completion commit.
     const ticketContent = fs.readFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), 'utf8');
-    assert.match(ticketContent, /status: "Failed"/);
+    assert.match(ticketContent, /status: "In Progress"/);
+    assert.doesNotMatch(ticketContent, /status: "Failed"/);
     assert.doesNotMatch(ticketContent, /completion_commit:/);
     const npmCalls = JSON.parse(fs.readFileSync(npmCallsPath, 'utf8'));
     assert.deepEqual(npmCalls, [['npm', 'run', 'test:fast']]);
 
+    // The gate-fail reset was suppressed: the worker's commit survives.
     const headAfter = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-    assert.equal(headAfter, headBefore);
+    assert.notEqual(headAfter, headBefore, 'worker commit preserved (reset suppressed)');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// 7eb9fa20 evidence-absent path: stale resume artifact (outside the spawn
+// window) + commit outside scope allowed_paths → flip + reset proceed exactly
+// as before (legitimate failures still flip, after resetToSha's archival).
+test('spawn-morty: evidence-absent test:fast failure still marks ticket Failed and resets HEAD', () => {
+  const root = makeTmpRoot();
+  try {
+    initWorkerFixtureRepo(root);
+    const ticketId = '3646c20c';
+    const { sessionRoot, ticketDir } = writeSession(root, ticketId);
+    // Stale lifecycle artifact from a previous attempt: present (so worker
+    // validation passes) but aged outside the [spawn, exit] evidence window.
+    const staleArtifact = path.join(ticketDir, 'research_2026-05-06.md');
+    fs.writeFileSync(staleArtifact, '# stale research\n');
+    const oldSec = (Date.now() - 60 * 60 * 1000) / 1000;
+    fs.utimesSync(staleArtifact, oldSec, oldSec);
+    // Scoped session: the worker's commit (extension/src/...) is out of scope.
+    fs.writeFileSync(path.join(sessionRoot, 'scope.json'), JSON.stringify({ allowed_paths: ['docs/'] }));
+    const binDir = path.join(root, 'bin');
+    writeCodexShim(binDir, 'test-fixture.ts', { writeArtifact: false });
+    writeNpxPassShim(binDir, path.join(root, 'npx-calls.json'));
+    const npmCallsPath = path.join(sessionRoot, 'npm-calls.json');
+    writeNpmFailShim(
+      binDir,
+      npmCallsPath,
+      `not ok 1 - worker fast tier fails\n  ---\n  location: '${path.join(root, 'extension', 'tests', 'worker-fixture.test.js')}:7:3'\n  error: 'boom'\n  ...\n`,
+    );
+    const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+
+    const result = spawnSync(process.execPath, [
+      SPAWN_MORTY_BIN,
+      'integration replay',
+      '--ticket-id', ticketId,
+      '--ticket-path', ticketDir,
+      '--timeout', '30',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH || ''}`,
+        EXTENSION_DIR: root,
+        PICKLE_DATA_DIR: root,
+        FAKE_TICKET_DIR: ticketDir,
+        FAKE_TICKET_ID: ticketId,
+      },
+      timeout: WORKER_TIMEOUT_MS,
+    });
+
+    assert.equal(result.status, 1, `stderr: ${result.stderr}`);
+    const state = readState(sessionRoot);
+    assert.ok(state.activity.some((entry) => entry.event === 'worker_gate_failed'));
+    assert.equal(state.activity.some((entry) => entry.event === 'failed_flip_suppressed'), false, 'no suppression without evidence');
+
+    const ticketContent = fs.readFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), 'utf8');
+    assert.match(ticketContent, /status: "Failed"/);
+    assert.doesNotMatch(ticketContent, /completion_commit:/);
+
+    const headAfter = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+    assert.equal(headAfter, headBefore, 'gate-fail reset restored the pre-worker HEAD');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

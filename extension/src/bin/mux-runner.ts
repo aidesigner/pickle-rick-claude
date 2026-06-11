@@ -20,7 +20,7 @@ import {
   recordManagerRelaunch,
   type ManagerRelaunchExitKind,
 } from '../services/manager-relaunch.js';
-import { getHeadBranch, updateTicketFrontmatter, isWorkingTreeDirty, listWorkingTreeDirtyPaths, archiveBeforeDestructive, ArchiveAbortError, type ArchiveContext, type ArchiveResult } from '../services/git-utils.js';
+import { getHeadBranch, updateTicketFrontmatter, isWorkingTreeDirty, listWorkingTreeDirtyPaths, archiveBeforeDestructive, ArchiveAbortError, isCodegraphArtifact, type ArchiveContext, type ArchiveResult } from '../services/git-utils.js';
 import { runRecoveryLadder, parsePlanPhases, executePhaseLoop, isConvergedPlanEligible, type PlanPhase, type RecoveryDeps, type RecoveryEvidence, type RecoveryOutcome } from '../services/recovery-controller.js';
 import { detectArtifactProgress, resolveNoProgressWindowSeconds, type ArtifactProgressSnapshot } from '../services/artifact-progress-detector.js';
 import { readEvidence, persistEvidence, gateForPhantomDoneRevert, type EvidenceCtx, type RevertDecision } from '../services/ticket-completion-evidence.js';
@@ -1003,8 +1003,14 @@ function isOversizedNoProgressFailed(sessionDir: string, ticketId: string | null
 }
 
 function findNextPendingTicketId(sessionDir: string): string | null {
+  // 7eb9fa20: a ticket with an active failed-flip suppression hold is
+  // non-runnable — never auto-reselected with stale evidence. Selection-layer
+  // filtering only (same pattern as isOversizedNoProgressFailed).
+  const held = readActiveFailedFlipHolds(sessionDir);
   return collectTickets(sessionDir).find(ticket =>
-    isPendingMuxTicket(sessionDir, ticket) && !isOversizedNoProgressFailed(sessionDir, ticket.id),
+    isPendingMuxTicket(sessionDir, ticket)
+    && !isOversizedNoProgressFailed(sessionDir, ticket.id)
+    && !(ticket.id && held.has(ticket.id)),
   )?.id ?? null;
 }
 
@@ -1019,7 +1025,13 @@ function findNextPendingTicketId(sessionDir: string): string | null {
  * selectable pending ticket.
  */
 export function resolvePreTicket(sessionDir: string, currentTicket: string | null | undefined): string | null {
-  if (currentTicket && !isOversizedNoProgressFailed(sessionDir, currentTicket)) {
+  if (
+    currentTicket
+    && !isOversizedNoProgressFailed(sessionDir, currentTicket)
+    // 7eb9fa20: a held (failed-flip-suppressed) current_ticket is never
+    // re-engaged — fall through to the next selectable pending ticket.
+    && !readActiveFailedFlipHolds(sessionDir).has(currentTicket)
+  ) {
     return currentTicket;
   }
   return findNextPendingTicketId(sessionDir);
@@ -2030,8 +2042,10 @@ export function detectAndRecoverHeadRegression(input: {
   sessionDir: string;
   statePath: string;
   iteration: number;
+  /** 7eb9fa20: epoch ms when the iteration began — opens the artifact-evidence window for flip suppression. */
+  iterationStartMs?: number | null;
   log: (msg: string) => void;
-}): { detected: boolean; recovered: boolean; action: 'ff_reattached' | 'marked_failed' | 'none' } {
+}): { detected: boolean; recovered: boolean; action: 'ff_reattached' | 'marked_failed' | 'flip_suppressed' | 'suppression_cap_escalate' | 'none' } {
   const { ticketId, workingDir, startCommit, completionCommitSha, sessionDir, statePath, iteration, log } = input;
   const currentHead = readHeadCommit(workingDir);
   if (!currentHead) return { detected: false, recovered: false, action: 'none' };
@@ -2042,7 +2056,7 @@ export function detectAndRecoverHeadRegression(input: {
   log(`[head-regression] ticket ${ticketId} iter=${iteration}: HEAD=${currentHead} at/below start_commit=${startCommit}`);
 
   let recovered = false;
-  let action: 'ff_reattached' | 'marked_failed' = 'marked_failed';
+  let action: 'ff_reattached' | 'marked_failed' | 'flip_suppressed' | 'suppression_cap_escalate' = 'marked_failed';
 
   if (completionCommitSha) {
     const verifyR = spawnSync('git', ['-C', workingDir, 'cat-file', '-t', completionCommitSha], { encoding: 'utf-8', timeout: 5000 });
@@ -2061,11 +2075,35 @@ export function detectAndRecoverHeadRegression(input: {
   }
 
   if (!recovered) {
-    try {
-      updateTicketFrontmatter(ticketId, sessionDir, { status: 'Failed', completion_commit: null });
-      log(`[head-regression] ticket ${ticketId} marked Failed — HEAD at baseline, orphan unrecoverable`);
-    } catch (err) {
-      log(`[head-regression] ticket Failed flip error: ${safeErrorMessage(err)}`);
+    // 7eb9fa20: evidence-backed flip-intents are suppressed (held) instead of
+    // flipped — an unreattachable-but-real orphan commit is salvageable work,
+    // not a failure. Evidence absent → archive a dirty tree, then flip.
+    const decision = evaluateFailedFlipSuppression({
+      sessionDir,
+      statePath,
+      ticketId,
+      workingDir,
+      iteration,
+      callsite: 'head_regression',
+      windowStartMs: input.iterationStartMs ?? null,
+      windowEndMs: Date.now(),
+      preSha: startCommit,
+      log,
+    });
+    if (decision.action === 'suppress') {
+      action = 'flip_suppressed';
+      log(`[head-regression] ticket ${ticketId} Failed flip suppressed (${decision.evidence}) — status preserved, ticket held`);
+    } else if (decision.action === 'escalate') {
+      action = 'suppression_cap_escalate';
+      log(`[head-regression] ticket ${ticketId} suppression cap ${decision.cap} reached — escalating to no-progress halt (no flip)`);
+    } else {
+      archiveDirtyTreeBeforeFlip({ workingDir, sessionDir, ticketId, log });
+      try {
+        updateTicketFrontmatter(ticketId, sessionDir, { status: 'Failed', completion_commit: null });
+        log(`[head-regression] ticket ${ticketId} marked Failed — HEAD at baseline, orphan unrecoverable`);
+      } catch (err) {
+        log(`[head-regression] ticket Failed flip error: ${safeErrorMessage(err)}`);
+      }
     }
   }
 
@@ -5538,11 +5576,16 @@ function classifyWorkerSessionLogs(ticketDir: string, files: string[]): {
  * silent death must not be charged against ticket A's budget.
  */
 function countSilentDeathRespawns(statePath: string, ticketId: string): number {
+  return countLedgerSuccesses(statePath, ticketId, SILENT_DEATH_RESPAWN_STRATEGY);
+}
+
+/** Count `outcome: 'success'` entries in `state.recovery_attempts` for one ticket + strategy (persisted ledger — survives relaunch and `setup.js --resume`). */
+function countLedgerSuccesses(statePath: string, ticketId: string, strategy: string): number {
   try {
     const s = readRecoverableJsonObject(statePath) as State | null;
     if (!s || !Array.isArray(s.recovery_attempts)) return 0;
     return s.recovery_attempts.filter(
-      (a) => a && a.strategy === SILENT_DEATH_RESPAWN_STRATEGY && a.outcome === 'success' && a.ticket === ticketId,
+      (a) => a && a.strategy === strategy && a.outcome === 'success' && a.ticket === ticketId,
     ).length;
   } catch { return 0; }
 }
@@ -5714,8 +5757,8 @@ function hasFreshLifecycleArtifacts(input: SilentDeathRecoveryInput): boolean {
   return false;
 }
 
-/** Append one silent-death entry to `state.recovery_attempts` (R-WMW-5 persistence pattern: state-backed, survives relaunch/--resume). */
-function appendSilentDeathAttempt(statePath: string, attempt: RecoveryAttempt): void {
+/** Append one entry to `state.recovery_attempts` (R-WMW-5 persistence pattern: state-backed, survives relaunch/--resume). */
+function appendRecoveryLedgerEntry(statePath: string, attempt: RecoveryAttempt): void {
   try {
     sm.update(statePath, (s) => {
       if (!Array.isArray(s.recovery_attempts)) s.recovery_attempts = [];
@@ -5787,7 +5830,7 @@ export function applySilentDeathRecoveryPolicy(input: SilentDeathRecoveryInput):
   const prior = countSilentDeathRespawns(input.statePath, input.ticketId);
   if (prior < cap) {
     const attempt = prior + 1;
-    appendSilentDeathAttempt(input.statePath, {
+    appendRecoveryLedgerEntry(input.statePath, {
       strategy: SILENT_DEATH_RESPAWN_STRATEGY,
       outcome: 'success',
       reason: `${subClass} respawn ${attempt}/${cap} for ${input.ticketId}`,
@@ -5798,7 +5841,7 @@ export function applySilentDeathRecoveryPolicy(input: SilentDeathRecoveryInput):
     return { action: 'respawn', subClass, attempt, cap };
   }
 
-  appendSilentDeathAttempt(input.statePath, {
+  appendRecoveryLedgerEntry(input.statePath, {
     strategy: SILENT_DEATH_RESPAWN_STRATEGY,
     outcome: 'failed',
     reason: `cap_exhausted (${prior}/${cap}) for ${input.ticketId} — falling through to no-progress halt`,
@@ -5807,6 +5850,223 @@ export function applySilentDeathRecoveryPolicy(input: SilentDeathRecoveryInput):
   });
   log(`[silent-death] ${subClass} for ${input.ticketId}: respawn cap ${cap} exhausted — halting`);
   return { action: 'halt', subClass, exitReason: 'recovery_exhausted', cap };
+}
+
+// ---------------------------------------------------------------------------
+// Ticket 7eb9fa20 (H4) — Failed-flip evidence suppression with bounded
+// non-runnable hold. ONE shared policy guards the three real Failed-flip
+// callsites: (1) detectAndRecoverHeadRegression `marked_failed`, (2) the
+// R-WMW-5 wmw-auto-skip flip, (3) spawn-morty's gate-fail reset+flip
+// (spawn-morty imports `evaluateFailedFlipSuppression` from this module —
+// runtime-only usage, so the existing mux-runner→spawn-morty import of
+// `resolveCodexModel` does not create an ESM evaluation-order hazard).
+//
+// Evidence is an OR-predicate, not AND: fresh lifecycle artifacts in the
+// [spawn, exit] window (skew-tolerant, `.codegraph/**` excluded) OR a
+// ticket-scoped commit (frontmatter completion sha authoritative — but only
+// when it resolves to a real commit object, so a garbage sha can never hold a
+// ticket; else a window commit whose touched paths ⊆ scope allowed_paths).
+// Evidence-check errors fail OPEN (existing flip behavior proceeds).
+// Suppressions persist as `state.recovery_attempts` entries (strategy
+// `failed_flip_suppressed`) — NO new state.json top-level field (R-RMBS-1) —
+// and emit the `failed_flip_suppressed` activity event. At
+// `hardening.failed_flip_suppression_cap` (default 2) the decision escalates
+// to the existing no-progress halt instead of suppressing again.
+// ---------------------------------------------------------------------------
+
+export const FAILED_FLIP_SUPPRESSED_STRATEGY = 'failed_flip_suppressed';
+/** Mtime skew tolerance for the artifact-evidence window (filesystem timestamp granularity). */
+const FAILED_FLIP_SKEW_MS = 2_000;
+
+export type FailedFlipCallsite = 'head_regression' | 'wmw_auto_skip' | 'worker_gate_fail';
+export type FailedFlipEvidenceKind = 'fresh_artifacts' | 'ticket_commit' | 'both';
+
+export interface FailedFlipSuppressionInput {
+  sessionDir: string;
+  statePath: string;
+  ticketId: string;
+  workingDir: string;
+  iteration: number;
+  callsite: FailedFlipCallsite;
+  /** Spawn timestamp (epoch ms) opening the evidence window; null/absent disables the artifact arm. */
+  windowStartMs?: number | null;
+  /** Exit timestamp (epoch ms) closing the evidence window; defaults to now. */
+  windowEndMs?: number | null;
+  /** HEAD sha captured before the window — base of the scoped-commit probe. */
+  preSha?: string | null;
+  /** Injectable for tests; defaults to `resolveHardeningSettings(loadPickleSettingsBag())`. */
+  settings?: HardeningSettings | null;
+  log?: (msg: string) => void;
+}
+
+export type FailedFlipSuppressionDecision =
+  | { action: 'suppress'; evidence: FailedFlipEvidenceKind; suppressionCount: number }
+  | { action: 'proceed'; reason: 'no_evidence' | 'evidence_check_error' }
+  | { action: 'escalate'; cap: number };
+
+/** Evidence arm (a): a lifecycle artifact mtime inside [spawn, exit] + skew; `.codegraph/**` excluded via isCodegraphArtifact. */
+function hasFreshTicketArtifactEvidence(input: FailedFlipSuppressionInput): boolean {
+  if (typeof input.windowStartMs !== 'number') return false;
+  const windowEnd = typeof input.windowEndMs === 'number' ? input.windowEndMs : Date.now();
+  const ticketDir = path.join(input.sessionDir, input.ticketId);
+  for (const file of fs.readdirSync(ticketDir)) {
+    if (isCodegraphArtifact(file)) continue;
+    if (!LIFECYCLE_ARTIFACT_RE.test(file)) continue;
+    let mtimeMs: number;
+    try { mtimeMs = fs.statSync(path.join(ticketDir, file)).mtimeMs; } catch { continue; }
+    if (mtimeMs >= input.windowStartMs - FAILED_FLIP_SKEW_MS && mtimeMs <= windowEnd + FAILED_FLIP_SKEW_MS) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Frontmatter completion sha, authoritative but garbage-proof: the sha counts
+ * only when it resolves to a real commit object in workingDir (a regex-valid
+ * but nonexistent sha must NOT hold a ticket — R-CXOR-1 unrecoverable-orphan
+ * flips stay flips).
+ */
+function hasVerifiedFrontmatterCompletionSha(sessionDir: string, ticketId: string, workingDir: string): boolean {
+  let raw: string;
+  try { raw = fs.readFileSync(ticketFilePath(sessionDir, ticketId), 'utf-8'); } catch { return false; }
+  for (const field of ['completion_commit', 'completion_commit_inferred'] as const) {
+    const value = (readFrontmatterField(raw, field) ?? '').trim().replace(/^['"]+|['"]+$/g, '');
+    if (!/^[0-9a-f]{7,40}$/i.test(value)) continue;
+    if (silentDeathGit(['cat-file', '-t', value], workingDir) === 'commit') return true;
+  }
+  return false;
+}
+
+/** Evidence arm (b): frontmatter completion sha (verified) OR a window commit whose touched paths ⊆ allowed_paths. */
+function hasTicketScopedCommitEvidence(input: FailedFlipSuppressionInput): boolean {
+  if (hasVerifiedFrontmatterCompletionSha(input.sessionDir, input.ticketId, input.workingDir)) return true;
+  if (!input.preSha) return false;
+  const head = silentDeathGit(['rev-parse', 'HEAD'], input.workingDir);
+  if (!head || head === input.preSha) return false;
+  const diffOut = silentDeathGit(['diff', '--name-only', `${input.preSha}..HEAD`], input.workingDir);
+  if (diffOut === null) return false;
+  const touched = diffOut.split('\n').map((s) => s.trim()).filter(Boolean);
+  if (touched.length === 0) return false;
+  const allowed = readScopeAllowedPaths(input.sessionDir);
+  if (!allowed || allowed.length === 0) return true;
+  return touched.every((f) => isWithinAllowedPaths(f, allowed));
+}
+
+/** OR-combine the two evidence arms. Returns null when neither holds. */
+function detectFailedFlipEvidence(input: FailedFlipSuppressionInput): FailedFlipEvidenceKind | null {
+  const artifacts = hasFreshTicketArtifactEvidence(input);
+  const commit = hasTicketScopedCommitEvidence(input);
+  if (artifacts && commit) return 'both';
+  if (artifacts) return 'fresh_artifacts';
+  if (commit) return 'ticket_commit';
+  return null;
+}
+
+/**
+ * Decide suppress / proceed / escalate for one Failed-flip intent.
+ * - suppress: evidence present, under cap — ledger entry appended (strategy
+ *   `failed_flip_suppressed`, outcome success), `failed_flip_suppressed`
+ *   activity event emitted, frontmatter status preserved by the caller.
+ * - proceed: no evidence (caller archives a dirty tree, then flips) or the
+ *   evidence check itself errored (fail-open: existing flip behavior).
+ * - escalate: evidence present but cap reached — caller routes to the
+ *   existing no-progress halt; the flip is still skipped (a ticket is only
+ *   ever flipped Failed with evidence absent).
+ */
+export function evaluateFailedFlipSuppression(input: FailedFlipSuppressionInput): FailedFlipSuppressionDecision {
+  const log = input.log ?? (() => { /* silent default */ });
+  let evidence: FailedFlipEvidenceKind | null;
+  try {
+    evidence = detectFailedFlipEvidence(input);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`[failed-flip] evidence check failed for ${input.ticketId} at ${input.callsite} (fail-open, flip proceeds): ${msg}`);
+    return { action: 'proceed', reason: 'evidence_check_error' };
+  }
+  if (!evidence) return { action: 'proceed', reason: 'no_evidence' };
+
+  const settings = input.settings ?? resolveHardeningSettings(loadPickleSettingsBag());
+  const cap = settings.failed_flip_suppression_cap;
+  const prior = countLedgerSuccesses(input.statePath, input.ticketId, FAILED_FLIP_SUPPRESSED_STRATEGY);
+  if (prior >= cap) {
+    appendRecoveryLedgerEntry(input.statePath, {
+      strategy: FAILED_FLIP_SUPPRESSED_STRATEGY,
+      outcome: 'failed',
+      reason: `cap_exhausted (${prior}/${cap}) at ${input.callsite} for ${input.ticketId} — escalating to no-progress halt`,
+      iteration: input.iteration,
+      ticket: input.ticketId,
+    });
+    log(`[failed-flip] ${input.callsite} for ${input.ticketId}: evidence (${evidence}) but suppression cap ${cap} reached — escalating`);
+    return { action: 'escalate', cap };
+  }
+
+  const suppressionCount = prior + 1;
+  appendRecoveryLedgerEntry(input.statePath, {
+    strategy: FAILED_FLIP_SUPPRESSED_STRATEGY,
+    outcome: 'success',
+    reason: `${input.callsite} flip suppressed ${suppressionCount}/${cap} (${evidence}) for ${input.ticketId}`,
+    iteration: input.iteration,
+    ticket: input.ticketId,
+  });
+  try {
+    writeActivityEntry(input.statePath, {
+      event: 'failed_flip_suppressed',
+      ts: new Date().toISOString(),
+      ticket: input.ticketId,
+      evidence,
+      suppression_count: suppressionCount,
+    });
+  } catch { /* best-effort telemetry — never block the suppression */ }
+  log(`[failed-flip] ${input.callsite} for ${input.ticketId}: flip suppressed ${suppressionCount}/${cap} (${evidence}) — ticket held, status preserved`);
+  return { action: 'suppress', evidence, suppressionCount };
+}
+
+/**
+ * Ticket ids with an ACTIVE failed-flip suppression hold: a success ledger
+ * entry exists AND the operator has not re-queued the ticket (frontmatter
+ * `status: Todo` releases the hold — same heal flow as oversized_no_progress).
+ * Selection-layer only (R-RMBS-1: `isPendingMuxTicket` stays canonical and
+ * untouched). Any read error → empty set (fail-open: never blocks scheduling).
+ */
+export function readActiveFailedFlipHolds(sessionDir: string): Set<string> {
+  const held = new Set<string>();
+  try {
+    const s = readRecoverableJsonObject(path.join(sessionDir, 'state.json')) as State | null;
+    if (!s || !Array.isArray(s.recovery_attempts)) return held;
+    for (const a of s.recovery_attempts) {
+      if (a && a.strategy === FAILED_FLIP_SUPPRESSED_STRATEGY && a.outcome === 'success' && typeof a.ticket === 'string') {
+        held.add(a.ticket);
+      }
+    }
+    for (const id of [...held]) {
+      try {
+        if (normalizeTicketStatus(getTicketStatus(sessionDir, id)) === 'todo') held.delete(id);
+      } catch { /* unreadable status → stay held (conservative) */ }
+    }
+  } catch { return held; }
+  return held;
+}
+
+/**
+ * Evidence-absent flip path: archive a dirty tree BEFORE the flip so the
+ * runner's downstream reset path can never destroy unexamined work.
+ * `archiveBeforeDestructive` self-no-ops on a clean tree. Best-effort: the
+ * flip itself is a non-destructive frontmatter write, so archive failure
+ * (including ArchiveAbortError) logs loudly but does not block the flip.
+ */
+function archiveDirtyTreeBeforeFlip(input: { workingDir: string; sessionDir: string; ticketId: string; log: (msg: string) => void }): void {
+  try {
+    archiveBeforeDestructive({
+      cwd: input.workingDir,
+      sessionDir: input.sessionDir,
+      ticketDir: path.join(input.sessionDir, input.ticketId),
+      reason: 'pre_reset',
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    input.log(`[failed-flip] pre-flip archive failed for ${input.ticketId} (flip proceeds; tree untouched): ${msg}`);
+  }
 }
 
 /**
@@ -6983,6 +7243,45 @@ async function runMuxRunnerMain() {
         }
         // fall_through → proceed to the existing terminal Failed flip below.
       }
+      // 7eb9fa20: evidence-backed flip-intents are suppressed (held) instead of
+      // flipped. Evidence absent → archive a dirty tree first, then flip (the
+      // wmw flip itself preserves the dirty tree; archival guards the runner's
+      // downstream reset paths). Cap reached → existing no-progress halt.
+      {
+        const wmwWorkingDir = state.working_dir || process.cwd();
+        const ffDecision = evaluateFailedFlipSuppression({
+          sessionDir,
+          statePath,
+          ticketId: apTicketId,
+          workingDir: wmwWorkingDir,
+          iteration,
+          callsite: 'wmw_auto_skip',
+          windowStartMs: iterStartMs,
+          windowEndMs: Date.now(),
+          preSha: preIterSha,
+          log,
+        });
+        if (ffDecision.action === 'suppress') {
+          const holdMsg = `[wmw-auto-skip] ticket ${apTicketId}: Failed flip suppressed (${ffDecision.evidence}) — ticket held, status preserved`;
+          log(holdMsg);
+          process.stderr.write(`${holdMsg}\n`);
+          // Clear current_ticket so the next iteration selects past the held
+          // ticket (resolvePreTicket also refuses to re-engage a held ticket).
+          updateMuxLifecycleState(statePath, { currentTicket: null });
+          continue;
+        }
+        if (ffDecision.action === 'escalate') {
+          const capMsg = `[wmw-auto-skip] ticket ${apTicketId}: suppression cap ${ffDecision.cap} reached — halting (recovery_exhausted).`;
+          log(capMsg);
+          process.stderr.write(`${capMsg}\n`);
+          recordExitReason(statePath, 'recovery_exhausted');
+          safeDeactivate(statePath);
+          removeRunnerSessionMapEntry(statePath, log);
+          exitReason = 'recovery_exhausted';
+          break;
+        }
+        archiveDirtyTreeBeforeFlip({ workingDir: wmwWorkingDir, sessionDir, ticketId: apTicketId, log });
+      }
       const skipMsg = `[wmw-auto-skip] ticket ${apTicketId}: ${apProgressResult.zeroProgressCount}/${skipK} consecutive zero-progress spawns — flipping to Failed/oversized_no_progress`;
       log(skipMsg);
       process.stderr.write(`${skipMsg}\n`);
@@ -7087,7 +7386,7 @@ async function runMuxRunnerMain() {
           // R-CXOR-1: detect HEAD regression — worker may have committed then git-reset to baseline.
           if (previousTicketStartCommit) {
             try {
-              detectAndRecoverHeadRegression({
+              const hrResult = detectAndRecoverHeadRegression({
                 ticketId: prevTicketInfo.id,
                 workingDir: prevTicketInfo.working_dir || state.working_dir || process.cwd(),
                 startCommit: previousTicketStartCommit,
@@ -7095,8 +7394,19 @@ async function runMuxRunnerMain() {
                 sessionDir,
                 statePath,
                 iteration,
+                iterationStartMs: iterStartMs,
                 log,
               });
+              if (hrResult.action === 'suppression_cap_escalate') {
+                // 7eb9fa20: cap reached with evidence — existing no-progress halt.
+                const msg = `[failed-flip] suppression cap exhausted for ${prevTicketInfo.id} at head-regression — halting (recovery_exhausted).`;
+                log(msg);
+                process.stderr.write(`${msg}\n`);
+                recordExitReason(statePath, 'recovery_exhausted');
+                safeDeactivate(statePath);
+                removeRunnerSessionMapEntry(statePath, log);
+                return;
+              }
             } catch (err) { log(`head-regression check failed (ignored): ${safeErrorMessage(err)}`); }
           }
         } else {

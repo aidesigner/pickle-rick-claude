@@ -743,22 +743,34 @@ export function loadPickleSettingsBag(extensionRoot = getExtensionRoot()): Pickl
 /** Compiled default for `hardening.silent_death_respawn_cap` (ticket 90574654). */
 export const DEFAULT_SILENT_DEATH_RESPAWN_CAP = 1;
 
+/** Compiled default for `hardening.failed_flip_suppression_cap` (ticket 7eb9fa20). */
+export const DEFAULT_FAILED_FLIP_SUPPRESSION_CAP = 2;
+
 /**
  * Ticket 90574654 — resolve the additive `hardening:` settings block (DISTINCT
  * from `bmad_hardening`). Doctrine mirrors `loadRefinementSettings`
  * (spawn-refinement-team.ts): start from compiled defaults; an absent, partial,
  * or malformed bag/block/field never throws and falls back per field.
  * `silent_death_respawn_cap` accepts non-negative integers only — `0` disables
- * silent-death respawns entirely.
+ * silent-death respawns entirely. `failed_flip_suppression_cap` (ticket
+ * 7eb9fa20) follows the same rule — `0` disables evidence-backed Failed-flip
+ * suppression (flip-intents with evidence escalate immediately).
  */
 export function resolveHardeningSettings(bag: PickleSettings | null | undefined): HardeningSettings {
-  const settings: HardeningSettings = { silent_death_respawn_cap: DEFAULT_SILENT_DEATH_RESPAWN_CAP };
+  const settings: HardeningSettings = {
+    silent_death_respawn_cap: DEFAULT_SILENT_DEATH_RESPAWN_CAP,
+    failed_flip_suppression_cap: DEFAULT_FAILED_FLIP_SUPPRESSION_CAP,
+  };
   if (!bag || typeof bag !== 'object') return settings;
   const block = (bag as Record<string, unknown>).hardening;
   if (!block || typeof block !== 'object' || Array.isArray(block)) return settings;
-  const cap = (block as Record<string, unknown>).silent_death_respawn_cap;
-  if (typeof cap === 'number' && Number.isInteger(cap) && cap >= 0) {
-    settings.silent_death_respawn_cap = cap;
+  const respawnCap = (block as Record<string, unknown>).silent_death_respawn_cap;
+  if (typeof respawnCap === 'number' && Number.isInteger(respawnCap) && respawnCap >= 0) {
+    settings.silent_death_respawn_cap = respawnCap;
+  }
+  const suppressionCap = (block as Record<string, unknown>).failed_flip_suppression_cap;
+  if (typeof suppressionCap === 'number' && Number.isInteger(suppressionCap) && suppressionCap >= 0) {
+    settings.failed_flip_suppression_cap = suppressionCap;
   }
   return settings;
 }

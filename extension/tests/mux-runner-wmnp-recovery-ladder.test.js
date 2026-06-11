@@ -20,9 +20,13 @@ const SRC = fs.readFileSync(path.resolve(__dirname, '../src/bin/mux-runner.ts'),
 function autoSkipBlock() {
   const start = SRC.indexOf('zeroProgressCount >= skipK');
   assert.ok(start > 0, 'auto-skip guard present');
-  // The block ends at the terminal flip+clear `continue;` after updateMuxLifecycleState({ currentTicket: null }).
-  const end = SRC.indexOf('updateMuxLifecycleState(statePath, { currentTicket: null });', start);
-  assert.ok(end > start, 'terminal flip present');
+  // The block ends at the clear AFTER the terminal Failed flip. 7eb9fa20 added
+  // an earlier suppress-branch clear (evidence-backed hold), so anchor the end
+  // search past the flip itself rather than at the first clear.
+  const flip = SRC.indexOf("updateTicketFrontmatter(apTicketId, sessionDir, { status: 'Failed', completion_commit: null });", start);
+  assert.ok(flip > start, 'terminal flip present');
+  const end = SRC.indexOf('updateMuxLifecycleState(statePath, { currentTicket: null });', flip);
+  assert.ok(end > flip, 'terminal flip clear present');
   return SRC.slice(start, end);
 }
 

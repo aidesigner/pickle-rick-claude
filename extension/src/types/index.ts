@@ -196,6 +196,16 @@ export interface HardeningSettings {
    * Compiled default: 1.
    */
   silent_death_respawn_cap: number;
+  /**
+   * Ticket 7eb9fa20 (H4): max evidence-backed Failed-flip suppressions per
+   * ticket, persisted in `state.recovery_attempts` (strategy
+   * `failed_flip_suppressed`) so the budget survives relaunch and
+   * `setup.js --resume`. Reaching the cap escalates to the existing
+   * no-progress halt instead of suppressing again. `0` disables suppression
+   * (an evidence-backed flip-intent escalates immediately).
+   * Compiled default: 2.
+   */
+  failed_flip_suppression_cap: number;
 }
 
 /**

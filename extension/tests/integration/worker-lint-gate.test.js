@@ -107,7 +107,12 @@ function readState(sessionRoot) {
   return JSON.parse(fs.readFileSync(path.join(sessionRoot, 'state.json'), 'utf8'));
 }
 
-test('spawn-morty: persistent lint gate failure marks ticket Failed, emits events, and resets HEAD', () => {
+// 7eb9fa20: the fixture worker writes a fresh lifecycle artifact AND a
+// ticket-scoped commit, so the persistent lint failure is evidence-backed —
+// the Failed flip and the gate-fail reset are suppressed (work preserved; the
+// manager-side non-runnable hold parks the ticket). The evidence-absent flip
+// path is covered by spawn-morty-worker-gate.test.js.
+test('spawn-morty: persistent lint gate failure with work evidence suppresses the flip and preserves the commit', () => {
   const root = makeTmpRoot();
   try {
     initRepo(root);
@@ -159,12 +164,16 @@ test('spawn-morty: persistent lint gate failure marks ticket Failed, emits event
       'tsc must not be a failure in a lint-only gate failure',
     );
 
+    const suppressedEvent = state.activity.find((entry) => entry.event === 'failed_flip_suppressed');
+    assert.ok(suppressedEvent, `missing failed_flip_suppressed in ${JSON.stringify(state.activity)}`);
+    assert.equal(suppressedEvent.ticket, ticketId);
+
     const ticketContent = fs.readFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), 'utf8');
-    assert.match(ticketContent, /status: "Failed"/);
+    assert.match(ticketContent, /status: "In Progress"/, 'frontmatter status preserved — no Failed flip with evidence');
     assert.doesNotMatch(ticketContent, /completion_commit:/);
 
     const headAfter = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-    assert.equal(headAfter, headBefore);
+    assert.notEqual(headAfter, headBefore, 'worker commit preserved (gate-fail reset suppressed)');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

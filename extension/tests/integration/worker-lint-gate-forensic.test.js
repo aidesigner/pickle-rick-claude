@@ -81,7 +81,13 @@ function writeSession(root, ticketId) {
   return { sessionRoot, ticketDir };
 }
 
-test('worker lint gate forensic: deliberate lint violation fails ticket and leaves HEAD unchanged', () => {
+// 7eb9fa20: the forensic worker writes a fresh lifecycle artifact AND a
+// ticket-scoped commit, so the lint gate failure is evidence-backed — the
+// Failed flip and gate-fail reset are suppressed; the worker's commit and
+// frontmatter status survive for triage. The worker still exits non-zero and
+// the gate telemetry still fires. The evidence-absent flip+reset path is
+// pinned by spawn-morty-worker-gate.test.js.
+test('worker lint gate forensic: deliberate lint violation with work evidence holds the ticket (no flip, commit preserved)', () => {
   const root = makeTmpRoot();
   try {
     initRepo(root);
@@ -124,10 +130,14 @@ test('worker lint gate forensic: deliberate lint violation fails ticket and leav
         state.activity.filter((e) => /worker_/.test(e.event)).map((e) => e.event),
       )}`,
     );
+    assert.ok(
+      state.activity.some((entry) => entry.event === 'failed_flip_suppressed' && entry.ticket === ticketId),
+      'evidence-backed gate failure emits failed_flip_suppressed',
+    );
     const ticketContent = fs.readFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), 'utf8');
-    assert.match(ticketContent, /status: "Failed"/);
+    assert.match(ticketContent, /status: "In Progress"/, 'status preserved — no Failed flip with evidence');
     const headAfter = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-    assert.equal(headAfter, headBefore);
+    assert.notEqual(headAfter, headBefore, 'worker commit preserved (gate-fail reset suppressed)');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

@@ -11,6 +11,10 @@ import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOver
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { autoFillCompletionCommit } from './auto-fill-completion-commit.js';
+// 7eb9fa20: shared Failed-flip suppression policy. Runtime-only usage — safe
+// despite mux-runner's own import of `resolveCodexModel` from this module
+// (neither module touches the other's bindings during module evaluation).
+import { evaluateFailedFlipSuppression } from './mux-runner.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { loadAgentMd } from '../services/agent-md-loader.js';
 import { flushAndExit } from '../services/worker-shutdown.js';
@@ -912,6 +916,7 @@ export async function runWorkerGate(changedFiles, args) {
             retryCount: 0,
             autofixApplied: false,
             completionCommitSha: null,
+            failedFlipSuppressed: false,
         };
     }
     const lintTargets = toExtensionLintTargets(args.workingDir, fileList);
@@ -973,7 +978,40 @@ export async function runWorkerGate(changedFiles, args) {
             retry_count: retryCount,
             ts: new Date().toISOString(),
         });
-        if (args.preWorkerHead) {
+        // 7eb9fa20: before the gate-fail reset destroys the worker's tree, check
+        // for evidence of real work (fresh ticket artifacts OR a ticket-scoped
+        // commit). Evidence present → suppress BOTH the reset and the downstream
+        // Failed flip (the manager-side non-runnable hold parks the ticket). The
+        // worker cannot halt the manager loop, so a cap escalation here also just
+        // preserves the work — the cap_exhausted ledger entry and the manager-side
+        // callsites own the actual recovery_exhausted halt. Evidence-check errors
+        // fail open (existing reset + flip behavior).
+        let failedFlipSuppressed = false;
+        try {
+            const sessionDir = path.dirname(args.statePath);
+            const parentState = readRecoverableJsonObject(args.statePath);
+            const decision = evaluateFailedFlipSuppression({
+                sessionDir,
+                statePath: args.statePath,
+                ticketId: args.ticketId,
+                workingDir: args.workingDir,
+                iteration: typeof parentState?.iteration === 'number' ? parentState.iteration : 0,
+                callsite: 'worker_gate_fail',
+                windowStartMs: args.spawnTsMs ?? null,
+                windowEndMs: Date.now(),
+                preSha: args.preWorkerHead,
+                log: msg => console.error(`[spawn-morty] ${msg}`),
+            });
+            failedFlipSuppressed = decision.action === 'suppress' || decision.action === 'escalate';
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[spawn-morty] failed-flip suppression check errored (fail-open): ${msg}`);
+        }
+        if (failedFlipSuppressed) {
+            console.error(`[spawn-morty] gate-fail reset and Failed flip suppressed for ${args.ticketId} — work preserved for triage`);
+        }
+        else if (args.preWorkerHead) {
             try {
                 const preservePrefixes = (args.preservePaths ?? [])
                     .map(preservePath => toRepoRelativePath(args.workingDir, preservePath))
@@ -1007,6 +1045,7 @@ export async function runWorkerGate(changedFiles, args) {
             retryCount,
             autofixApplied,
             completionCommitSha: null,
+            failedFlipSuppressed,
         };
     }
     const completionCommitSha = autofixApplied
@@ -1028,7 +1067,30 @@ export async function runWorkerGate(changedFiles, args) {
         retryCount,
         autofixApplied,
         completionCommitSha,
+        failedFlipSuppressed: false,
     };
+}
+/**
+ * Persist the worker-turn outcome to ticket frontmatter. 7eb9fa20: a
+ * suppressed gate-fail preserves the existing status — no Failed flip.
+ */
+function persistWorkerOutcomeStatus(input) {
+    try {
+        if (input.isSuccess) {
+            updateTicketFrontmatter(input.ticketId, input.sessionRoot, { status: 'Done', completion_commit: input.completionCommitSha ?? getHeadSha(input.sessionWorkingDir) });
+        }
+        else if (!input.flipSuppressed) {
+            updateTicketFrontmatter(input.ticketId, input.sessionRoot, { status: 'Failed', completion_commit: null });
+        }
+    }
+    catch {
+        /* best-effort */
+    }
+}
+function workerValidationLabel(isSuccess, flipSuppressed) {
+    if (isSuccess)
+        return 'successful';
+    return flipSuppressed ? 'failed (flip suppressed — work preserved)' : 'failed';
 }
 async function finalizeWorkerTurn(params) {
     const { ctx, exitCode, flushTimeout, startTime, resolve } = params;
@@ -1040,6 +1102,7 @@ async function finalizeWorkerTurn(params) {
     const logContent = scrubWorkerLog(sessionLogPath, readWorkerLog(sessionLogPath));
     let { isSuccess } = evaluateWorkerOutcome({ ctx, logContent, startTime });
     let completionCommitSha = null;
+    let flipSuppressed = false;
     if (isSuccess) {
         const changedFiles = collectChangedFilesForLintGate(sessionWorkingDir, ctx.preWorkerHead);
         const workerGate = await runWorkerGate(changedFiles, {
@@ -1049,18 +1112,16 @@ async function finalizeWorkerTurn(params) {
             preWorkerHead: ctx.preWorkerHead,
             preservePaths: [sessionRoot],
             ticketTier: readTicketInfo(ctx.args.ticketFilePath)?.complexity_tier,
+            spawnTsMs: startTime,
         });
         isSuccess = workerGate.ok;
         completionCommitSha = workerGate.completionCommitSha;
+        // 7eb9fa20: suppressed gate-fail — preserve the ticket's frontmatter
+        // status (no Failed flip); the worker still exits non-zero below and the
+        // manager-side non-runnable hold parks the ticket for triage.
+        flipSuppressed = !workerGate.ok && workerGate.failedFlipSuppressed;
     }
-    try {
-        updateTicketFrontmatter(ticketId, sessionRoot, isSuccess
-            ? { status: 'Done', completion_commit: completionCommitSha ?? getHeadSha(sessionWorkingDir) }
-            : { status: 'Failed', completion_commit: null });
-    }
-    catch {
-        /* best-effort */
-    }
+    persistWorkerOutcomeStatus({ ticketId, sessionRoot, sessionWorkingDir, isSuccess, flipSuppressed, completionCommitSha });
     if (isSuccess) {
         // R-CCC-2: Auto-fill completion_commit: for Done tickets that missed the ACK.
         // Kept as autoFillCompletionCommit (preserved CLI shim) — its git-log scan
@@ -1079,7 +1140,7 @@ async function finalizeWorkerTurn(params) {
             /* best-effort */
         }
     }
-    printMinimalPanel('Worker Report', { status: ctx.mutableState.timedOut ? 'timeout' : `exit:${exitCode}`, validation: isSuccess ? 'successful' : 'failed' }, isSuccess ? 'GREEN' : 'RED', '🥒');
+    printMinimalPanel('Worker Report', { status: ctx.mutableState.timedOut ? 'timeout' : `exit:${exitCode}`, validation: workerValidationLabel(isSuccess, flipSuppressed) }, isSuccess ? 'GREEN' : 'RED', '🥒');
     if (!isSuccess) {
         // The worker log stream has already been ended in the proc.close path, so
         // waiting for flushAndExit() here can miss the close event and let Node
