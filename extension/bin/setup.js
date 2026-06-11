@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { printMinimalPanel, Style, TICKET_TIER_BUDGETS, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus, loadPickleSettingsBag } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, TICKET_TIER_BUDGETS, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus, loadPickleSettingsBag, resolveCodegraphSettings } from '../services/pickle-utils.js';
 import { resolveMcpConfigPath } from '../services/backend-spawn.js';
 import { getHeadSha, getHeadBranch, probeConcurrentGitAccess } from '../services/git-utils.js';
 import { LockError, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
@@ -13,6 +13,7 @@ import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaV
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
+import { CodegraphService } from '../services/codegraph-service.js';
 const sm = new StateManager();
 const VALID_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
 export const DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS = 60_000;
@@ -75,6 +76,74 @@ export async function runMcpSnapshot(sessionRoot, snapshotServers, mcpConfigPath
         catch {
             /* best-effort */
         }
+    }
+}
+function cgApplyGitExclude(workingDir) {
+    const gitDir = path.join(workingDir, '.git');
+    if (!fs.existsSync(gitDir) || !fs.statSync(gitDir).isDirectory())
+        return;
+    const infoDir = path.join(gitDir, 'info');
+    const excludePath = path.join(infoDir, 'exclude');
+    fs.mkdirSync(infoDir, { recursive: true });
+    const existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf8') : '';
+    if (existing.split('\n').map((l) => l.trim()).includes('.codegraph/'))
+        return;
+    const sep = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+    fs.appendFileSync(excludePath, `${sep}.codegraph/\n`);
+}
+function cgResolveIndexAction(isResume, dbPath, staleMs) {
+    if (!isResume)
+        return 'full';
+    try {
+        const ageMs = Date.now() - fs.statSync(dbPath).mtimeMs;
+        return ageMs >= staleMs ? 'sync' : 'noop';
+    }
+    catch {
+        return 'full'; // db absent
+    }
+}
+function cgMakeEmit(injected) {
+    if (injected)
+        return injected;
+    return (evt) => {
+        const p = { event: evt.event, source: 'pickle', ts: evt.ts };
+        if (evt.reason)
+            p.reason = evt.reason;
+        if (evt.error)
+            p.error = evt.error;
+        if (evt.operation || evt.gate_payload) {
+            p.gate_payload = {
+                ...(evt.operation ? { operation: evt.operation } : {}),
+                ...(evt.gate_payload ?? {}),
+            };
+        }
+        logActivity(p);
+    };
+}
+export async function runCodegraphIndexAtSetup(workingDir, settings, isResume, deps = {}, env = process.env) {
+    if (env['PICKLE_CODEGRAPH'] === 'off')
+        return;
+    if (!settings.enabled || !settings.index_at_setup)
+        return;
+    try {
+        cgApplyGitExclude(workingDir);
+    }
+    catch { /* best-effort */ }
+    const dbPath = deps.dbPath ?? path.join(workingDir, '.codegraph', 'codegraph.db');
+    const indexAction = cgResolveIndexAction(isResume, dbPath, settings.staleness_max_age_minutes * 60_000);
+    if (indexAction === 'noop')
+        return;
+    const emit = cgMakeEmit(deps.emit);
+    const svc = CodegraphService.create(workingDir, settings, { ...deps, emit });
+    const start = Date.now();
+    try {
+        const result = indexAction === 'sync' ? await svc.sync() : await svc.indexAll();
+        if (result === null) {
+            emit({ event: 'codegraph_index_failed', ts: new Date().toISOString(), reason: 'index_null_result', gate_payload: { duration_ms: Date.now() - start } });
+        }
+    }
+    finally {
+        svc.close();
     }
 }
 function die(message) {
@@ -1346,6 +1415,12 @@ async function main() {
         }
     }
     displaySetupSummary(session);
+    // C4: codegraph index — post-summary so SESSION_ROOT= is already on stdout. Fail-open.
+    try {
+        const cgSettings = resolveCodegraphSettings(loadPickleSettingsBag());
+        await runCodegraphIndexAtSetup(process.cwd(), cgSettings, args.resumeMode);
+    }
+    catch { /* index is best-effort — never block launch */ }
 }
 function resolvePath(p) {
     if (p.startsWith('~'))
