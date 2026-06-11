@@ -29,6 +29,10 @@ What it did with that knowledge — nothing structural:
 
 A fixed-interval pause ALREADY EXISTS: the resumed manager prompt carries "NOTE: Resumed after 5-minute API rate limit wait (source: config)". So the runtime parks for a config-sourced 5 minutes and resumes — regardless of the reported `reset_at` being hours away. D1 is therefore "fixed-interval wait ignores reset_at", not "no wait exists". The fix below should REPLACE the 5-minute config wait's resume condition (park until `max(reset_at + jitter, now + configured_min_wait)`) rather than introduce a parallel mechanism.
 
+### Second occurrence (2026-06-11 13:37Z, same session)
+
+Next five_hour window: 3/3 consecutive at 13:37Z, reset 17:30Z, workers dying at 0 within ~17 minutes of the prior window's work resuming. Babysitter response upgraded: clean stop BEFORE any zero-progress accounting (wap counter for in-flight ticket 90574654 confirmed at 0), one-shot timed auto-resume armed for 17:36Z. Confirms the bug bites every ~5h window boundary on long bundles — roughly 3-4 times across this 25-ticket run.
+
 ## Fix proposal (machine-checkable)
 
 1. **Park-until-reset**: on `consecutive >= threshold` with a reported reset time, the runner enters `rate_limit_parked`: no manager/worker spawns, no iteration advance, no zero-progress accounting; emit `rate_limit_parked {reset_at, ts}`; sleep in capped intervals re-checking a probe call.
