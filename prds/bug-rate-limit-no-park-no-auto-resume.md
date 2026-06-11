@@ -25,6 +25,10 @@ What it did with that knowledge — nothing structural:
 - Manual stop at 03:45Z pre-exhaustion (controlled pause; runners + parked workers killed).
 - At 12:33Z tick: found uncommitted-but-green H3 work in the tree (`archiveBeforeDestructive` + 10/10 tests) — committed reset-proof as `e4b6cdda` per the commit-verified-work-first doctrine; cleared the stale `worker_artifact_progress['0780b805']` counter; `setup.js --resume` + relaunch. Iteration 32 proceeding on 0780b805.
 
+### Refinement (2026-06-11 tick, from preserved manager-prompt forensics)
+
+A fixed-interval pause ALREADY EXISTS: the resumed manager prompt carries "NOTE: Resumed after 5-minute API rate limit wait (source: config)". So the runtime parks for a config-sourced 5 minutes and resumes — regardless of the reported `reset_at` being hours away. D1 is therefore "fixed-interval wait ignores reset_at", not "no wait exists". The fix below should REPLACE the 5-minute config wait's resume condition (park until `max(reset_at + jitter, now + configured_min_wait)`) rather than introduce a parallel mechanism.
+
 ## Fix proposal (machine-checkable)
 
 1. **Park-until-reset**: on `consecutive >= threshold` with a reported reset time, the runner enters `rate_limit_parked`: no manager/worker spawns, no iteration advance, no zero-progress accounting; emit `rate_limit_parked {reset_at, ts}`; sleep in capped intervals re-checking a probe call.
