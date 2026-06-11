@@ -37,6 +37,9 @@
       "notes": "no current public CVE; pinned exact for contract-test stability"
     }
   },
+  "dependencies": {
+    "@colbymchenry/codegraph": "0.9.9"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.3.3",
