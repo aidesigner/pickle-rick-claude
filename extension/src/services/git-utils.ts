@@ -4,6 +4,8 @@ import * as os from 'os';
 import { execFileSync, spawnSync } from 'child_process';
 import { runCmd, extractFrontmatter, formatLocalDateKey } from './pickle-utils.js';
 import { syncLinearTicketStatus } from './linear-integration.js';
+import { writeActivityEntry } from './state-manager.js';
+import type { PreResetPayload } from '../types/index.js';
 
 export function runGit(cmd: string[], cwd?: string, check: boolean = true): string {
   return runCmd(['git', ...cmd], { cwd, check });
@@ -203,8 +205,9 @@ function assertWorkingDirUnderTmpdirIfTestMode(cwd: string): void {
   );
 }
 
-export function resetToSha(sha: string, cwd: string, preservePrefixes?: string[]): void {
+export function resetToSha(sha: string, cwd: string, preservePrefixes?: string[], archive?: ArchiveContext): void {
   assertWorkingDirUnderTmpdirIfTestMode(cwd);
+  if (archive) archiveBeforeDestructive(archive);
   runGit(['reset', '--hard', sha], cwd);
   runGit(buildCleanArgs(preservePrefixes), cwd);
 }
@@ -268,6 +271,159 @@ export function isGitIgnoredPath(cwd: string, filePath: string): boolean {
 
 export function isWorkingTreeDirty(cwd: string, excludePrefixes?: string[]): boolean {
   return listWorkingTreeDirtyPaths(cwd, excludePrefixes).length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Pre-destructive archival (H3 / CUJ-9)
+// ---------------------------------------------------------------------------
+
+const CODEGRAPH_DIR = '.codegraph';
+const ARCHIVE_UNTRACKED_BYTE_CAP = 10 * 1024 * 1024;
+const ARCHIVE_GIT_TIMEOUT_MS = 30_000;
+const ARCHIVE_GIT_MAX_BUFFER = 64 * 1024 * 1024;
+const CODEGRAPH_PATHSPEC_EXCLUDES = ['--', '.', `:!${CODEGRAPH_DIR}`, `:!${CODEGRAPH_DIR}/**`];
+
+export type ArchiveReason = PreResetPayload['reason'];
+
+export interface ArchiveContext {
+  cwd: string;
+  sessionDir: string;
+  ticketDir?: string | null;
+  reason: ArchiveReason;
+}
+
+export interface ArchiveResult {
+  patchPath: string;
+  files: string[];
+  filesTruncated: boolean;
+}
+
+/** Archive write failed; callers MUST abort the destructive op (fail-closed). */
+export class ArchiveAbortError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ArchiveAbortError';
+  }
+}
+
+/** True for `.codegraph` and anything under `.codegraph/**` — regenerable index artifacts, never archived. */
+export function isCodegraphArtifact(p: string): boolean {
+  const normalized = p.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  return normalized === CODEGRAPH_DIR || normalized.startsWith(`${CODEGRAPH_DIR}/`);
+}
+
+function runArchiveGit(args: string[], cwd: string, okStatuses: number[] = [0]): string {
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf-8',
+    timeout: ARCHIVE_GIT_TIMEOUT_MS,
+    maxBuffer: ARCHIVE_GIT_MAX_BUFFER,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.error) throw result.error;
+  if (!okStatuses.includes(result.status ?? -1)) {
+    throw new Error(`Command failed: git ${args.join(' ')}\nError: ${result.stderr || ''}`);
+  }
+  return result.stdout || '';
+}
+
+function listUntrackedPaths(cwd: string): string[] {
+  const out = runArchiveGit(['ls-files', '--others', '--exclude-standard', '-z'], cwd);
+  return out.split('\0').filter((p) => p.length > 0 && !isCodegraphArtifact(p));
+}
+
+function collectUntrackedDiffs(cwd: string, byteCap: number): { sections: string[]; truncated: boolean } {
+  const sections: string[] = [];
+  let bytes = 0;
+  for (const file of listUntrackedPaths(cwd)) {
+    // exit 1 = content differs (the normal case for --no-index against /dev/null)
+    const diff = runArchiveGit(['diff', '--no-index', '/dev/null', file], cwd, [0, 1]);
+    const size = Buffer.byteLength(diff, 'utf-8');
+    if (bytes + size > byteCap) return { sections, truncated: true };
+    bytes += size;
+    sections.push(diff);
+  }
+  return { sections, truncated: false };
+}
+
+function buildArchivePatch(cwd: string, byteCap: number): { content: string; truncated: boolean } {
+  const staged = runArchiveGit(['diff', '--cached', ...CODEGRAPH_PATHSPEC_EXCLUDES], cwd);
+  const unstaged = runArchiveGit(['diff', ...CODEGRAPH_PATHSPEC_EXCLUDES], cwd);
+  const untracked = collectUntrackedDiffs(cwd, byteCap);
+  const content = [staged, unstaged, ...untracked.sections].filter((s) => s.length > 0).join('');
+  return { content, truncated: untracked.truncated };
+}
+
+/** Write + fsync the patch so it is durable BEFORE any destructive command runs. */
+function writePatchFileSync(patchPath: string, content: string): void {
+  const fd = fs.openSync(patchPath, 'w');
+  try {
+    fs.writeFileSync(fd, content);
+    fs.fsyncSync(fd);
+  } finally {
+    try { fs.closeSync(fd); } catch { /* preserve original error */ }
+  }
+}
+
+/** Best-effort telemetry: emission failure must never block (or unblock) the destructive op. */
+function emitArchiveEvent(sessionDir: string, entry: { event: string; [key: string]: unknown }): void {
+  try {
+    writeActivityEntry(path.join(sessionDir, 'state.json'), entry);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Fail-closed archival of uncommitted work before a destructive tree op.
+ *
+ * Writes staged diff + unstaged diff + untracked file content (per-file
+ * `git diff --no-index /dev/null <file>`, byte-capped) to
+ * `<ticketDir>/pre_reset_diff_<epoch-ms>.patch` (sessionDir fallback for
+ * non-ticket callers), fsyncs it, then emits `pre_reset_diff_archived`.
+ * `.codegraph/**` is excluded from both the dirty-check and the archive.
+ * Clean tree → returns null: no patch file, no event.
+ *
+ * Any archive failure emits `pre_reset_archive_failed` and throws
+ * `ArchiveAbortError` — the caller MUST abort the destructive op.
+ */
+export function archiveBeforeDestructive(
+  ctx: ArchiveContext,
+  byteCap: number = ARCHIVE_UNTRACKED_BYTE_CAP,
+): ArchiveResult | null {
+  const files = listWorkingTreeDirtyPaths(ctx.cwd, [CODEGRAPH_DIR]).filter((p) => !isCodegraphArtifact(p));
+  if (files.length === 0) return null;
+
+  const ticket = ctx.ticketDir ? path.basename(ctx.ticketDir) : null;
+  const patchPath = path.join(ctx.ticketDir ?? ctx.sessionDir, `pre_reset_diff_${Date.now()}.patch`);
+
+  let filesTruncated: boolean;
+  try {
+    const patch = buildArchivePatch(ctx.cwd, byteCap);
+    filesTruncated = patch.truncated;
+    writePatchFileSync(patchPath, patch.content);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    emitArchiveEvent(ctx.sessionDir, {
+      event: 'pre_reset_archive_failed',
+      ts: new Date().toISOString(),
+      ticket,
+      patch_path: patchPath,
+      reason: ctx.reason,
+      error: msg,
+    });
+    throw new ArchiveAbortError(`pre-destructive archive failed (${ctx.reason}): ${msg}`);
+  }
+
+  emitArchiveEvent(ctx.sessionDir, {
+    event: 'pre_reset_diff_archived',
+    ts: new Date().toISOString(),
+    ticket,
+    patch_path: patchPath,
+    files,
+    files_truncated: filesTruncated,
+    reason: ctx.reason,
+  });
+
+  return { patchPath, files, filesTruncated };
 }
 
 export type DiffStatus = 'A' | 'M' | 'D' | 'R' | 'B';
