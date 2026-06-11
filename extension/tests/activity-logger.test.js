@@ -247,6 +247,21 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // B-MWIS: R-MWIS-2 emits this when the mux main-loop idle-stall watchdog
         // detects a worker that exited without advancing (process-exit primary signal).
         'mux_idle_stall_detected',
+        // 08e75a59: v2.0 codegraph + recovery telemetry events, registered
+        // before any emitter lands (schema defs + oneOf refs in
+        // activity-events.schema.json; payload contracts in types/index.ts).
+        'codegraph_index_built',
+        'codegraph_index_failed',
+        'codegraph_sync_completed',
+        'codegraph_degraded',
+        'codegraph_session_summary',
+        'scope_impact_warning',
+        'orphan_commit_reattached',
+        'orphan_commit_unreattachable',
+        'worker_silent_death',
+        'pre_reset_diff_archived',
+        'pre_reset_archive_failed',
+        'failed_flip_suppressed',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {

@@ -300,6 +300,19 @@ export const VALID_ACTIVITY_EVENTS = [
     'refinement_over_collapse_detected',
     'worker_mcp_config_resolved',
     'worker_head_regression_detected',
+    // v2.0 codegraph + recovery telemetry (registered before any emitter lands)
+    'codegraph_index_built',
+    'codegraph_index_failed',
+    'codegraph_sync_completed',
+    'codegraph_degraded',
+    'codegraph_session_summary',
+    'scope_impact_warning',
+    'orphan_commit_reattached',
+    'orphan_commit_unreattachable',
+    'worker_silent_death',
+    'pre_reset_diff_archived',
+    'pre_reset_archive_failed',
+    'failed_flip_suppressed',
 ];
 /** Recoverable reasons a ticket can be flipped to Failed by the auto-skip guard (R-WSWA-3). */
 export const FAILURE_REASONS = ['oversized_no_progress'];

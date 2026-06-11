@@ -676,6 +676,19 @@ export const VALID_ACTIVITY_EVENTS = [
   'refinement_over_collapse_detected',
   'worker_mcp_config_resolved',
   'worker_head_regression_detected',
+  // v2.0 codegraph + recovery telemetry (registered before any emitter lands)
+  'codegraph_index_built',
+  'codegraph_index_failed',
+  'codegraph_sync_completed',
+  'codegraph_degraded',
+  'codegraph_session_summary',
+  'scope_impact_warning',
+  'orphan_commit_reattached',
+  'orphan_commit_unreattachable',
+  'worker_silent_death',
+  'pre_reset_diff_archived',
+  'pre_reset_archive_failed',
+  'failed_flip_suppressed',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
@@ -831,6 +844,98 @@ export interface ActivityEvent {
   attempted_session_path?: string;
   attempted_pid?: number;
   cwd?: string;
+  // v2.0: scope_impact_warning payload fields (ImpactAnalysisPayload)
+  staged_paths?: string[];
+  transitive_dependents_outside_scope?: string[];
+  radius_depth?: number;
+  // v2.0: worker_silent_death payload fields (SilentDeathPayload)
+  log_path?: string;
+  sub_class?: SilentDeathPayload['sub_class'];
+  respawn_attempt?: number;
+  // v2.0: pre_reset_diff_archived / pre_reset_archive_failed payload fields (PreResetPayload)
+  patch_path?: string;
+  files?: string[];
+  files_truncated?: boolean;
+  // v2.0: orphan_commit_reattached / orphan_commit_unreattachable payload fields (OrphanReattachPayload)
+  sha?: string;
+  prev_head?: string;
+  chain_length?: number;
+  // v2.0: failed_flip_suppressed payload fields (FailedFlipSuppressedPayload)
+  evidence?: FailedFlipSuppressedPayload['evidence'];
+  suppression_count?: number;
+  // v2.0: codegraph_session_summary payload fields (CodegraphSessionSummaryPayload)
+  tickets?: number;
+  degraded_ops?: number;
+  index_status?: CodegraphSessionSummaryPayload['index_status'];
+}
+
+// ---------------------------------------------------------------------------
+// v2.0 Activity Event Payload Contracts (PRD Type Contracts)
+// Event → payload mapping:
+//   scope_impact_warning            → ImpactAnalysisPayload
+//   worker_silent_death             → SilentDeathPayload
+//   pre_reset_diff_archived         → PreResetPayload
+//   pre_reset_archive_failed        → PreResetPayload (archive failure variant)
+//   orphan_commit_reattached        → OrphanReattachPayload
+//   orphan_commit_unreattachable    → OrphanReattachPayload (no reattach evidence)
+//   failed_flip_suppressed          → FailedFlipSuppressedPayload
+//   codegraph_session_summary       → CodegraphSessionSummaryPayload
+//   codegraph_index_built / codegraph_index_failed / codegraph_sync_completed /
+//   codegraph_degraded              → no dedicated payload (event + ts, optional telemetry)
+// `writeActivityEntry` never stamps `ts` — emitters pass it explicitly, so `ts`
+// is required wherever the payload declares it.
+// ---------------------------------------------------------------------------
+
+/** Payload for `scope_impact_warning`. */
+export interface ImpactAnalysisPayload {
+  staged_paths: string[];
+  transitive_dependents_outside_scope: string[];
+  radius_depth: number;
+}
+
+/** Payload for `worker_silent_death`. */
+export interface SilentDeathPayload {
+  ticket: string;
+  pid: number | null;
+  log_path: string;
+  sub_class: 'log_empty';
+  respawn_attempt: number;
+  ts: string;
+}
+
+/** Payload for `pre_reset_diff_archived` / `pre_reset_archive_failed`. */
+export interface PreResetPayload {
+  ticket: string | null;
+  patch_path: string;
+  files: string[];
+  files_truncated: boolean;
+  reason: 'pre_reset' | 'silent_death' | 'microverse_rollback';
+  ts: string;
+}
+
+/** Payload for `orphan_commit_reattached` / `orphan_commit_unreattachable`. */
+export interface OrphanReattachPayload {
+  ticket: string;
+  sha: string;
+  prev_head: string;
+  chain_length: number;
+  ts: string;
+}
+
+/** Payload for `failed_flip_suppressed`. */
+export interface FailedFlipSuppressedPayload {
+  ticket: string;
+  evidence: 'fresh_artifacts' | 'ticket_commit' | 'both';
+  suppression_count: number;
+  ts: string;
+}
+
+/** Payload for `codegraph_session_summary`. */
+export interface CodegraphSessionSummaryPayload {
+  tickets: number;
+  degraded_ops: number;
+  index_status: 'healthy' | 'degraded' | 'latched' | 'disabled';
+  ts: string;
 }
 
 // ---------------------------------------------------------------------------

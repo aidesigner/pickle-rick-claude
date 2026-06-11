@@ -782,6 +782,148 @@ const EVENT_CASES = [
     },
     drop: 'gate_payload',
   },
+  // v2.0 codegraph + recovery telemetry events. `writeActivityEntry` never
+  // stamps `ts`, so every fixture whose payload contract declares `ts`
+  // drops it to prove the schema requires it.
+  {
+    type: 'codegraph_index_built',
+    valid: {
+      event: 'codegraph_index_built',
+      ts: TS,
+      session: 'session-1',
+      gate_payload: { files_indexed: 412, duration_ms: 1830 },
+    },
+    drop: 'ts',
+  },
+  {
+    type: 'codegraph_index_failed',
+    valid: {
+      event: 'codegraph_index_failed',
+      ts: TS,
+      session: 'session-1',
+      error: 'index build crashed: ENOSPC',
+      gate_payload: { error: 'index build crashed: ENOSPC', duration_ms: 95 },
+    },
+    drop: 'ts',
+  },
+  {
+    type: 'codegraph_sync_completed',
+    valid: {
+      event: 'codegraph_sync_completed',
+      ts: TS,
+      session: 'session-1',
+      gate_payload: { files_changed: 7, duration_ms: 210 },
+    },
+    drop: 'ts',
+  },
+  {
+    type: 'codegraph_degraded',
+    valid: {
+      event: 'codegraph_degraded',
+      ts: TS,
+      session: 'session-1',
+      reason: 'index stale beyond threshold',
+      gate_payload: { operation: 'impact_analysis', fallback: 'grep' },
+    },
+    drop: 'ts',
+  },
+  {
+    type: 'codegraph_session_summary',
+    valid: {
+      event: 'codegraph_session_summary',
+      ts: TS,
+      session: 'session-1',
+      tickets: 12,
+      degraded_ops: 2,
+      index_status: 'degraded',
+    },
+    drop: 'ts',
+  },
+  {
+    type: 'scope_impact_warning',
+    valid: {
+      event: 'scope_impact_warning',
+      ts: TS,
+      ticket: 'abc12345',
+      staged_paths: ['extension/src/services/scope-resolver.ts'],
+      transitive_dependents_outside_scope: ['extension/src/bin/check-readiness.ts'],
+      radius_depth: 2,
+    },
+    drop: 'staged_paths',
+  },
+  {
+    type: 'orphan_commit_reattached',
+    valid: {
+      event: 'orphan_commit_reattached',
+      ts: TS,
+      ticket: 'abc12345',
+      sha: 'def5678def5678',
+      prev_head: 'abc1234abc1234',
+      chain_length: 2,
+    },
+    drop: 'ts',
+  },
+  {
+    type: 'orphan_commit_unreattachable',
+    valid: {
+      event: 'orphan_commit_unreattachable',
+      ts: TS,
+      ticket: 'abc12345',
+      sha: 'def5678def5678',
+      prev_head: 'abc1234abc1234',
+      reason: 'diverged: ff-only reattach not possible',
+    },
+    drop: 'sha',
+  },
+  {
+    type: 'worker_silent_death',
+    valid: {
+      event: 'worker_silent_death',
+      ts: TS,
+      ticket: 'abc12345',
+      pid: null,
+      log_path: '/tmp/session/abc12345/worker_session_4242.log',
+      sub_class: 'log_empty',
+      respawn_attempt: 1,
+    },
+    drop: 'ts',
+  },
+  {
+    type: 'pre_reset_diff_archived',
+    valid: {
+      event: 'pre_reset_diff_archived',
+      ts: TS,
+      ticket: 'abc12345',
+      patch_path: '/tmp/session/archive/pre-reset-abc12345.patch',
+      files: ['extension/src/bin/mux-runner.ts'],
+      files_truncated: false,
+      reason: 'pre_reset',
+    },
+    drop: 'ts',
+  },
+  {
+    type: 'pre_reset_archive_failed',
+    valid: {
+      event: 'pre_reset_archive_failed',
+      ts: TS,
+      ticket: null,
+      patch_path: '/tmp/session/archive/pre-reset-unknown.patch',
+      reason: 'silent_death',
+      error: 'git diff exited 128',
+    },
+    drop: 'ts',
+  },
+  {
+    type: 'failed_flip_suppressed',
+    valid: {
+      event: 'failed_flip_suppressed',
+      ts: TS,
+      ticket: 'abc12345',
+      evidence: 'both',
+      suppression_count: 1,
+    },
+    drop: 'ts',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -1056,6 +1198,18 @@ test('activity-event-payload: schema defines all registered event type definitio
     'concurrent_git_access_detected',
     'worker_mcp_config_resolved',
     'worker_head_regression_detected',
+    'codegraph_index_built',
+    'codegraph_index_failed',
+    'codegraph_sync_completed',
+    'codegraph_degraded',
+    'codegraph_session_summary',
+    'scope_impact_warning',
+    'orphan_commit_reattached',
+    'orphan_commit_unreattachable',
+    'worker_silent_death',
+    'pre_reset_diff_archived',
+    'pre_reset_archive_failed',
+    'failed_flip_suppressed',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

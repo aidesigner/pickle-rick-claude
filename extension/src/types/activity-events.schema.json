@@ -1464,6 +1464,178 @@
           }
         }
       }
+    },
+    "codegraph_index_built": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "codegraph_index_built" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "properties": {
+            "files_indexed": { "type": "integer", "minimum": 0 },
+            "duration_ms": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "codegraph_index_failed": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "codegraph_index_failed" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "error": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "properties": {
+            "error": { "type": "string" },
+            "duration_ms": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "codegraph_sync_completed": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "codegraph_sync_completed" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "properties": {
+            "files_changed": { "type": "integer", "minimum": 0 },
+            "duration_ms": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "codegraph_degraded": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "codegraph_degraded" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "reason": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "properties": {
+            "operation": { "type": "string" },
+            "fallback": { "type": "string" }
+          }
+        }
+      }
+    },
+    "codegraph_session_summary": {
+      "type": "object",
+      "required": ["event", "ts", "tickets", "degraded_ops", "index_status"],
+      "properties": {
+        "event": { "type": "string", "const": "codegraph_session_summary" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "tickets": { "type": "integer", "minimum": 0 },
+        "degraded_ops": { "type": "integer", "minimum": 0 },
+        "index_status": { "type": "string", "enum": ["healthy", "degraded", "latched", "disabled"] }
+      }
+    },
+    "scope_impact_warning": {
+      "type": "object",
+      "required": ["event", "ts", "staged_paths", "transitive_dependents_outside_scope", "radius_depth"],
+      "properties": {
+        "event": { "type": "string", "const": "scope_impact_warning" },
+        "ts": { "type": "string" },
+        "ticket": { "type": ["string", "null"] },
+        "staged_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "transitive_dependents_outside_scope": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "radius_depth": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "orphan_commit_reattached": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "sha", "prev_head", "chain_length"],
+      "properties": {
+        "event": { "type": "string", "const": "orphan_commit_reattached" },
+        "ts": { "type": "string" },
+        "ticket": { "type": "string" },
+        "sha": { "type": "string" },
+        "prev_head": { "type": "string" },
+        "chain_length": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "orphan_commit_unreattachable": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "sha", "reason"],
+      "properties": {
+        "event": { "type": "string", "const": "orphan_commit_unreattachable" },
+        "ts": { "type": "string" },
+        "ticket": { "type": "string" },
+        "sha": { "type": "string" },
+        "prev_head": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "worker_silent_death": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "pid", "log_path", "sub_class", "respawn_attempt"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_silent_death" },
+        "ts": { "type": "string" },
+        "ticket": { "type": "string" },
+        "pid": { "type": ["integer", "null"] },
+        "log_path": { "type": "string" },
+        "sub_class": { "type": "string", "const": "log_empty" },
+        "respawn_attempt": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "pre_reset_diff_archived": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "patch_path", "files", "files_truncated", "reason"],
+      "properties": {
+        "event": { "type": "string", "const": "pre_reset_diff_archived" },
+        "ts": { "type": "string" },
+        "ticket": { "type": ["string", "null"] },
+        "patch_path": { "type": "string" },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "files_truncated": { "type": "boolean" },
+        "reason": { "type": "string", "enum": ["pre_reset", "silent_death", "microverse_rollback"] }
+      }
+    },
+    "pre_reset_archive_failed": {
+      "type": "object",
+      "required": ["event", "ts", "reason", "error"],
+      "properties": {
+        "event": { "type": "string", "const": "pre_reset_archive_failed" },
+        "ts": { "type": "string" },
+        "ticket": { "type": ["string", "null"] },
+        "patch_path": { "type": "string" },
+        "reason": { "type": "string", "enum": ["pre_reset", "silent_death", "microverse_rollback"] },
+        "error": { "type": "string" }
+      }
+    },
+    "failed_flip_suppressed": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "evidence", "suppression_count"],
+      "properties": {
+        "event": { "type": "string", "const": "failed_flip_suppressed" },
+        "ts": { "type": "string" },
+        "ticket": { "type": "string" },
+        "evidence": { "type": "string", "enum": ["fresh_artifacts", "ticket_commit", "both"] },
+        "suppression_count": { "type": "integer", "minimum": 1 }
+      }
     }
   },
   "oneOf": [
@@ -1558,6 +1730,18 @@
     { "$ref": "#/definitions/refinement_over_collapse_detected" },
     { "$ref": "#/definitions/concurrent_git_access_detected" },
     { "$ref": "#/definitions/worker_mcp_config_resolved" },
-    { "$ref": "#/definitions/worker_head_regression_detected" }
+    { "$ref": "#/definitions/worker_head_regression_detected" },
+    { "$ref": "#/definitions/codegraph_index_built" },
+    { "$ref": "#/definitions/codegraph_index_failed" },
+    { "$ref": "#/definitions/codegraph_sync_completed" },
+    { "$ref": "#/definitions/codegraph_degraded" },
+    { "$ref": "#/definitions/codegraph_session_summary" },
+    { "$ref": "#/definitions/scope_impact_warning" },
+    { "$ref": "#/definitions/orphan_commit_reattached" },
+    { "$ref": "#/definitions/orphan_commit_unreattachable" },
+    { "$ref": "#/definitions/worker_silent_death" },
+    { "$ref": "#/definitions/pre_reset_diff_archived" },
+    { "$ref": "#/definitions/pre_reset_archive_failed" },
+    { "$ref": "#/definitions/failed_flip_suppressed" }
   ]
 }

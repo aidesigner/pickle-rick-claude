@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { VALID_ACTIVITY_EVENTS } from '../types/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..', '..');
@@ -92,6 +93,59 @@ for (const eventName of PIWG_EVENTS) {
     );
   });
 }
+
+// v2.0 codegraph + recovery telemetry events (ticket 08e75a59) — registered
+// BEFORE any emitter lands. Conformance surface: VALID_ACTIVITY_EVENTS,
+// schema definitions + oneOf membership (R-PDD-oneOf), EVENT_CASES fixture,
+// EVENT_NAMES drift array, and `ts` in the schema's required set (emitters
+// stamp ts explicitly — writeActivityEntry never does).
+// Note: no spawn-refinement-team grounding row is asserted — these events have
+// no prompt-catalog rows yet; that lands with the emitters.
+const V2_EVENTS = [
+  'codegraph_index_built',
+  'codegraph_index_failed',
+  'codegraph_sync_completed',
+  'codegraph_degraded',
+  'codegraph_session_summary',
+  'scope_impact_warning',
+  'orphan_commit_reattached',
+  'orphan_commit_unreattachable',
+  'worker_silent_death',
+  'pre_reset_diff_archived',
+  'pre_reset_archive_failed',
+  'failed_flip_suppressed',
+];
+
+test('v2-conformance: all 12 v2.0 events are fully registered (registry, schema, oneOf, fixtures, ts required)', () => {
+  assert.equal(V2_EVENTS.length, 12, 'v2.0 table must contain exactly 12 events');
+  for (const eventName of V2_EVENTS) {
+    assert.ok(
+      VALID_ACTIVITY_EVENTS.includes(eventName),
+      `VALID_ACTIVITY_EVENTS missing '${eventName}'`,
+    );
+    assert.ok(
+      schemaHasEventDefinition(eventName),
+      `activity-events.schema.json definitions missing '${eventName}'`,
+    );
+    assert.ok(
+      schemaOneOfReferencesEvent(eventName),
+      `activity-events.schema.json oneOf does not reference '${eventName}'`,
+    );
+    assert.ok(
+      eventCasesHasType(eventName),
+      `activity-event-payload.test.js EVENT_CASES has no fixture for '${eventName}'`,
+    );
+    assert.ok(
+      eventNamesContains(eventName),
+      `activity-event-payload.test.js EVENT_NAMES drift-check missing '${eventName}'`,
+    );
+    const required = schema.definitions[eventName].required ?? [];
+    assert.ok(
+      required.includes('ts'),
+      `'${eventName}' schema must require 'ts' — writeActivityEntry never stamps it`,
+    );
+  }
+});
 
 test('piwg-triangle: synthetic gap test — a missing spawn-refinement-team row would be detected', () => {
   // The detector is grep-based on the source; a gap would manifest as
