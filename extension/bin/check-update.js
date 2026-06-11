@@ -18,29 +18,57 @@ function log(message) {
         /* fail-open */
     }
 }
+// Release `X.Y.Z` or prerelease `X.Y.Z-<ident>.<N>` (e.g. 2.0.0-beta.1).
+const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+)\.(\d+))?$/;
+function parseSemverParts(version) {
+    const match = SEMVER_RE.exec(version);
+    if (!match)
+        return null;
+    return {
+        major: Number(match[1]),
+        minor: Number(match[2]),
+        patch: Number(match[3]),
+        prerelease: match[4] !== undefined ? { ident: match[4], num: Number(match[5]) } : null,
+    };
+}
 export function parseVersion(tag) {
     if (!tag)
         return null;
     const stripped = tag.startsWith('v') ? tag.slice(1) : tag;
-    if (!/^\d+\.\d+\.\d+$/.test(stripped))
+    if (!parseSemverParts(stripped))
         return null;
     return stripped;
+}
+function comparePrerelease(a, b) {
+    if (!a && !b)
+        return 0;
+    if (!a)
+        return 1; // release > prerelease of the same triple
+    if (!b)
+        return -1;
+    if (a.ident !== b.ident)
+        return a.ident < b.ident ? -1 : 1;
+    if (a.num !== b.num)
+        return a.num < b.num ? -1 : 1;
+    return 0;
 }
 export function compareSemver(a, b) {
     const normalizedA = parseVersion(a);
     const normalizedB = parseVersion(b);
-    if (!normalizedA || !normalizedB) {
+    const parsedA = normalizedA ? parseSemverParts(normalizedA) : null;
+    const parsedB = normalizedB ? parseSemverParts(normalizedB) : null;
+    if (!parsedA || !parsedB) {
         throw new Error(`Invalid semver comparison: '${a}' vs '${b}'`);
     }
-    const partsA = normalizedA.split('.').map(Number);
-    const partsB = normalizedB.split('.').map(Number);
+    const partsA = [parsedA.major, parsedA.minor, parsedA.patch];
+    const partsB = [parsedB.major, parsedB.minor, parsedB.patch];
     for (let i = 0; i < 3; i++) {
         if (partsA[i] < partsB[i])
             return -1;
         if (partsA[i] > partsB[i])
             return 1;
     }
-    return 0;
+    return comparePrerelease(parsedA.prerelease, parsedB.prerelease);
 }
 export class BlockedDowngradeError extends Error {
     candidate;
