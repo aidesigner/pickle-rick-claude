@@ -33,6 +33,10 @@ A fixed-interval pause ALREADY EXISTS: the resumed manager prompt carries "NOTE:
 
 Next five_hour window: 3/3 consecutive at 13:37Z, reset 17:30Z, workers dying at 0 within ~17 minutes of the prior window's work resuming. Babysitter response upgraded: clean stop BEFORE any zero-progress accounting (wap counter for in-flight ticket 90574654 confirmed at 0), one-shot timed auto-resume armed for 17:36Z. Confirms the bug bites every ~5h window boundary on long bundles — roughly 3-4 times across this 25-ticket run.
 
+### Third occurrence (2026-06-11 16:05Z, fresh account)
+
+The fresh-quota account hit its OWN five_hour window ~2h after switch-over (2/3 at 16:05Z, reset 19:00Z). Confirms the bug is account-agnostic and recurs on EVERY window boundary — at large-tier parallel-worker burn this is roughly every 2-4 tickets regardless of which account. By 2/3 the in-flight ticket (e56ed23f/H1) had already taken `zero_progress_count: 1` from a 429'd spawn that produced no artifacts — the counter-poisoning pathway composing with B-LERD, exactly as predicted. Babysitter stopped at 2/3 (pre-3/3, pre-burn), cleared the H1 counter, armed timed resume for 19:06Z. Pattern across this single run: 3 window walls, all babysitter-handled.
+
 ## Fix proposal (machine-checkable)
 
 1. **Park-until-reset**: on `consecutive >= threshold` with a reported reset time, the runner enters `rate_limit_parked`: no manager/worker spawns, no iteration advance, no zero-progress accounting; emit `rate_limit_parked {reset_at, ts}`; sleep in capped intervals re-checking a probe call.
