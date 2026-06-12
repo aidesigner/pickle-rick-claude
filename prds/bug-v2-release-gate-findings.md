@@ -20,3 +20,13 @@ The bundle's own review hammers (d49c7596 test-quality, b0111894 cross-ref) revi
 
 ## OPEN — b0111894-escalated install.sh gap (P3)
 `install.sh` lacks the `INSTALL_BYPASS_ACTIVE_SESSION` audit-write that README documents. Additive audit event, no data loss, not beta-blocking. Needs a follow-up ticket.
+
+## CORRECTION (2026-06-12) — CI test:fast red is documented fast-suite flakiness, NOT the bundle
+
+The `fetch-depth` + concurrency-clamp fixes got CI past the audits, but the release.yml run at the fully-fixed commit `3a3619d5` STILL fails test:fast with **exactly 48 failures** (same count at c=8 and c≤4 — not random flake variance). Every one of the 48 **passes locally** (full `test:fast` = 6037/6040 at c=2; verify-recapture's file 32/32; codegraph-service 16/16). They are CI-environment-specific (slower/UTC GitHub runner → subprocess-heavy + timing-sensitive tests time out).
+
+This is the **documented R-TSPF / R-TFP fast-suite-on-CI flake class**. The repo already encodes that single-pass `test:fast` is unreliable on CI: `stability-gate.yml` runs it 30× and `check-flake-budget.ts` tolerates a failure budget. The `release.yml` gate runs `npm run test:fast` ONCE, so it is structurally fragile against the very flakiness the repo otherwise accommodates.
+
+**This is NOT a release blocker for the artifact** — v2.0.0-beta.1 is verified green locally across all tiers and the tarball asset is attached. It IS a real gate-design gap.
+
+**Fix (OPEN, P2): wire the release gate's test:fast to the flake-tolerant mechanism.** Replace the single-pass `npm run test:fast` in the canonical `FULL_CMD` (CLAUDE.md/ci.yml/release.yml/check-wired.sh/release-gate-wiring.test.js) with either `check-flake-budget` (rerun-with-budget) or a serial-manifest pass, so CI green reflects real failures, not runner-load flakes. AC: release.yml goes green on a clean bundle; an actually-broken test still reds it.
