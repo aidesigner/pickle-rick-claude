@@ -208,6 +208,8 @@ const TASK_NOTE_PRIORITY = {
     'Progress': 3,
 };
 const TASK_NOTE_TRUNC_MARKER = '[truncated]';
+/** Default character budget for {@link truncateTaskNotes}; caps TASK_NOTES.md injected into the manager prompt. */
+const TASK_NOTES_MAX_CHARS = 2000;
 const MANAGER_TURN_HEARTBEAT_POLL_MS = 20_000;
 const HEARTBEAT_ARTIFACT_PREFIXES = ['research_', 'plan_', 'conformance_'];
 // R-MWIS-1: bounded stdio-drain window after the child's 'exit' event. Node's
@@ -628,7 +630,7 @@ function buildIterationHandoffSummary(state, sessionDir, iterationNum) {
  * Preserves ## Next and ## Dead Ends fully, trims ## Progress from oldest.
  * Sections without recognized headers are treated as Progress.
  */
-export function truncateTaskNotes(content, maxChars = 2000) {
+export function truncateTaskNotes(content, maxChars = TASK_NOTES_MAX_CHARS) {
     if (!content || !content.trim())
         return '';
     if (content.length <= maxChars)
@@ -2567,7 +2569,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
             if (fs.existsSync(taskNotesPath)) {
                 // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
                 const raw = fs.readFileSync(taskNotesPath, 'utf-8');
-                const truncated = truncateTaskNotes(raw, 2000);
+                const truncated = truncateTaskNotes(raw);
                 if (truncated.trim())
                     taskNotes = truncated;
             }
