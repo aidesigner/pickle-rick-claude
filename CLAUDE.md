@@ -41,7 +41,7 @@ DOT pipeline files (`*.dot`) and PRD files (`*.md` in `extension/`) are generate
 
 ## Build & Test
 
-cd extension && npm ci && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh && bash scripts/audit-subprocess-heavy-tests.sh && bash scripts/audit-fix-commits.sh && bash scripts/audit-bundle-thesis.sh && bash scripts/audit-quarantine.sh && bash scripts/audit-trap-door-enforcement.sh && npm run test:fast && npm run test:integration && RUN_EXPENSIVE_TESTS=1 npm run test:expensive
+cd extension && npm ci && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh && bash scripts/audit-subprocess-heavy-tests.sh && bash scripts/audit-fix-commits.sh && bash scripts/audit-bundle-thesis.sh && bash scripts/audit-quarantine.sh && bash scripts/audit-trap-door-enforcement.sh && bash scripts/audit-guarded-reset.sh && npm run test:fast && npm run test:integration && RUN_EXPENSIVE_TESTS=1 npm run test:expensive
 Tests: `extension/tests/*.test.js` via `node --test`. No `.test.ts` files.
 Auxiliary npm scripts: `coverage` (c8 fast-tier baseline), `coverage:delta` (regression check via `scripts/coverage-delta.sh`), `wire-check` (gate parity via `scripts/check-wired.sh`).
 
@@ -57,7 +57,7 @@ Extension path: `~/.claude/pickle-rick` (never `.gemini`)
 Semver `<Major>.<Minor>.<Patch>` in `extension/package.json`:
 **Major** = breaking (state schema, CLI args, hook contracts) | **Minor** = features (commands, flags, prompts) | **Patch** = fixes, refactors
 Bump → commit `chore: bump version to X.Y.Z` → `gh release create vX.Y.Z`
-Before creating a release, run the full lint and test gate from `extension/`: `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh && bash scripts/audit-subprocess-heavy-tests.sh && bash scripts/audit-fix-commits.sh && bash scripts/audit-bundle-thesis.sh && bash scripts/audit-quarantine.sh && bash scripts/audit-trap-door-enforcement.sh && npm run test:fast && npm run test:integration && RUN_EXPENSIVE_TESTS=1 npm run test:expensive`. Test failures block release, no exceptions.
+Before creating a release, run the full lint and test gate from `extension/`: `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh && bash scripts/audit-subprocess-heavy-tests.sh && bash scripts/audit-fix-commits.sh && bash scripts/audit-bundle-thesis.sh && bash scripts/audit-quarantine.sh && bash scripts/audit-trap-door-enforcement.sh && bash scripts/audit-guarded-reset.sh && npm run test:fast && npm run test:integration && RUN_EXPENSIVE_TESTS=1 npm run test:expensive`. Test failures block release, no exceptions.
 **All uncommitted changes MUST be committed and included before tagging a release.** No dirty working tree at release time — `git status` must be clean, compiled JS must match TS source.
 
 ## Architecture
@@ -89,12 +89,15 @@ Operator-configured fields in the source `pickle_settings.json` (deployed via `b
 |---|---|---|---|
 | `worker_mcp_config_path` | `string \| null` | `null` | Path to an operator-curated subset MCP config for worker/manager subprocesses (e.g. read-only Linear; omit write-capable servers). `null` = no MCP forwarding. |
 | `worker_mcp_snapshot_servers` | `string[]` | `[]` | Server names (from `worker_mcp_config_path`) to snapshot at session setup time. Empty = none snapshotted. |
+| `codegraph` | `object` | see notes | v2.0 Code Graph integration block (resolved by `resolveCodegraphSettings`; per-field fallback). Fields: `enabled` (`false`), `index_at_setup` (`false`), `staleness_max_age_minutes` (`30`, min 1), `context_max_bytes` (`8192`, clamp 1024–65536), `expose_mcp_to_workers` (`false`), and the SPLIT timeouts `index_timeout_ms` (`120000`, floor 5000) / `sync_timeout_ms` (`30000`, floor 1000) / `query_timeout_ms` (`5000`, floor 500). Kill-switch: `PICKLE_CODEGRAPH=off`. |
+| `hardening` | `object` | see notes | Additive runtime-recovery block (DISTINCT from `bmad_hardening`; resolved by `resolveHardeningSettings`). `silent_death_respawn_cap` (`1`; `0` disables silent-death respawns) and `failed_flip_suppression_cap` (`2`; `0` disables evidence-backed Failed-flip suppression). Non-negative integers; both draw down the persistent `state.recovery_attempts` ledger so caps survive relaunch / `setup.js --resume`. |
 
 ## Environment Variables
 
 | Variable | Values | Effect |
 |---|---|---|
 | `PLUMBUS_GENERATIVE_AUDIT` | `"off"` | Kill-switch: bypasses Override 6 entirely — no analyzer invocation, no `## Generative Findings` written, logs `"generative_audit: skipped (kill-switch)"` to `state.json.activity` |
+| `PICKLE_CODEGRAPH` | `"off"` | Kill-switch for the v2.0 Code Graph integration: `off` makes `CodegraphService` inert (every call returns null, emits nothing, never loads the native `@colbymchenry/codegraph` bundle) AND skips the setup-time index (`runCodegraphIndexAtSetup`). Only the literal lowercase `off` disables; any other value / absent leaves the `codegraph.enabled` setting in control. Reads: `services/codegraph-service.ts`, `bin/setup.ts` |
 | `PICKLE_INSTALL_ROOT` | path (default `$HOME/.claude/pickle-rick`) | Override deploy prefix for `install.sh` and deploy-lifecycle soak test |
 | `RUN_EXPENSIVE_TESTS` | `"1"` | Gates the `test:expensive` tier (deploy-lifecycle soak, release-gate full run). Must be set explicitly; not included in default `npm test` |
 | `SOAK_SECONDS` | integer ≥ 1800 (default `1800`) | Duration for deploy-lifecycle soak test in `tests/integration/deploy-lifecycle-soak.test.js` |

@@ -459,6 +459,51 @@ Auto-discovers subsystems, rotates through them round-robin, three-phase protoco
 
 **Microverse opt-in** — `/pickle-microverse` runs are NOT gated by default. Add a filename to `convergence_gate.enabled_convergence_files` (default `["anatomy-park.json"]`) to opt a microverse-driven convergence file into per-iteration gating.
 
+### 🕸️ Code Graph — Symbol-Graph Worker Context *(v2.0, beta)*
+
+> *"Workers don't grep blind anymore, Morty — they get a map."*
+
+**Beta release.** Code Graph is opt-in and ships disabled by default. It indexes the repo into a symbol graph (backed by `@colbymchenry/codegraph`, a per-platform native bundle that may be absent — the service fails open and never crashes a session when it can't load). Claude-family workers get a `codegraph serve --mcp` MCP server so they can query callers/impact-radius/symbols instead of grepping. The upstream project claims **~58% fewer tool calls** per task — treat this as an **UNVALIDATED upstream claim**; we have not independently measured it.
+
+**Settings** — add a `codegraph:` block to `extension/pickle_settings.json` (resolved by `resolveCodegraphSettings`; an absent/partial/malformed block falls back per field):
+
+| Field | Default | Notes |
+|---|---|---|
+| `codegraph.enabled` | `false` | Master switch for the integration. |
+| `index_at_setup` | `false` | Build/refresh the index at session setup. |
+| `staleness_max_age_minutes` | `30` | On resume, re-`sync` the index when older than this (min `1`). |
+| `context_max_bytes` | `8192` | Max injected context size (clamped `1024`–`65536`). |
+| `expose_mcp_to_workers` | `false` | Materialize the worker MCP config so Claude workers get the `codegraph` server. |
+| `index_timeout_ms` | `120000` | **Split timeout** for the full `indexAll` build (floor `5000`). |
+| `sync_timeout_ms` | `30000` | **Split timeout** for incremental `sync` (floor `1000`). |
+| `query_timeout_ms` | `5000` | **Split timeout** for `buildContext`/queries (floor `500`). |
+
+The three timeouts are independent — index, sync, and query each get their own budget. (`searchNodes` / `getCallers` / `getImpactRadius` are synchronous and are not raced against a timer.)
+
+**`hardening:` block** — additive runtime-recovery knobs (distinct from `bmad_hardening`; resolved by `resolveHardeningSettings`, per-field fallback). Both caps draw down the persistent `state.recovery_attempts` ledger so they survive relaunch and `setup.js --resume`:
+
+| Field | Default | Notes |
+|---|---|---|
+| `silent_death_respawn_cap` | `1` | Shared respawn budget across both silent-death sub-classes (`log_empty`, `log_truncated`). `0` disables silent-death respawns entirely. |
+| `failed_flip_suppression_cap` | `2` | Max evidence-backed Failed-flip suppressions per ticket. `0` disables suppression (an evidence-backed flip-intent escalates immediately). |
+
+**Kill-switch** — set `PICKLE_CODEGRAPH=off` to make the service inert: every call returns null, it emits nothing, it never loads the native bundle, and the setup-time index is skipped. Only the literal lowercase string `off` disables it — any other value (or absent) leaves the `codegraph.enabled` setting in control.
+
+**Worker MCP layout** — when `expose_mcp_to_workers` is `true`, setup materializes `<session>/mcp/worker-mcp.json` containing `{ mcpServers: { codegraph, ...operatorEntries } }`. This is **Claude-family workers only** — codex workers are **explicitly excluded** (`codex exec` has no `--mcp-config` flag, so `buildCodexInvocation` never receives one). The bundled `codegraph serve --mcp` entry launches with `CODEGRAPH_NO_WATCH=1` so the runtime `sync` is the **single writer** to `.codegraph/codegraph.db` (the serve watcher is off). The operator's own MCP config file is never mutated.
+
+**`.codegraph/` hygiene** — workers must **NOT** commit the `.codegraph/` index directory. Setup appends `.codegraph/` to `.git/info/exclude` automatically (idempotent, best-effort) — no `.gitignore` edit required.
+
+**Activity events** — observable in `state.json.activity` / the activity JSONL:
+
+| Event | Emitted when |
+|---|---|
+| `codegraph_session_summary` | Once at session end. Payload: `{ tickets, degraded_ops, index_status: 'healthy'\|'degraded'\|'latched'\|'disabled', ts }`. |
+| `codegraph_index_built` | A full `indexAll` succeeded. |
+| `codegraph_index_failed` | Setup-time index returned no result. |
+| `codegraph_sync_completed` | An incremental `sync` succeeded. |
+| `codegraph_degraded` | An op was degraded (timeout, lock, corrupt, schema-skew, or latch). |
+| `worker_mcp_config_resolved` | Names the winning `--mcp-config` layer for a worker/manager spawn. |
+
 ### 🧬 Cronenberg — The Meta-Router
 
 <p align="center">
