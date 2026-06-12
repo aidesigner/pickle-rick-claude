@@ -1012,6 +1012,77 @@ describe('install.sh typescript symlink', () => {
   });
 });
 
+describe('install.sh codegraph runtime dep (361e8bd9)', () => {
+  test('real install.sh contains the per-mode codegraph sequence + self-probe', () => {
+    const src = readFileSync(INSTALL_SH, 'utf8');
+    assert.ok(
+      src.includes('CODEGRAPH RUNTIME DEP'),
+      'install.sh must contain the per-mode codegraph banner',
+    );
+    // Git mode: scoped main package symlink.
+    assert.match(
+      src,
+      /ln -sfn "\$_cg_src" "\$_codegraph_scope\/codegraph"/,
+      'install.sh must symlink the scoped @colbymchenry/codegraph main package in git mode',
+    );
+    // Git mode: generic platform-binding discovery (no hardcoded darwin-arm64).
+    assert.match(
+      src,
+      /@colbymchenry\/codegraph-\*-\*/,
+      'install.sh must resolve the platform binding via a generic codegraph-<plat>-<arch> glob',
+    );
+    assert.doesNotMatch(
+      src,
+      /codegraph-darwin-arm64/,
+      'install.sh must NOT hardcode the darwin-arm64 platform binding',
+    );
+    // Tarball mode: deploy-root npm install at the pinned version.
+    assert.match(
+      src,
+      /npm install --omit=dev --no-save @colbymchenry\/codegraph@0\.9\.9/,
+      'install.sh must npm install codegraph@0.9.9 at the deploy root in tarball mode',
+    );
+    // Self-probe (both modes).
+    assert.match(
+      src,
+      /import\('@colbymchenry\/codegraph'\)\.then\(\(\)=>process\.exit\(0\),\(\)=>process\.exit\(1\)\)/,
+      'install.sh must self-probe import resolution of @colbymchenry/codegraph',
+    );
+    assert.ok(
+      src.includes('FATAL: @colbymchenry/codegraph does not resolve'),
+      'install.sh must abort loudly when the codegraph probe fails',
+    );
+  });
+
+  test('flat-name symlink loop does NOT mention @colbymchenry (AC-4)', () => {
+    const src = readFileSync(INSTALL_SH, 'utf8');
+    const lines = src.split('\n');
+    const loopStart = lines.findIndex((l) => /for dep in typescript;/.test(l));
+    assert.ok(loopStart !== -1, 'flat-name for-dep loop must exist');
+    // The flat-name loop is a small fixed block ending at its `done`.
+    const loopEnd = lines.findIndex((l, i) => i > loopStart && /^done$/.test(l.trim()));
+    assert.ok(loopEnd !== -1 && loopEnd > loopStart, 'flat-name for-dep loop must close with done');
+    const loopBody = lines.slice(loopStart, loopEnd + 1).join('\n');
+    assert.doesNotMatch(
+      loopBody,
+      /@colbymchenry/,
+      'the flat-name symlink loop must NOT carry @colbymchenry — codegraph deploys via the per-mode block',
+    );
+  });
+
+  test('codegraph per-mode block runs after rsync and before the jq settings merge', () => {
+    const src = readFileSync(INSTALL_SH, 'utf8');
+    const rsyncIdx = src.indexOf('rsync -a --delete --delete-excluded');
+    const codegraphIdx = src.indexOf('CODEGRAPH RUNTIME DEP');
+    const jqMergeIdx = src.indexOf('Merge pickle_settings:');
+    assert.ok(rsyncIdx !== -1, 'rsync block must exist');
+    assert.ok(codegraphIdx !== -1, 'codegraph block must exist');
+    assert.ok(jqMergeIdx !== -1, 'jq settings merge must exist');
+    assert.ok(rsyncIdx < codegraphIdx, 'codegraph block must run after rsync (which deletes node_modules)');
+    assert.ok(codegraphIdx < jqMergeIdx, 'codegraph block must run before the jq settings merge');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // R-ITS-1 / R-ITS-2: parity gate tests
 // ---------------------------------------------------------------------------

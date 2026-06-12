@@ -81,6 +81,24 @@ test('deploy-lifecycle soak: package.json version remains stable', { timeout: 2 
     assert.ok(typeof expectedVersion === 'string' && expectedVersion.length > 0,
         'installed package.json must have a version');
 
+    // Ticket 361e8bd9: the deploy must self-verify the @colbymchenry/codegraph
+    // runtime dependency in the deployed tree. install.sh runs its own probe and
+    // aborts non-zero on failure, so a status-0 install already implies a green
+    // probe — but assert it independently here too (deploy-root install + probe
+    // exit 0). On the operator host this runs the git-mode scoped-symlink path;
+    // the tarball deploy-root `npm install` branch is documented as tester-only.
+    const codegraphProbe = spawnSync(
+        process.execPath,
+        ['-e', "import('@colbymchenry/codegraph').then(()=>process.exit(0),()=>process.exit(1))"],
+        { encoding: 'utf-8', timeout: 30_000, cwd: path.join(tmpDir, 'extension'), env: { ...process.env, PICKLE_INSTALL_ROOT: tmpDir } },
+    );
+    assert.equal(
+        codegraphProbe.status,
+        0,
+        `deployed @colbymchenry/codegraph must resolve from ${path.join(tmpDir, 'extension')}:\n` +
+        `stdout: ${codegraphProbe.stdout}\nstderr: ${codegraphProbe.stderr}`,
+    );
+
     const soakMs = soakSeconds * 1000;
     const intervalMs = 30_000;
     const deadline = Date.now() + soakMs;

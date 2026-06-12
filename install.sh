@@ -400,6 +400,42 @@ for dep in typescript; do
     ln -sfn "$SCRIPT_DIR/extension/node_modules/$dep" "$EXTENSION_ROOT/extension/node_modules/$dep"
   fi
 done
+
+# --- CODEGRAPH RUNTIME DEP (per-mode; recreated each run — rsync deletes node_modules) ---
+# @colbymchenry/codegraph is a SCOPED package with a platform-specific native
+# binding; the flat-name loop above cannot express the @colbymchenry/ layout, so
+# deploy it explicitly per mode. Git: symlink the scoped main package + the one
+# resolved platform binding from SOURCE node_modules. Tarball: npm install at the
+# deploy root (no lockfile reaches the deploy tree by design — npm ci impossible
+# there; lockfile staying rsync-excluded is intentional, NOT a bug to "fix").
+_codegraph_scope="$EXTENSION_ROOT/extension/node_modules/@colbymchenry"
+if [ "$INSTALL_MODE" = "git" ]; then
+  mkdir -p "$_codegraph_scope"
+  _cg_src="$SCRIPT_DIR/extension/node_modules/@colbymchenry/codegraph"
+  if [ -d "$_cg_src" ]; then
+    ln -sfn "$_cg_src" "$_codegraph_scope/codegraph"
+  fi
+  # Resolve the ONE platform binding present in source node_modules generically
+  # (0.9.9 ships six platform optionalDependencies; npm installs only the
+  # host-matching one — do not hardcode darwin-arm64).
+  for _cg_plat in "$SCRIPT_DIR"/extension/node_modules/@colbymchenry/codegraph-*-*; do
+    [ -d "$_cg_plat" ] || continue
+    ln -sfn "$_cg_plat" "$_codegraph_scope/$(basename "$_cg_plat")"
+  done
+else
+  echo "📦 Installing @colbymchenry/codegraph@0.9.9 at deploy root (tarball mode)…"
+  (cd "$EXTENSION_ROOT/extension" && npm install --omit=dev --no-save @colbymchenry/codegraph@0.9.9 --no-fund --no-audit)
+fi
+
+# Self-probe (both modes): the deployed tree MUST resolve the scoped package, or
+# the deploy is broken and we abort loudly at install time, not at session time.
+if ! (cd "$EXTENSION_ROOT/extension" && node -e "import('@colbymchenry/codegraph').then(()=>process.exit(0),()=>process.exit(1))"); then
+  echo "❌ FATAL: @colbymchenry/codegraph does not resolve from the deployed extension root ($EXTENSION_ROOT/extension)." >&2
+  echo "   Mode: $INSTALL_MODE. The deploy cannot self-verify its codegraph runtime dependency; aborting." >&2
+  exit 1
+fi
+echo "OK codegraph"
+
 # Merge pickle_settings: repo defaults as base, user values overlaid (preserves customizations)
 if [ -f "$EXTENSION_ROOT/pickle_settings.json" ]; then
   TMPFILE="$(mktemp)"
