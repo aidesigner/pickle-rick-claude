@@ -20,7 +20,7 @@ const AUDIT_SCRIPTS = [
   'bash scripts/audit-trap-door-enforcement.sh',
   'bash scripts/audit-guarded-reset.sh',
 ].join(' && ');
-const RELEASE_GATE_COMMAND = `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && ${AUDIT_SCRIPTS} && npm run test:fast && npm run test:integration && RUN_EXPENSIVE_TESTS=1 npm run test:expensive`;
+const RELEASE_GATE_COMMAND = `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && ${AUDIT_SCRIPTS} && npm run test:fast:budget && npm run test:integration && RUN_EXPENSIVE_TESTS=1 npm run test:expensive`;
 
 function versioningSection(markdown) {
   const lines = markdown.split(/\r?\n/);
