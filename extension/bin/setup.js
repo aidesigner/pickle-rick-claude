@@ -680,6 +680,25 @@ function resolvePrdPath(taskArgs) {
     }
     return resolveExistingPrdPath('prd.md') ?? resolveExistingPrdPath('PRD.md');
 }
+/**
+ * D3 (B-RRH AC-D3): resolve the refined-or-base PRD that lives under a session
+ * dir, preferring `prd_refined.md` over `prd.md`. Used on the `--resume` path to
+ * populate `config.prdPath` so the resume stamp in `applyResumeConfig` fires —
+ * the new-session stamp in `createInitialState` is never reached on resume.
+ */
+function resolveSessionPrdPath(sessionDir) {
+    for (const name of ['prd_refined.md', 'prd.md']) {
+        const candidate = path.join(sessionDir, name);
+        try {
+            if (fs.statSync(candidate).isFile())
+                return candidate;
+        }
+        catch {
+            /* missing — try the next candidate */
+        }
+    }
+    return undefined;
+}
 function resolveStartCommit() {
     try {
         return getHeadSha(process.cwd());
@@ -876,6 +895,12 @@ function applyResumeConfig(s, config, fullSessionPath, codexVersionSeen) {
     if (codexVersionSeen)
         s.codex_version_seen = codexVersionSeen;
     s.session_dir = fullSessionPath;
+    // D3 (B-RRH AC-D3): the resume-path equivalent of the createInitialState
+    // prd_path stamp (NOT a duplicate — createInitialState is never reached on
+    // resume). config.prdPath was populated upstream in resumeSession from the
+    // session dir, so this fires for paused-refine → --resume.
+    if (config.prdPath)
+        s.prd_path = config.prdPath;
 }
 /**
  * R-ICP-3 (p1-iteration-cap-and-phantom-done-handshake): on resume, the cap
@@ -1091,6 +1116,14 @@ function resumeSession(config) {
         die(`No active session found or path invalid: ${fullSessionPath}`);
     }
     const statePath = path.join(fullSessionPath, 'state.json');
+    // D3 (B-RRH AC-D3): on --resume the session dir is authoritative for the PRD —
+    // prd_refined.md preferred over prd.md. resolvePrdPath ran against process.cwd()
+    // at parse time, so config.prdPath may hold a cwd-relative bare `prd.md` false
+    // match; the session PRD must supersede it. Only when the session dir has no PRD
+    // do we keep whatever config.prdPath resolved to (e.g. an explicit CLI arg).
+    const sessionPrd = resolveSessionPrdPath(fullSessionPath);
+    if (sessionPrd)
+        config.prdPath = sessionPrd;
     let preState = null;
     try {
         preState = sm.read(statePath);

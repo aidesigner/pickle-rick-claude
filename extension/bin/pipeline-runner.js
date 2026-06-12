@@ -1728,9 +1728,39 @@ async function remediateCitadelFindings(runtime, findings, remediatorTimeoutMs, 
         runtime.log(`citadel: remediator exited non-zero or timed out: ${safeErrorMessage(err)}`);
     }
 }
+/**
+ * D4 (B-RRH AC-D4): resolve the refined-or-base PRD under a session dir,
+ * preferring `prd_refined.md` over `prd.md`. Used by the citadel preflight to
+ * self-heal a missing `state.prd_path` instead of hard-failing a clean build.
+ */
+function resolveSessionPrdPath(sessionDir) {
+    for (const name of ['prd_refined.md', 'prd.md']) {
+        const candidate = path.join(sessionDir, name);
+        try {
+            if (fs.statSync(candidate).isFile())
+                return candidate;
+        }
+        catch {
+            /* missing — try the next candidate */
+        }
+    }
+    return undefined;
+}
 export async function executeCitadelPhase(runtime) {
     const state = sm.read(runtime.statePath);
-    if (!state.prd_path || !state.start_commit) {
+    // D4 (B-RRH AC-D4): if prd_path is absent BUT start_commit is set AND a session
+    // PRD exists, adopt it (persist + use) instead of hard-failing. Adopt only when
+    // start_commit is present; if NEITHER prd file exists the honest fail below fires.
+    let prdPath = state.prd_path;
+    if (!prdPath && state.start_commit) {
+        const adopted = resolveSessionPrdPath(runtime.sessionDir);
+        if (adopted) {
+            sm.update(runtime.statePath, s => { s.prd_path = adopted; });
+            prdPath = adopted;
+            runtime.log(`citadel: self-healed missing state.prd_path — adopted ${adopted}`);
+        }
+    }
+    if (!prdPath || !state.start_commit) {
         runtime.log('citadel: missing state.prd_path or state.start_commit — failing phase');
         return { exitCode: 1 };
     }
@@ -1742,7 +1772,7 @@ export async function executeCitadelPhase(runtime) {
     // returns success; the pipeline continues to anatomy-park regardless of remediation outcome.
     for (let cycle = 0; cycle < cap; cycle++) {
         const result = await citadelRemediationDeps.runCitadelAudit({
-            prdPath: state.prd_path,
+            prdPath,
             diffRange: `${state.start_commit}..HEAD`,
             repoRoot: runtime.repoRoot,
             sessionDir: runtime.sessionDir,
