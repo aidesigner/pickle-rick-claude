@@ -704,9 +704,27 @@ export function quarantineCrashedTicketFilesOrFatal(args: CrashedTicketQuarantin
     return;
   }
 
-  // Branch 1/2 destructive path — archive first, gate the clean on truncation.
-  const result = archive(workingDir, sessionDir, ticketDir, args.byteCap);
+  // Branch 1/2 destructive path — archive first (FATAL on truncation), then clean.
+  const { patchPath } = archiveOrFatalOnTruncation(args, ticketDir, archive);
+  applyRecoverableQuarantine({
+    workingDir, sessionDir, currentTicket, inScope: decision.inScope,
+    patchPath, applyClean, log,
+  });
+}
 
+/**
+ * Branch 1/2 archive step: archive the crashed tree and, when the archive
+ * truncated (dirty tree exceeds the byte cap → INCOMPLETE patch), emit
+ * `crashed_ticket_files_quarantine_truncated` and FATAL — never clean/reset a
+ * partial archive, which would silently destroy the un-archived delta.
+ */
+function archiveOrFatalOnTruncation(
+  args: CrashedTicketQuarantineArgs,
+  ticketDir: string | null,
+  archive: NonNullable<CrashedTicketQuarantineArgs['archive']>,
+): { patchPath: string | null } {
+  const { workingDir, sessionDir, currentTicket } = args;
+  const result = archive(workingDir, sessionDir, ticketDir, args.byteCap);
   if (result?.filesTruncated === true) {
     emitQuarantineEvent('crashed_ticket_files_quarantine_truncated', {
       ticket: currentTicket ?? null,
@@ -720,11 +738,7 @@ export function quarantineCrashedTicketFilesOrFatal(args: CrashedTicketQuarantin
       `Resolve the dirty tree manually. Partial archive: ${result.patchPath}`,
     );
   }
-
-  applyRecoverableQuarantine({
-    workingDir, sessionDir, currentTicket, inScope: decision.inScope,
-    patchPath: result?.patchPath ?? null, applyClean, log,
-  });
+  return { patchPath: result?.patchPath ?? null };
 }
 
 /** Recoverable Branch 1/2 side effects: clean in-scope dirt, reset ticket → Todo, emit + log. */
