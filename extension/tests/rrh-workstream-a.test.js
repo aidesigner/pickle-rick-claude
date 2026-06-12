@@ -163,6 +163,8 @@ test('A2: ladder exhaustion EXITS when no runnable ticket remains', async () => 
 test('A3: scoped signature over scope.json:allowed_paths excludes a peer-dirty prds/ file', async () => {
   const { computeScopedSourceTreeSignature, computeSourceTreeSignature } = await import('../bin/mux-runner.js');
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'rrh-a3-'));
+  // Isolation: sandbox PICKLE_DATA_ROOT so no imported helper can reach live orchestration state.
+  process.env.PICKLE_DATA_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'rrh-a3-dataroot-'));
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf-8' });
   try {
     git('init', '-q');
