@@ -511,15 +511,31 @@ test('computeRateLimitAction: no resetsAt + retries < max → wait with config s
     assert.equal(action.hasResetsAt, false);
 });
 
-test('computeRateLimitAction: resetsAt exceeds 3× cap → falls back to config', () => {
-    const farFuture = Math.floor(Date.now() / 1000) + 999999; // way past 3× cap
+// Ticket e9bdac75 (Workstream B): the 3× config cap is REMOVED. A far-future reset
+// is now HONORED, clamped only to max_park_minutes (default 360). It no longer falls
+// back to the config default and no longer spawn-burns into the wall.
+test('computeRateLimitAction: far-future resetsAt → parks, clamped to max_park_minutes (no 3× cap)', () => {
+    const farFuture = Math.floor(Date.now() / 1000) + 999999; // ~277h, well past max_park
     const exitResult = { type: 'api_limit', rateLimitInfo: { limited: true, resetsAt: farFuture } };
-    const action = computeRateLimitAction(exitResult, 1, 3, 60);
+    const action = computeRateLimitAction(exitResult, 1, 3, 60, 360); // explicit max_park=360
     assert.equal(action.action, 'wait');
-    assert.equal(action.waitSource, 'config');
-    assert.equal(action.waitMs, 60 * 60 * 1000); // config default
-    assert.equal(action.resetCounter, false); // config source → no counter reset
+    assert.equal(action.waitSource, 'api', 'honors the API reset, not config fallback');
+    assert.equal(action.waitMs, 360 * 60 * 1000, 'clamped to max_park_minutes ceiling, not 3× config');
+    assert.equal(action.resetCounter, true); // api source → counter reset
     assert.equal(action.hasResetsAt, true);
+    assert.equal(action.resetAtEpochSec, farFuture, 'persists reset_at for --resume re-arm');
+});
+
+test('computeRateLimitAction: 5h resetsAt under max_park → parks the full ~5h (not 15-min 3× cap)', () => {
+    const fiveHours = Math.floor(Date.now() / 1000) + 5 * 3600;
+    const exitResult = { type: 'api_limit', rateLimitInfo: { limited: true, resetsAt: fiveHours } };
+    const action = computeRateLimitAction(exitResult, 1, 3, 5, 360); // 5min config, 360min ceiling
+    assert.equal(action.action, 'wait');
+    assert.equal(action.waitSource, 'api');
+    // ~5h + 30s buffer, well under the 360-min ceiling and far above the old 15-min cap.
+    const expectedMs = 5 * 3600 * 1000;
+    assert.ok(action.waitMs >= expectedMs && action.waitMs <= expectedMs + 60_000,
+        `waitMs ${action.waitMs} should be ~5h, not the removed 3×=15min cap`);
 });
 
 test('computeRateLimitAction: resetsAt in the past → falls back to config', () => {

@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { StringDecoder } from 'string_decoder';
-import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent, type PickleSettings, type Backend, type HardeningSettings, type CodegraphSettings } from '../types/index.js';
+import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent, type PickleSettings, type Backend, type HardeningSettings, type CodegraphSettings, type RateLimitSettings } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
@@ -820,6 +820,24 @@ export function resolveCodegraphSettings(bag: unknown): CodegraphSettings {
   if (syncMs !== undefined) settings.sync_timeout_ms = syncMs;
   const queryMs = parseSettingIntFloor(b.query_timeout_ms, 500);
   if (queryMs !== undefined) settings.query_timeout_ms = queryMs;
+  return settings;
+}
+
+export const DEFAULT_MAX_PARK_MINUTES = 360;
+
+/**
+ * Ticket e9bdac75 (Workstream B): resolve the rate-limit park controls from the
+ * additive `rate_limit:` block in `pickle_settings.json`. Per-field fallback —
+ * absent/partial/malformed input yields the compiled default. Mirrors
+ * `resolveHardeningSettings` / `resolveCodegraphSettings`.
+ */
+export function resolveRateLimitSettings(bag: PickleSettings | null | undefined): RateLimitSettings {
+  const settings: RateLimitSettings = { max_park_minutes: DEFAULT_MAX_PARK_MINUTES };
+  if (!bag || typeof bag !== 'object') return settings;
+  const block = (bag as Record<string, unknown>).rate_limit;
+  if (!block || typeof block !== 'object' || Array.isArray(block)) return settings;
+  const maxPark = parseSettingIntFloor((block as Record<string, unknown>).max_park_minutes, 1);
+  if (maxPark !== undefined) settings.max_park_minutes = maxPark;
   return settings;
 }
 

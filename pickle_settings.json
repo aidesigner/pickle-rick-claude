@@ -51,6 +51,9 @@
   "default_cb_half_open_after": 2,
   "default_rate_limit_wait_minutes": 5,
   "default_max_rate_limit_retries": 3,
+  "rate_limit": {
+    "max_park_minutes": 360
+  },
   "manager_idle_backoff_fallback_ms": 60000,
   "meeseeks_model_tiers": {
     "1": "haiku",

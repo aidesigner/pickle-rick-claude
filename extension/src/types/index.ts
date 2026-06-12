@@ -165,6 +165,24 @@ export interface State {
   };
   /** R-ORSR-1 (schema-neutral v5): recovery controller attempt ledger. Defaulted to [] via normalizeV5StateDefaults. */
   recovery_attempts?: RecoveryAttempt[];
+  /**
+   * Ticket e9bdac75 (Workstream B, additive/schema-neutral): persisted rate-limit
+   * park arm. Written on park entry, cleared on resume. Re-armed on `--resume` so a
+   * relaunch does not spawn-burn into the wall. Absent/null when not parked.
+   */
+  rate_limit_park?: RateLimitPark | null;
+}
+
+/** Persisted rate-limit park arm (ticket e9bdac75). */
+export interface RateLimitPark {
+  /** API-provided reset time (epoch seconds); null when the 429 carried no reset_at. */
+  reset_at_epoch_sec: number | null;
+  /** Epoch-ms when this park episode started (for cumulative-park accounting). */
+  parked_started_epoch_ms: number;
+  /** Cumulative parked wall-clock (ms) across this episode — compared to max_park_minutes. */
+  cumulative_parked_ms: number;
+  /** Consecutive rate-limit waits in this episode (carries the counter across relaunch). */
+  consecutive_waits: number;
 }
 
 /** Per-entry shape for the recovery controller attempt ledger (R-ORSR-1). */
@@ -206,6 +224,23 @@ export interface HardeningSettings {
    * Compiled default: 2.
    */
   failed_flip_suppression_cap: number;
+}
+
+/**
+ * Ticket e9bdac75 (Workstream B) — rate-limit park controls resolved from the
+ * additive `rate_limit:` block in `pickle_settings.json`.
+ * Resolver: `resolveRateLimitSettings(bag)` in `services/pickle-utils.ts` —
+ * absent/partial/malformed input falls back to the compiled default per field.
+ */
+export interface RateLimitSettings {
+  /**
+   * Cumulative wall-clock ceiling (minutes) the runner will park across a single
+   * rate-limit episode before giving up cleanly (emits `rate_limit_park_exhausted`
+   * + reuses the existing `rate_limit_exhausted` exit-for-recovery). Also the clamp
+   * applied to any single `reset_at`-driven park window. Compiled default: 360 (6h).
+   * Min floor: 1.
+   */
+  max_park_minutes: number;
 }
 
 export interface CodegraphSettings {
@@ -785,6 +820,15 @@ export interface RateLimitAction {
   waitSource: 'api' | 'config';
   resetCounter: boolean;
   hasResetsAt: boolean;
+  /**
+   * Ticket e9bdac75 (Workstream B): when `waitSource === 'api'`, the full
+   * `reset_at`-driven park window (clamped to `max_park_minutes`), expressed as an
+   * absolute epoch-ms wake target. Park is encoded as `action: 'wait'` —
+   * schema-neutral, no new action value. Absent for config-default waits.
+   */
+  parkUntilEpochMs?: number;
+  /** The API-provided `reset_at` (epoch seconds) persisted for `--resume` re-arm; null when absent. */
+  resetAtEpochSec?: number | null;
 }
 
 export interface ActivityEvent {
@@ -917,6 +961,11 @@ export interface ActivityEvent {
   tickets?: number;
   degraded_ops?: number;
   index_status?: CodegraphSessionSummaryPayload['index_status'];
+  // Ticket e9bdac75 (Workstream B): rate-limit park payload fields.
+  // rate_limit_wait carries the API reset_at (epoch seconds, null when absent);
+  // rate_limit_resume carries the actual parked wall-clock in minutes.
+  reset_at?: number | null;
+  parked_minutes?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1035,6 +1084,8 @@ export interface PickleSettings {
   hardening?: { silent_death_respawn_cap?: number } | null;
   /** C2: codegraph integration settings block (see CodegraphSettings). */
   codegraph?: CodegraphSettings;
+  /** Ticket e9bdac75: rate-limit park controls block (see RateLimitSettings). */
+  rate_limit?: RateLimitSettings;
   [key: string]: unknown;
 }
 

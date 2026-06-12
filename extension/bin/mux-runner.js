@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, TIER_LIFECYCLE, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, resolveCommandTemplate, loadPickleSettingsBag, resolveHardeningSettings, resolveCodegraphSettings } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, TIER_LIFECYCLE, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, resolveCommandTemplate, loadPickleSettingsBag, resolveHardeningSettings, resolveCodegraphSettings, resolveRateLimitSettings, DEFAULT_MAX_PARK_MINUTES } from '../services/pickle-utils.js';
 import { findMissingPrefixes, requiredTierArtifactPrefixes } from '../services/artifact-validation.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive } from '../services/state-manager.js';
@@ -2406,31 +2406,44 @@ export function classifyIterationExit(completionResult, logFile, timing) {
     }
     return { type: 'success' };
 }
+/** Buffer (ms) added past `reset_at` before probing for a healthy resume. */
+const RATE_LIMIT_RESET_BUFFER_MS = 30_000;
+/** Resume-jitter bounds (ms) past `reset_at` — avoids thundering-herd reconnects. */
+export const PARK_RESUME_JITTER_MIN_MS = 60_000;
+export const PARK_RESUME_JITTER_MAX_MS = 120_000;
 /**
- * Pure decision function: given rate limit context, returns whether to wait or bail.
- * Extracted from main() for testability. No side effects.
+ * Pure decision function: given rate limit context, returns the park/wait/bail
+ * decision. Extracted from main() for testability. No side effects.
  *
- * When resetsAt is available from the API, always waits (the API told us when to come back).
- * Only bails when no resetsAt AND consecutive retries >= max.
- * Resets the counter after an API-guided wait completes.
+ * Ticket e9bdac75 (Workstream B): the old `3×` config cap is GONE. When the API
+ * provides `reset_at`, the full reset window is honored (clamped only to
+ * `maxParkMinutes`) — a 5h reset now parks ≈5h instead of spawn-burning into the
+ * wall under a 15-min ceiling. Park is encoded as `action: 'wait'` with
+ * `waitSource: 'api'` (schema-neutral: no new action/exit_reason). When no
+ * `reset_at` is present, we fall back to `now + configured_min_wait` and never
+ * spawn-burn; we bail only when blind AND retries are exhausted.
  */
-export function computeRateLimitAction(exitResult, consecutiveRateLimits, maxRetries, configWaitMinutes) {
+export function computeRateLimitAction(exitResult, consecutiveRateLimits, maxRetries, configWaitMinutes, maxParkMinutes = DEFAULT_MAX_PARK_MINUTES) {
     const configWaitMs = configWaitMinutes * 60 * 1000;
-    const maxApiWaitMs = configWaitMs * 3;
+    const maxParkMs = maxParkMinutes * 60 * 1000;
     let waitMs = configWaitMs;
     let waitSource = 'config';
+    let parkUntilEpochMs;
+    let resetAtEpochSec = null;
     const rlResetsAt = exitResult.type === 'api_limit' ? exitResult.rateLimitInfo?.resetsAt : undefined;
     const hasResetsAt = typeof rlResetsAt === 'number' && rlResetsAt > 0;
     if (hasResetsAt) {
         const apiWaitMs = (rlResetsAt * 1000) - Date.now();
-        if (apiWaitMs > 0 && apiWaitMs <= maxApiWaitMs) {
-            waitMs = apiWaitMs + 30_000; // 30s buffer
+        if (apiWaitMs > 0) {
+            // Honor the FULL reset window, clamped only to the park ceiling. No 3× cap.
+            waitMs = Math.min(apiWaitMs + RATE_LIMIT_RESET_BUFFER_MS, maxParkMs);
             waitSource = 'api';
+            resetAtEpochSec = rlResetsAt;
+            parkUntilEpochMs = Date.now() + waitMs;
         }
-        // apiWaitMs > maxApiWaitMs → capped, falls through to config default
-        // apiWaitMs <= 0 → resetsAt in the past, use config default
+        // apiWaitMs <= 0 → resetsAt in the past, fall back to config default.
     }
-    // Bail only when blind (no resetsAt) AND retries exhausted
+    // Bail only when blind (no resetsAt) AND retries exhausted.
     if (!hasResetsAt && consecutiveRateLimits >= maxRetries) {
         return { action: 'bail', waitMs: 0, waitSource: 'config', resetCounter: false, hasResetsAt };
     }
@@ -2440,7 +2453,31 @@ export function computeRateLimitAction(exitResult, consecutiveRateLimits, maxRet
         waitSource,
         resetCounter: waitSource === 'api',
         hasResetsAt,
+        parkUntilEpochMs,
+        resetAtEpochSec,
     };
+}
+/**
+ * Pure: resolve the wake target for a parked rate-limit episode (ticket e9bdac75).
+ * Resume at `max(reset_at + jitter, now + min_wait)` so we never probe before the
+ * API window closes, and never sooner than the configured minimum wait. `jitterMs`
+ * is injected (60–120s in production) to keep the decision deterministic in tests.
+ */
+export function resolveParkResumeTime(resetAtEpochSec, nowMs, minWaitMs, jitterMs) {
+    const minTarget = nowMs + minWaitMs;
+    if (resetAtEpochSec === null || resetAtEpochSec <= 0)
+        return minTarget;
+    const resetTarget = resetAtEpochSec * 1000 + jitterMs;
+    return Math.max(resetTarget, minTarget);
+}
+/** Pure: jitter draw in [PARK_RESUME_JITTER_MIN_MS, PARK_RESUME_JITTER_MAX_MS]. */
+export function drawParkResumeJitterMs(rand = Math.random) {
+    const span = PARK_RESUME_JITTER_MAX_MS - PARK_RESUME_JITTER_MIN_MS;
+    return PARK_RESUME_JITTER_MIN_MS + Math.floor(rand() * (span + 1));
+}
+/** Pure: cumulative parked wall-clock exceeds the max-park ceiling (ticket e9bdac75, B5). */
+export function isParkExhausted(cumulativeParkedMs, maxParkMinutes) {
+    return cumulativeParkedMs > maxParkMinutes * 60 * 1000;
 }
 // eslint-disable-next-line -- legacy iteration loop retained behavior-preserving for global bin acceptance
 export async function runIteration(sessionDir, iterationNum, extensionRoot, qualityPassModel, runtimeOverrides = {}) {
@@ -4237,6 +4274,16 @@ function ctxReadState(ctx) {
 function ctxDeactivate(ctx) {
     (ctx.deactivate || safeDeactivate)(ctx.statePath);
 }
+function ctxUpdateState(ctx, mutator) {
+    if (ctx.updateState) {
+        ctx.updateState(mutator);
+        return;
+    }
+    try {
+        sm.update(ctx.statePath, mutator);
+    }
+    catch { /* best-effort persistence */ }
+}
 function ctxFinalize(ctx, exitReason) {
     if (ctx.deactivate) {
         // Test seam: caller injected a deactivate hook — preserve old contract.
@@ -4529,61 +4576,92 @@ export async function processRateLimitCycle(state, ctx) {
     const consecutiveRateLimits = (ctx.consecutiveRateLimits || 0) + 1;
     const maxRetries = ctx.maxRateLimitRetries || 3;
     const waitMinutes = ctx.rateLimitWaitMinutes || 5;
+    const maxParkMinutes = ctx.maxParkMinutes ?? DEFAULT_MAX_PARK_MINUTES;
     ctx.log(`API rate limit detected (consecutive: ${consecutiveRateLimits}/${maxRetries})`);
-    const rlAction = computeRateLimitAction(exitResult, consecutiveRateLimits, maxRetries, waitMinutes);
+    const rlAction = computeRateLimitAction(exitResult, consecutiveRateLimits, maxRetries, waitMinutes, maxParkMinutes);
     if (rlAction.action === 'bail') {
         logActivity({ event: 'rate_limit_exhausted', source: 'pickle', session: path.basename(ctx.sessionDir), error: `max retries (${maxRetries}) exceeded, no resetsAt available` });
         ctxDeactivate(ctx);
         return { kind: 'break', reason: 'rate_limit_exhausted', consecutiveRateLimits };
     }
-    return processRateLimitWait(state, ctx, exitResult, rlAction, consecutiveRateLimits);
+    // B5: no reset_at → never spawn-burn; fall back to now + configured min wait.
+    if (!rlAction.hasResetsAt) {
+        logActivity({ event: 'rate_limited_without_reset_at', source: 'pickle', session: path.basename(ctx.sessionDir) });
+    }
+    // B5: cumulative park ceiling → clean exit via the EXISTING rate_limit_exhausted path.
+    const priorPark = ctxReadState(ctx).rate_limit_park ?? null;
+    const priorCumulativeMs = priorPark?.cumulative_parked_ms ?? 0;
+    if (isParkExhausted(priorCumulativeMs + rlAction.waitMs, maxParkMinutes)) {
+        logActivity({ event: 'rate_limit_park_exhausted', source: 'pickle', session: path.basename(ctx.sessionDir) });
+        ctxDeactivate(ctx);
+        return { kind: 'break', reason: 'rate_limit_exhausted', consecutiveRateLimits };
+    }
+    return processRateLimitWait(state, ctx, exitResult, rlAction, consecutiveRateLimits, priorPark);
 }
-async function processRateLimitWait(state, ctx, exitResult, rlAction, consecutiveRateLimits) {
+async function processRateLimitWait(state, ctx, exitResult, rlAction, consecutiveRateLimits, priorPark) {
     const waitSource = rlAction.waitSource;
     const waitPath = path.join(ctx.sessionDir, 'rate_limit_wait.json');
+    const resetAtSec = rlAction.resetAtEpochSec ?? null;
     const waitUntil = new Date(ctxNow(ctx) + rlAction.waitMs).toISOString();
-    logActivity({ event: 'rate_limit_wait', source: 'pickle', session: path.basename(ctx.sessionDir), duration_min: Math.ceil(rlAction.waitMs / 60_000) });
+    const parkEpisodeStartMs = priorPark?.parked_started_epoch_ms ?? ctxNow(ctx);
+    const priorCumulativeMs = priorPark?.cumulative_parked_ms ?? 0;
+    logActivity({ event: 'rate_limit_wait', source: 'pickle', session: path.basename(ctx.sessionDir), duration_min: Math.ceil(rlAction.waitMs / 60_000), reset_at: resetAtSec });
+    // Park flag (C6a): present while parked so the watchdogs short-circuit to in_wait_state.
     writeLoopState(ctx, waitPath, {
         waiting: true, reason: 'API rate limit', started_at: new Date(ctxNow(ctx)).toISOString(), wait_until: waitUntil,
         consecutive_waits: consecutiveRateLimits, rate_limit_type: exitResult.rateLimitInfo?.rateLimitType || null,
-        resets_at_epoch: exitResult.rateLimitInfo?.resetsAt || null, wait_source: waitSource,
+        resets_at_epoch: resetAtSec, wait_source: waitSource,
     });
-    const limitedWait = await waitThroughRateLimit(state, ctx, rlAction.waitMs);
+    // B4: persist the park-arm so a --resume relaunch re-arms instead of spawn-burning.
+    ctxUpdateState(ctx, (s) => {
+        s.rate_limit_park = {
+            reset_at_epoch_sec: resetAtSec,
+            parked_started_epoch_ms: parkEpisodeStartMs,
+            cumulative_parked_ms: priorCumulativeMs,
+            consecutive_waits: consecutiveRateLimits,
+        };
+    });
+    const parkStartMs = ctxNow(ctx);
+    const limitedWait = await waitThroughRateLimit(ctx, resetAtSec, (ctx.rateLimitWaitMinutes || 5) * 60 * 1000);
     if (limitedWait.exit)
         return { kind: 'break', reason: limitedWait.reason, consecutiveRateLimits };
     unlinkLoopPath(ctx, waitPath);
+    // B3: exclude parked wall from max_time_minutes by advancing start_time_epoch.
+    const parkedMs = ctxNow(ctx) - parkStartMs;
+    const parkedSeconds = Math.floor(parkedMs / 1000);
+    ctxUpdateState(ctx, (s) => {
+        if (typeof s.start_time_epoch === 'number' && Number.isFinite(s.start_time_epoch)) {
+            s.start_time_epoch += parkedSeconds;
+        }
+        s.rate_limit_park = null;
+    });
     const nextConsecutive = rlAction.resetCounter ? 0 : consecutiveRateLimits;
-    logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(ctx.sessionDir) });
+    const parkedMinutes = Math.ceil(parkedMs / 60_000);
+    logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(ctx.sessionDir), parked_minutes: parkedMinutes });
     const handoffContent = [
         buildIterationHandoffSummary(state, ctx.sessionDir, ctx.iteration + 1), '',
-        `NOTE: Resumed after ${Math.ceil(rlAction.waitMs / 60_000)}-minute API rate limit wait (source: ${waitSource}).`,
+        `NOTE: Resumed after ${parkedMinutes}-minute API rate limit park (source: ${waitSource}).`,
         'Resume from current phase — do not repeat the rate-limited iteration.',
     ].join('\n');
     (ctx.writeHandoff || writeHandoffAtomic)(ctx.sessionDir, handoffContent, process.pid, ctx.log);
     return { kind: 'continue', consecutiveRateLimits: nextConsecutive };
 }
-async function waitThroughRateLimit(state, ctx, computedWaitMs) {
-    const epoch = Number.isFinite(Number(state.start_time_epoch)) ? Number(state.start_time_epoch) : 0;
-    const maxMins = Number.isFinite(Number(state.max_time_minutes)) ? Number(state.max_time_minutes) : 0;
-    let actualWaitMs = computedWaitMs;
-    if (maxMins > 0 && epoch > 0) {
-        const remaining = (maxMins * 60) - (Math.floor(ctxNow(ctx) / 1000) - epoch);
-        if (remaining <= 0) {
-            ctxDeactivate(ctx);
-            return { exit: true, reason: 'limit' };
-        }
-        actualWaitMs = Math.min(actualWaitMs, remaining * 1000);
-    }
-    const waitEnd = ctxNow(ctx) + actualWaitMs;
-    while (ctxNow(ctx) < waitEnd) {
+/**
+ * Sleep through a rate-limit park until the jittered resume target. Parked wall is
+ * EXCLUDED from max_time_minutes (the caller advances start_time_epoch on wake), so
+ * this loop is cancellable but NOT budget-clamped. Resume at
+ * max(reset_at + jitter, now + min_wait) (ticket e9bdac75, B2/B3).
+ */
+async function waitThroughRateLimit(ctx, resetAtSec, minWaitMs) {
+    const jitterMs = ctx.parkJitterMs ?? drawParkResumeJitterMs();
+    const resumeTargetMs = resolveParkResumeTime(resetAtSec, ctxNow(ctx), minWaitMs, jitterMs);
+    while (ctxNow(ctx) < resumeTargetMs) {
         await (ctx.sleep || sleep)(Defaults.RATE_LIMIT_POLL_MS);
         try {
             if (ctxReadState(ctx).active !== true)
                 return { exit: true, reason: 'cancelled' };
         }
         catch { /* proceed */ }
-        if (maxMins > 0 && epoch > 0 && Math.floor(ctxNow(ctx) / 1000) - epoch >= maxMins * 60)
-            return { exit: true, reason: 'limit' };
     }
     return { exit: false };
 }
@@ -6404,12 +6482,39 @@ async function runMuxRunnerMain() {
     process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
     process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
     process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
-    // Clean up stale rate_limit_wait.json from a previous crashed session
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    try {
-        fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json'));
+    // B4 (ticket e9bdac75): park survives --resume. If a persisted park-arm exists
+    // with a still-future reset_at, RE-ARM the park (re-write rate_limit_wait.json so
+    // the watchdogs see in_wait_state and no worker spawns) instead of clearing it.
+    // Otherwise clean up a stale rate_limit_wait.json from a previous crashed session.
+    const persistedPark = ownerState.rate_limit_park ?? null;
+    const persistedReset = persistedPark?.reset_at_epoch_sec ?? null;
+    const parkArmStillFuture = typeof persistedReset === 'number' && persistedReset > 0
+        && persistedReset * 1000 > Date.now();
+    if (parkArmStillFuture && persistedPark) {
+        writeStateFile(path.join(sessionDir, 'rate_limit_wait.json'), {
+            waiting: true, reason: 'API rate limit (re-armed on resume)',
+            started_at: new Date().toISOString(),
+            wait_until: new Date(persistedReset * 1000).toISOString(),
+            consecutive_waits: persistedPark.consecutive_waits,
+            rate_limit_type: null,
+            resets_at_epoch: persistedReset,
+            wait_source: 'api',
+        });
+        log(`Re-armed rate-limit park from persisted state (reset_at ${new Date(persistedReset * 1000).toISOString()}) — not spawn-burning.`);
     }
-    catch { /* not present */ }
+    else {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+        try {
+            fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json'));
+        }
+        catch { /* not present */ }
+        if (persistedPark) {
+            try {
+                sm.update(statePath, (s) => { s.rate_limit_park = null; });
+            }
+            catch { /* best-effort */ }
+        }
+    }
     const cbSettings = loadSettings(extensionRoot);
     const cbEnabled = cbSettings.enabled;
     let cbState = cbEnabled ? initCircuitBreaker(sessionDir, cbSettings) : null;
@@ -6419,6 +6524,7 @@ async function runMuxRunnerMain() {
         ?? positiveIntegerOrNull(runnerSettingsBag.default_manager_max_turns)
         ?? Defaults.MANAGER_MAX_TURNS;
     const { waitMinutes: rateLimitWaitMinutes, maxRetries: maxRateLimitRetries } = loadRateLimitSettings(extensionRoot);
+    const { max_park_minutes: maxParkMinutes } = resolveRateLimitSettings(loadPickleSettingsBag(extensionRoot));
     const startTime = Date.now();
     let iteration = 0;
     let meeseeksPassCount = 0;
@@ -7600,7 +7706,7 @@ async function runMuxRunnerMain() {
             if (exitResult.rateLimitInfo?.resetsAt) {
                 log(`API reports reset at ${new Date(exitResult.rateLimitInfo.resetsAt * 1000).toISOString()} (type: ${exitResult.rateLimitInfo.rateLimitType || 'unknown'})`);
             }
-            const rlAction = computeRateLimitAction(exitResult, consecutiveRateLimits, maxRateLimitRetries, rateLimitWaitMinutes);
+            const rlAction = computeRateLimitAction(exitResult, consecutiveRateLimits, maxRateLimitRetries, rateLimitWaitMinutes, maxParkMinutes);
             if (rlAction.action === 'bail') {
                 exitReason = 'rate_limit_exhausted';
                 logActivity({ event: 'rate_limit_exhausted', source: 'pickle',
@@ -7611,39 +7717,62 @@ async function runMuxRunnerMain() {
             }
             const { waitMs: computedWaitMs, waitSource } = rlAction;
             if (waitSource === 'api') {
-                log(`Using API-provided reset time: ${Math.ceil(computedWaitMs / 60_000)}min wait (vs ${rateLimitWaitMinutes}min config default)`);
+                log(`Parking on API reset: ${Math.ceil(computedWaitMs / 60_000)}min until reset (vs ${rateLimitWaitMinutes}min config default, clamped to ${maxParkMinutes}min ceiling).`);
             }
+            // B5: no reset_at → never spawn-burn; fall back to now + configured min wait.
+            if (!rlAction.hasResetsAt) {
+                logActivity({ event: 'rate_limited_without_reset_at', source: 'pickle', session: path.basename(sessionDir) });
+            }
+            // B5: cumulative park ceiling. Accumulate parked wall across this episode via
+            // the persisted park record; on exceed, emit (activity-only)
+            // rate_limit_park_exhausted and clean-exit via the EXISTING rate_limit_exhausted
+            // exit path (NEVER a new exit_reason).
+            const priorPark = readRunnerState(statePath).rate_limit_park ?? null;
+            const priorCumulativeMs = priorPark?.cumulative_parked_ms ?? 0;
+            const parkEpisodeStartMs = priorPark?.parked_started_epoch_ms ?? Date.now();
+            if (isParkExhausted(priorCumulativeMs + computedWaitMs, maxParkMinutes)) {
+                logActivity({ event: 'rate_limit_park_exhausted', source: 'pickle', session: path.basename(sessionDir) });
+                log(`Cumulative rate-limit park exceeded ${maxParkMinutes}min ceiling — giving up cleanly for recovery.`);
+                exitReason = 'rate_limit_exhausted';
+                recordExitReason(statePath, 'rate_limit_exhausted');
+                safeDeactivate(statePath);
+                break;
+            }
+            const resetAtSec = rlAction.resetAtEpochSec ?? null;
             const waitUntil = new Date(Date.now() + computedWaitMs).toISOString();
             logActivity({ event: 'rate_limit_wait', source: 'pickle',
-                session: path.basename(sessionDir), duration_min: Math.ceil(computedWaitMs / 60_000) });
+                session: path.basename(sessionDir), duration_min: Math.ceil(computedWaitMs / 60_000),
+                reset_at: resetAtSec });
+            // Park flag (C6a): present while parked so the idle + CPU watchdogs short-circuit
+            // to in_wait_state and never salvage a parked worker.
             writeStateFile(path.join(sessionDir, 'rate_limit_wait.json'), {
                 waiting: true, reason: 'API rate limit',
                 started_at: new Date().toISOString(),
                 wait_until: waitUntil,
                 consecutive_waits: consecutiveRateLimits,
                 rate_limit_type: exitResult.rateLimitInfo?.rateLimitType || null,
-                resets_at_epoch: exitResult.rateLimitInfo?.resetsAt || null,
+                resets_at_epoch: resetAtSec,
                 wait_source: waitSource,
             });
-            // Pre-wait time check
-            const rawEpoch = Number(state.start_time_epoch);
-            const epoch = Number.isFinite(rawEpoch) ? rawEpoch : 0;
-            const rawMax = Number(state.max_time_minutes);
-            const maxMins = Number.isFinite(rawMax) ? rawMax : 0;
-            let actualWaitMs = computedWaitMs;
-            if (maxMins > 0 && epoch > 0) {
-                const elapsed = Math.floor(Date.now() / 1000) - epoch;
-                const remaining = (maxMins * 60) - elapsed;
-                if (remaining <= 0) {
-                    exitReason = 'limit';
-                    finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
-                    break;
-                }
-                actualWaitMs = Math.min(actualWaitMs, remaining * 1000);
+            // B4: persist the park-arm so a --resume relaunch re-arms instead of spawn-burning.
+            try {
+                sm.update(statePath, (s) => {
+                    s.rate_limit_park = {
+                        reset_at_epoch_sec: resetAtSec,
+                        parked_started_epoch_ms: parkEpisodeStartMs,
+                        cumulative_parked_ms: priorCumulativeMs,
+                        consecutive_waits: consecutiveRateLimits,
+                    };
+                });
             }
-            // Cancellable + time-limit-aware sleep loop
-            const waitEnd = Date.now() + actualWaitMs;
-            while (Date.now() < waitEnd) {
+            catch { /* best-effort persistence */ }
+            // B2: resume at max(reset_at + jitter, now + min_wait). B3: parked wall is
+            // EXCLUDED from max_time_minutes — we do NOT clamp the wait by the remaining
+            // budget; instead we advance start_time_epoch by the parked seconds on resume so
+            // the wall-clock cap never counts parked time. The sleep loop stays cancellable.
+            const parkStartMs = Date.now();
+            const resumeTargetMs = resolveParkResumeTime(resetAtSec, parkStartMs, rateLimitWaitMinutes * 60 * 1000, drawParkResumeJitterMs());
+            while (Date.now() < resumeTargetMs) {
                 await sleep(Defaults.RATE_LIMIT_POLL_MS);
                 try {
                     const ws = readRunnerState(statePath);
@@ -7653,32 +7782,27 @@ async function runMuxRunnerMain() {
                     }
                 }
                 catch { /* proceed */ }
-                if (maxMins > 0 && epoch > 0) {
-                    const elapsed = Math.floor(Date.now() / 1000) - epoch;
-                    if (elapsed >= maxMins * 60) {
-                        exitReason = 'limit';
-                        break;
-                    }
-                }
             }
             if (isHaltExit(exitReason)) {
-                // 'limit' is a clean-success terminal exit (budget consumed) and gets
-                // finalizeTerminalState. Other halt reasons (currently only 'cancelled'
-                // is reachable here from the sleep loop; 'timeout_repeat' is also
-                // included in the union for parity with failure-bucket sites elsewhere
-                // in this file, even though it actually exits earlier via
-                // executeTimeoutHalt) preserve step/current_ticket for postmortem.
                 const halt = exitReason;
-                if (halt === 'limit') {
-                    finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
-                }
-                else if (halt === 'cancelled' || halt === 'timeout_repeat') {
+                if (halt === 'cancelled' || halt === 'timeout_repeat') {
                     recordExitReason(statePath, halt);
                     safeDeactivate(statePath);
                 }
                 break;
             }
-            // Wake: cleanup + handoff
+            // Wake: B3 exclude parked wall from max_time_minutes by advancing start_time_epoch.
+            const parkedMs = Date.now() - parkStartMs;
+            const parkedSeconds = Math.floor(parkedMs / 1000);
+            try {
+                sm.update(statePath, (s) => {
+                    if (typeof s.start_time_epoch === 'number' && Number.isFinite(s.start_time_epoch)) {
+                        s.start_time_epoch += parkedSeconds;
+                    }
+                    s.rate_limit_park = null; // clear the park-arm on clean resume
+                });
+            }
+            catch { /* best-effort */ }
             // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             try {
                 fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json'));
@@ -7686,11 +7810,12 @@ async function runMuxRunnerMain() {
             catch { /* ok */ }
             if (rlAction.resetCounter)
                 consecutiveRateLimits = 0;
-            logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(sessionDir) });
-            const waitedMinutes = Math.ceil(computedWaitMs / 60_000);
+            const parkedMinutes = Math.ceil(parkedMs / 60_000);
+            logActivity({ event: 'rate_limit_resume', source: 'pickle',
+                session: path.basename(sessionDir), parked_minutes: parkedMinutes });
             const handoffContent = [
                 buildIterationHandoffSummary(state, sessionDir, iteration + 1), '',
-                `NOTE: Resumed after ${waitedMinutes}-minute API rate limit wait (source: ${waitSource}).`,
+                `NOTE: Resumed after ${parkedMinutes}-minute API rate limit park (source: ${waitSource}).`,
                 'Resume from current phase — do not repeat the rate-limited iteration.',
             ].join('\n');
             writeHandoffAtomic(sessionDir, handoffContent, process.pid, log);
