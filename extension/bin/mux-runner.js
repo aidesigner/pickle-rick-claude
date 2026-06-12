@@ -6,7 +6,7 @@ import { spawn, spawnSync, execFileSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, TIER_LIFECYCLE, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, resolveCommandTemplate, loadPickleSettingsBag, resolveHardeningSettings, resolveCodegraphSettings } from '../services/pickle-utils.js';
 import { findMissingPrefixes, requiredTierArtifactPrefixes } from '../services/artifact-validation.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact } from '../types/index.js';
-import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides } from '../services/backend-spawn.js';
@@ -3029,6 +3029,168 @@ export function resolveIdleStallThresholdSeconds() {
     return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MUX_IDLE_STALL_SECONDS;
 }
 const DEFAULT_MUX_IDLE_STALL_SECONDS = 900;
+export function evaluateCpuLivenessWatchdog(input) {
+    const cpuSecondsDelta = Math.max(0, input.cpuSecondsDelta);
+    if (!input.active) {
+        return { stalled: false, reason: 'inactive', cpuSecondsDelta };
+    }
+    // C6a: legitimate wait states gate the CPU branch off. This MUST precede the
+    // workerAlive / CPU / mtime checks so a parked worker is never CPU-stalled.
+    if (input.rateLimitWaiting ||
+        !input.circuitBreakerExecutable ||
+        input.lastError != null ||
+        input.consecutiveSubprocessErrors > 0) {
+        return { stalled: false, reason: 'in_wait_state', cpuSecondsDelta };
+    }
+    if (!input.workerAlive) {
+        return { stalled: false, reason: 'no_worker', cpuSecondsDelta };
+    }
+    // Artifact-mtime advance is forward progress (the worker IS writing), independent of
+    // output recency — a real liveness signal that defeats nothing.
+    if (input.artifactMtimeAdvanced) {
+        return { stalled: false, reason: 'mtime_advanced', cpuSecondsDelta };
+    }
+    // A live, working worker accrues CPU. A `/login`-hung worker accrues ~0 while ETIME climbs.
+    if (cpuSecondsDelta >= input.cpuFloorSeconds) {
+        return { stalled: false, reason: 'cpu_active', cpuSecondsDelta };
+    }
+    return { stalled: true, reason: 'cpu_stall', cpuSecondsDelta };
+}
+/** C6 default CPU-seconds floor: <5s accrued over the window with no mtime advance is a stall. */
+const DEFAULT_CPU_LIVENESS_FLOOR_SECONDS = 5;
+/**
+ * C6 CPU sampler: read a process's accumulated CPU-time (seconds) via
+ * `ps -o time= -p <pid>`. Returns null on a dead/absent pid or any ps error. The
+ * `[[DD-]HH:]MM:SS` ps TIME format is parsed to whole seconds. Injectable at the
+ * wiring callsite so the pure decision (and its tests) never shell out.
+ */
+export function sampleWorkerCpuSeconds(pid) {
+    if (!Number.isInteger(pid) || pid <= 0)
+        return null;
+    try {
+        const r = spawnSync('ps', ['-o', 'time=', '-p', String(pid)], { encoding: 'utf-8', timeout: 5000 });
+        if (r.status !== 0 || typeof r.stdout !== 'string')
+            return null;
+        const raw = r.stdout.trim();
+        if (!raw)
+            return null;
+        return parsePsCpuTimeToSeconds(raw);
+    }
+    catch {
+        return null;
+    }
+}
+/** Parse a `ps -o time=` value (`[[DD-]HH:]MM:SS`) into whole seconds. Returns null on malformed input. */
+export function parsePsCpuTimeToSeconds(value) {
+    const trimmed = value.trim();
+    // Optional leading `DD-` day field.
+    const dayMatch = /^(\d+)-(.*)$/.exec(trimmed);
+    let days = 0;
+    let rest = trimmed;
+    if (dayMatch) {
+        days = Number(dayMatch[1]);
+        rest = dayMatch[2];
+    }
+    const parts = rest.split(':').map((p) => Number(p));
+    if (parts.length < 2 || parts.length > 3 || parts.some((n) => !Number.isFinite(n) || n < 0)) {
+        return null;
+    }
+    let hours = 0;
+    let minutes;
+    let seconds;
+    if (parts.length === 3) {
+        [hours, minutes, seconds] = parts;
+    }
+    else {
+        [minutes, seconds] = parts;
+    }
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds;
+}
+/**
+ * C7 graded-lifecycle predicate (invariant #1 — graded level, never a bare boolean
+ * elsewhere; here the boolean answers exactly "is the conformance-complete set
+ * present?"). The required artifact prefix set is derived from the ticket tier's
+ * lifecycle (`requiredTierArtifactPrefixes`), never hardcoded. Returns true ONLY when
+ * `findMissingPrefixes` is empty — i.e. the graded level is `=conformance` (complete).
+ * An INCOMPLETE set returns false so the CPU-stall salvage never auto-commits it.
+ */
+export function gradeConformanceComplete(sessionDir, ticketId) {
+    const ticketDir = path.join(sessionDir, ticketId);
+    let files;
+    try {
+        files = fs.readdirSync(ticketDir);
+    }
+    catch {
+        return false;
+    }
+    let tier = 'medium';
+    try {
+        tier = parseTicketFrontmatter(ticketFilePath(sessionDir, ticketId))?.complexity_tier ?? 'medium';
+    }
+    catch { /* default medium */ }
+    const requiredPrefixes = requiredTierArtifactPrefixes(tier);
+    return findMissingPrefixes(files, requiredPrefixes).length === 0;
+}
+/**
+ * C6 helper: the in-flight worker pid for a ticket, read from the most-recent
+ * `worker_session_<pid>.log` under the ticket dir (the same artifact the silent-death
+ * classifier keys on). Returns null when no worker log / pid is resolvable.
+ */
+export function resolveCurrentWorkerPid(sessionDir, ticketId) {
+    const ticketDir = path.join(sessionDir, ticketId);
+    let best = null;
+    let entries;
+    try {
+        entries = fs.readdirSync(ticketDir);
+    }
+    catch {
+        return null;
+    }
+    for (const file of entries) {
+        const m = /^worker_session_(\d+)\.log$/.exec(file);
+        if (!m)
+            continue;
+        let mtimeMs;
+        try {
+            mtimeMs = fs.statSync(path.join(ticketDir, file)).mtimeMs;
+        }
+        catch {
+            continue;
+        }
+        if (!best || mtimeMs > best.mtimeMs || (mtimeMs === best.mtimeMs && file.localeCompare(best.file) > 0)) {
+            best = { pid: Number(m[1]), mtimeMs, file };
+        }
+    }
+    return best ? best.pid : null;
+}
+/**
+ * C6 helper: the newest mtime (ms) among the ticket dir's gated artifacts
+ * (research, plan, conformance, code_review markdown). Used as the
+ * artifact-mtime-advance liveness signal — independent of any worker output recency.
+ * Returns 0 when none.
+ */
+export function latestTicketArtifactMtimeMs(sessionDir, ticketId) {
+    const ticketDir = path.join(sessionDir, ticketId);
+    let entries;
+    try {
+        entries = fs.readdirSync(ticketDir);
+    }
+    catch {
+        return 0;
+    }
+    let latest = 0;
+    for (const file of entries) {
+        if (!/^(research|plan|conformance|code_review)_.*\.md$/.test(file))
+            continue;
+        try {
+            const m = fs.statSync(path.join(ticketDir, file)).mtimeMs;
+            if (m > latest)
+                latest = m;
+        }
+        catch { /* ignore unreadable */ }
+    }
+    return latest;
+}
 /** L2 default consecutive idle-stall self-recovery cap before escalation. */
 const DEFAULT_MUX_IDLE_STALL_RECOVERY_CAP = 3;
 /**
@@ -6297,6 +6459,13 @@ async function runMuxRunnerMain() {
     // (below) always refreshes it before the watchdog reads it each pass.
     // eslint-disable-next-line no-useless-assignment -- declaration-required seed; refreshed at iteration_start before any read
     let lastProgressEpoch = muxNow();
+    // C6 (B-MRSW) CPU/artifact-liveness watchdog window anchors. Seeded per-ticket on
+    // first observation; the delta is only evaluated once the window reaches the
+    // idle-stall threshold. NOT persisted to state.json — pure loop-local liveness truth.
+    let cpuLivenessTicketId = null;
+    let cpuLivenessAnchorEpoch = 0;
+    let cpuLivenessAnchorCpuSeconds = null;
+    let cpuLivenessAnchorMtimeMs = 0;
     let readinessGateChecked = false;
     let ticketAuditGateChecked = false;
     let smokeGateBypassEmitted = false;
@@ -6892,6 +7061,107 @@ async function runMuxRunnerMain() {
         catch (err) {
             // Watchdog is best-effort — never crash the loop on a watchdog failure.
             log(`idle-stall watchdog threw (ignored): ${safeErrorMessage(err)}`);
+        }
+        // C6 (B-MRSW): CPU/artifact liveness watchdog. The idle-stall watchdog above keys on
+        // `lastProgressMs`, which a `/login` re-auth keeps falsely fresh; this complement keys
+        // on the worker's CPU-time delta + artifact-mtime advance (output recency is irrelevant).
+        // A worker alive but accruing <5s CPU over the window with no new artifact mtime is wedged
+        // — route to the C7 conformance-present salvage. Best-effort; never crash the loop.
+        try {
+            const cpuTicket = state.current_ticket ?? null;
+            // Re-anchor the window whenever the active ticket changes (per-ticket liveness).
+            if (cpuTicket !== cpuLivenessTicketId) {
+                cpuLivenessTicketId = cpuTicket;
+                cpuLivenessAnchorEpoch = cpuTicket ? muxNow() : 0;
+                cpuLivenessAnchorCpuSeconds = cpuTicket ? sampleWorkerCpuSeconds(resolveCurrentWorkerPid(sessionDir, cpuTicket) ?? -1) : null;
+                cpuLivenessAnchorMtimeMs = cpuTicket ? latestTicketArtifactMtimeMs(sessionDir, cpuTicket) : 0;
+            }
+            else if (cpuTicket) {
+                const windowSeconds = Math.floor((muxNow() - cpuLivenessAnchorEpoch) / 1000);
+                const workerPid = resolveCurrentWorkerPid(sessionDir, cpuTicket);
+                const nowCpuSeconds = workerPid != null ? sampleWorkerCpuSeconds(workerPid) : null;
+                const nowMtimeMs = latestTicketArtifactMtimeMs(sessionDir, cpuTicket);
+                // Only evaluate a full window; seed the CPU anchor lazily if the first sample failed.
+                if (cpuLivenessAnchorCpuSeconds == null && nowCpuSeconds != null) {
+                    cpuLivenessAnchorCpuSeconds = nowCpuSeconds;
+                    cpuLivenessAnchorEpoch = muxNow();
+                    cpuLivenessAnchorMtimeMs = nowMtimeMs;
+                }
+                else if (windowSeconds >= idleStallThresholdSeconds && cpuLivenessAnchorCpuSeconds != null && nowCpuSeconds != null) {
+                    const cpuDecision = evaluateCpuLivenessWatchdog({
+                        active: state.active === true,
+                        workerAlive: workerPid != null && isProcessAlive(workerPid),
+                        cpuSecondsDelta: nowCpuSeconds - cpuLivenessAnchorCpuSeconds,
+                        windowSeconds,
+                        cpuFloorSeconds: DEFAULT_CPU_LIVENESS_FLOOR_SECONDS,
+                        artifactMtimeAdvanced: nowMtimeMs > cpuLivenessAnchorMtimeMs,
+                        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+                        rateLimitWaiting: fs.existsSync(path.join(sessionDir, 'rate_limit_wait.json')),
+                        circuitBreakerExecutable: !cbEnabled || !cbState || canExecute(cbState),
+                        lastError: state.last_error ?? null,
+                        consecutiveSubprocessErrors: state.last_subprocess_error != null ? 1 : 0,
+                    });
+                    if (cpuDecision.stalled) {
+                        log(`[cpu-liveness] worker ${workerPid} alive but accrued ${cpuDecision.cpuSecondsDelta}s CPU over ${windowSeconds}s (< ${DEFAULT_CPU_LIVENESS_FLOOR_SECONDS}s) with no artifact-mtime advance — wedged at 0% CPU despite fresh output`);
+                        process.stderr.write(`[mux-runner] cpu-liveness watchdog: worker ${workerPid} wedged (CPU stall) on ${cpuTicket}\n`);
+                        logActivity({
+                            event: 'mux_idle_stall_detected',
+                            source: 'pickle',
+                            session: path.basename(sessionDir),
+                            iteration,
+                            gate_payload: {
+                                threshold_seconds: idleStallThresholdSeconds,
+                                idle_seconds: windowSeconds,
+                                observed_iteration: curIter,
+                                current_ticket: cpuTicket,
+                                step: typeof state.step === 'string' ? state.step : 'unknown',
+                                liveness: 'cpu',
+                                cpu_seconds_delta: cpuDecision.cpuSecondsDelta,
+                                cpu_floor_seconds: DEFAULT_CPU_LIVENESS_FLOOR_SECONDS,
+                            },
+                        });
+                        // AC-2 fail-safe: a git-mutating commit MUST have an explicit working_dir,
+                        // never fall back to process.cwd() (the real repo).
+                        if (!state.working_dir) {
+                            recordExitReason(statePath, 'state_working_dir_missing');
+                            safeDeactivate(statePath);
+                            exitReason = 'state_working_dir_missing';
+                            break;
+                        }
+                        // C7: salvage ONLY when the conformance-complete set is present (graded
+                        // =conformance). The committer runs the armed gate TO COMPLETION (never
+                        // infers from a stale artifact mtime) and commits reset-proof with an
+                        // explicit completion_commit. INCOMPLETE set → DO NOT auto-commit; wait.
+                        if (gradeConformanceComplete(sessionDir, cpuTicket)) {
+                            commitGatePassingDeliverableOnExitPath({
+                                sessionDir,
+                                statePath,
+                                workingDir: state.working_dir,
+                                ticketId: cpuTicket,
+                                extensionRoot,
+                                flags: state.flags ?? null,
+                                log,
+                            });
+                        }
+                        else {
+                            log(`[cpu-liveness] ticket ${cpuTicket}: conformance set INCOMPLETE — not auto-committing (waiting/escalating instead)`);
+                        }
+                        // Self-recover identically to the idle-stall path: re-select a pending ticket,
+                        // reset the stall + progress trackers, and re-anchor the CPU window.
+                        const nextPending = findNextPendingTicketId(sessionDir);
+                        updateMuxLifecycleState(statePath, { currentTicket: nextPending ?? null });
+                        lastStateIteration = -1;
+                        stallCount = 0;
+                        lastProgressEpoch = muxNow();
+                        cpuLivenessTicketId = null;
+                        cpuLivenessAnchorCpuSeconds = null;
+                        continue;
+                    }
+                }
+            }
+        }
+        catch (err) {
+            log(`cpu-liveness watchdog threw (ignored): ${safeErrorMessage(err)}`);
         }
         // Per-spawn codegraph staleness sync (fail-open — bounded by sync_timeout_ms in the service).
         if (cgService !== null) {
