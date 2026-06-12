@@ -5,9 +5,10 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { printMinimalPanel, Style, TICKET_TIER_BUDGETS, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus, loadPickleSettingsBag, resolveCodegraphSettings, type TicketInfo } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, TICKET_TIER_BUDGETS, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus, readFrontmatterField, loadPickleSettingsBag, resolveCodegraphSettings, type TicketInfo } from '../services/pickle-utils.js';
 import { resolveMcpConfigPath, buildWorkerMcpConfig } from '../services/backend-spawn.js';
-import { getHeadSha, getHeadBranch, probeConcurrentGitAccess } from '../services/git-utils.js';
+import { getHeadSha, getHeadBranch, probeConcurrentGitAccess, updateTicketFrontmatter } from '../services/git-utils.js';
+import { detectAndRecoverHeadRegression } from './mux-runner.js';
 import { State, LockError, SessionMapEntry, Backend, BACKENDS, STATE_MANAGER_DEFAULTS, type CodegraphSettings } from '../types/index.js';
 import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive, readMappedPid } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
@@ -1075,6 +1076,98 @@ function emitResumeEpochReset(fullSessionPath: string, originalEpoch: number | n
   } catch { /* ignore — telemetry should not block resume */ }
 }
 
+/**
+ * C5 (B-RRH AC-C5): on `--resume`, self-heal an orphaned ticket commit.
+ *
+ * When a worker committed real work then the commit was orphaned before this
+ * resume (a spurious Failed-flip + HEAD reset, the pre-fix state), the ticket
+ * frontmatter still names the orphaned commit in `completion_commit`. If that
+ * commit ff-descends from HEAD (`git merge-base --is-ancestor HEAD <sha>` exits
+ * 0), reuse the H1 reattach logic (`detectAndRecoverHeadRegression` with
+ * startCommit = currentHead) to `merge --ff-only` reattach it, then mark the
+ * ticket Done with an explicit completion_commit. A NON-ancestor commit is left
+ * untouched — never force-reattached, reset, or cherry-picked — because H1's
+ * non-recovery path would clear completion_commit.
+ *
+ * Best-effort throughout: every external call is wrapped in try/catch and errors
+ * go to stderr only. This MUST NOT throw out of the resume path.
+ */
+/** Read `completion_commit` from the current ticket's frontmatter, or null. */
+function readTicketCompletionCommit(sessionRoot: string, ticketId: string): string | null {
+  let status: string | null;
+  try {
+    status = getTicketStatus(sessionRoot, ticketId);
+  } catch {
+    return null; // ticket missing/unparseable — nothing to heal
+  }
+  const normalized = (status || '').trim().toLowerCase();
+  if (normalized !== 'failed' && normalized !== 'in progress') return null;
+  try {
+    const ticketPath = path.join(sessionRoot, ticketId, `linear_ticket_${ticketId}.md`);
+    return readFrontmatterField(fs.readFileSync(ticketPath, 'utf-8'), 'completion_commit');
+  } catch {
+    return null;
+  }
+}
+
+/** True iff `sha` ff-descends from HEAD (`merge-base --is-ancestor HEAD sha` exit 0). */
+function shaDescendsFromHead(workingDir: string, currentHead: string, sha: string): boolean {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', currentHead, sha], {
+      cwd: workingDir,
+      stdio: ['ignore', 'ignore', 'ignore'],
+      timeout: 5000,
+    });
+    return true;
+  } catch {
+    return false; // not a descendant — never force-reattach (SAFETY)
+  }
+}
+
+function tryResumeOrphanReattach(
+  fullSessionPath: string,
+  statePath: string,
+  currentTicket: string | null,
+  workingDir: string | null,
+): void {
+  if (!currentTicket || !workingDir) return;
+  try {
+    const completionCommitSha = readTicketCompletionCommit(fullSessionPath, currentTicket);
+    if (!completionCommitSha) return; // skip fsck discovery (out of scope)
+
+    let currentHead = '';
+    try { currentHead = getHeadSha(workingDir); } catch { return; }
+    if (!currentHead) return;
+
+    // is-ancestor gate: the stamped SHA MUST ff-descend from HEAD, else leaving it
+    // to H1 would clear completion_commit via the non-recovery path.
+    if (!shaDescendsFromHead(workingDir, currentHead, completionCommitSha)) return;
+
+    let iteration = 0;
+    try {
+      const state = sm.read(statePath);
+      if (typeof state.iteration === 'number' && Number.isFinite(state.iteration)) iteration = state.iteration;
+    } catch { /* iteration is advisory — default to 0 */ }
+
+    const result = detectAndRecoverHeadRegression({
+      ticketId: currentTicket,
+      workingDir,
+      startCommit: currentHead,
+      completionCommitSha,
+      sessionDir: fullSessionPath,
+      statePath,
+      iteration,
+      log: (m) => process.stderr.write(m + '\n'),
+    });
+
+    if (result.recovered) {
+      updateTicketFrontmatter(currentTicket, fullSessionPath, { status: 'Done', completion_commit: completionCommitSha });
+    }
+  } catch (err) {
+    process.stderr.write(`[resume-reattach] best-effort failure: ${safeErrorMessage(err)}\n`);
+  }
+}
+
 function resumeSession(config: SetupArgs): SessionResult {
   const fullSessionPath = config.resumePath
     ? resolvePath(config.resumePath)
@@ -1126,6 +1219,9 @@ function resumeSession(config: SetupArgs): SessionResult {
   } catch {
     die(`state.json is missing or corrupt in ${fullSessionPath}`);
   }
+
+  // C5 (B-RRH AC-C5): self-heal an orphaned ticket commit on resume.
+  tryResumeOrphanReattach(fullSessionPath, statePath, state.current_ticket, state.working_dir);
 
   emitResumeEpochReset(fullSessionPath, originalEpoch, state);
 
