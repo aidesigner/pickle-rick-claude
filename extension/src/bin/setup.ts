@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { printMinimalPanel, Style, TICKET_TIER_BUDGETS, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus, loadPickleSettingsBag, resolveCodegraphSettings, type TicketInfo } from '../services/pickle-utils.js';
-import { resolveMcpConfigPath } from '../services/backend-spawn.js';
+import { resolveMcpConfigPath, buildWorkerMcpConfig } from '../services/backend-spawn.js';
 import { getHeadSha, getHeadBranch, probeConcurrentGitAccess } from '../services/git-utils.js';
 import { State, LockError, SessionMapEntry, Backend, BACKENDS, STATE_MANAGER_DEFAULTS, type CodegraphSettings } from '../types/index.js';
 import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive, readMappedPid } from '../services/state-manager.js';
@@ -1476,6 +1476,35 @@ async function main() {
       args.resumeMode
     );
   } catch { /* snapshot is best-effort — never block launch */ }
+
+  // C7: materialize the session-merged worker MCP config ONCE at setup, after the
+  // snapshot seam. Merges the operator's MCP server entries with an absolute-command
+  // `codegraph serve --mcp` entry (watcher OFF → C4 sync is sole writer). Claude-family
+  // workers only; codex workers never receive --mcp-config. Best-effort — never blocks
+  // launch. The materialized path is consumed at worker-spawn time via opts.mcpConfig.
+  try {
+    const settingsBag = loadPickleSettingsBag();
+    const cgSettings = resolveCodegraphSettings(settingsBag);
+    let operatorEntries: Record<string, unknown> | null = null;
+    const operatorPath = resolveMcpConfigPath(settingsBag ?? undefined);
+    if (operatorPath) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(operatorPath, 'utf8')) as { mcpServers?: unknown };
+        if (parsed.mcpServers && typeof parsed.mcpServers === 'object' && !Array.isArray(parsed.mcpServers)) {
+          operatorEntries = parsed.mcpServers as Record<string, unknown>;
+        }
+      } catch { /* operator config unreadable/absent → codegraph-only config */ }
+    }
+    buildWorkerMcpConfig(
+      session.sessionRoot,
+      process.cwd(),
+      {
+        worker_mcp_config_path: settingsBag?.worker_mcp_config_path ?? null,
+        expose_mcp_to_workers: cgSettings.expose_mcp_to_workers,
+      },
+      operatorEntries,
+    );
+  } catch { /* worker MCP config is best-effort — never block launch */ }
 
   try {
     updateSessionMap(paths.sessionsMap, process.cwd(), session.sessionRoot);

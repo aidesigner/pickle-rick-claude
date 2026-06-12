@@ -1439,7 +1439,7 @@
             "mcp_config_path": { "type": ["string", "null"] },
             "precedence_layer": {
               "type": "string",
-              "enum": ["settings_override", "claude_json_fallback", "omitted"]
+              "enum": ["session_merged", "settings_override", "claude_json_fallback", "omitted"]
             }
           }
         }

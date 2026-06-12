@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { Backend, BACKENDS, State, type BackendResolutionSource, type WorkerBackendResolutionSource } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 import { logActivity } from './activity-logger.js';
@@ -334,8 +335,14 @@ export function resolveBackendFromStateFile(statePath: string): Backend {
  *   3. undefined — omit --mcp-config entirely (INV-MCP-OPT-IN)
  *
  * `homeDir` defaults to `os.homedir()` and is exposed for testing only.
+ *
+ * `session_merged` is a fourth, higher layer that wins whenever a per-spawn
+ * `opts.mcpConfig` override is supplied (the session-merged `worker-mcp.json`
+ * materialized at setup by `buildWorkerMcpConfig`). `resolveMcpConfigWithLayer`
+ * never returns it — it is named by the caller that holds the override path so the
+ * activity log names the winning layer truthfully (C7 / AC5).
  */
-type McpPrecedenceLayer = 'settings_override' | 'claude_json_fallback' | 'omitted';
+export type McpPrecedenceLayer = 'session_merged' | 'settings_override' | 'claude_json_fallback' | 'omitted';
 
 /**
  * Single source of truth for MCP-config precedence. Returns both the resolved
@@ -365,19 +372,135 @@ export function resolveMcpConfigPath(
   return resolveMcpConfigWithLayer(settingsBag, homeDir).path ?? undefined;
 }
 
-function emitMcpConfigResolved(
-  settingsBag?: { worker_mcp_config_path?: string | null },
-  homeDir?: string,
-): void {
+/**
+ * Emit the `worker_mcp_config_resolved` activity event naming the winning layer.
+ * Takes the already-resolved path + layer so callers that hold a per-spawn
+ * `opts.mcpConfig` override can truthfully name `session_merged` (C7 / AC5),
+ * while the no-override path keeps the settings/claude.json/omitted semantics.
+ */
+function emitMcpConfigResolved(mcpConfigPath: string | null, layer: McpPrecedenceLayer): void {
   try {
-    const { path: mcp_config_path, layer: precedence_layer } = resolveMcpConfigWithLayer(settingsBag, homeDir);
     logActivity({
       event: 'worker_mcp_config_resolved',
       source: 'pickle',
-      gate_payload: { mcp_config_path, precedence_layer },
+      gate_payload: { mcp_config_path: mcpConfigPath, precedence_layer: layer },
     });
   } catch {
     // best-effort: never block spawn on activity log failure
+  }
+}
+
+/**
+ * Resolve the effective `--mcp-config` path + winning precedence layer for a spawn.
+ * A per-spawn `opts.mcpConfig` override (the session-merged `worker-mcp.json` path
+ * materialized at setup) wins as `session_merged`; otherwise fall back to the shared
+ * settings/claude.json/omitted decision tree.
+ */
+function resolveSpawnMcpConfig(
+  opts: { mcpConfig?: string; settingsBag?: { worker_mcp_config_path?: string | null } },
+): { path: string | null; layer: McpPrecedenceLayer } {
+  if (opts.mcpConfig) return { path: opts.mcpConfig, layer: 'session_merged' };
+  return resolveMcpConfigWithLayer(opts.settingsBag);
+}
+
+/** A single stdio MCP server entry in a claude `--mcp-config` file. */
+interface McpServerEntry {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+}
+
+/**
+ * Resolve the absolute `node <bin> serve --mcp` command for the bundled
+ * `@colbymchenry/codegraph` server. The package `exports` map blocks subpath
+ * resolution of the bin, so resolve via the (exported) package.json then join
+ * with `bin.codegraph` — the convention recorded in
+ * `extension/data/codegraph-api-inventory.json` (`serve.bin_resolution`) and
+ * proven by the real `serve --mcp` handshake integration test.
+ *
+ * Writer-ownership (C7): the inventory records `serve.watcher_disableable: true`
+ * and that `CODEGRAPH_NO_WATCH=1` is the empirically-verified authoritative opt-out
+ * that silences the serve auto-sync watcher. We launch serve with the watcher OFF so
+ * C4's runtime `sync` remains the SOLE writer to `.codegraph/codegraph.db` — exactly
+ * one writer authority for the index.
+ *
+ * Returns `null` on any resolution failure (package/platform-bundle absent) so the
+ * caller can fail open to the operator passthrough config.
+ */
+function resolveCodegraphServeEntry(workingDir: string): McpServerEntry | null {
+  try {
+    const req = createRequire(import.meta.url);
+    const pkgJsonPath = req.resolve('@colbymchenry/codegraph/package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8')) as { bin?: { codegraph?: string } };
+    const binRel = pkg.bin?.codegraph ?? 'npm-shim.js';
+    const binAbs = path.join(path.dirname(pkgJsonPath), binRel);
+    return {
+      command: 'node',
+      args: [binAbs, 'serve', '--mcp'],
+      // C7 single-writer: watcher OFF (see fn doc) — codegraph-api-inventory.json serve finding.
+      env: { CODEGRAPH_NO_WATCH: '1' },
+      cwd: workingDir,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * C7 — Claude-family-ONLY session-merged worker MCP config.
+ *
+ * Materializes `<sessionDir>/mcp/worker-mcp.json` merging the operator's snapshotted
+ * MCP server entries with an absolute-command `codegraph serve --mcp` entry, and
+ * returns the path to use as the worker `--mcp-config`. Codex workers are excluded
+ * elsewhere (`buildCodexInvocation` never receives `--mcp-config`).
+ *
+ * Resolution:
+ *   - `expose_mcp_to_workers !== true` (disabled) → operator passthrough: return
+ *     `resolveMcpConfigPath(settings)` (or null); write nothing.
+ *   - codegraph bin unresolvable OR write failure (merge-fail) → one degraded-style
+ *     log line + operator passthrough.
+ *   - otherwise → write `{ mcpServers: { codegraph, ...operatorEntries } }` and return
+ *     the session path. Operator entries are spread LAST so an operator-supplied
+ *     `codegraph` key WINS the name collision (intentional override). No operator
+ *     entries → codegraph-only config.
+ *
+ * Invariants: the operator config file is never mutated; exactly one writer authority
+ * (serve watcher OFF, see `resolveCodegraphServeEntry`).
+ */
+export function buildWorkerMcpConfig(
+  sessionDir: string,
+  workingDir: string,
+  settings: { worker_mcp_config_path?: string | null; expose_mcp_to_workers?: boolean } | undefined,
+  snapshotEntries: Record<string, unknown> | null,
+): string | null {
+  const passthrough = (): string | null => resolveMcpConfigPath(settings) ?? null;
+
+  if (settings?.expose_mcp_to_workers !== true) return passthrough();
+
+  const codegraph = resolveCodegraphServeEntry(workingDir);
+  if (!codegraph) {
+    process.stderr.write(
+      '[backend-spawn] worker MCP merge degraded: codegraph bin unresolved; passthrough operator config\n',
+    );
+    return passthrough();
+  }
+
+  // Operator entries spread LAST → operator `codegraph` (if any) wins the collision.
+  const mcpServers: Record<string, unknown> = { codegraph, ...(snapshotEntries ?? {}) };
+
+  try {
+    const mcpDir = path.join(sessionDir, 'mcp');
+    fs.mkdirSync(mcpDir, { recursive: true });
+    const outPath = path.join(mcpDir, 'worker-mcp.json');
+    fs.writeFileSync(outPath, JSON.stringify({ mcpServers }, null, 2));
+    return outPath;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `[backend-spawn] worker MCP merge degraded: write failed (${msg}); passthrough operator config\n`,
+    );
+    return passthrough();
   }
 }
 
@@ -404,14 +527,14 @@ export function buildManagerInvocation(backend: Backend, opts: ManagerInvocation
 function buildClaudeWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvocation {
   // R-WSRC-4: test-harness sandbox assertion. No-op unless PICKLE_TEST_MODE=1.
   assertAddDirsUnderTmpdirIfTestMode(opts.addDirs);
-  emitMcpConfigResolved(opts.settingsBag);
+  const { path: mcpCfg, layer } = resolveSpawnMcpConfig(opts);
+  emitMcpConfigResolved(mcpCfg, layer);
   const args: string[] = ['--dangerously-skip-permissions'];
   appendAddDirArgs(args, opts.addDirs);
   if (opts.outputFormat && opts.outputFormat !== 'text') {
     args.push('--output-format', opts.outputFormat);
   }
   if (opts.model) args.push('--model', opts.model);
-  const mcpCfg = opts.mcpConfig ?? resolveMcpConfigPath(opts.settingsBag);
   if (mcpCfg) args.push('--mcp-config', mcpCfg);
   // NOTE: claude CLI has no public reasoning-effort flag for `claude -p`; opts.effort
   // is intentionally ignored here. Don't inject --append-system-prompt or env vars
@@ -421,7 +544,8 @@ function buildClaudeWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvoca
 }
 
 function buildClaudeManagerInvocation(opts: ManagerInvocationOptions): SpawnInvocation {
-  emitMcpConfigResolved(opts.settingsBag);
+  const { path: mcpCfg, layer } = resolveSpawnMcpConfig(opts);
+  emitMcpConfigResolved(mcpCfg, layer);
   const args: string[] = ['--dangerously-skip-permissions'];
   for (const dir of opts.addDirs) {
     if (dir) args.push('--add-dir', dir);
@@ -432,7 +556,6 @@ function buildClaudeManagerInvocation(opts: ManagerInvocationOptions): SpawnInvo
     args.push('--max-turns', String(opts.maxTurns));
   }
   if (opts.model) args.push('--model', opts.model);
-  const mcpCfg = opts.mcpConfig ?? resolveMcpConfigPath(opts.settingsBag);
   if (mcpCfg) args.push('--mcp-config', mcpCfg);
   args.push('-p', opts.prompt);
   return { cmd: 'claude', args, backend: 'claude' };
