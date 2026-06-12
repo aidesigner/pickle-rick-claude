@@ -331,6 +331,53 @@ export function extractForwardRefAnnotations(content: string): { valid: Set<stri
   return { valid, malformed };
 }
 
+// R-FRA-6 (88a4cdd6 E1/E2): a forward-created file declared in a ticket's
+// "Files to modify/create" (or "Files to create") section — whether as a bold
+// inline declaration `**Files to modify/create**: \`a.ts\`, \`b.ts\`` or under a
+// `## Files to modify/create` heading — is creation-OK across EVERY citation
+// surface (verify-command strings, table cells, cross-ticket refs), not just the
+// line that carries an inline annotation. This harvests the declared paths from
+// one ticket's content. Bare "Files to modify" (no "/create") is intentionally
+// excluded — a modify-only path must still exist at HEAD (ATB-02 contract).
+const DECLARED_CREATE_HEADING_RE = /^#{1,6}\s+.*files\s+to\s+(?:modify\/create|create)\b/i;
+const DECLARED_CREATE_INLINE_RE = /\*{0,2}files\s+to\s+(?:modify\/create|create)\*{0,2}\s*:/i;
+function backtickedPathTokens(line: string): string[] {
+  const tokens: string[] = [];
+  for (const match of line.matchAll(/`([^`]+)`/g)) {
+    const value = match[1].trim();
+    PATH_RE.lastIndex = 0;
+    if (PATH_RE.test(value)) tokens.push(value);
+    PATH_RE.lastIndex = 0;
+  }
+  return tokens;
+}
+export function extractDeclaredCreatePaths(content: string): Set<string> {
+  const result = new Set<string>();
+  let inCreateSection = false;
+  for (const line of content.split(/\r?\n/)) {
+    if (/^#{1,6}\s/.test(line)) {
+      inCreateSection = DECLARED_CREATE_HEADING_RE.test(line);
+    }
+    if (inCreateSection || DECLARED_CREATE_INLINE_RE.test(line)) {
+      for (const token of backtickedPathTokens(line)) result.add(token);
+    }
+  }
+  return result;
+}
+
+// R-FRA-6 (88a4cdd6 E1/E2): the bundle-creation index — additive whitelist of
+// every forward-created path declared (or annotated) ANYWHERE in the bundle.
+// Suppression is exact-membership only, so a genuinely phantom path (neither
+// declared nor annotated) still produces a finding (teeth preserved).
+export function buildBundleCreationIndex(ticketContents: string[]): Set<string> {
+  const index = new Set<string>();
+  for (const content of ticketContents) {
+    for (const declared of extractDeclaredCreatePaths(content)) index.add(declared);
+    for (const annotated of extractForwardRefAnnotations(content).valid) index.add(annotated);
+  }
+  return index;
+}
+
 export function extractContractReferences(rawContent: string): string[] {
   const content = stripCorrectionNotes(rawContent);
   const annotations = extractForwardRefAnnotations(content);
@@ -887,7 +934,7 @@ function findPrdMapFindings(tickets: TicketInfo[], manifest: unknown, sourceRequ
     }));
 }
 
-function findPathFindings(ticket: TicketInfo, repoRoot: string, sessionDir: string, cache?: ResolverCache): ReadinessFinding[] {
+function findPathFindings(ticket: TicketInfo, repoRoot: string, sessionDir: string, cache?: ResolverCache, creationIndex: Set<string> = new Set()): ReadinessFinding[] {
   // R-RHFP: drop `*(refined: ...)*` correction notes so stale old paths
   // quoted inside them are not flagged as unresolved.
   const content = stripCorrectionNotes(fs.readFileSync(ticket.file, 'utf-8'));
@@ -899,6 +946,9 @@ function findPathFindings(ticket: TicketInfo, repoRoot: string, sessionDir: stri
   for (const match of content.matchAll(PATH_RE)) refs.add(match[0]);
   return [...refs].sort()
     .filter((ref) => !annotatedTokens.has(ref))
+    // R-FRA-6 (88a4cdd6 E1/E2): a path declared forward-created ANYWHERE in the
+    // bundle is creation-OK across command/table/cross-ticket surfaces.
+    .filter((ref) => !creationIndex.has(ref))
     .filter((ref) => !allowlist.has(ref))
     .filter((ref) => !resolvePathRef(ref, repoRoot, ticket, sessionDir, cache))
     .map((ref) => ({
@@ -1089,9 +1139,13 @@ export function runReadiness(args: ReadinessArgs): { exitCode: number; findings:
     ? createResolverCache(args.repoRoot, args.maxWallMs, allowlist)
     : undefined;
   const pathCache: ResolverCache = resolverCache ?? createResolverCache(args.repoRoot, args.maxWallMs, allowlist);
+  // R-FRA-6 (88a4cdd6 E1/E2): build the bundle-creation index ONCE over every
+  // selected ticket so a forward-created path declared in one ticket is honored
+  // when cited (in a command, table, or cross-ticket ref) by any ticket.
+  const bundleCreationIndex = buildBundleCreationIndex(selected.files.map((file) => fs.readFileSync(file, 'utf-8')));
   const findings = [
     ...findPrdMapFindings(tickets, manifest, sourceRequirements),
-    ...tickets.flatMap((ticket) => findPathFindings(ticket, args.repoRoot, args.sessionDir, pathCache)),
+    ...tickets.flatMap((ticket) => findPathFindings(ticket, args.repoRoot, args.sessionDir, pathCache, bundleCreationIndex)),
     ...tickets.flatMap((ticket) => findDependencyFindings(ticket, refs)),
     ...selected.files.flatMap((file) => findReadinessFindings(file, args.repoRoot, { checkMachinability, checkContracts, cache: resolverCache, maxWallMs: args.maxWallMs, allowlist })),
   ];

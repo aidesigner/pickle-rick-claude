@@ -291,7 +291,44 @@ export function extractForwardCreatePaths(body) {
     }
     return result;
 }
-export function checkPathDrift(t, gitFiles) {
+// R-FRA-6 (88a4cdd6 E1/E2): harvest paths declared forward-created in a ticket's
+// "Files to modify/create" or "Files to create" section — bold inline
+// (`**Files to modify/create**: ...`) or heading-led. DISTINCT from
+// `extractForwardCreatePaths` (create-only, per-ticket, ATB-06 contract): this
+// also accepts the "modify/create" combined heading and feeds the bundle-wide
+// index. Bare "Files to modify" (no "/create") is excluded — modify-only paths
+// must exist at HEAD (ATB-02 contract).
+const DECLARED_CREATE_HEADING_RE = /^#{1,6}\s+.*files\s+to\s+(?:modify\/create|create)\b/i;
+const DECLARED_CREATE_INLINE_RE = /\*{0,2}files\s+to\s+(?:modify\/create|create)\*{0,2}\s*:/i;
+export function extractDeclaredCreatePaths(body) {
+    const result = new Set();
+    let inCreateSection = false;
+    for (const line of body.split('\n')) {
+        if (/^#{1,6}\s/.test(line)) {
+            inCreateSection = DECLARED_CREATE_HEADING_RE.test(line);
+        }
+        if (inCreateSection || DECLARED_CREATE_INLINE_RE.test(line)) {
+            for (const p of extractBacktickedPaths(line))
+                result.add(p);
+        }
+    }
+    return result;
+}
+// R-FRA-6 (88a4cdd6 E1/E2): bundle-creation index — additive whitelist of every
+// forward-created path declared (or annotated) across ALL tickets in the bundle.
+// Exact-membership suppression only: a phantom path neither declared nor
+// annotated still produces a fatal path-drift finding (teeth preserved).
+export function buildBundleCreationIndex(tickets) {
+    const index = new Set();
+    for (const t of tickets) {
+        for (const declared of extractDeclaredCreatePaths(t.body))
+            index.add(declared);
+        for (const annotated of extractForwardRefAnnotations(t.body))
+            index.add(annotated);
+    }
+    return index;
+}
+export function checkPathDrift(t, gitFiles, creationIndex = new Set()) {
     const findings = [];
     const seen = new Set();
     const forwardCreatePaths = extractForwardCreatePaths(t.body);
@@ -302,6 +339,9 @@ export function checkPathDrift(t, gitFiles) {
         if (gitFiles.has(tok))
             continue;
         if (forwardCreatePaths.has(tok))
+            continue;
+        // R-FRA-6 (88a4cdd6 E1/E2): bundle-wide declared/annotated forward-create.
+        if (creationIndex.has(tok))
             continue;
         const ctx = lineContext(t.body, tok);
         if (hasForwardRefPathAnnotation(ctx, tok))
@@ -513,9 +553,9 @@ export function checkMissingAuditComment(t) {
         },
     ];
 }
-function auditTicket(t, ctx) {
+function auditTicket(t, ctx, creationIndex = new Set()) {
     return [
-        ...checkPathDrift(t, ctx.gitFiles),
+        ...checkPathDrift(t, ctx.gitFiles, creationIndex),
         ...checkSelfReference(t),
         ...checkMissingDeps(t, ctx.knownTicketHashes),
         ...checkWrongHead(t, ctx),
@@ -585,12 +625,14 @@ export function auditSession(sessionDir, scriptDir) {
     const ctx = buildContext(absSession, scriptDir);
     const ticketDirs = [...ctx.knownTicketHashes].sort();
     const files = findTicketFiles(absSession, ticketDirs);
+    const parsed = files.map((f) => parseTicket(f, absSession)).filter((t) => t !== null);
+    // R-FRA-6 (88a4cdd6 E1/E2): build the bundle-creation index over every parsed
+    // ticket so a forward-created path declared in one ticket is honored when cited
+    // by any ticket (command, table, or cross-ticket ref).
+    const creationIndex = buildBundleCreationIndex(parsed);
     const findings = [];
-    for (const f of files) {
-        const t = parseTicket(f, absSession);
-        if (t === null)
-            continue;
-        findings.push(...auditTicket(t, ctx));
+    for (const t of parsed) {
+        findings.push(...auditTicket(t, ctx, creationIndex));
     }
     const exit_code = findings.some((f) => f.severity === 'fatal' || f.severity === 'warning') ? 1 : 0;
     return {
