@@ -2027,6 +2027,36 @@ function isHeadAtOrBelowCommit(headSha: string, refSha: string, workingDir: stri
 }
 
 /**
+ * R-RRH C4 ff-reattach guard for HEAD-reset call sites (anatomy/microverse
+ * auto-commit-then-reset). Returns true when resetting to `target` WOULD orphan
+ * `protectedSha` — i.e. `protectedSha` ff-descends from `target` (target is a
+ * strict ancestor of protectedSha). Reuses the H1 is-ancestor mechanism
+ * (`isHeadAtOrBelowCommit`); does NOT duplicate the merge-base probe.
+ *
+ * `protectedSha` is the in-flight ticket commit (current HEAD); `target` is the
+ * reset destination. Equal/empty SHAs or a non-ancestor target → false (the
+ * reset orphans nothing, so it may proceed). Callers that get true MUST preserve
+ * HEAD instead of rewinding (no reset path rewinds off a commit that ff-descends
+ * from HEAD).
+ */
+export function wouldResetOrphanCommit(input: {
+  workingDir: string;
+  target: string;
+  protectedSha: string | null | undefined;
+  log?: (msg: string) => void;
+}): boolean {
+  const { workingDir, target, protectedSha, log } = input;
+  if (!protectedSha || !target || protectedSha === target) return false;
+  // target is a strict ancestor of protectedSha ⇒ protectedSha ff-descends from
+  // target ⇒ resetting HEAD back to target would strand the descendant work.
+  const orphans = isHeadAtOrBelowCommit(target, protectedSha, workingDir);
+  if (orphans) {
+    log?.(`[reset-guard] reset to ${target} would orphan ff-descendant ${protectedSha} — preserving HEAD`);
+  }
+  return orphans;
+}
+
+/**
  * Returns dangling commit SHAs from `git fsck --no-reflogs --lost-found`.
  * Only chain tips are reported dangling (interior commits stay reachable from
  * the descendant that points at them). `--no-reflogs` is REQUIRED — without it a

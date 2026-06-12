@@ -57,6 +57,7 @@ import {
   classifyIterationExit,
   computeRateLimitAction,
   killCurrentChild,
+  wouldResetOrphanCommit,
 } from './mux-runner.js';
 import { resolveCodexModel } from './spawn-morty.js';
 import {
@@ -3228,6 +3229,29 @@ async function measureCommandIteration(
   return { kind: 'failed', exitReason };
 }
 
+/**
+ * R-RRH C4: route the microverse/anatomy regression rollback through the H1
+ * is-ancestor guard. The worker's just-made commit (current HEAD =
+ * ctx.postIterSha) ff-descends from ctx.preIterSha whenever it committed —
+ * rewinding would orphan that gate-green work, so preserve HEAD at the ticket
+ * commit instead of rewinding. Only an orphan-free target is hard-reset.
+ */
+function guardedMicroverseRollback(ctx: RunContext): void {
+  const protectedSha = ctx.postIterSha ?? _deps.getHeadSha(ctx.workingDir);
+  const target = ctx.preIterSha ?? '';
+  if (wouldResetOrphanCommit({ workingDir: ctx.workingDir, target, protectedSha, log: ctx.log })) {
+    ctx.log(`Regression detected — reset to ${target} would orphan ${protectedSha}; preserving HEAD (ticket commit retained)`);
+    return;
+  }
+  ctx.log(`Regression detected — rolling back to ${ctx.preIterSha}`);
+  _deps.resetToSha(target, ctx.workingDir, undefined, {
+    cwd: ctx.workingDir,
+    sessionDir: ctx.sessionDir,
+    ticketDir: null,
+    reason: 'microverse_rollback',
+  });
+}
+
 export async function measureAndClassifyIteration(
   state: MicroverseState,
   baseline: MetricSnapshot,
@@ -3286,13 +3310,7 @@ export async function measureAndClassifyIteration(
       history: metricConv.history,
       metricClassification: classification,
     }));
-    ctx.log(`Regression detected — rolling back to ${ctx.preIterSha}`);
-    _deps.resetToSha(ctx.preIterSha ?? '', ctx.workingDir, undefined, {
-      cwd: ctx.workingDir,
-      sessionDir: ctx.sessionDir,
-      ticketDir: null,
-      reason: 'microverse_rollback',
-    });
+    guardedMicroverseRollback(ctx);
     replaceMicroverseState(state, recordFailedApproach(state, `Iteration ${ctx.iteration}: score dropped from ${previousScore} to ${metricResult.score}`));
   }
 

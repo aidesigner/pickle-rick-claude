@@ -12,7 +12,7 @@ import { getHeadSha, resetToSha, isWorkingTreeDirty, listWorkingTreeDirtyPaths }
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, displayMacNotification, ensureMonitorWindow, collectTickets, getMicroverseSettings, resolveJudgeBackend, } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 const sm = new StateManager();
-import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
+import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, wouldResetOrphanCommit, } from './mux-runner.js';
 import { resolveCodexModel } from './spawn-morty.js';
 import { evaluateManagerRelaunch, recordManagerRelaunch, } from '../services/manager-relaunch.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -2423,6 +2423,28 @@ async function measureCommandIteration(state, ctx) {
     });
     return { kind: 'failed', exitReason };
 }
+/**
+ * R-RRH C4: route the microverse/anatomy regression rollback through the H1
+ * is-ancestor guard. The worker's just-made commit (current HEAD =
+ * ctx.postIterSha) ff-descends from ctx.preIterSha whenever it committed —
+ * rewinding would orphan that gate-green work, so preserve HEAD at the ticket
+ * commit instead of rewinding. Only an orphan-free target is hard-reset.
+ */
+function guardedMicroverseRollback(ctx) {
+    const protectedSha = ctx.postIterSha ?? _deps.getHeadSha(ctx.workingDir);
+    const target = ctx.preIterSha ?? '';
+    if (wouldResetOrphanCommit({ workingDir: ctx.workingDir, target, protectedSha, log: ctx.log })) {
+        ctx.log(`Regression detected — reset to ${target} would orphan ${protectedSha}; preserving HEAD (ticket commit retained)`);
+        return;
+    }
+    ctx.log(`Regression detected — rolling back to ${ctx.preIterSha}`);
+    _deps.resetToSha(target, ctx.workingDir, undefined, {
+        cwd: ctx.workingDir,
+        sessionDir: ctx.sessionDir,
+        ticketDir: null,
+        reason: 'microverse_rollback',
+    });
+}
 export async function measureAndClassifyIteration(state, baseline, ctx) {
     const backend = resolveWorkerBackendFromState(ctx.currentRunnerState).backend;
     let metricResult;
@@ -2471,13 +2493,7 @@ export async function measureAndClassifyIteration(state, baseline, ctx) {
             history: metricConv.history,
             metricClassification: classification,
         }));
-        ctx.log(`Regression detected — rolling back to ${ctx.preIterSha}`);
-        _deps.resetToSha(ctx.preIterSha ?? '', ctx.workingDir, undefined, {
-            cwd: ctx.workingDir,
-            sessionDir: ctx.sessionDir,
-            ticketDir: null,
-            reason: 'microverse_rollback',
-        });
+        guardedMicroverseRollback(ctx);
         replaceMicroverseState(state, recordFailedApproach(state, `Iteration ${ctx.iteration}: score dropped from ${previousScore} to ${metricResult.score}`));
     }
     replaceMicroverseState(state, stateRecordIteration(state, entry, classification));
