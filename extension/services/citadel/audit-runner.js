@@ -20,6 +20,7 @@ import { checkEndpointContractConformance } from './endpoint-contract-conformanc
 import { auditSchemaRegistryDrift } from './schema-registry-drift-audit.js';
 import { auditTestAuthenticity } from './test-authenticity-audit.js';
 import { auditStaleReferences } from './stale-reference-audit.js';
+import { auditCrossfileBehaviorDrift } from './crossfile-behavior-drift-audit.js';
 import { auditBannedConstructs } from './banned-constructs-audit.js';
 import { auditBannedCasts } from './banned-casts-audit.js';
 import { auditPatternConformance } from './pattern-conformance-audit.js';
@@ -101,6 +102,7 @@ export function buildCitadelAuditReport(options) {
     const schemaRegistryDrift = safeRunAnalyzer('citadel-schema-registry-drift', () => auditSchemaRegistryDrift(diff));
     const testAuthenticity = safeRunAnalyzer('citadel-test-authenticity', () => auditTestAuthenticity(diff));
     const staleReference = safeRunAnalyzer('citadel-stale-reference', () => auditStaleReferences(diff));
+    const crossfileBehaviorDrift = safeRunAnalyzer('citadel-crossfile-behavior-drift', () => auditCrossfileBehaviorDrift(diff));
     const bannedConstructs = safeRunAnalyzer('citadel-banned-constructs', () => auditBannedConstructs(diff));
     const bannedCasts = safeRunAnalyzer('citadel-banned-casts', () => auditBannedCasts(diff));
     const patternConformance = safeRunAnalyzer('citadel-pattern-conformance', () => auditPatternConformance(diff));
@@ -123,6 +125,7 @@ export function buildCitadelAuditReport(options) {
         ...schemaRegistryDrift.findings.map((finding) => withFindingSource(finding, 'schema_registry_drift')),
         ...testAuthenticity.findings.map((finding) => withFindingSource(finding, 'test_authenticity')),
         ...staleReference.findings.map((finding) => withFindingSource(finding, 'stale_reference')),
+        ...crossfileBehaviorDrift.findings.map((finding) => withFindingSource(finding, 'crossfile_behavior_drift')),
         ...bannedConstructs.findings.map((finding) => withFindingSource(finding, 'banned_constructs')),
         ...bannedCasts.findings.map((finding) => withFindingSource(finding, 'banned_casts')),
         ...patternConformance.findings.map((finding) => withFindingSource(finding, 'pattern_conformance')),
@@ -143,6 +146,7 @@ export function buildCitadelAuditReport(options) {
         schema_registry_drift: schemaRegistryDrift,
         test_authenticity: testAuthenticity,
         stale_reference: staleReference,
+        crossfile_behavior_drift: crossfileBehaviorDrift,
         banned_constructs: bannedConstructs,
         banned_casts: bannedCasts,
         pattern_conformance: patternConformance,

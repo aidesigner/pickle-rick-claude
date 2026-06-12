@@ -164,6 +164,7 @@ describe('citadel-analyzer-wiring: invocation probe', () => {
     'schema_registry_drift',
     'test_authenticity',
     'stale_reference',
+    'crossfile_behavior_drift',
     'banned_constructs',
     'banned_casts',
     'pattern_conformance',

@@ -20,6 +20,7 @@ import { checkEndpointContractConformance } from './endpoint-contract-conformanc
 import { auditSchemaRegistryDrift } from './schema-registry-drift-audit.js';
 import { auditTestAuthenticity } from './test-authenticity-audit.js';
 import { auditStaleReferences } from './stale-reference-audit.js';
+import { auditCrossfileBehaviorDrift } from './crossfile-behavior-drift-audit.js';
 import { auditBannedConstructs } from './banned-constructs-audit.js';
 import { auditBannedCasts } from './banned-casts-audit.js';
 import { auditPatternConformance } from './pattern-conformance-audit.js';
@@ -171,6 +172,8 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     auditTestAuthenticity(diff));
   const staleReference = safeRunAnalyzer('citadel-stale-reference', () =>
     auditStaleReferences(diff));
+  const crossfileBehaviorDrift = safeRunAnalyzer('citadel-crossfile-behavior-drift', () =>
+    auditCrossfileBehaviorDrift(diff));
   const bannedConstructs = safeRunAnalyzer('citadel-banned-constructs', () =>
     auditBannedConstructs(diff));
   const bannedCasts = safeRunAnalyzer('citadel-banned-casts', () =>
@@ -196,6 +199,7 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     ...schemaRegistryDrift.findings.map((finding) => withFindingSource(finding as FindingLike, 'schema_registry_drift')),
     ...testAuthenticity.findings.map((finding) => withFindingSource(finding as FindingLike, 'test_authenticity')),
     ...staleReference.findings.map((finding) => withFindingSource(finding as FindingLike, 'stale_reference')),
+    ...crossfileBehaviorDrift.findings.map((finding) => withFindingSource(finding as FindingLike, 'crossfile_behavior_drift')),
     ...bannedConstructs.findings.map((finding) => withFindingSource(finding as FindingLike, 'banned_constructs')),
     ...bannedCasts.findings.map((finding) => withFindingSource(finding as FindingLike, 'banned_casts')),
     ...patternConformance.findings.map((finding) => withFindingSource(finding as FindingLike, 'pattern_conformance')),
@@ -216,6 +220,7 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     schema_registry_drift: schemaRegistryDrift,
     test_authenticity: testAuthenticity,
     stale_reference: staleReference,
+    crossfile_behavior_drift: crossfileBehaviorDrift,
     banned_constructs: bannedConstructs,
     banned_casts: bannedCasts,
     pattern_conformance: patternConformance,
