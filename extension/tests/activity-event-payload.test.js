@@ -1210,6 +1210,8 @@ test('activity-event-payload: schema defines all registered event type definitio
     'pre_reset_diff_archived',
     'pre_reset_archive_failed',
     'failed_flip_suppressed',
+    'crashed_ticket_files_quarantined',
+    'crashed_ticket_files_quarantine_truncated',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

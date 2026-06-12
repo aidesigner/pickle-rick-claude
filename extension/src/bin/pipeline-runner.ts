@@ -39,7 +39,14 @@ import {
   VISUAL_DOMINANCE_THRESHOLD,
   type DiffVisualStat,
 } from '../services/pickle-utils.js';
-import { isGitIgnoredPath, listWorkingTreeDirtyPaths } from '../services/git-utils.js';
+import {
+  isGitIgnoredPath,
+  listWorkingTreeDirtyPaths,
+  archiveBeforeDestructive,
+  updateTicketStatus,
+  ARCHIVE_UNTRACKED_BYTE_CAP,
+  type ArchiveResult,
+} from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 import { emitBundleLinearComments } from '../services/linear-integration.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -472,6 +479,296 @@ export function resetInterruptedTicketWorkForRelaunch(
   }
 
   log(`[relaunch-reset] Done: ${trackedPaths.length} tracked restored, ${untrackedPaths.length} untracked removed`);
+}
+
+// ---------------------------------------------------------------------------
+// R-RRH C8: Dirty-tree relaunch self-heals the crashed ticket's files
+// (truncation-safe).
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the repo-relative paths a ticket declares it will touch from its
+ * `**Files to modify/create**:` line (backtick-quoted tokens). Returns `[]`
+ * when the ticket file or the line is absent — best-effort, never throws.
+ */
+function readDeclaredFilesForTicket(sessionDir: string, ticketId: string): string[] {
+  try {
+    const ticketPath = path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
+    const content = fs.readFileSync(ticketPath, 'utf-8');
+    const line = content.split('\n').find((l) => l.includes('Files to modify/create'));
+    if (!line) return [];
+    const paths: string[] = [];
+    const re = /`([^`]+)`/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line)) !== null) {
+      const token = m[1].trim();
+      if (token.length > 0) paths.push(token);
+    }
+    return [...new Set(paths)];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Resolve the git repo root for `cwd`; falls back to `cwd` for a non-git dir.
+ * `git status --porcelain` paths are repo-root-relative, so containment checks
+ * MUST resolve dirty paths against the repo root, not the (possibly-subdir) cwd.
+ */
+function gitRepoRoot(cwd: string): string {
+  try {
+    const out = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf-8',
+      timeout: GIT_REPO_ROOT_TIMEOUT_MS,
+    }).trim();
+    return out || cwd;
+  } catch {
+    return cwd;
+  }
+}
+
+/**
+ * True when `dirtyPath` (a `git status --porcelain` repo-root-relative path)
+ * resolves inside `workingDir`. A path that resolves outside `workingDir`
+ * (e.g. workingDir is a subdir of the repo and the dirt is above it) is OUTSIDE
+ * the working dir — Branch 4 (no scope creep).
+ */
+function isDirtyPathUnderWorkingDir(repoRoot: string, workingDir: string, dirtyPath: string): boolean {
+  const resolvedWorking = path.resolve(workingDir);
+  const resolved = path.resolve(repoRoot, dirtyPath);
+  return resolved === resolvedWorking || resolved.startsWith(resolvedWorking + path.sep);
+}
+
+function emitQuarantineEvent(
+  event: 'crashed_ticket_files_quarantined' | 'crashed_ticket_files_quarantine_truncated',
+  payload: Record<string, unknown>,
+): void {
+  try {
+    logActivity({ event, source: 'pickle', ts: new Date().toISOString(), ...payload });
+  } catch { /* best-effort telemetry; never block the launch decision */ }
+}
+
+/** Default destructive cleaner: path-scoped reset + checkout + untracked unlink (runner-only). */
+function cleanScopedDirtyPaths(workingDir: string, scopedPaths: string[]): void {
+  if (scopedPaths.length === 0) return;
+  spawnSync('git', ['reset', 'HEAD', '--', ...scopedPaths], {
+    cwd: workingDir,
+    encoding: 'utf-8',
+    timeout: 30_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const statusResult = spawnSync('git', ['status', '--porcelain', '-z', '--', ...scopedPaths], {
+    cwd: workingDir,
+    encoding: 'utf-8',
+    timeout: 30_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const tracked: string[] = [];
+  const untracked: string[] = [];
+  const tokens = (statusResult.stdout || '').split('\0').filter((t) => t.length > 0);
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.length < 4) continue;
+    const xy = token.slice(0, 2);
+    const filePath = token.slice(3);
+    if (xy[0] === 'R' || xy[0] === 'C' || xy[1] === 'R' || xy[1] === 'C') i++;
+    if (xy === '??') untracked.push(filePath);
+    else tracked.push(filePath);
+  }
+  if (tracked.length > 0) {
+    spawnSync('git', ['checkout', '--', ...tracked], {
+      cwd: workingDir,
+      encoding: 'utf-8',
+      timeout: 30_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  }
+  for (const relPath of untracked) {
+    try { fs.unlinkSync(path.join(workingDir, relPath)); } catch { /* best effort */ }
+  }
+}
+
+export interface CrashedTicketQuarantineArgs {
+  workingDir: string;
+  sessionDir: string;
+  statePath: string;
+  /** `state.current_ticket` — may be null (normal post-crash). */
+  currentTicket: string | null;
+  /** Declared files keyed by ticket id for the In-Progress/Todo set. */
+  declaredFilesByTicket: Map<string, string[]>;
+  ignoreDirtyPaths?: string[];
+  log: (msg: string) => void;
+  /** Byte cap forwarded to the archive primitive (injectable for tests). */
+  byteCap?: number;
+  /** Injectable archive seam (defaults to the real `archiveBeforeDestructive`). */
+  archive?: (cwd: string, sessionDir: string, ticketDir: string | null, byteCap?: number) => ArchiveResult | null;
+  /** Injectable cleaner seam (defaults to the real path-scoped reset/checkout/unlink). */
+  applyClean?: (workingDir: string, scopedPaths: string[]) => void;
+}
+
+/**
+ * R-RRH C8 dirty-tree preflight self-heal. Runs from the RUNNER (never a
+ * worker — the R-WSRC-GR git-verb block does not apply here), BEFORE
+ * `assertCleanWorkingTree`. Four branches:
+ *
+ *   1. dirty within `currentTicket`'s declared files → archive; if NOT
+ *      truncated → reset ticket to Todo + emit `crashed_ticket_files_quarantined`
+ *      + clean the in-scope paths so the launch proceeds; if truncated → FATAL.
+ *   2. `currentTicket == null` (normal post-crash) → scope against the UNION of
+ *      all In-Progress/Todo declared files; an empty union is NOT a FATAL.
+ *   3. dirty inside `workingDir` but declared by NO ticket → quarantine-and-warn
+ *      (archive, warn, leave the dirt for the operator; `assertCleanWorkingTree`
+ *      then fails so the operator resolves it — no silent destruction).
+ *   4. dirty OUTSIDE `workingDir` → FATAL (no scope creep).
+ *
+ * INVARIANT: never `git clean`/reset a tree whose archive truncated; a truncated
+ * archive is INCOMPLETE so destroying the tree would lose the un-archived delta.
+ */
+export type DirtyTreeBranch = 'clean' | 'outside_working_dir' | 'unowned_quarantine' | 'in_scope';
+
+export interface DirtyTreeClassification {
+  branch: DirtyTreeBranch;
+  /** Blocking dirty paths that escape `workingDir` (Branch 4). */
+  outside: string[];
+  /** In-scope blocking paths to archive + clean (Branch 1/2). */
+  inScope: string[];
+  /** Blocking paths declared by no ticket (Branch 3). */
+  unowned: string[];
+}
+
+/**
+ * Pure branch decision for the dirty-tree preflight self-heal — no side effects,
+ * so it is unit-testable. Builds the scope set from `currentTicket`'s declared
+ * files (Branch 1) or the UNION of all passed declared files (Branch 2, when
+ * `currentTicket === null`). An empty union is NOT an error — it yields branch
+ * `clean` / `unowned_quarantine`, never a FATAL.
+ */
+export function classifyDirtyTreeBranch(
+  repoRoot: string,
+  workingDir: string,
+  blocking: string[],
+  currentTicket: string | null,
+  declaredFilesByTicket: Map<string, string[]>,
+): DirtyTreeClassification {
+  if (blocking.length === 0) return { branch: 'clean', outside: [], inScope: [], unowned: [] };
+
+  const outside = blocking.filter((p) => !isDirtyPathUnderWorkingDir(repoRoot, workingDir, p));
+  if (outside.length > 0) return { branch: 'outside_working_dir', outside, inScope: [], unowned: [] };
+
+  const allDeclared = new Set<string>();
+  for (const files of declaredFilesByTicket.values()) {
+    for (const f of files) allDeclared.add(f);
+  }
+  const scopeSet = currentTicket != null
+    ? new Set(declaredFilesByTicket.get(currentTicket) ?? [])
+    : allDeclared;
+
+  const inScope = blocking.filter((p) => scopeSet.has(p));
+  const unowned = blocking.filter((p) => !allDeclared.has(p));
+
+  if (inScope.length === 0 && unowned.length > 0) {
+    return { branch: 'unowned_quarantine', outside: [], inScope, unowned };
+  }
+  return { branch: 'in_scope', outside: [], inScope, unowned };
+}
+
+export function quarantineCrashedTicketFilesOrFatal(args: CrashedTicketQuarantineArgs): void {
+  const { workingDir, sessionDir, currentTicket, declaredFilesByTicket, ignoreDirtyPaths, log } = args;
+  const archive = args.archive ?? ((cwd, sd, ticketDir, byteCap) =>
+    archiveBeforeDestructive({ cwd, sessionDir: sd, ticketDir, reason: 'pre_reset' }, byteCap ?? ARCHIVE_UNTRACKED_BYTE_CAP));
+  const applyClean = args.applyClean ?? cleanScopedDirtyPaths;
+  const ticketDir = currentTicket ? path.join(sessionDir, currentTicket) : null;
+
+  const repoRoot = gitRepoRoot(workingDir);
+  const blocking = allowedDirtyPathsForLaunch(workingDir, ignoreDirtyPaths);
+  const decision = classifyDirtyTreeBranch(repoRoot, workingDir, blocking, currentTicket, declaredFilesByTicket);
+
+  if (decision.branch === 'clean') return;
+
+  // Branch 4: dirt outside workingDir → FATAL (no scope creep, no archive).
+  if (decision.branch === 'outside_working_dir') {
+    throw new Error(
+      `Dirty tree contains paths OUTSIDE working_dir (${workingDir}); refusing to self-heal (no scope creep). ` +
+      `Outside paths:\n${decision.outside.join('\n')}`,
+    );
+  }
+
+  // Branch 3: dirt owned by no ticket → quarantine-and-warn (no destruction).
+  if (decision.branch === 'unowned_quarantine') {
+    try { archive(workingDir, sessionDir, ticketDir, args.byteCap); }
+    catch (err) { log(`[crashed-tree-quarantine] archive of unowned dirt failed (warn-only): ${safeErrorMessage(err)}`); }
+    log(
+      `[crashed-tree-quarantine] dirty paths declared by NO ticket — quarantine-and-warn (left for operator):\n` +
+      decision.unowned.join('\n'),
+    );
+    return;
+  }
+
+  // Branch 1/2 destructive path — archive first, gate the clean on truncation.
+  const result = archive(workingDir, sessionDir, ticketDir, args.byteCap);
+
+  if (result?.filesTruncated === true) {
+    emitQuarantineEvent('crashed_ticket_files_quarantine_truncated', {
+      ticket: currentTicket ?? null,
+      patch_path: result.patchPath,
+      files: result.files,
+      working_dir: workingDir,
+    });
+    throw new Error(
+      `Crashed-ticket archive TRUNCATED (filesTruncated=true): the dirty tree exceeds the archive byte cap, ` +
+      `so the patch is INCOMPLETE. Refusing to clean/reset — that would silently destroy the un-archived delta. ` +
+      `Resolve the dirty tree manually. Partial archive: ${result.patchPath}`,
+    );
+  }
+
+  applyRecoverableQuarantine({
+    workingDir, sessionDir, currentTicket, inScope: decision.inScope,
+    patchPath: result?.patchPath ?? null, applyClean, log,
+  });
+}
+
+/** Recoverable Branch 1/2 side effects: clean in-scope dirt, reset ticket → Todo, emit + log. */
+function applyRecoverableQuarantine(args: {
+  workingDir: string;
+  sessionDir: string;
+  currentTicket: string | null;
+  inScope: string[];
+  patchPath: string | null;
+  applyClean: (workingDir: string, scopedPaths: string[]) => void;
+  log: (msg: string) => void;
+}): void {
+  const { workingDir, sessionDir, currentTicket, inScope, patchPath, applyClean, log } = args;
+  applyClean(workingDir, inScope);
+  if (currentTicket != null) {
+    try { updateTicketStatus(currentTicket, 'Todo', sessionDir); }
+    catch (err) { log(`[crashed-tree-quarantine] reset-to-Todo failed for ${currentTicket}: ${safeErrorMessage(err)}`); }
+  }
+  emitQuarantineEvent('crashed_ticket_files_quarantined', {
+    ticket: currentTicket ?? null,
+    patch_path: patchPath,
+    files: inScope,
+    working_dir: workingDir,
+  });
+  log(
+    `[crashed-tree-quarantine] archived + reset ${inScope.length} in-scope file(s) from the crashed ticket` +
+    `${currentTicket ? ` (${currentTicket} → Todo)` : ''}; preflight proceeds.`,
+  );
+}
+
+/**
+ * Build the declared-files map for the In-Progress/Todo ticket set, keyed by
+ * ticket id — the scope input for `quarantineCrashedTicketFilesOrFatal`.
+ */
+export function buildDeclaredFilesByTicket(sessionDir: string): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const t of collectTickets(sessionDir)) {
+    if (!t.id) continue;
+    const status = (t.status ?? '').toLowerCase();
+    if (status === 'in progress' || status === 'todo') {
+      map.set(t.id, readDeclaredFilesForTicket(sessionDir, t.id));
+    }
+  }
+  return map;
 }
 
 // ---------------------------------------------------------------------------
@@ -2403,6 +2700,19 @@ function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: stri
   if (relaunchCount > 0) {
     resetInterruptedTicketWorkForRelaunch(workingDir, config.ignore_dirty_paths, log);
   }
+  // R-RRH C8: a cold manager crash mid-implement strands the in-flight ticket's
+  // non-gate-passing source files. Self-heal the crashed ticket's files (archive
+  // + reset-to-Todo) before assertCleanWorkingTree would FATAL — but NEVER destroy
+  // a tree whose archive truncated (that FATALs here instead).
+  quarantineCrashedTicketFilesOrFatal({
+    workingDir,
+    sessionDir,
+    statePath,
+    currentTicket: typeof state.current_ticket === 'string' ? state.current_ticket : null,
+    declaredFilesByTicket: buildDeclaredFilesByTicket(sessionDir),
+    ignoreDirtyPaths: config.ignore_dirty_paths,
+    log,
+  });
   assertCleanWorkingTree(workingDir, config.ignore_dirty_paths);
   setupRuntimeScope(sessionDir, workingDir, config.target || workingDir, opts, pipelineRaw, log);
 

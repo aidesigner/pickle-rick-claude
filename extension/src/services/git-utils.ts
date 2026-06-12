@@ -278,7 +278,7 @@ export function isWorkingTreeDirty(cwd: string, excludePrefixes?: string[]): boo
 // ---------------------------------------------------------------------------
 
 const CODEGRAPH_DIR = '.codegraph';
-const ARCHIVE_UNTRACKED_BYTE_CAP = 10 * 1024 * 1024;
+export const ARCHIVE_UNTRACKED_BYTE_CAP = 10 * 1024 * 1024;
 const ARCHIVE_GIT_TIMEOUT_MS = 30_000;
 const ARCHIVE_GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const CODEGRAPH_PATHSPEC_EXCLUDES = ['--', '.', `:!${CODEGRAPH_DIR}`, `:!${CODEGRAPH_DIR}/**`];
