@@ -30,3 +30,12 @@ Compounding: the anatomy-park/microverse runner found C6's uncommitted dirty tre
 
 - HEAD `46db064a` (C6 reattached + remessaged); tsc + 17/17 C6 tests green.
 - pipeline-runner.log 02:12:47Z: PHASE 1/4 PICKLE re-entered; mux iter 4, current_ticket=c1d5ba67 (C7); 16 Done / 9 Todo / 0 Failed.
+
+## RECURRENCE 2026-06-12 — repro on the B-RRH fix bundle's own run (session 2026-06-12-8f02855b)
+
+**Irony:** B-XSPA bit the very bundle building its fix. The C1/C2 fix (gate pickle-completion on all-tickets-Done) is `d680804e` (committed `cb23c3fc`) — but it's source-only, not deployed, so the running pipeline-runner still had the bug.
+
+- Pickle phase "exited with code 0" at 16:58Z with only **5/21 tickets committed** (A0, A, C1/C2, C3, C4); pipeline-runner read exit-0 as completion → advanced PHASE 2 CITADEL (77 findings) → PHASE 3 ANATOMY-PARK (discovered 2 subsystems, microverse setup). The anatomy/microverse runner auto-committed the dead pickle phase's dirty tree as `44e4b515 "microverse: auto-commit dirty tree before start"` (real C1/C2 follow-up work on pipeline-runner.ts + rrh-pickle-incomplete.test.js — preserved at HEAD, NOT yet reset/orphaned because the babysitter froze it before the microverse worker ran).
+- **NEW wrinkle vs the original incident:** the mux exited **code 0** (clean), not SIGTERM/143 — so the trigger was NOT an external signal this time. The mux decided it was "done" at 5/21 (false-terminal: likely a false EPIC_COMPLETED or an R-ORSR/breaker terminal exit-0 after the iter-6–9 silent-worker-death churn). AC-C1 (gate on all-tickets-Done, not exit code) covers this REGARDLESS of why the mux exited — reinforces that C1 must not trust exit code at all.
+- **Babysitter recovery:** killed the session procs (pipeline-runner + microverse-runner + anatomy worker + watchers, session-scoped) before the microverse reset; reconciled C4 (`84f79bfc`, committed `acaef709` but frontmatter still Todo) → Done w/ completion_commit; reset `state.step` anatomy-park→research + `current_ticket`→`a3f87133` (C5, lowest-order Todo) + `active=true`; relaunched → pipeline-runner re-entered PHASE 1 PICKLE, building C5. No orphaned ticket deliverable (clean log chain; 10 danglings were superseded intermediates).
+- **Watch:** stale `citadel_report.json` / `anatomy-park.json` / `microverse.json` from the premature run will be regenerated when pickle re-completes and the pipeline re-reaches those phases.
