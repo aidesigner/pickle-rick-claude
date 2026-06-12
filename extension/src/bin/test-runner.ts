@@ -1,7 +1,33 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import path from 'node:path';
+
+// Cap any requested --test-concurrency to the available cores. node:test does NOT
+// auto-cap an explicit --test-concurrency, so a hardcoded `=8` oversubscribes a
+// 2-core CI runner and produces broad timeout-shaped flakes across subprocess /
+// timing-sensitive tests. Clamping (never raising) keeps c=8 on capable dev
+// machines while making CI run at its core count. (R-TCC-1)
+function clampTestConcurrency(args: string[]): string[] {
+  const cap = Math.max(1, availableParallelism());
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    const eq = /^--test-concurrency=(\d+)$/.exec(arg);
+    if (eq) {
+      out.push(`--test-concurrency=${Math.min(Number(eq[1]), cap)}`);
+      continue;
+    }
+    if (arg === '--test-concurrency' && /^\d+$/.test(args[i + 1] ?? '')) {
+      out.push(arg, String(Math.min(Number(args[i + 1]), cap)));
+      i += 1;
+      continue;
+    }
+    out.push(arg);
+  }
+  return out;
+}
 
 const VALID_TIERS = new Set(['fast', 'integration', 'expensive', 'contract']);
 const QUARANTINED_TIER_EXCLUSIONS = new Set(['fast', 'integration']);
@@ -287,7 +313,7 @@ function main(): never {
     process.exit(0);
   }
 
-  const nodeArgs = ['--test', ...runnerArgs, ...selectedFiles];
+  const nodeArgs = ['--test', ...clampTestConcurrency(runnerArgs), ...selectedFiles];
   const result = spawnSync(process.execPath, nodeArgs, {
     stdio: 'inherit',
     timeout: getRunnerTimeoutMs(),
