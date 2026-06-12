@@ -171,12 +171,10 @@ test('v2-E2E-3: enabled + index_at_setup=true → indexAll called, codegraph_ind
 
 test('v2-E2E-4: PICKLE_CODEGRAPH=off → tierUsesGraphContext still works, but section is empty', async () => {
   // tierUsesGraphContext is a pure function, unaffected by env
-  const mediumUses = tierUsesGraphContext('medium');
-  const smallUses = tierUsesGraphContext('small');
-  assert.ok(mediumUses, 'medium tier should use graph context');
-  // trivial/small do not
-  // (we just assert the call succeeds and returns a boolean)
-  assert.equal(typeof smallUses, 'boolean');
+  assert.equal(tierUsesGraphContext('medium'), true, 'medium tier uses graph context');
+  assert.equal(tierUsesGraphContext('large'), true, 'large tier uses graph context');
+  assert.equal(tierUsesGraphContext('small'), true, 'small tier uses graph context');
+  assert.equal(tierUsesGraphContext('trivial'), false, 'trivial tier must NOT use graph context');
 });
 
 // ── test 5: enabled codegraph + medium tier → section present in prompt ───────
@@ -192,14 +190,10 @@ test('v2-E2E-5: buildCodegraphContextSection with fake service returns non-empty
     title: ticket.title,
     ticketContent: ticket.content,
   });
-  if (tierUsesGraphContext('medium')) {
-    // section may be non-empty when enabled and service returns hits
-    assert.equal(typeof section, 'string', 'section must be a string');
-    // The section header appears if there is content
-    if (section.length > 0) {
-      assert.ok(section.includes('## Code Graph Context'), 'header must appear');
-    }
-  }
+  // medium tier + enabled settings + non-empty node list = unconditional non-empty section.
+  // Both conditions hold by construction: do NOT gate with an inner if.
+  assert.ok(section.length > 0, 'enabled codegraph with hits must produce a non-empty section for medium tier');
+  assert.ok(section.includes('## Code Graph Context'), 'section must contain the Code Graph Context header');
 });
 
 // ── test 6: buildCodegraphContextSection with disabled settings → empty ───────
