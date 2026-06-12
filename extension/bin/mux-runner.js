@@ -1001,6 +1001,24 @@ function logPhantomDoneKept(input, ticketId, workingDir, fallbackFired) {
     input.log?.(`Phantom-Done watcher kept ticket ${ticketId} Done — valid completion_commit evidence`);
 }
 /**
+ * D1 (84c209ae) promote-once: promote a git-verified inferred SHA to the EXPLICIT
+ * `completion_commit` field AND delete `completion_commit_inferred` in one pass.
+ *
+ * Idempotency-by-state: once `completion_commit` is explicit, `readEvidence`
+ * returns `explicit` → `gateForPhantomDoneRevert` returns `keep`, so the next
+ * phantom-Done re-scan is a no-op (no growing `phantom_done_backfilled` count).
+ * This is the inverse of the git-utils.ts Failed-flip idiom that clears
+ * `completion_commit_inferred` on `completion_commit: null` — here we clear it on
+ * EXPLICIT promotion. Returns null when the frontmatter cannot be parsed.
+ */
+function promoteInferredToExplicit(content, sha) {
+    const withExplicit = upsertFrontmatterField(content, 'completion_commit', sha);
+    if (!withExplicit)
+        return null;
+    // Mirror git-utils.ts setFrontmatterField(..., null): delete the inferred line.
+    return withExplicit.replace(/^completion_commit_inferred:.*$(\r?\n)?/m, '');
+}
+/**
  * R-AFCC-DEEP-3B/3C: classify a Done ticket for the batch phantom-Done loop and
  * apply side-effects (persist inferred SHA). Extracted to keep the loop under
  * the ESLint complexity ceiling.
@@ -1020,12 +1038,15 @@ function batchLoopPhantomDoneKind(input, ticketId, workingDir) {
     const ctx = { sessionDir: input.sessionDir, ticketId, workingDir, fallbackDir: input.workingDir };
     const decision = gateForPhantomDoneRevert(ctx, { flags: input.flags });
     if (decision.action === 'persist-inferred') {
-        // R-PDWR: persist SHA so the batch loop stamps the field (inferred-fresh path).
+        // D1 (84c209ae) promote-once: write EXPLICIT completion_commit and DELETE the
+        // inferred field so the next phantom-Done re-scan classifies `explicit` → keep
+        // (no re-backfill loop). Replaces the prior upsert of completion_commit_inferred,
+        // which left the field present and re-fired backfill every pass.
         const fp = ticketFilePath(input.sessionDir, ticketId);
         try {
             const raw = fs.readFileSync(fp, 'utf8');
             if (!readFrontmatterField(raw, 'completion_commit') && decision.sha) {
-                const upd = upsertFrontmatterField(raw, 'completion_commit_inferred', decision.sha);
+                const upd = promoteInferredToExplicit(raw, decision.sha);
                 if (upd)
                     fs.writeFileSync(fp, upd);
             }
@@ -1241,8 +1262,12 @@ function applyInspectPhantomDoneDecision(content, filePath, sessionDir, ticketId
         case 'keep':
             return { changed: false, reason: 'has_completion_commit' };
         case 'persist-inferred': {
-            // completion_commit absent (checked above); upsert inferred field.
-            const updated = upsertFrontmatterField(content, 'completion_commit_inferred', decision.sha ?? '');
+            // D1 (84c209ae) promote-once: completion_commit absent (checked above) — promote
+            // the git-verified inferred SHA to EXPLICIT completion_commit and DELETE the
+            // inferred field. The first pass returns 'backfilled' (caller emits ONE backfill
+            // event); subsequent passes see the explicit field → 'has_completion_commit' →
+            // no further event, so the backfill count stays stable instead of growing per pass.
+            const updated = promoteInferredToExplicit(content, decision.sha ?? '');
             if (!updated)
                 return { changed: false, reason: 'unparseable' };
             try {

@@ -295,6 +295,52 @@ function assertValidActivityEvent(entry) {
         throw new InvalidActivityEventError(entry.event);
     }
 }
+// ---------------------------------------------------------------------------
+// D2 (84c209ae): bounded activity ring
+// ---------------------------------------------------------------------------
+/**
+ * Write-side ceiling for `state.activity`. The phantom-Done backfill loop
+ * (B-PDBL D1) grew the array to 7021 entries / 1.9MB heading for a 20MB freeze
+ * because there was no write-side cap (only read-side guards). This bounds every
+ * write regardless of caller.
+ */
+const ACTIVITY_RING_MAX = 2000;
+/**
+ * Eviction-exempt recovery events: never dropped even when oldest. The predicate
+ * matches on the event NAME:
+ *   - `rate_limit_*`     (prefix) — rate-limit park/resume/wait/exhaustion
+ *   - `*_quarantined`    (suffix) — crashed-ticket-files quarantine forensics
+ *   - `ticket_ladder_exhausted` (exact) — terminal ladder-exhaustion marker
+ */
+function isExemptActivityEvent(name) {
+    if (typeof name !== 'string')
+        return false;
+    return name.startsWith('rate_limit_') ||
+        name.endsWith('_quarantined') ||
+        name === 'ticket_ladder_exhausted';
+}
+/**
+ * Enforce `state.activity.length <= ACTIVITY_RING_MAX` via drop-oldest, skipping
+ * exempt entries. Evicts the oldest NON-exempt entries first, preserving order.
+ * Edge case: if every over-cap entry is exempt, they are kept (best-effort cap
+ * over evictable entries — exempt recovery events are never lost).
+ */
+function trimActivityRing(state) {
+    const activity = state.activity;
+    if (!Array.isArray(activity) || activity.length <= ACTIVITY_RING_MAX)
+        return;
+    let toDrop = activity.length - ACTIVITY_RING_MAX;
+    const kept = [];
+    for (const entry of activity) {
+        const eventName = isRecord(entry) ? entry.event : undefined;
+        if (toDrop > 0 && !isExemptActivityEvent(eventName)) {
+            toDrop--;
+            continue;
+        }
+        kept.push(entry);
+    }
+    state.activity = kept;
+}
 function normalizeV3StateDefaults(state) {
     state.archaeology ??= null;
     if (typeof state.tickets_version !== 'number' || !Number.isFinite(state.tickets_version)) {
@@ -592,6 +638,8 @@ export class StateManager {
         try {
             const state = this.read(statePath);
             mutator(state);
+            // D2 (84c209ae): bound state.activity on every write (drop-oldest, exempt-safe).
+            trimActivityRing(state);
             // R-WSRC-1: refuse forward-schema writes from workers. EXEMPTION via
             // opts._internalSchemaBump for the legitimate migrateSchema path only.
             assertSchemaVersionWithinCeiling(statePath, state, opts);
@@ -686,6 +734,8 @@ export class StateManager {
         // which propagates out of forceWrite — callers (signal handlers, halt
         // paths) MUST be prepared to surface this as a forensic failure. Other
         // write errors continue to be swallowed per the existing contract.
+        // D2 (84c209ae): bound state.activity on every write (drop-oldest, exempt-safe).
+        trimActivityRing(state);
         try {
             assertSchemaVersionWithinCeiling(statePath, state, opts);
         }
@@ -921,6 +971,7 @@ export class StateManager {
             kind: 'orphan_phantom_demoted',
             ts: new Date().toISOString(),
         });
+        trimActivityRing(state); // D2 (84c209ae): bound the ring at this direct-write site too.
         try {
             writeStateFile(statePath, state);
         }
@@ -953,6 +1004,7 @@ export class StateManager {
                 mapped_pid: demotion.mappedPid,
                 ts: new Date().toISOString(),
             });
+            trimActivityRing(state); // D2 (84c209ae): bound the ring at this direct-write site too.
             try {
                 writeStateFile(statePath, state);
             }
@@ -964,6 +1016,7 @@ export class StateManager {
             return;
         if (!isProcessAlive(pid)) {
             state.active = false;
+            trimActivityRing(state); // D2 (84c209ae): bound the ring at this direct-write site too.
             try {
                 writeStateFile(statePath, state);
             }
