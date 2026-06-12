@@ -5576,13 +5576,39 @@ export function resolveWmwSkipK(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : WMW_SKIP_K_DEFAULT;
 }
 
-/** Count the artifact files whose progress R-WMW tracks: code_review_* + conformance_* markdown. */
-export function countWorkerArtifacts(ticketDir: string): number {
+// AC-A4 (B-RRH): the early-phase credit window — for a `large`-tier ticket's
+// first N spawns, research/plan artifacts credit progress. N defaults to 4, kept
+// strictly below the default skip threshold (WMW_SKIP_K_DEFAULT = 5) so phase
+// churn PAST the window still reaches worker_auto_skip_oversized.
+export const WMW_EARLY_PHASE_K_ENV = 'PICKLE_WMW_EARLY_PHASE_K';
+export const WMW_EARLY_PHASE_K_DEFAULT = 4;
+
+export function resolveWmwEarlyPhaseK(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[WMW_EARLY_PHASE_K_ENV];
+  if (!raw) return WMW_EARLY_PHASE_K_DEFAULT;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : WMW_EARLY_PHASE_K_DEFAULT;
+}
+
+/**
+ * Count the artifact files whose progress R-WMW tracks: code_review_* +
+ * conformance_* markdown. AC-A4 (B-RRH): when `opts.creditEarlyPhases` is set,
+ * ALSO count the graded early-phase artifacts `research*` + `plan*` so a large-tier
+ * worker grinding through the early lifecycle (research → plan) during its first
+ * N spawns credits forward progress instead of charging zero-progress. The default
+ * (no opts) stays code_review_* + conformance_* only — existing callers and the
+ * past-N phase-churn path are unchanged, so an oversized ticket still auto-skips.
+ */
+export function countWorkerArtifacts(
+  ticketDir: string,
+  opts: { creditEarlyPhases?: boolean } = {},
+): number {
   let n = 0;
   try {
     for (const e of fs.readdirSync(ticketDir)) {
       if (!e.endsWith('.md')) continue;
       if (e.startsWith('code_review') || e.startsWith('conformance')) n++;
+      else if (opts.creditEarlyPhases && (e.startsWith('research') || e.startsWith('plan'))) n++;
     }
   } catch { /* dir missing/unreadable → 0 */ }
   return n;
@@ -5622,6 +5648,185 @@ export function computeSourceTreeSignature(workingDir: string): string | null {
 }
 
 /**
+ * AC-A3 (B-RRH): scoped working-tree signature. Identical contract to
+ * `computeSourceTreeSignature` (null on git-unavailable / non-zero / ETIMEDOUT
+ * EITHER probe, so the caller's `?? prev` preserves a prior COMPLETE signature)
+ * but bounded to `scope.json:allowed_paths` (reusing the `getLatestCommitInScope`
+ * convention from `services/artifact-progress-detector.ts`). A peer session's
+ * dirty `prds/` file is OUTSIDE allowed_paths and so is absent from the signature
+ * — closing the B-HRPW cross-session signature pollution. When scope.json is
+ * absent / malformed / has no `allowed_paths`, it delegates to the whole-tree
+ * `computeSourceTreeSignature` (unscoped fallback, never crashes the runner).
+ */
+/** Read `allowed_paths` git-pathspecs from a scope.json FILE path; absent/malformed → []. Fail-open. */
+function readScopeAllowedPathSpecsFromFile(scopeJsonPath?: string): string[] {
+  const pathSpecs: string[] = [];
+  if (!scopeJsonPath) return pathSpecs;
+  try {
+    const raw = JSON.parse(fs.readFileSync(scopeJsonPath, 'utf-8'));
+    if (Array.isArray(raw?.allowed_paths)) {
+      for (const p of raw.allowed_paths) {
+        if (typeof p === 'string') pathSpecs.push(p);
+      }
+    }
+  } catch { /* scope.json absent or malformed — fall through to unscoped */ }
+  return pathSpecs;
+}
+
+/** Combine a status+numstat probe pair into a signature; null on non-zero/ETIMEDOUT either probe. */
+function gitProbesToSignature(
+  status: ReturnType<typeof spawnSync>,
+  numstat: ReturnType<typeof spawnSync>,
+): string | null {
+  const statusErr = (status.error as NodeJS.ErrnoException | undefined)?.code;
+  const numstatErr = (numstat.error as NodeJS.ErrnoException | undefined)?.code;
+  if (status.status !== 0 || numstat.status !== 0 || statusErr === 'ETIMEDOUT' || numstatErr === 'ETIMEDOUT') {
+    return null;
+  }
+  return `${String(status.stdout ?? '')} ${String(numstat.stdout ?? '')}`;
+}
+
+export function computeScopedSourceTreeSignature(
+  workingDir: string,
+  scopeJsonPath?: string,
+): string | null {
+  const pathSpecs = readScopeAllowedPathSpecsFromFile(scopeJsonPath);
+  if (pathSpecs.length === 0) return computeSourceTreeSignature(workingDir);
+  try {
+    const status = spawnSync('git', ['-C', workingDir, 'status', '--porcelain', '--', ...pathSpecs], { encoding: 'utf-8', timeout: 10_000 });
+    const numstat = spawnSync('git', ['-C', workingDir, 'diff', '--numstat', '--', ...pathSpecs], { encoding: 'utf-8', timeout: 10_000 });
+    return gitProbesToSignature(status, numstat);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * AC-A5 (B-RRH): compiled default for `hardening.breaker_recovery_grace_seconds`
+ * (30s). A spawn within this many seconds of a circuit-breaker recovery is given
+ * grace — its zero-progress increment is suppressed (the worker is racing a
+ * just-reopened breaker, not genuinely stuck).
+ */
+export const DEFAULT_BREAKER_RECOVERY_GRACE_SECONDS = 30;
+
+/**
+ * Resolve `hardening.breaker_recovery_grace_seconds` from the settings bag.
+ * Mirrors `resolveHardeningSettings` doctrine: absent / partial / malformed bag
+ * or non-(non-negative-integer) field falls back to the compiled default; never
+ * throws.
+ */
+export function resolveBreakerRecoveryGraceSeconds(bag: unknown): number {
+  if (!bag || typeof bag !== 'object') return DEFAULT_BREAKER_RECOVERY_GRACE_SECONDS;
+  const block = (bag as Record<string, unknown>).hardening;
+  if (!block || typeof block !== 'object' || Array.isArray(block)) return DEFAULT_BREAKER_RECOVERY_GRACE_SECONDS;
+  const grace = (block as Record<string, unknown>).breaker_recovery_grace_seconds;
+  if (typeof grace === 'number' && Number.isInteger(grace) && grace >= 0) return grace;
+  return DEFAULT_BREAKER_RECOVERY_GRACE_SECONDS;
+}
+
+/**
+ * AC-A5 (B-RRH): true when the circuit breaker recently recovered (transitioned
+ * out of OPEN) and `nowMs` is within `graceSeconds` of that recovery. A still-OPEN
+ * breaker is NOT a recovery (the loop exits on OPEN elsewhere); HALF_OPEN is
+ * actively probing recovery; a CLOSED breaker that has tripped at least once
+ * (`total_opens > 0`) is within grace while its last transition is recent.
+ * Fail-open: an unparseable `last_change` yields false.
+ */
+export function isWithinBreakerRecoveryGrace(
+  cbState: CircuitBreakerState | null | undefined,
+  graceSeconds: number,
+  nowMs: number,
+): boolean {
+  if (!cbState) return false;
+  if (cbState.state === 'OPEN') return false;
+  if (cbState.state === 'HALF_OPEN') return true;
+  if (cbState.total_opens > 0 && typeof cbState.last_change === 'string') {
+    const changedMs = Date.parse(cbState.last_change);
+    if (!Number.isFinite(changedMs)) return false;
+    const elapsed = nowMs - changedMs;
+    return elapsed >= 0 && elapsed <= graceSeconds * 1000;
+  }
+  return false;
+}
+
+/**
+ * AC-A1 (B-RRH) default done-guard: a ticket is "fine" (never charged) when its
+ * frontmatter status is Done AND it carries explicit (`completion_commit`) OR
+ * inferred (`completion_commit_inferred`) completion evidence. Fail-open — a
+ * missing/unreadable ticket file yields false so the normal charge path runs.
+ */
+function defaultDoneGuard(sessionDir: string, ticketId: string): boolean {
+  try {
+    if (normalizeTicketStatus(getTicketStatus(sessionDir, ticketId)) !== 'done') return false;
+    const raw = fs.readFileSync(ticketFilePath(sessionDir, ticketId), 'utf-8');
+    const explicit = (readFrontmatterField(raw, 'completion_commit') ?? '').trim();
+    const inferred = (readFrontmatterField(raw, 'completion_commit_inferred') ?? '').trim();
+    return explicit.length > 0 || inferred.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * AC-A4 (B-RRH): true when the ticket is `large`-tier AND still inside its early
+ * phase-credit window (`priorSpawnCount < n`). Outside the window — or for any
+ * non-large tier — research/plan artifacts no longer credit progress, so a ticket
+ * that only churns phases past the window still reaches worker_auto_skip_oversized.
+ * Fail-open: a missing/unreadable ticket file yields false.
+ */
+export function resolveCreditEarlyPhases(
+  sessionDir: string,
+  ticketId: string,
+  priorSpawnCount: number,
+  n: number,
+): boolean {
+  if (priorSpawnCount >= n) return false;
+  try {
+    const raw = fs.readFileSync(ticketFilePath(sessionDir, ticketId), 'utf-8');
+    const tier = (readFrontmatterField(raw, 'complexity_tier') ?? '').trim().toLowerCase();
+    return tier === 'large';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * AC-A2 (B-RRH): per-ticket ladder exhaustion is an ADVANCE while ≥1 runnable Todo
+ * remains; only when none remains does the run EXIT (B-LERD: run-exit on a still-
+ * progressable bundle). Flips the exhausted ticket Failed/oversized so it leaves
+ * the runnable set, emits the (A0-frozen) `ticket_ladder_exhausted` literal, clears
+ * current_ticket, then returns `'advance'` (a runnable ticket remains) or `'exit'`
+ * (none remains — the caller performs the recovery_exhausted run-exit). The global
+ * iteration cap is enforced separately at the loop top.
+ */
+export function advanceOrExitOnLadderExhaustion(input: {
+  sessionDir: string;
+  statePath: string;
+  ticketId: string;
+  reason: string;
+  log: (m: string) => void;
+}): 'advance' | 'exit' {
+  const { sessionDir, statePath, ticketId, reason, log } = input;
+  try {
+    updateTicketFrontmatter(ticketId, sessionDir, { status: 'Failed', completion_commit: null });
+    const tfPath = ticketFilePath(sessionDir, ticketId);
+    const tfRaw = fs.readFileSync(tfPath, 'utf-8');
+    const tfUpdated = upsertFrontmatterField(tfRaw, 'failed_reason', 'oversized_no_progress');
+    if (tfUpdated) fs.writeFileSync(tfPath, tfUpdated);
+  } catch (err) { log(`[ticket-ladder] frontmatter flip failed (ignored): ${safeErrorMessage(err)}`); }
+  try {
+    writeActivityEntry(statePath, {
+      event: 'ticket_ladder_exhausted',
+      ts: new Date().toISOString(),
+      ticket: ticketId,
+      gate_payload: { reason },
+    });
+  } catch { /* best-effort */ }
+  updateMuxLifecycleState(statePath, { currentTicket: null });
+  return noRunnableTicketsRemain(sessionDir) ? 'exit' : 'advance';
+}
+
+/**
  * Persist the post-spawn progress delta for one ticket and, on exactly the
  * K-th consecutive zero-PROGRESS spawn, emit `worker_artifact_progress_zero`.
  * `beforeCount` is the snapshot taken BEFORE the spawn; the AFTER snapshot is read
@@ -5642,11 +5847,29 @@ export function recordWorkerArtifactProgress(
     log?: (m: string) => void;
     workingDir?: string;
     sourceSignatureFn?: (workingDir: string) => string | null;
+    // AC-A4 (B-RRH): credit research/plan artifacts as progress (early iters of a
+    // large-tier ticket). Threaded into countWorkerArtifacts for the AFTER snapshot;
+    // the charge site MUST pass the SAME flag into the BEFORE snapshot so the delta
+    // is consistent.
+    creditEarlyPhases?: boolean;
+    // AC-A5 (B-RRH): rate-limited / within-breaker-recovery-grace spawn — the
+    // zero-progress counter is HELD (never incremented) so a 429 or breaker-recovery
+    // race does not poison the no-progress ladder.
+    suppressIncrement?: boolean;
+    // AC-A1 (B-RRH): done-guard predicate — a Done ticket with explicit OR inferred
+    // completion evidence is never charged. Defaults to a fail-open frontmatter read.
+    doneGuardFn?: (sessionDir: string, ticketId: string) => boolean;
   } = {},
-): { spawnCount: number; lastArtifactCount: number; zeroProgressCount: number; fired: boolean } {
+): { spawnCount: number; lastArtifactCount: number; zeroProgressCount: number; fired: boolean; doneGuard: boolean; incrementSuppressed: boolean } {
   const k = opts.k ?? resolveWmwObserveK();
-  const afterCount = countWorkerArtifacts(path.join(sessionDir, ticketId));
+  const afterCount = countWorkerArtifacts(path.join(sessionDir, ticketId), { creditEarlyPhases: opts.creditEarlyPhases });
   const delta = afterCount - beforeCount;
+
+  // AC-A1 (B-RRH): a Done ticket with completion evidence is fine — never charge it
+  // (B-LERD: run-exit on a Done ticket). Fail-open: any read error → not guarded.
+  const doneGuardFn = opts.doneGuardFn ?? defaultDoneGuard;
+  let doneGuard = false;
+  try { doneGuard = doneGuardFn(sessionDir, ticketId); } catch { doneGuard = false; }
 
   // AC-R-WMNP-1: capture the current source-tree signature. A non-null signature
   // that differs from the prior spawn's stored signature counts as progress even
@@ -5654,6 +5877,7 @@ export function recordWorkerArtifactProgress(
   const sigFn = opts.sourceSignatureFn ?? computeSourceTreeSignature;
   const sourceSignature = opts.workingDir ? sigFn(opts.workingDir) : null;
 
+  let incremented = false;
   const updated = sm.update(statePath, s => {
     const map = (s.worker_artifact_progress && typeof s.worker_artifact_progress === 'object')
       ? s.worker_artifact_progress
@@ -5671,10 +5895,21 @@ export function recordWorkerArtifactProgress(
         || prev.last_source_signature === null
         || sourceSignature !== prev.last_source_signature);
     const progressed = artifactProgressed || sourceProgressed;
+    // Charge precedence: A1 done-guard resets (ticket is fine) → A any forward
+    // progress resets → A5 suppression HOLDS (no increment) → otherwise increment.
+    let nextZero: number;
+    if (doneGuard || progressed) {
+      nextZero = 0;
+    } else if (opts.suppressIncrement) {
+      nextZero = prev.zero_progress_count;
+    } else {
+      nextZero = prev.zero_progress_count + 1;
+      incremented = true;
+    }
     map[ticketId] = {
       spawn_count: prev.spawn_count + 1,
       last_artifact_count: afterCount,
-      zero_progress_count: progressed ? 0 : prev.zero_progress_count + 1,
+      zero_progress_count: nextZero,
       // Carry the freshest signature forward. On a probe failure persist an
       // explicit `null` sentinel (M3) — not the prior value, and not `undefined` —
       // so a later successful probe is detected as gap-recovery progress rather
@@ -5688,7 +5923,9 @@ export function recordWorkerArtifactProgress(
 
   const entry = updated.worker_artifact_progress?.[ticketId]
     ?? { spawn_count: 1, last_artifact_count: afterCount, zero_progress_count: 0 };
-  const fired = entry.zero_progress_count === k;
+  // Fire only when THIS spawn incremented to the threshold — a held (suppressed)
+  // or done-guarded spawn that merely sits at k must not re-fire.
+  const fired = incremented && entry.zero_progress_count === k;
   if (fired) {
     writeActivityEntry(statePath, {
       event: 'worker_artifact_progress_zero',
@@ -5708,6 +5945,8 @@ export function recordWorkerArtifactProgress(
     lastArtifactCount: entry.last_artifact_count,
     zeroProgressCount: entry.zero_progress_count,
     fired,
+    doneGuard,
+    incrementSuppressed: !!opts.suppressIncrement && !incremented && !doneGuard,
   };
 }
 
@@ -7393,7 +7632,14 @@ async function runMuxRunnerMain() {
     // R-WSWA-2: snapshot the per-ticket review/conformance artifact count BEFORE the
     // worker spawn; the AFTER snapshot + delta persistence happen once it exits.
     const apTicketId = state.current_ticket || null;
-    const apBeforeCount = apTicketId ? countWorkerArtifacts(path.join(sessionDir, apTicketId)) : 0;
+    // AC-A4 (B-RRH): a large-tier ticket's first N spawns credit early-phase
+    // (research/plan) artifacts as progress. Compute the flag from the PRIOR
+    // per-ticket spawn_count so the BEFORE/AFTER counts use the same prefix set.
+    const apPriorSpawnCount = (apTicketId && state.worker_artifact_progress?.[apTicketId]?.spawn_count) || 0;
+    const apCreditEarlyPhases = apTicketId
+      ? resolveCreditEarlyPhases(sessionDir, apTicketId, apPriorSpawnCount, resolveWmwEarlyPhaseK())
+      : false;
+    const apBeforeCount = apTicketId ? countWorkerArtifacts(path.join(sessionDir, apTicketId), { creditEarlyPhases: apCreditEarlyPhases }) : 0;
     const outcome = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel).catch(
       (err: unknown): Awaited<ReturnType<typeof runIteration>> => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -7436,15 +7682,51 @@ async function runMuxRunnerMain() {
       }
     } catch { /* best-effort — never block iteration on exit-path commit */ }
 
+    // AC-A5 (B-RRH): a rate-limited spawn (rate_limit_wait.json present OR the
+    // iteration log shows a 429) OR a spawn within breaker-recovery grace must NOT
+    // increment the no-progress counter (B-RLAR-D2 429-spawn counter poisoning).
+    // Fail-open: any probe error → not suppressed.
+    let apSuppressIncrement = false;
+    try {
+      const apRateLimited =
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking probe (mirrors the rate_limit_wait check above)
+        fs.existsSync(path.join(sessionDir, 'rate_limit_wait.json'))
+        || detectRateLimitInLog(path.join(sessionDir, `tmux_iteration_${iteration}.log`)).limited;
+      const apBreakerGrace = isWithinBreakerRecoveryGrace(
+        cbState,
+        resolveBreakerRecoveryGraceSeconds(loadPickleSettingsBag(extensionRoot)),
+        Date.now(),
+      );
+      apSuppressIncrement = apRateLimited || apBreakerGrace;
+    } catch { /* best-effort — never block iteration on rate-limit/breaker probing */ }
+
     // R-WSWA-2: persist the post-spawn artifact-count delta and emit
     // worker_artifact_progress_zero at exactly K consecutive zero-delta spawns.
-    let apProgressResult: { spawnCount: number; lastArtifactCount: number; zeroProgressCount: number; fired: boolean } | null = null;
+    // AC-A3 (B-RRH): scope the source-tree signature to scope.json:allowed_paths so a
+    // peer session's dirty prds/ file is absent from the signature (B-HRPW).
+    let apProgressResult: { spawnCount: number; lastArtifactCount: number; zeroProgressCount: number; fired: boolean; doneGuard: boolean; incrementSuppressed: boolean } | null = null;
     try {
-      if (apTicketId) apProgressResult = recordWorkerArtifactProgress(statePath, sessionDir, apTicketId, apBeforeCount, { iteration, log, workingDir: state.working_dir || process.cwd() });
+      if (apTicketId) apProgressResult = recordWorkerArtifactProgress(statePath, sessionDir, apTicketId, apBeforeCount, {
+        iteration,
+        log,
+        workingDir: state.working_dir || process.cwd(),
+        sourceSignatureFn: (wd) => computeScopedSourceTreeSignature(wd, path.join(sessionDir, 'scope.json')),
+        creditEarlyPhases: apCreditEarlyPhases,
+        suppressIncrement: apSuppressIncrement,
+      });
     } catch { /* best-effort observability — never block iteration on progress tracking */ }
     // L2: a worker that produced NEW artifacts (non-zero delta) made genuine
     // progress — reset the consecutive idle-stall recovery streak.
     if (apProgressResult && apProgressResult.zeroProgressCount === 0) idleStallRecoveryCount = 0;
+
+    // AC-A1 (B-RRH): a Done ticket with completion evidence that produced no new
+    // artifacts is NOT stuck — reset (handled in recordWorkerArtifactProgress), clear
+    // current_ticket, advance, no increment (B-LERD: run-exit on a Done ticket).
+    if (templateName !== 'meeseeks.md' && apTicketId && apProgressResult?.doneGuard) {
+      log(`[done-guard] ticket ${apTicketId} is Done with completion evidence — counter reset, advancing without charge`);
+      updateMuxLifecycleState(statePath, { currentTicket: null });
+      continue;
+    }
 
     // R-WSWA-3: at PICKLE_WMW_SKIP_K (default 5) consecutive zero-progress spawns, flip the
     // ticket to Failed/oversized_no_progress (dirty tree preserved) and advance the loop.
@@ -7489,7 +7771,23 @@ async function runMuxRunnerMain() {
           continue;
         }
         if (wmwRecovery.kind === 'exhausted') {
-          log(`recovery_exhausted: ladder exhausted for ${apTicketId} (${wmwRecovery.reason}) at wmw-auto-skip — exiting at iteration ${iteration}.`);
+          // AC-A2 (B-RRH): per-ticket ladder exhaustion advances to the next runnable
+          // Todo (emitting ticket_ladder_exhausted) instead of killing the whole run;
+          // run-exit only when no runnable ticket remains.
+          const ladderAction = advanceOrExitOnLadderExhaustion({
+            sessionDir,
+            statePath,
+            ticketId: apTicketId,
+            reason: `recovery_exhausted: ${wmwRecovery.reason}`,
+            log,
+          });
+          if (ladderAction === 'advance') {
+            log(`ticket_ladder_exhausted: ${apTicketId} (${wmwRecovery.reason}) — advancing to next runnable ticket at iteration ${iteration}.`);
+            lastStateIteration = -1;
+            stallCount = 0;
+            continue;
+          }
+          log(`recovery_exhausted: ladder exhausted for ${apTicketId} (${wmwRecovery.reason}) and no runnable ticket remains — exiting at iteration ${iteration}.`);
           recordExitReason(statePath, 'recovery_exhausted');
           safeDeactivate(statePath);
           removeRunnerSessionMapEntry(statePath, log);
@@ -7526,9 +7824,25 @@ async function runMuxRunnerMain() {
           continue;
         }
         if (ffDecision.action === 'escalate') {
-          const capMsg = `[wmw-auto-skip] ticket ${apTicketId}: suppression cap ${ffDecision.cap} reached — halting (recovery_exhausted).`;
+          const capMsg = `[wmw-auto-skip] ticket ${apTicketId}: suppression cap ${ffDecision.cap} reached.`;
           log(capMsg);
           process.stderr.write(`${capMsg}\n`);
+          // AC-A2 (B-RRH): suppression-cap exhaustion advances while a runnable Todo
+          // remains; run-exit only when none remains.
+          const ladderAction = advanceOrExitOnLadderExhaustion({
+            sessionDir,
+            statePath,
+            ticketId: apTicketId,
+            reason: `suppression_cap_reached: ${ffDecision.cap}`,
+            log,
+          });
+          if (ladderAction === 'advance') {
+            log(`ticket_ladder_exhausted: ${apTicketId} (suppression cap ${ffDecision.cap}) — advancing to next runnable ticket at iteration ${iteration}.`);
+            lastStateIteration = -1;
+            stallCount = 0;
+            continue;
+          }
+          log(`recovery_exhausted: suppression cap reached for ${apTicketId} and no runnable ticket remains — halting.`);
           recordExitReason(statePath, 'recovery_exhausted');
           safeDeactivate(statePath);
           removeRunnerSessionMapEntry(statePath, log);
