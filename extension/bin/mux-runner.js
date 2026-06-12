@@ -4128,6 +4128,58 @@ export function validateStartupState(state, statePath) {
     if (issues.length > 0)
         throw new Error(`Invalid state at ${statePath}:\n  - ${issues.join('\n  - ')}`);
 }
+/**
+ * Sentinel file written into SESSION_ROOT on signal teardown when ≥1 ticket is
+ * still remaining (any status other than Done). pipeline-runner reads its
+ * presence as an authoritative "pickle phase did NOT complete" signal that
+ * forces incomplete regardless of the mux exit code (which a SIGTERM-killed mux
+ * sets to 0). Primary signal of B-RRH C2; consumed by pipeline-runner C1.
+ */
+export const PICKLE_INCOMPLETE_SENTINEL = 'pickle_incomplete.json';
+/**
+ * B-RRH C2: on signal teardown, if ≥1 ticket is still remaining (status !==
+ * Done — Todo/In-Progress/Failed/Skipped all count), write the
+ * `pickle_incomplete.json` sentinel into SESSION_ROOT and emit the
+ * `pickle_incomplete` activity event. When all tickets are Done (or none exist),
+ * write NO sentinel. Returns true iff the sentinel was written. Fully
+ * best-effort: never throws (a signal handler must always reach process.exit).
+ */
+export function writePickleIncompleteSentinelIfRemaining(sessionDir, statePath, log) {
+    try {
+        const tickets = collectTickets(sessionDir);
+        const remaining = tickets.filter(t => (t.status || '').toLowerCase().replace(/["']/g, '').trim() !== 'done');
+        if (tickets.length === 0 || remaining.length === 0)
+            return false;
+        const ts = new Date().toISOString();
+        const sentinelPath = path.join(sessionDir, PICKLE_INCOMPLETE_SENTINEL);
+        try {
+            fs.writeFileSync(sentinelPath, JSON.stringify({
+                reason: 'signal_teardown',
+                remaining_count: remaining.length,
+                total: tickets.length,
+                ts,
+            }, null, 2));
+        }
+        catch (err) {
+            log(`WARNING: failed to write pickle_incomplete sentinel: ${safeErrorMessage(err)}`);
+        }
+        const incompleteEvent = { event: 'pickle_incomplete', source: 'pickle', ts };
+        try {
+            writeActivityEntry(statePath, incompleteEvent);
+        }
+        catch { /* telemetry best effort */ }
+        try {
+            logActivity(incompleteEvent);
+        }
+        catch { /* telemetry best effort */ }
+        log(`pickle_incomplete: ${remaining.length}/${tickets.length} tickets remaining at signal teardown`);
+        return true;
+    }
+    catch (err) {
+        log(`WARNING: pickle_incomplete sentinel check failed: ${safeErrorMessage(err)}`);
+        return false;
+    }
+}
 export function setupSignalHandlers(statePath, log) {
     const handleShutdownSignal = (signal) => {
         const backend = readBackendForActivity(statePath);
@@ -4139,6 +4191,9 @@ export function setupSignalHandlers(statePath, log) {
         catch { /* telemetry best effort */ }
         log(`Received ${signal} — deactivating session`);
         log(`signal_received ${JSON.stringify(signalEvent)}`);
+        // B-RRH C2: stamp the pickle_incomplete sentinel BEFORE deactivation so a
+        // SIGTERM-killed mux (which exits 0) cannot be read as a clean completion.
+        writePickleIncompleteSentinelIfRemaining(path.dirname(statePath), statePath, log);
         recordExitReason(statePath, 'signal');
         safeDeactivate(statePath);
         removeRunnerSessionMapEntry(statePath, log);

@@ -2538,11 +2538,65 @@ export function classifyMicroverseHaltDecision(exitReason) {
     return { action: 'abort', recognizedExitReason: null };
 }
 /**
+ * B-RRH C1: sentinel filename written by mux-runner's signal teardown
+ * (`writePickleIncompleteSentinelIfRemaining`) into SESSION_ROOT when the pickle
+ * phase was killed with ≥1 ticket remaining. Its presence forces the pickle
+ * phase INCOMPLETE regardless of the mux exit code.
+ */
+const PICKLE_INCOMPLETE_SENTINEL = 'pickle_incomplete.json';
+/**
+ * B-RRH C1: the robustness layer on top of the existing exit-3 /
+ * `maybeStampPhaseIncompleteTickets` machinery. The existing N-of-M gate has an
+ * escape hatch (`doneCount>0||commitCount>0 → null`), so a SIGTERM-killed mux
+ * that made PARTIAL progress (e.g. 2/13 Done) and exited 0 currently advances to
+ * citadel. This gate does NOT trust the exit code: for the pickle phase it scans
+ * the ticket roster + the `pickle_incomplete.json` sentinel and treats the phase
+ * as INCOMPLETE when ANY of:
+ *   (a) the sentinel is present,
+ *   (b) the roster is missing/empty/unreadable (fail-safe — cannot prove all-Done),
+ *   (c) any ticket is still runnable (Todo/In-Progress/Failed — i.e. not Done and
+ *       not the intentionally-terminal Skipped).
+ * All-tickets-Done AND no sentinel → null (preserve normal advance).
+ * Reuses `reportPhaseIncomplete`'s `pipeline_phase_incomplete` exit_reason and the
+ * `{action:'break', phaseIncomplete:true}` outcome so the halt path is identical
+ * to the existing PhaseIncomplete contract.
+ */
+function maybeStampPickleIncompleteRobust(runtime, rawPhase, log) {
+    if (rawPhase !== 'pickle')
+        return null;
+    let sentinelPresent = false;
+    try {
+        sentinelPresent = fs.existsSync(path.join(runtime.sessionDir, PICKLE_INCOMPLETE_SENTINEL));
+    }
+    catch { /* best-effort — treat unreadable as absent, roster scan still gates */ }
+    // collectTickets returns [] on an unreadable session dir. An empty roster
+    // cannot PROVE all-Done, so it is incomplete only when a sentinel also dropped;
+    // a populated roster is incomplete when any ticket is still runnable (not Done,
+    // not the intentionally-terminal Skipped — R-PPPA).
+    const tickets = collectTickets(runtime.sessionDir);
+    const runnable = tickets.filter(t => {
+        const s = (t.status || '').toLowerCase().replace(/["']/g, '').trim();
+        return s !== 'done' && s !== 'skipped';
+    });
+    if (!sentinelPresent && runnable.length === 0)
+        return null;
+    const reason = sentinelPresent
+        ? `${PICKLE_INCOMPLETE_SENTINEL} sentinel present`
+        : `${runnable.length}/${tickets.length} tickets still runnable`;
+    log(`Phase ${rawPhase} did NOT complete — not advancing to citadel (${reason})`);
+    reportPhaseIncomplete(runtime, rawPhase);
+    return { action: 'break', phaseIncomplete: true };
+}
+/**
  * R-PIPE-2: post-AC-gate success path extracted from `runPhaseIteration` so
  * the no-progress gate, counter increment, cancel-marker check, and success
  * log do not push `runPhaseIteration` past the cyclomatic-complexity ceiling.
  */
 function finalizePhaseSuccess(runtime, counters, cancelMarker, rawPhase, exitCode, log) {
+    // B-RRH C1: strict roster+sentinel gate runs FIRST — do not trust exit code 0.
+    const robustBreak = maybeStampPickleIncompleteRobust(runtime, rawPhase, log);
+    if (robustBreak)
+        return robustBreak;
     const noProgressBreak = maybeStampPhaseNoProgress(runtime, rawPhase, exitCode, log);
     if (noProgressBreak)
         return noProgressBreak;
