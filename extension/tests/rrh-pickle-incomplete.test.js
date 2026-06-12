@@ -124,8 +124,15 @@ afterEach(() => {
   __setSpawnRunnerForTests(null);
 });
 
-// ── AC2: partial progress + clean exit (0) → NO citadel advance ──────────────
-test('pipeline-runner does NOT advance to citadel when a ticket is still Todo (exit 0)', async () => {
+// ── AC2: SIGTERM-killed mux (sentinel) + clean exit (0) → NO citadel advance ──
+// This is the B-XSPA bug: an external SIGTERM kills the mux with ≥1 ticket still
+// Todo, but the mux exit code reads 0 (indistinguishable from clean completion).
+// C2's teardown drops the `pickle_incomplete.json` sentinel; C1's robust gate
+// reads that sentinel and refuses to advance to citadel on the partial build.
+// (A clean exit-0 with partial progress and NO sentinel is NOT this bug — that is
+// the normal R-CMWL-2 partial-progress path and is covered by the no-progress
+// suite, where it advances so downstream remediation is preserved.)
+test('SIGTERM-killed mux drops the sentinel → pipeline does NOT advance to citadel (exit 0 disguise)', async () => {
   const repo = tmpDir('rrh-repo-');
   const sessionDir = tmpDir('rrh-session-');
   try {
@@ -133,20 +140,27 @@ test('pipeline-runner does NOT advance to citadel when a ticket is still Todo (e
     writeState(sessionDir, repo, { start_commit: head });
     writePipeline(sessionDir, repo, ['pickle', 'citadel']);
 
-    // 2 Done, 1 Todo — the GAP case (existing N-of-M gate would let this pass).
+    // 2 Done, 1 Todo — partial build the SIGTERM interrupted.
     writeTicket(sessionDir, 'aaa11111', 1, 'Done');
     writeTicket(sessionDir, 'bbb22222', 2, 'Done');
     writeTicket(sessionDir, 'ccc33333', 3, 'Todo');
 
-    // Mux exits CLEAN (0) — the SIGTERM-killed-mux disguise.
-    __setSpawnRunnerForTests(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+    // Mux exits CLEAN (0) but its signal teardown dropped the sentinel — the
+    // SIGTERM-killed-mux disguise that an exit code alone cannot detect.
+    __setSpawnRunnerForTests(async () => {
+      fs.writeFileSync(
+        path.join(sessionDir, SENTINEL),
+        JSON.stringify({ remaining_count: 1, total: 3 }),
+      );
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
 
     await captureMainExit(sessionDir, PipelineRunnerExitCode.PhaseIncomplete);
 
     // No PHASE 2: citadel never ran, so no citadel_report.json.
     assert.ok(
       !fs.existsSync(path.join(sessionDir, 'citadel_report.json')),
-      'citadel must NOT run when a pickle ticket is still Todo',
+      'citadel must NOT run when the pickle_incomplete sentinel is present',
     );
     const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
     assert.equal(state.exit_reason, 'pipeline_phase_incomplete');
