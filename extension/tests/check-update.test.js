@@ -1267,8 +1267,12 @@ describe('edge cases', () => {
         assert.equal(compareSemver('0.0.0', '0.0.0'), 0);
     });
 
-    test('parseVersion rejects pre-release suffixes', () => {
-        assert.equal(parseVersion('v1.0.0-rc.1'), null);
+    test('parseVersion accepts well-formed pre-release suffixes, rejects malformed (R2 931c492f)', () => {
+        // R2 (931c492f) made parseVersion tolerate X.Y.Z-<ident>.<N> prereleases so the
+        // 2.0.0-beta.1 bump cannot throw at the four check-update caller sites.
+        assert.equal(parseVersion('v1.0.0-rc.1'), '1.0.0-rc.1');
+        assert.equal(parseVersion('2.0.0-beta.1'), '2.0.0-beta.1');
+        // malformed prerelease (ident without a numeric component) is still rejected
         assert.equal(parseVersion('1.0.0-alpha'), null);
     });
 
