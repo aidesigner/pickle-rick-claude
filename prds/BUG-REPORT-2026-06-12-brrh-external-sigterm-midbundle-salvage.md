@@ -33,3 +33,35 @@ This interactive tmux session had **no auto-resume wrapper armed**, so an extern
 - **R-XSIG-2:** identify the recurring environmental SIGTERM/SIGINT source (cron? IDE? OS power event?) — file separately if reproducible.
 
 Escalate to P1 only on a third manual-salvage recurrence in one bundle.
+
+---
+
+## ADDENDUM 2026-06-12 23:00Z — R-XSPA-2: signal-shutdown exit-0 DEFEATS the C1/C2 incomplete-bundle guard (PREMATURE ADVANCE, P1)
+
+A **third** external signal (`signal_received` 22:52:37.955Z) hit the pickle mux-runner. This time the consequence was worse than a clean kill — the pipeline **prematurely advanced two phases on an incomplete bundle**:
+
+```
+signal_received                      22:52:37.955Z
+Phase pickle exited with code 0      22:52:37.971Z   ← signal handler exits 0
+Phase pickle completed successfully                  ← pipeline-runner advances
+PHASE 2/4: CITADEL → PHASE 3/4: ANATOMY-PARK
+```
+
+At advance time only **16/21** tickets were Done (71001154 In Progress, 5495bee2/1cf82fe7/ed840487/closer 00fa0662 Todo). anatomy-park (microverse-runner pid 42992) ran on an incomplete bundle; the **closer never executed and nothing shipped**.
+
+### Root cause (the C1/C2 gap)
+
+The deployed C1/C2 / R-ICP-2 / R-PHC-6 incomplete-bundle guard fires on a **non-zero** pickle exit (`PipelineRunnerExitCode.PhaseIncomplete = 3`). But the mux-runner **signal-shutdown handler exits 0** (graceful). So a SIGTERM during pickle with pending tickets produces a clean exit-0 that `pipeline-runner` reads as "Phase pickle completed successfully" → advances. The guard never sees a non-zero code. This is the residual half of B-XSPA that the beta.2 fix did **not** close.
+
+### Proposed AC (P1)
+
+- **R-XSPA-2:** the mux-runner signal-shutdown path MUST, when pending (Todo/In-Progress) tickets remain in the bundle, exit with `PipelineRunnerExitCode.PhaseIncomplete (3)` (or stamp `exit_reason='pipeline_phase_incomplete'` that `pipeline-runner` honors) instead of exit 0 — so the incomplete-bundle guard fires and the pipeline does NOT advance pickle→citadel on a signal-truncated build. ENFORCE: an integration test that SIGTERMs the pickle mux-runner mid-bundle and asserts pipeline-runner does NOT enter citadel/anatomy-park.
+
+### Recovery applied (2nd salvage this bundle)
+
+1. Froze the whole session tree (2 pipeline-runners 27054/14425, 2 microverse-runners 42992/46183, worker) — killed.
+2. Reconciled: 71001154 work is committed reset-proof (`1b2697d3` + 6 lines swept into anatomy auto-commit `9a1ccf9a`); tree clean; no orphans.
+3. Kept 71001154 In Progress (full research+plan+impl artifacts present → resume, not restart); reset `step=research`/`current_ticket=null`/cleared `exit_reason`; killed stale tmux; relaunched.
+4. Runner re-entered PHASE 1 PICKLE (pid 53498, worker 53945), resumed 71001154 at `step=implement`.
+
+**Escalating R-XSIG/R-XSPA-2 to P1** — this is the 2nd manual salvage in one bundle AND it exposed a premature-advance code gap, not just a missing wrapper.
