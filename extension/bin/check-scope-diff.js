@@ -13,6 +13,36 @@ function isPathInScope(stagedPath, allowedPaths) {
         return normalized === normalizedAllowed || normalized.startsWith(normalizedAllowed + '/');
     });
 }
+function maybeEmitImpactWarning(service, stagedPaths, allowedPaths) {
+    if (!service || stagedPaths.length === 0)
+        return;
+    let dependents;
+    try {
+        dependents = service.getImpactRadius(stagedPaths, 2);
+    }
+    catch {
+        return; // fail-open — service error never blocks the gate
+    }
+    if (!Array.isArray(dependents) || dependents.length === 0)
+        return;
+    const outside = dependents.filter((d) => !isPathInScope(d, allowedPaths));
+    if (outside.length === 0)
+        return;
+    try {
+        logActivity({
+            event: 'scope_impact_warning',
+            source: 'pickle',
+            gate_payload: {
+                staged_paths: stagedPaths,
+                transitive_dependents_outside_scope: outside,
+                radius_depth: 2,
+            },
+        });
+    }
+    catch {
+        // Telemetry must never block the caller.
+    }
+}
 function getStagedPaths() {
     const result = spawnSync('git', ['diff', '--staged', '--name-only', '--no-renames'], {
         encoding: 'utf-8',
@@ -25,6 +55,7 @@ function getStagedPaths() {
 export function checkScopeDiff(opts = {}) {
     const scopeJsonPath = opts.scopeJsonPath;
     const headRef = opts.headRef ?? 'HEAD';
+    const getStagedFn = opts._getStagedPaths ?? getStagedPaths;
     if (!scopeJsonPath || !fs.existsSync(scopeJsonPath)) {
         return { status: 'no_scope' };
     }
@@ -43,11 +74,13 @@ export function checkScopeDiff(opts = {}) {
         return { status: 'malformed_scope', error: 'scope.json missing or invalid allowed_paths array' };
     }
     const allowedPaths = scopeData.allowed_paths;
-    const staged = getStagedPaths();
+    const staged = getStagedFn();
     const outside = staged.filter((p) => !isPathInScope(p, allowedPaths));
     if (outside.length === 0) {
+        maybeEmitImpactWarning(opts.impactService, staged, allowedPaths);
         return { status: 'ok', staged_count: staged.length };
     }
+    maybeEmitImpactWarning(opts.impactService, staged, allowedPaths);
     return {
         status: 'outside_scope',
         staged_paths_outside_scope: outside,
