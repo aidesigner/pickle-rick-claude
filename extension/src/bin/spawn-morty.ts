@@ -1992,12 +1992,23 @@ const NATIVE_CLI_BINARY_MISSING_BACKENDS: readonly Backend[] = ['hermes', 'grok'
 
 export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exitCode: number; isSuccess: boolean }> {
   const { args, ticketPath, ticketId, sessionRoot, sessionLog, sessionLogPath, sessionWorkingDir } = ctx;
+  // C7: resolve session-merged worker MCP config (expose_mcp_to_workers).
+  // The file is materialized by setup.ts:materializeWorkerMcpConfig at session
+  // init.  Only forwarded for the claude backend — other backends don't accept
+  // --mcp-config and buildWorkerInvocation routes them away from the clause
+  // that reads this field.
+  const sessionMcpPath = path.join(sessionRoot, 'mcp', 'worker-mcp.json');
+  const resolvedMcpConfig =
+    args.backend === 'claude' && fs.existsSync(sessionMcpPath)
+      ? sessionMcpPath
+      : undefined;
   const invocation = buildWorkerInvocation(args.backend, {
     prompt: ctx.prompt,
     addDirs: [getExtensionRoot(), getDataRoot(), sessionWorkingDir, ticketPath],
     model: ctx.model,
     outputFormat: args.outputFormat,
     effort: ctx.effort,
+    mcpConfig: resolvedMcpConfig,
     ...(args.backend === 'hermes' ? ctx.hermesOptions : {}),
   });
   try { updateTicketStatus(ticketId, 'In Progress', sessionRoot); } catch { /* best-effort */ }
