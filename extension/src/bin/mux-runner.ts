@@ -3,9 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, TIER_LIFECYCLE, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, resolveCommandTemplate, loadPickleSettingsBag, resolveHardeningSettings, type CompletionCommitEvidence, type TicketComplexityTier, type TicketInfo, type TicketStatus, type TicketTierBudget } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, TIER_LIFECYCLE, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, resolveCommandTemplate, loadPickleSettingsBag, resolveHardeningSettings, resolveCodegraphSettings, type CompletionCommitEvidence, type TicketComplexityTier, type TicketInfo, type TicketStatus, type TicketTierBudget } from '../services/pickle-utils.js';
 import { findMissingPrefixes, requiredTierArtifactPrefixes } from '../services/artifact-validation.js';
-import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step, type RecoveryAttempt, type HardeningSettings, type OrphanReattachPayload } from '../types/index.js';
+import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type ActivityLogEntry, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step, type RecoveryAttempt, type HardeningSettings, type OrphanReattachPayload } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerConfig, type CircuitBreakerState } from '../services/circuit-breaker.js';
@@ -24,6 +24,7 @@ import { getHeadBranch, updateTicketFrontmatter, isWorkingTreeDirty, listWorking
 import { runRecoveryLadder, parsePlanPhases, executePhaseLoop, isConvergedPlanEligible, type PlanPhase, type RecoveryDeps, type RecoveryEvidence, type RecoveryOutcome } from '../services/recovery-controller.js';
 import { detectArtifactProgress, resolveNoProgressWindowSeconds, type ArtifactProgressSnapshot } from '../services/artifact-progress-detector.js';
 import { readEvidence, persistEvidence, gateForPhantomDoneRevert, type EvidenceCtx, type RevertDecision } from '../services/ticket-completion-evidence.js';
+import { CodegraphService } from '../services/codegraph-service.js';
 export { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream } from '../services/classifier-utils.js';
 export { hasCompletionCommit, stripSetupSection } from '../services/pickle-utils.js';
 export {
@@ -4639,6 +4640,25 @@ export function applyTimeoutCounter(input: TimeoutCounterInput): TimeoutCounterS
   return { count: prev.count, ticket: prev.ticket, halt: false };
 }
 
+/**
+ * Returns true when the codegraph db mtime is older than the staleness threshold.
+ * Returns false when the db is absent — full index is setup's responsibility.
+ * Injectable `now` and `statSync` seams enable fast-tier unit tests.
+ */
+export function shouldSyncCodegraph(
+  dbPath: string,
+  stalenessMaxAgeMinutes: number,
+  now: () => number = Date.now,
+  statSync: (p: string) => { mtimeMs: number } = fs.statSync,
+): boolean {
+  try {
+    const ageMs = now() - statSync(dbPath).mtimeMs;
+    return ageMs >= stalenessMaxAgeMinutes * 60 * 1000;
+  } catch {
+    return false;
+  }
+}
+
 export interface TimeoutHaltContext {
   statePath: string;
   sessionDir: string;
@@ -6628,6 +6648,32 @@ async function runMuxRunnerMain() {
   installPhantomDoneWatchers();
   process.on('exit', closePhantomDoneWatchers);
 
+  // Session-scoped CodegraphService. Declared before signal handlers so closures can reference it.
+  // Initialized (async) below, after signal-handler registration — null until create() resolves.
+  let cgService: CodegraphService | null = null;
+  let cgTicketCount = 0;
+
+  const emitCgSessionSummary = (): void => {
+    try {
+      if (cgService === null) return;
+      const ctrs = cgService.getSessionCounters();
+      const index_status: 'healthy' | 'degraded' | 'latched' | 'disabled' =
+        ctrs.latched > 0 ? 'latched' : ctrs.degraded > 0 ? 'degraded' : 'healthy';
+      writeActivityEntry(statePath, {
+        event: 'codegraph_session_summary',
+        ts: new Date().toISOString(),
+        tickets: cgTicketCount,
+        degraded_ops: ctrs.degraded,
+        index_status,
+      });
+    } catch { /* best-effort */ }
+  };
+
+  const closeCgService = (): void => {
+    if (cgService === null) return;
+    try { cgService.close(); } catch { /* best-effort */ }
+  };
+
   // Graceful shutdown: deactivate session on SIGTERM/SIGINT so it doesn't
   // remain orphaned with active: true when the tmux pane is closed.
   const handleShutdownSignal = (signal: string) => {
@@ -6646,6 +6692,8 @@ async function runMuxRunnerMain() {
       currentChildProc.kill('SIGTERM');
     }
     closePhantomDoneWatchers();
+    emitCgSessionSummary();
+    closeCgService();
     logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux', backend });
     process.exit(0);
   };
@@ -6713,6 +6761,21 @@ async function runMuxRunnerMain() {
   let ticketAuditGateChecked = false;
   let smokeGateBypassEmitted = false;
   let bundleBootstrapApplied = false;
+
+  // Initialize session-scoped CodegraphService (fail-open — never blocks session start).
+  const cgSettings = resolveCodegraphSettings(loadPickleSettingsBag());
+  const cgWorkingDir = ownerState.working_dir || process.cwd();
+  const cgDbPath = path.join(cgWorkingDir, '.codegraph', 'codegraph.db');
+  try {
+    cgService = await CodegraphService.create(
+      cgWorkingDir,
+      cgSettings,
+      { emit: (ev) => writeActivityEntry(statePath, ev as unknown as ActivityLogEntry) },
+    );
+  } catch (err) {
+    log(`codegraph service init failed (ignored): ${safeErrorMessage(err)}`);
+  }
+
   while (true) {
     let state: State;
     try {
@@ -7313,6 +7376,14 @@ async function runMuxRunnerMain() {
     } catch (err) {
       // Watchdog is best-effort — never crash the loop on a watchdog failure.
       log(`idle-stall watchdog threw (ignored): ${safeErrorMessage(err)}`);
+    }
+
+    // Per-spawn codegraph staleness sync (fail-open — bounded by sync_timeout_ms in the service).
+    if (cgService !== null) {
+      if (shouldSyncCodegraph(cgDbPath, cgSettings.staleness_max_age_minutes)) {
+        try { await cgService.sync(); } catch { /* degrade already emitted by the service */ }
+      }
+      cgTicketCount = collectTickets(sessionDir).filter((t) => t.status === 'Done').length;
     }
 
     const iterWorkingDir = state.working_dir || process.cwd();
@@ -8296,6 +8367,9 @@ async function runMuxRunnerMain() {
 
     await sleep(1000);
   }
+
+  emitCgSessionSummary();
+  closeCgService();
 
   const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
   const isFailedExit = isFailureExit(exitReason);

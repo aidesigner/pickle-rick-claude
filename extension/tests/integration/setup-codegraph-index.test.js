@@ -1,10 +1,12 @@
 // @tier: integration
 //
 // AC-C4: runCodegraphIndexAtSetup — session setup codegraph indexing.
+// AC-SPAWN: shouldSyncCodegraph + session summary integration (mux-runner spawn site).
 //
 // Covers: kill-switch, disabled/index_at_setup gates, full build, null→index_failed,
 // resume matrix (noop / stale→sync / missing→rebuild), .git/info/exclude hygiene,
 // SESSION_ROOT ordering guarantee (structural source check).
+// AC-SPAWN: spawn-site staleness decision, session summary index_status derivation.
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,6 +19,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const { runCodegraphIndexAtSetup } = await import(
   path.resolve(__dirname, '../../bin/setup.js')
+);
+
+const { shouldSyncCodegraph } = await import(
+  path.resolve(__dirname, '../../bin/mux-runner.js')
 );
 
 const sandboxDirs = [];
@@ -211,4 +217,71 @@ test('AC-C4-ORDER: displaySetupSummary precedes runCodegraphIndexAtSetup in setu
   assert.ok(summaryIdx >= 0, 'displaySetupSummary must be present in source');
   assert.ok(cgIdx >= 0, 'await runCodegraphIndexAtSetup call must be present in source');
   assert.ok(summaryIdx < cgIdx, 'SESSION_ROOT= line (via displaySetupSummary) must precede codegraph index call');
+});
+
+// ---------------------------------------------------------------------------
+// AC-SPAWN: spawn-site staleness decision + session summary derivation
+// ---------------------------------------------------------------------------
+
+test('AC-SPAWN-FRESH: shouldSyncCodegraph returns false for fresh db (age < threshold)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c4-spawn-fresh-'));
+  try {
+    const dbDir = path.join(dir, '.codegraph');
+    fs.mkdirSync(dbDir, { recursive: true });
+    const dbPath = path.join(dbDir, 'codegraph.db');
+    fs.writeFileSync(dbPath, 'fake');
+    const nowSec = Date.now() / 1000;
+    fs.utimesSync(dbPath, nowSec, nowSec);
+    // db is seconds old; threshold is 60 min
+    assert.equal(shouldSyncCodegraph(dbPath, 60), false, 'fresh db must not trigger sync');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC-SPAWN-STALE: shouldSyncCodegraph returns true for stale db (age > threshold)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c4-spawn-stale-'));
+  try {
+    const dbDir = path.join(dir, '.codegraph');
+    fs.mkdirSync(dbDir, { recursive: true });
+    const dbPath = path.join(dbDir, 'codegraph.db');
+    fs.writeFileSync(dbPath, 'fake');
+    // 2 hours ago
+    const staleSec = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(dbPath, staleSec, staleSec);
+    assert.equal(shouldSyncCodegraph(dbPath, 30), true, 'stale db must trigger sync');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC-SPAWN-MISSING: shouldSyncCodegraph returns false when db is absent (setup owns full index)', () => {
+  const missing = '/tmp/nonexistent-no-codegraph-db/codegraph.db';
+  assert.equal(shouldSyncCodegraph(missing, 30), false, 'absent db must not trigger sync');
+});
+
+test('AC-SPAWN-SOURCE: shouldSyncCodegraph is exported from mux-runner.ts source', () => {
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '../../src/bin/mux-runner.ts'),
+    'utf-8'
+  );
+  assert.ok(
+    src.includes('export function shouldSyncCodegraph'),
+    'shouldSyncCodegraph must be exported from mux-runner.ts'
+  );
+});
+
+test('AC-SPAWN-SUMMARY-SOURCE: codegraph_session_summary emission present in mux-runner.ts source', () => {
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '../../src/bin/mux-runner.ts'),
+    'utf-8'
+  );
+  assert.ok(
+    src.includes("event: 'codegraph_session_summary'"),
+    "mux-runner.ts must emit 'codegraph_session_summary'"
+  );
+  assert.ok(
+    src.includes('emitCgSessionSummary'),
+    'emitCgSessionSummary helper must be defined in mux-runner.ts'
+  );
 });
