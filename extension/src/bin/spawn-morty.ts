@@ -16,6 +16,8 @@ import {
   classifyTicketTier,
   VALID_TICKET_COMPLEXITY_TIERS,
   extractFrontmatter,
+  loadPickleSettingsBag,
+  resolveCodegraphSettings,
   TIER_LIFECYCLE,
   TIER_DIFF_ENVELOPE,
   type LifecyclePhase,
@@ -23,7 +25,8 @@ import {
   type TicketComplexityTier,
 } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
-import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS, type Backend, type BackendResolutionSource, type LastToolErrorState, type PickleSettings, type State } from '../types/index.js';
+import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS, type Backend, type BackendResolutionSource, type CodegraphSettings, type LastToolErrorState, type PickleSettings, type State } from '../types/index.js';
+import { CodegraphService } from '../services/codegraph-service.js';
 import { isRecord } from '../lib/is-record.js';
 import { ArchiveAbortError, getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
 import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile } from '../services/backend-spawn.js';
@@ -91,6 +94,11 @@ export type BuildWorkerPromptOptions = {
   extensionRoot?: string;
   agentsDir?: string;
   complexityTier?: TicketComplexityTier;
+  /**
+   * Pre-rendered `## Code Graph Context` section (from `buildCodegraphContextSection`),
+   * injected adjacent to the tier lifecycle sections. Empty/absent = no section.
+   */
+  codegraphSection?: string;
 };
 
 export type WorkerProcessContext = {
@@ -528,6 +536,201 @@ export function buildTierLifecycleSections(phases: LifecyclePhase[], tier: strin
   return out;
 }
 
+// --- Code Graph Context section (C5) ----------------------------------------
+//
+// A tier-conditional `## Code Graph Context` block injected adjacent to the tier
+// lifecycle sections. The async service work lives in `buildCodegraphContextSection`
+// (awaited at the spawn call site); `buildWorkerPrompt` stays synchronous and just
+// injects the pre-rendered string. The builder owns the tier gate, so a trivial-tier
+// ticket always yields `''` and its prompt is byte-identical with codegraph on or off.
+
+const CODEGRAPH_SECTION_HEADER = '\n## Code Graph Context\n';
+const CODEGRAPH_TRUNCATED_MARKER = '[truncated]';
+const CODEGRAPH_GRAPH_PHASES: readonly LifecyclePhase[] = ['research', 'plan'];
+const CODEGRAPH_MAX_TERMS = 8;
+const CODEGRAPH_CALLER_HITS = 3;
+const CODEGRAPH_TERM_STOPWORDS = new Set<string>([
+  'into', 'with', 'from', 'this', 'that', 'when', 'then', 'tier', 'code', 'graph',
+  'context', 'worker', 'prompt', 'build', 'inject', 'section', 'only', 'over',
+  'each', 'them', 'their', 'must', 'should',
+]);
+
+/** True when the tier's lifecycle includes research or plan (small/medium/large; not trivial). */
+export function tierUsesGraphContext(tier: string): boolean {
+  const phases = (TIER_LIFECYCLE as Record<string, LifecyclePhase[]>)[tier] ?? [];
+  return CODEGRAPH_GRAPH_PHASES.some((p) => phases.includes(p));
+}
+
+/**
+ * Derive search terms: backticked symbols from title+ACs ∪ title nouns, deduped
+ * (case-sensitive, first-occurrence wins), capped at `max` (default 8).
+ */
+export function deriveCodegraphTerms(title: string, acText: string, max = CODEGRAPH_MAX_TERMS): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (raw: string): void => {
+    const v = raw.trim();
+    if (v.length > 0 && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  };
+  for (const m of `${title}\n${acText}`.matchAll(/`([^`\n]+)`/g)) {
+    push(m[1]);
+  }
+  for (const w of title.split(/[^A-Za-z0-9_]+/)) {
+    if (w.length >= 4 && !CODEGRAPH_TERM_STOPWORDS.has(w.toLowerCase())) push(w);
+  }
+  return out.slice(0, max);
+}
+
+/**
+ * Render `entries` (each a single symbol-boundary line) under the section header,
+ * capped so the WHOLE returned section is ≤ `maxBytes`. Truncation drops whole
+ * trailing entries and appends a `[truncated]` line — a symbol entry is never split.
+ * Returns `''` when nothing (even one entry) fits.
+ */
+export function renderCodegraphSection(entries: string[], maxBytes: number): string {
+  const sectionBytes = (lines: string[], withMarker: boolean): number => {
+    const body = lines.join('\n') + (lines.length > 0 ? '\n' : '');
+    const marker = withMarker ? `${CODEGRAPH_TRUNCATED_MARKER}\n` : '';
+    return Buffer.byteLength(CODEGRAPH_SECTION_HEADER + body + marker, 'utf-8');
+  };
+  const accepted: string[] = [];
+  let truncated = false;
+  for (const entry of entries) {
+    accepted.push(entry);
+    if (sectionBytes(accepted, false) > maxBytes) {
+      accepted.pop();
+      truncated = true;
+      break;
+    }
+  }
+  if (truncated) {
+    while (accepted.length > 0 && sectionBytes(accepted, true) > maxBytes) {
+      accepted.pop();
+    }
+  }
+  if (accepted.length === 0) return '';
+  const body = accepted.join('\n') + '\n';
+  const marker = truncated ? `${CODEGRAPH_TRUNCATED_MARKER}\n` : '';
+  return CODEGRAPH_SECTION_HEADER + body + marker;
+}
+
+interface CodegraphNodeLike {
+  id?: unknown;
+  name?: unknown;
+  file?: unknown;
+  filePath?: unknown;
+  line?: unknown;
+  startLine?: unknown;
+}
+
+function asNode(value: unknown): CodegraphNodeLike | null {
+  if (!isRecord(value)) return null;
+  const node = isRecord(value.node) ? value.node : value;
+  return node as CodegraphNodeLike;
+}
+
+function nodeName(node: CodegraphNodeLike): string | null {
+  return typeof node.name === 'string' && node.name.trim().length > 0 ? node.name.trim() : null;
+}
+
+function nodeLocation(node: CodegraphNodeLike): string {
+  const file = typeof node.file === 'string' ? node.file : typeof node.filePath === 'string' ? node.filePath : null;
+  const line = typeof node.line === 'number' ? node.line : typeof node.startLine === 'number' ? node.startLine : null;
+  if (!file) return '';
+  return line !== null ? ` (${file}:${line})` : ` (${file})`;
+}
+
+export interface CodegraphContextOptions {
+  tier: string;
+  title: string;
+  ticketContent: string;
+  service: CodegraphService | null;
+  settings: CodegraphSettings;
+}
+
+/** Collect deduped search hits (by node id, highest score wins), ranked by score desc. */
+async function collectCodegraphHits(
+  service: CodegraphService,
+  terms: string[],
+): Promise<{ node: CodegraphNodeLike }[]> {
+  const hitsById = new Map<string, { node: CodegraphNodeLike; score: number }>();
+  for (const term of terms) {
+    const result = await service.searchNodes(term);
+    if (!Array.isArray(result)) continue;
+    for (const raw of result) {
+      const node = asNode(raw);
+      if (!node || typeof node.id !== 'string') continue;
+      const score = isRecord(raw) && typeof raw.score === 'number' ? raw.score : 0;
+      const prev = hitsById.get(node.id);
+      if (!prev || score > prev.score) hitsById.set(node.id, { node, score });
+    }
+  }
+  return [...hitsById.values()].sort((a, b) => b.score - a.score);
+}
+
+/** First-degree caller names for a node, or '' when none. */
+async function codegraphCallerSuffix(service: CodegraphService, nodeId: string): Promise<string> {
+  const callers = await service.getCallers(nodeId);
+  if (!Array.isArray(callers)) return '';
+  const names = callers
+    .map((c) => asNode(c))
+    .map((n) => (n ? nodeName(n) : null))
+    .filter((n): n is string => n !== null);
+  return names.length > 0 ? ` ← callers: ${names.join(', ')}` : '';
+}
+
+/** Render one symbol-boundary line per ranked hit; the top hits also get caller suffixes. */
+async function buildCodegraphEntries(
+  service: CodegraphService,
+  ranked: { node: CodegraphNodeLike }[],
+  summary: unknown,
+): Promise<string[]> {
+  const entries: string[] = [];
+  if (typeof summary === 'string') {
+    for (const line of summary.split('\n')) {
+      const t = line.trim();
+      if (t.length > 0) entries.push(`Summary: ${t}`);
+    }
+  }
+  for (let i = 0; i < ranked.length; i++) {
+    const node = ranked[i].node;
+    const name = nodeName(node);
+    if (!name) continue;
+    let entry = `- \`${name}\`${nodeLocation(node)}`;
+    if (i < CODEGRAPH_CALLER_HITS && typeof node.id === 'string') {
+      entry += await codegraphCallerSuffix(service, node.id);
+    }
+    entries.push(entry);
+  }
+  return entries;
+}
+
+/**
+ * Build the `## Code Graph Context` section, or `''` when absent. Absent on:
+ * disabled settings, non-graph tier (trivial), null service, no derived terms,
+ * or zero search hits. The service itself returns null on kill-switch / degraded /
+ * unavailable, which collapses into the zero-hits path. Never throws.
+ */
+export async function buildCodegraphContextSection(opts: CodegraphContextOptions): Promise<string> {
+  const { tier, title, ticketContent, service, settings } = opts;
+  if (!settings.enabled || !service || !tierUsesGraphContext(tier)) return '';
+
+  const terms = deriveCodegraphTerms(title, ticketContent);
+  if (terms.length === 0) return '';
+
+  const ranked = await collectCodegraphHits(service, terms);
+  if (ranked.length === 0) return '';
+
+  const summary = await service.buildContext({ title, description: ticketContent.slice(0, 500) });
+  const entries = await buildCodegraphEntries(service, ranked, summary);
+  if (entries.length === 0) return '';
+
+  return renderCodegraphSection(entries, settings.context_max_bytes);
+}
+
 export function buildWorkerPrompt(opts: BuildWorkerPromptOptions): string {
   const { ticket } = opts;
   const extensionRoot = opts.extensionRoot ?? getExtensionRoot();
@@ -549,7 +752,10 @@ export function buildWorkerPrompt(opts: BuildWorkerPromptOptions): string {
     const activePhases = TIER_LIFECYCLE[tier];
     workerPrompt = workerPrompt
       .replace('{{TIER_RESUME_TABLE}}', buildTierResumeTable(activePhases))
-      .replace('{{TIER_LIFECYCLE_SECTIONS}}', buildTierLifecycleSections(activePhases, tier));
+      .replace(
+        '{{TIER_LIFECYCLE_SECTIONS}}',
+        buildTierLifecycleSections(activePhases, tier) + (opts.codegraphSection ?? ''),
+      );
     if (TIER_DIFF_ENVELOPE[tier] !== undefined) {
       workerPrompt += `\n\n**Minimalism:** This is a ${tier} ticket. Make the smallest correct change. Do not refactor adjacent code, do not add abstractions, do not rename or restructure beyond the ticket's explicit ask. If the fix is one line, it is one line.`;
     }
@@ -2037,12 +2243,36 @@ async function main() {
     args.isReviewTicket ? 'MAGENTA' : 'CYAN',
     '🥒'
   );
-  _smCrumb('after printMinimalPanel — before buildWorkerPrompt');
+  _smCrumb('after printMinimalPanel — before codegraph context');
+  // Fail-open: codegraph context is best-effort and must never block a worker spawn.
+  let codegraphSection = '';
+  if (!args.isReviewTicket) {
+    try {
+      const cgSettings = resolveCodegraphSettings(loadPickleSettingsBag());
+      const cgService = CodegraphService.create(runtime.sessionWorkingDir, cgSettings, {});
+      try {
+        codegraphSection = await buildCodegraphContextSection({
+          tier: effectiveTier,
+          title: args.ticket,
+          ticketContent: args.ticketContent,
+          service: cgService,
+          settings: cgSettings,
+        });
+      } finally {
+        cgService.close();
+      }
+    } catch (err) {
+      _smCrumb(`codegraph context skipped (ignored): ${safeErrorMessage(err)}`);
+      codegraphSection = '';
+    }
+  }
+  _smCrumb('after codegraph context — before buildWorkerPrompt');
   const prompt = buildWorkerPrompt({
     ticket: { task: args.ticket, ticketContent: args.ticketContent, ticketId: args.ticketId, ticketPath: args.ticketPath, sessionRoot: args.sessionRoot, backend, isReviewTicket: args.isReviewTicket },
     model: model ?? 'sonnet',
     repoRoot: runtime.sessionWorkingDir,
     complexityTier: effectiveTier,
+    codegraphSection,
   });
   _smCrumb('buildWorkerPrompt done — before runWorkerProcess');
   const sessionLog = fs.createWriteStream(args.sessionLogPath, { flags: 'w' });
