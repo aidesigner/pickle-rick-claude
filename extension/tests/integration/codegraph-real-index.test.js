@@ -22,6 +22,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { buildWorkerMcpConfig } from '../../services/backend-spawn.js';
 
 const require = createRequire(import.meta.url);
 const EXPENSIVE = process.env.RUN_EXPENSIVE_TESTS === '1';
@@ -227,6 +228,80 @@ test('C0: serve --mcp stdio handshake (initialize -> tools/list) via absolute no
   for (const tool of result.tools) {
     assert.equal(typeof tool.name, 'string', 'each tool has a string name');
   }
+});
+
+test('C7: buildWorkerMcpConfig command drives a real serve --mcp handshake (initialize -> tools/list)', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  if (!EXPENSIVE) return t.skip('set RUN_EXPENSIVE_TESTS=1');
+  const { skip } = loadCodeGraphOrSkipReason();
+  if (skip) return t.skip(skip);
+
+  // Non-vacuous coupling: instead of re-deriving the bin independently, drive the
+  // EXACT command that the production builder materializes into worker-mcp.json.
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-wmm-session-'));
+  const fixtureDir = makeFixture({ 'src/a.ts': 'export function f() { return 1; }\n' });
+
+  const mcpPath = buildWorkerMcpConfig(sessionDir, fixtureDir, { expose_mcp_to_workers: true }, null);
+  // When the package resolves (it does on EXPENSIVE hosts that loaded the bundle)
+  // the builder writes the session file; if it ever can't, skip rather than fail.
+  if (!mcpPath || !fs.existsSync(mcpPath)) {
+    rmDir(sessionDir);
+    rmDir(fixtureDir);
+    return t.skip('buildWorkerMcpConfig did not materialize a session config (codegraph bin unresolved)');
+  }
+  const entry = JSON.parse(fs.readFileSync(mcpPath, 'utf8')).mcpServers.codegraph;
+  assert.equal(entry.command, 'node', 'materialized codegraph command is node');
+  assert.ok(path.isAbsolute(entry.args[0]), 'materialized bin path is absolute');
+  assert.deepEqual(entry.args.slice(-2), ['serve', '--mcp'], 'materialized args end with serve --mcp');
+
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(entry.command, entry.args, {
+      cwd: entry.cwd,
+      env: { ...process.env, ...entry.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let buf = '';
+    let stage = 0;
+    let initResult = null;
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* best effort */ }
+      reject(new Error(`handshake timed out after ${HANDSHAKE_TIMEOUT_MS}ms (stage ${stage})`));
+    }, HANDSHAKE_TIMEOUT_MS);
+    const send = (obj) => child.stdin.write(`${JSON.stringify(obj)}\n`);
+    const finish = (fn) => { clearTimeout(timer); try { child.kill('SIGKILL'); } catch { /* best effort */ } fn(); };
+
+    child.stdout.on('data', (d) => {
+      buf += d.toString();
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.id === 1 && stage === 0) {
+          stage = 1;
+          initResult = msg.result;
+          send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+          send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+        } else if (msg.id === 2) {
+          finish(() => resolve({ initResult, tools: msg.result && msg.result.tools }));
+          return;
+        }
+      }
+    });
+    child.on('error', (e) => { clearTimeout(timer); reject(e); });
+    send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'pickle-wmm', version: '0.0.0' } },
+    });
+  });
+  rmDir(sessionDir);
+  rmDir(fixtureDir);
+
+  assert.ok(result.initResult && result.initResult.serverInfo, 'initialize result has serverInfo');
+  assert.ok(Array.isArray(result.tools) && result.tools.length >= 1, 'tools/list is non-empty');
 });
 
 test('C0: committed inventory exists and its method surface matches the real class', { timeout: TEST_TIMEOUT_MS }, async (t) => {

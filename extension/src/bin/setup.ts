@@ -1431,6 +1431,40 @@ export function precleanPausedOrphansBeforeCreate(sessionsRoot: string, smInstan
   }
 }
 
+/**
+ * C7: materialize the session-merged worker MCP config (`<sessionRoot>/mcp/worker-mcp.json`)
+ * once at setup. Merges the operator's MCP server entries with an absolute-command
+ * `codegraph serve --mcp` entry (watcher OFF → C4 runtime sync is the sole DB writer).
+ * Claude-family workers only; codex workers never receive `--mcp-config`. The operator
+ * config is read-only here — only the session file is written. Best-effort: the whole
+ * body is wrapped so a malformed settings/operator config can never block session launch.
+ */
+function materializeWorkerMcpConfig(sessionRoot: string): void {
+  try {
+    const settingsBag = loadPickleSettingsBag();
+    const cgSettings = resolveCodegraphSettings(settingsBag);
+    let operatorEntries: Record<string, unknown> | null = null;
+    const operatorPath = resolveMcpConfigPath(settingsBag ?? undefined);
+    if (operatorPath) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(operatorPath, 'utf8')) as { mcpServers?: unknown };
+        if (parsed.mcpServers && typeof parsed.mcpServers === 'object' && !Array.isArray(parsed.mcpServers)) {
+          operatorEntries = parsed.mcpServers as Record<string, unknown>;
+        }
+      } catch { /* operator config unreadable/absent → codegraph-only config */ }
+    }
+    buildWorkerMcpConfig(
+      sessionRoot,
+      process.cwd(),
+      {
+        worker_mcp_config_path: settingsBag?.worker_mcp_config_path ?? null,
+        expose_mcp_to_workers: cgSettings.expose_mcp_to_workers,
+      },
+      operatorEntries,
+    );
+  } catch { /* worker MCP config is best-effort — never block launch */ }
+}
+
 async function main() {
   try {
     assertSchemaVersionDeployParity();
@@ -1478,33 +1512,9 @@ async function main() {
   } catch { /* snapshot is best-effort — never block launch */ }
 
   // C7: materialize the session-merged worker MCP config ONCE at setup, after the
-  // snapshot seam. Merges the operator's MCP server entries with an absolute-command
-  // `codegraph serve --mcp` entry (watcher OFF → C4 sync is sole writer). Claude-family
-  // workers only; codex workers never receive --mcp-config. Best-effort — never blocks
-  // launch. The materialized path is consumed at worker-spawn time via opts.mcpConfig.
-  try {
-    const settingsBag = loadPickleSettingsBag();
-    const cgSettings = resolveCodegraphSettings(settingsBag);
-    let operatorEntries: Record<string, unknown> | null = null;
-    const operatorPath = resolveMcpConfigPath(settingsBag ?? undefined);
-    if (operatorPath) {
-      try {
-        const parsed = JSON.parse(fs.readFileSync(operatorPath, 'utf8')) as { mcpServers?: unknown };
-        if (parsed.mcpServers && typeof parsed.mcpServers === 'object' && !Array.isArray(parsed.mcpServers)) {
-          operatorEntries = parsed.mcpServers as Record<string, unknown>;
-        }
-      } catch { /* operator config unreadable/absent → codegraph-only config */ }
-    }
-    buildWorkerMcpConfig(
-      session.sessionRoot,
-      process.cwd(),
-      {
-        worker_mcp_config_path: settingsBag?.worker_mcp_config_path ?? null,
-        expose_mcp_to_workers: cgSettings.expose_mcp_to_workers,
-      },
-      operatorEntries,
-    );
-  } catch { /* worker MCP config is best-effort — never block launch */ }
+  // snapshot seam. Best-effort — never blocks launch. The materialized path is
+  // consumed at worker-spawn time via opts.mcpConfig.
+  materializeWorkerMcpConfig(session.sessionRoot);
 
   try {
     updateSessionMap(paths.sessionsMap, process.cwd(), session.sessionRoot);

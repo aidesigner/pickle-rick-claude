@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { printMinimalPanel, Style, TICKET_TIER_BUDGETS, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus, loadPickleSettingsBag, resolveCodegraphSettings } from '../services/pickle-utils.js';
-import { resolveMcpConfigPath } from '../services/backend-spawn.js';
+import { resolveMcpConfigPath, buildWorkerMcpConfig } from '../services/backend-spawn.js';
 import { getHeadSha, getHeadBranch, probeConcurrentGitAccess } from '../services/git-utils.js';
 import { LockError, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
 import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive, readMappedPid } from '../services/state-manager.js';
@@ -1363,6 +1363,36 @@ export function precleanPausedOrphansBeforeCreate(sessionsRoot, smInstance) {
         catch { /* best-effort */ }
     }
 }
+/**
+ * C7: materialize the session-merged worker MCP config (`<sessionRoot>/mcp/worker-mcp.json`)
+ * once at setup. Merges the operator's MCP server entries with an absolute-command
+ * `codegraph serve --mcp` entry (watcher OFF → C4 runtime sync is the sole DB writer).
+ * Claude-family workers only; codex workers never receive `--mcp-config`. The operator
+ * config is read-only here — only the session file is written. Best-effort: the whole
+ * body is wrapped so a malformed settings/operator config can never block session launch.
+ */
+function materializeWorkerMcpConfig(sessionRoot) {
+    try {
+        const settingsBag = loadPickleSettingsBag();
+        const cgSettings = resolveCodegraphSettings(settingsBag);
+        let operatorEntries = null;
+        const operatorPath = resolveMcpConfigPath(settingsBag ?? undefined);
+        if (operatorPath) {
+            try {
+                const parsed = JSON.parse(fs.readFileSync(operatorPath, 'utf8'));
+                if (parsed.mcpServers && typeof parsed.mcpServers === 'object' && !Array.isArray(parsed.mcpServers)) {
+                    operatorEntries = parsed.mcpServers;
+                }
+            }
+            catch { /* operator config unreadable/absent → codegraph-only config */ }
+        }
+        buildWorkerMcpConfig(sessionRoot, process.cwd(), {
+            worker_mcp_config_path: settingsBag?.worker_mcp_config_path ?? null,
+            expose_mcp_to_workers: cgSettings.expose_mcp_to_workers,
+        }, operatorEntries);
+    }
+    catch { /* worker MCP config is best-effort — never block launch */ }
+}
 async function main() {
     try {
         assertSchemaVersionDeployParity();
@@ -1403,6 +1433,10 @@ async function main() {
         await runMcpSnapshot(session.sessionRoot, snapshotServers, resolveMcpConfigPath(settingsBag ?? undefined), session.state.original_prompt || '', async () => null, args.resumeMode);
     }
     catch { /* snapshot is best-effort — never block launch */ }
+    // C7: materialize the session-merged worker MCP config ONCE at setup, after the
+    // snapshot seam. Best-effort — never blocks launch. The materialized path is
+    // consumed at worker-spawn time via opts.mcpConfig.
+    materializeWorkerMcpConfig(session.sessionRoot);
     try {
         updateSessionMap(paths.sessionsMap, process.cwd(), session.sessionRoot);
     }
