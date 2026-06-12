@@ -1,4 +1,7 @@
 // @tier: expensive
+// SERIAL: the C0/C7 `serve --mcp` handshake spawns a child process and is heavier than a typical
+// expensive-tier case (60s hang-guard timeout); under expensive-tier concurrency it flakes
+// (B-V2RG P3 / E9a), so it is listed in tests/integration/.serial-tests.json to run serialized.
 //
 // C0 spike (ticket 46097c46): real-surface validation of @colbymchenry/codegraph@0.9.9.
 //
