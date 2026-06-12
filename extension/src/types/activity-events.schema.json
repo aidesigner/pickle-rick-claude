@@ -1636,6 +1636,54 @@
         "evidence": { "type": "string", "enum": ["fresh_artifacts", "ticket_commit", "both"] },
         "suppression_count": { "type": "integer", "minimum": 1 }
       }
+    },
+    "rate_limit_park_exhausted": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "rate_limit_park_exhausted" },
+        "ts": { "type": "string" }
+      }
+    },
+    "rate_limited_without_reset_at": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "rate_limited_without_reset_at" },
+        "ts": { "type": "string" }
+      }
+    },
+    "ticket_ladder_exhausted": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "ticket_ladder_exhausted" },
+        "ts": { "type": "string" }
+      }
+    },
+    "crashed_ticket_files_quarantined": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "crashed_ticket_files_quarantined" },
+        "ts": { "type": "string" }
+      }
+    },
+    "crashed_ticket_files_quarantine_truncated": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "crashed_ticket_files_quarantine_truncated" },
+        "ts": { "type": "string" }
+      }
+    },
+    "pickle_incomplete": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "pickle_incomplete" },
+        "ts": { "type": "string" }
+      }
     }
   },
   "oneOf": [
@@ -1742,6 +1790,12 @@
     { "$ref": "#/definitions/worker_silent_death" },
     { "$ref": "#/definitions/pre_reset_diff_archived" },
     { "$ref": "#/definitions/pre_reset_archive_failed" },
-    { "$ref": "#/definitions/failed_flip_suppressed" }
+    { "$ref": "#/definitions/failed_flip_suppressed" },
+    { "$ref": "#/definitions/rate_limit_park_exhausted" },
+    { "$ref": "#/definitions/rate_limited_without_reset_at" },
+    { "$ref": "#/definitions/ticket_ladder_exhausted" },
+    { "$ref": "#/definitions/crashed_ticket_files_quarantined" },
+    { "$ref": "#/definitions/crashed_ticket_files_quarantine_truncated" },
+    { "$ref": "#/definitions/pickle_incomplete" }
   ]
 }

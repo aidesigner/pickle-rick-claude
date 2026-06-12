@@ -313,6 +313,12 @@ export const VALID_ACTIVITY_EVENTS = [
     'pre_reset_diff_archived',
     'pre_reset_archive_failed',
     'failed_flip_suppressed',
+    'rate_limit_park_exhausted',
+    'rate_limited_without_reset_at',
+    'ticket_ladder_exhausted',
+    'crashed_ticket_files_quarantined',
+    'crashed_ticket_files_quarantine_truncated',
+    'pickle_incomplete',
 ];
 /** Recoverable reasons a ticket can be flipped to Failed by the auto-skip guard (R-WSWA-3). */
 export const FAILURE_REASONS = ['oversized_no_progress'];

@@ -262,6 +262,12 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'pre_reset_diff_archived',
         'pre_reset_archive_failed',
         'failed_flip_suppressed',
+        'rate_limit_park_exhausted',
+        'rate_limited_without_reset_at',
+        'ticket_ladder_exhausted',
+        'crashed_ticket_files_quarantined',
+        'crashed_ticket_files_quarantine_truncated',
+        'pickle_incomplete',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
