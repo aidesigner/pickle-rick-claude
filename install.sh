@@ -115,6 +115,40 @@ append_downgrade_audit() {
   chmod 600 "$audit_file"
 }
 
+append_bypass_active_session_audit() {
+  local session_id="$1"
+  local audit_file="$EXTENSION_ROOT/deploy-audit.log"
+  mkdir -p "$EXTENSION_ROOT"
+  if [ ! -e "$audit_file" ]; then
+    : > "$audit_file"
+    chmod 600 "$audit_file"
+  fi
+  jq -nc \
+    --arg event "INSTALL_BYPASS_ACTIVE_SESSION" \
+    --arg src_version "$SRC_V" \
+    --arg dep_version "$DEP_V" \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg operator "${USER:-${LOGNAME:-}}" \
+    --arg invocation "$INVOCATION" \
+    --arg session_id "$session_id" \
+    --arg override_active "$OVERRIDE_ACTIVE" \
+    --arg no_confirm "$NO_CONFIRM" \
+    --arg closer_context "$CLOSER_CONTEXT" \
+    '{
+      event: $event,
+      src_version: $src_version,
+      dep_version: $dep_version,
+      ts: $ts,
+      operator: $operator,
+      invocation: $invocation,
+      session_id: (if $session_id == "" then null else $session_id end),
+      override_active: ($override_active == "1"),
+      no_confirm: ($no_confirm == "1"),
+      closer_context: ($closer_context == "1")
+    }' >> "$audit_file"
+  chmod 600 "$audit_file"
+}
+
 find_active_session() {
   local data_root sessions_root state_file active session_id
   data_root="${PICKLE_DATA_ROOT:-$HOME/.local/share/pickle-rick}"
@@ -232,8 +266,8 @@ echo "🥒 Installing Pickle Rick for Claude Code..."
 # up new code; the runtime mismatch produced bizarre cross-version bugs
 # that took hours to forensic. --override-active and --closer-context
 # bypass the guard (closer-release-gate.sh sets the latter).
-if [ "$OVERRIDE_ACTIVE" -ne 1 ] && [ "$CLOSER_CONTEXT" -ne 1 ]; then
-  if active_session_id="$(find_active_session)"; then
+if active_session_id="$(find_active_session)"; then
+  if [ "$OVERRIDE_ACTIVE" -ne 1 ] && [ "$CLOSER_CONTEXT" -ne 1 ]; then
     echo "❌ REFUSE: install.sh blocked — active session $active_session_id is in flight." >&2
     echo "   Mid-bundle install replaces compiled JS while the running mux-runner" >&2
     echo "   holds old code in-memory; new spawns get new code; the version skew" >&2
@@ -243,6 +277,9 @@ if [ "$OVERRIDE_ACTIVE" -ne 1 ] && [ "$CLOSER_CONTEXT" -ne 1 ]; then
     echo "     3. Pass --override-active if you understand the consequences." >&2
     exit 2
   fi
+  # Bypass path: --override-active or --closer-context set AND a session is live.
+  # Emit the documented INSTALL_BYPASS_ACTIVE_SESSION audit event, then proceed.
+  append_bypass_active_session_audit "$active_session_id"
 fi
 
 # --- VALIDATION ---
