@@ -469,6 +469,147 @@ test('head-regression: evidence absent + dirty tree → archival runs BEFORE the
   } finally { rmSync(fix.tmp, { recursive: true, force: true }); }
 });
 
+// ─── B-RRH C3: never Failed-flip a COMMITTED ticket on signal teardown ───────
+
+/**
+ * Build a committed ticket whose window/scope arms are all SILENT, so only the
+ * C3 signal_committed arm can fire: stale artifacts, preSha == HEAD, and a
+ * present completion_commit (no real-commit resolution required for this arm).
+ */
+function makeSignalCommittedFixture(opts = {}) {
+  const fix = makeFixture({
+    ticketFrontmatter:
+      opts.ticketFrontmatter ??
+      `---\nid: ${TICKET}\nstatus: "Done"\norder: 1\ncomplexity_tier: medium\n${opts.commitField ?? 'completion_commit'}: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"\n---\n# T\n`,
+  });
+  ageArtifacts(fix.ticketDir); // artifact arm silent
+  return fix;
+}
+
+test('[head_regression] committed ticket + SIGTERM → suppress (signal_committed) — AC1', () => {
+  const fix = makeSignalCommittedFixture();
+  try {
+    // preSha == HEAD (no window commit) + stale artifacts + garbage sha (not a
+    // real commit) → artifact AND verified-sha arms are silent. ONLY the C3
+    // signal_committed arm can fire.
+    const decision = evaluateFailedFlipSuppression(
+      policyInput(fix, 'head_regression', { interruptionCause: 'signal' }),
+    );
+    assert.deepEqual(decision, { action: 'suppress', evidence: 'signal_committed', suppressionCount: 1 });
+
+    const events = eventsOf(fix.statePath, 'failed_flip_suppressed');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].evidence, 'signal_committed');
+    assert.equal(ledgerOf(fix.statePath).length, 1);
+  } finally { rmSync(fix.tmp, { recursive: true, force: true }); }
+});
+
+test('[wmw_auto_skip] committed ticket + SIGTERM → suppress (signal_committed) — AC2', () => {
+  const fix = makeSignalCommittedFixture();
+  try {
+    const decision = evaluateFailedFlipSuppression(
+      policyInput(fix, 'wmw_auto_skip', { interruptionCause: 'signal' }),
+    );
+    assert.deepEqual(decision, { action: 'suppress', evidence: 'signal_committed', suppressionCount: 1 });
+    assert.equal(eventsOf(fix.statePath, 'failed_flip_suppressed')[0].evidence, 'signal_committed');
+  } finally { rmSync(fix.tmp, { recursive: true, force: true }); }
+});
+
+test('C3: inferred completion_commit + SIGTERM also suppresses (committed = explicit OR inferred)', () => {
+  const fix = makeSignalCommittedFixture({ commitField: 'completion_commit_inferred' });
+  try {
+    const decision = evaluateFailedFlipSuppression(
+      policyInput(fix, 'wmw_auto_skip', { interruptionCause: 'signal' }),
+    );
+    assert.deepEqual(decision, { action: 'suppress', evidence: 'signal_committed', suppressionCount: 1 });
+  } finally { rmSync(fix.tmp, { recursive: true, force: true }); }
+});
+
+test('C3: future signal:SIGTERM-style cause still enables the arm', () => {
+  const fix = makeSignalCommittedFixture();
+  try {
+    const decision = evaluateFailedFlipSuppression(
+      policyInput(fix, 'head_regression', { interruptionCause: 'signal:SIGTERM' }),
+    );
+    assert.equal(decision.action, 'suppress');
+    assert.equal(decision.evidence, 'signal_committed');
+  } finally { rmSync(fix.tmp, { recursive: true, force: true }); }
+});
+
+test('C3: committed ticket WITHOUT signal cause does NOT fire signal_committed (arm is signal-gated)', () => {
+  const fix = makeSignalCommittedFixture();
+  try {
+    // No interruptionCause and no state.exit_reason: signal arm inert. Garbage
+    // sha is not verified-commit evidence, artifacts stale → no_evidence.
+    const decision = evaluateFailedFlipSuppression(
+      policyInput(fix, 'head_regression', { interruptionCause: null }),
+    );
+    assert.deepEqual(decision, { action: 'proceed', reason: 'no_evidence' });
+  } finally { rmSync(fix.tmp, { recursive: true, force: true }); }
+});
+
+test('C3: interruptionCause defaults to state.exit_reason (signal) when input absent', () => {
+  const fix = makeSignalCommittedFixture();
+  try {
+    // Stamp exit_reason: 'signal' (the signal handler's stamp) and omit the
+    // explicit input — the arm must read it from recoverable state.
+    const s = readState(fix.statePath);
+    s.exit_reason = 'signal';
+    writeFileSync(fix.statePath, JSON.stringify(s));
+    const input = policyInput(fix, 'wmw_auto_skip');
+    delete input.interruptionCause;
+    const decision = evaluateFailedFlipSuppression(input);
+    assert.deepEqual(decision, { action: 'suppress', evidence: 'signal_committed', suppressionCount: 1 });
+  } finally { rmSync(fix.tmp, { recursive: true, force: true }); }
+});
+
+test('C3: real verified-sha evidence takes precedence over signal_committed (ticket_commit label)', () => {
+  const fix = makeFixture();
+  try {
+    ageArtifacts(fix.ticketDir);
+    const sha = commitWork(fix);
+    const fm = `---\nid: ${TICKET}\nstatus: "Done"\norder: 1\ncompletion_commit: "${sha}"\n---\n# T\n`;
+    writeFileSync(path.join(fix.ticketDir, `linear_ticket_${TICKET}.md`), fm);
+    // Even with a signal cause, a verified sha resolves the descriptive label to
+    // ticket_commit (the stronger, git-resolved arm wins the OR-combine).
+    const decision = evaluateFailedFlipSuppression(
+      policyInput(fix, 'head_regression', { preSha: sha, interruptionCause: 'signal' }),
+    );
+    assert.deepEqual(decision, { action: 'suppress', evidence: 'ticket_commit', suppressionCount: 1 });
+  } finally { rmSync(fix.tmp, { recursive: true, force: true }); }
+});
+
+test('C3/git-utils invariant: genuine evidence-absent flip still clears completion_commit_inferred — AC3', () => {
+  // No signal (exit_reason absent), HEAD == startCommit, stale artifacts, and a
+  // STALE completion_commit_inferred that does NOT resolve to a real commit →
+  // evidence absent → marked_failed. The flip must clear completion_commit_inferred.
+  const fix = makeFixture({
+    ticketFrontmatter: `---\nid: ${TICKET}\nstatus: "Done"\norder: 1\ncompletion_commit_inferred: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"\n---\n# T\n`,
+  });
+  try {
+    ageArtifacts(fix.ticketDir);
+    const result = detectAndRecoverHeadRegression({
+      ticketId: TICKET,
+      workingDir: fix.workingDir,
+      startCommit: fix.baseSha, // HEAD == startCommit
+      completionCommitSha: null,
+      sessionDir: fix.sessionDir,
+      statePath: fix.statePath,
+      iteration: 4,
+      log: () => {},
+    });
+    assert.equal(result.action, 'marked_failed', 'no signal + no real commit → genuine evidence-absent flip');
+    const raw = readFileSync(path.join(fix.ticketDir, `linear_ticket_${TICKET}.md`), 'utf-8');
+    assert.match(raw, /status: "Failed"/);
+    // git-utils invariant: status:Failed + completion_commit:null clears inferred.
+    assert.doesNotMatch(
+      raw,
+      /completion_commit_inferred:\s*["']?deadbeef/,
+      'stale completion_commit_inferred must be cleared on a genuine evidence-absent flip',
+    );
+  } finally { rmSync(fix.tmp, { recursive: true, force: true }); }
+});
+
 // ─── Contract: no new state.json top-level field ─────────────────────────────
 
 test('suppression writes only recovery_attempts + activity — no new state.json top-level field', async () => {

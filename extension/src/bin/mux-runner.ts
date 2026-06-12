@@ -6376,7 +6376,7 @@ export const FAILED_FLIP_SUPPRESSED_STRATEGY = 'failed_flip_suppressed';
 const FAILED_FLIP_SKEW_MS = 2_000;
 
 export type FailedFlipCallsite = 'head_regression' | 'wmw_auto_skip' | 'worker_gate_fail';
-export type FailedFlipEvidenceKind = 'fresh_artifacts' | 'ticket_commit' | 'both';
+export type FailedFlipEvidenceKind = 'fresh_artifacts' | 'ticket_commit' | 'signal_committed' | 'both';
 
 export interface FailedFlipSuppressionInput {
   sessionDir: string;
@@ -6391,6 +6391,13 @@ export interface FailedFlipSuppressionInput {
   windowEndMs?: number | null;
   /** HEAD sha captured before the window — base of the scoped-commit probe. */
   preSha?: string | null;
+  /**
+   * B-RRH C3: interruption cause for the flip intent. A signal teardown
+   * (`/^signal/i`) over a COMMITTED ticket is evidence-present. Absent → read
+   * `state.exit_reason` (the signal handler stamps `'signal'`). Read errors fall
+   * back conservatively (arm inert; never a false-Fail).
+   */
+  interruptionCause?: string | null;
   /** Injectable for tests; defaults to `resolveHardeningSettings(loadPickleSettingsBag())`. */
   settings?: HardeningSettings | null;
   log?: (msg: string) => void;
@@ -6450,13 +6457,53 @@ function hasTicketScopedCommitEvidence(input: FailedFlipSuppressionInput): boole
   return touched.every((f) => isWithinAllowedPaths(f, allowed));
 }
 
-/** OR-combine the two evidence arms. Returns null when neither holds. */
+/**
+ * B-RRH C3 evidence arm (c): a SIGTERM-interrupted-but-COMMITTED ticket.
+ * "Committed" per the git-utils invariant #2 = a present `completion_commit`
+ * (explicit) OR `completion_commit_inferred` frontmatter field — NOT requiring
+ * git resolution, because a signal teardown can move HEAD out from under the
+ * committed work while the durable frontmatter field is the evidence. Read
+ * failure → false (the other arms still apply; never a false-Fail).
+ */
+function hasPresentCompletionCommitField(sessionDir: string, ticketId: string): boolean {
+  let raw: string;
+  try { raw = fs.readFileSync(ticketFilePath(sessionDir, ticketId), 'utf-8'); } catch { return false; }
+  for (const field of ['completion_commit', 'completion_commit_inferred'] as const) {
+    const value = (readFrontmatterField(raw, field) ?? '').trim().replace(/^['"]+|['"]+$/g, '');
+    if (value.length > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Resolve whether this flip intent is a signal teardown. Prefers the explicit
+ * `interruptionCause` input; falls back to the recoverable `state.exit_reason`
+ * (the signal handler stamps `'signal'` before deactivation). Matches `/^signal/i`
+ * so future `signal:SIGTERM`-style stamps are covered. Any error → false.
+ */
+function resolveInterruptionIsSignal(input: FailedFlipSuppressionInput): boolean {
+  let cause = typeof input.interruptionCause === 'string' ? input.interruptionCause : null;
+  if (cause === null) {
+    try {
+      const s = readRecoverableJsonObject(input.statePath) as State | null;
+      cause = typeof s?.exit_reason === 'string' ? s.exit_reason : null;
+    } catch { return false; }
+  }
+  return cause !== null && /^signal/i.test(cause.trim());
+}
+
+/** OR-combine the evidence arms. Returns null when none holds. */
 function detectFailedFlipEvidence(input: FailedFlipSuppressionInput): FailedFlipEvidenceKind | null {
   const artifacts = hasFreshTicketArtifactEvidence(input);
   const commit = hasTicketScopedCommitEvidence(input);
   if (artifacts && commit) return 'both';
   if (artifacts) return 'fresh_artifacts';
   if (commit) return 'ticket_commit';
+  // C3: a signal teardown over a committed ticket is evidence-present even when
+  // the window/scope arms stay silent (e.g. HEAD moved under the commit).
+  if (resolveInterruptionIsSignal(input) && hasPresentCompletionCommitField(input.sessionDir, input.ticketId)) {
+    return 'signal_committed';
+  }
   return null;
 }
 
