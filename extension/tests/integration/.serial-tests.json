@@ -38,6 +38,7 @@
     "tests/integration/codegraph-real-index.test.js",
     "tests/mux-runner-claude-max-turns-relaunch.test.js",
     "tests/install-script-real.test.js",
+    "tests/install-script-prefix.test.js",
     "tests/council-publish.test.js",
     "tests/mux-runner.output-stall.test.js",
     "tests/mux-silent-worker-exit.test.js",

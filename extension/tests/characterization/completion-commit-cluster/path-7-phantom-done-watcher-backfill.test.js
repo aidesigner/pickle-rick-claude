@@ -5,7 +5,9 @@
 //
 // Two sub-outcomes:
 //   backfill: completion_commit absent, git-log finds inferred SHA
-//     → writes completion_commit_inferred:<sha>, returns {changed:true, reason:'backfilled'}
+//     → D1 (84c209ae) promote-once: writes EXPLICIT completion_commit:<sha> (and deletes any
+//       inferred field), returns {changed:true, reason:'backfilled'}. The next re-scan then sees
+//       the explicit field → has_completion_commit → no re-backfill (stable count, no loop).
 //   revert: completion_commit absent, no git evidence
 //     → reverts status to priorStatus, returns {changed:true, reason:'reverted'}
 //
@@ -62,9 +64,9 @@ function writeTicket(sessionDir, ticketId, frontmatter) {
 }
 
 // ---
-// Sub-path A: backfill — git-log finds matching commit → writes completion_commit_inferred
+// Sub-path A: backfill — git-log finds matching commit → D1 promote-once writes EXPLICIT completion_commit
 // ---
-test('path-7 backfill: Done ticket + no completion_commit + matching git commit → backfilled, completion_commit_inferred written', () => {
+test('path-7 backfill: Done ticket + no completion_commit + matching git commit → backfilled, EXPLICIT completion_commit written', () => {
   const root = makeTmp();
   try {
     initGitRepo(root);
@@ -86,14 +88,17 @@ test('path-7 backfill: Done ticket + no completion_commit + matching git commit 
 
     const result = inspectPhantomDoneTicketFile(ticketPath, sessionDir, root, 'Todo');
 
-    // Characterize: backfill sub-path writes completion_commit_inferred and returns backfilled
+    // Characterize: D1 (84c209ae) promote-once — backfill writes EXPLICIT completion_commit and
+    // returns backfilled (the inferred field is NOT left behind, so re-scans don't re-fire backfill).
     assert.equal(result.changed, true, `expected changed=true, got ${result.changed}`);
     assert.equal(result.reason, 'backfilled', `expected reason=backfilled, got '${result.reason}'`);
     assert.ok(result.commit, `expected commit sha in result, got '${result.commit}'`);
 
     const content = fs.readFileSync(ticketPath, 'utf8');
-    const inferred = readFrontmatterField(content, 'completion_commit_inferred');
-    assert.ok(inferred !== null, 'completion_commit_inferred should be written to frontmatter');
+    const explicit = readFrontmatterField(content, 'completion_commit');
+    assert.ok(explicit !== null, 'EXPLICIT completion_commit should be written to frontmatter');
+    assert.equal(readFrontmatterField(content, 'completion_commit_inferred'), null,
+      'inferred field must NOT be left behind (promote-once deletes it)');
 
     // Status remains Done (backfill keeps Done)
     const status = readFrontmatterField(content, 'status');

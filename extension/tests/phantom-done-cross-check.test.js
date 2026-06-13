@@ -21,7 +21,7 @@ function initGitRepo(dir) {
   execFileSync('git', ['commit', '-m', 'initial fixture', '--no-gpg-sign'], { cwd: dir, stdio: 'ignore' });
 }
 
-test('inspectPhantomDoneTicketFile: infers completion_commit_inferred from git instead of reverting Done', () => {
+test('inspectPhantomDoneTicketFile: promotes git-inferred SHA to EXPLICIT completion_commit instead of reverting Done', () => {
   const root = makeTmpRoot();
   try {
     initGitRepo(root);
@@ -49,8 +49,13 @@ test('inspectPhantomDoneTicketFile: infers completion_commit_inferred from git i
     assert.equal(result.reason, 'backfilled');
     assert.equal(result.commit, sha);
 
+    // D1 (84c209ae) promote-once: the git-verified SHA is written as EXPLICIT
+    // completion_commit (NOT completion_commit_inferred) and the inferred field is
+    // deleted, so the next phantom-Done re-scan classifies `explicit` → keep and the
+    // backfill count stays stable instead of re-firing every pass.
     const updated = fs.readFileSync(ticketPath, 'utf8');
-    assert.match(updated, new RegExp(`completion_commit_inferred:\\s+"${sha}"`));
+    assert.match(updated, new RegExp(`completion_commit:\\s+"${sha}"`));
+    assert.doesNotMatch(updated, /completion_commit_inferred:/);
     assert.match(updated, /status: "Done"/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

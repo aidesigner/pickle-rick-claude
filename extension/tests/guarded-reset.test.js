@@ -311,7 +311,10 @@ test('adoption: spawn-morty gate-fail resetToSha passes ticket-scoped archive co
 
 test('adoption: microverse rollback resetToSha passes session-level archive context with reason microverse_rollback (source + compiled mirror)', () => {
   const { ts, js } = readSourcePair('src/bin/microverse-runner.ts', 'bin/microverse-runner.js');
-  const callShape = /_deps\.resetToSha\(ctx\.preIterSha \?\? '', ctx\.workingDir, undefined, \{[\s\S]{0,200}?sessionDir: ctx\.sessionDir,[\s\S]{0,100}?ticketDir: null,[\s\S]{0,100}?reason: 'microverse_rollback',?[\s\S]{0,50}?\}\)/;
+  // B-RRH C4 (84f79bfc): guardedMicroverseRollback hoists `const target = ctx.preIterSha ?? ''`
+  // for the is-ancestor orphan guard, then passes `target` into resetToSha. Semantically identical
+  // to the prior inline `ctx.preIterSha ?? ''`; the session-level archive context is unchanged.
+  const callShape = /_deps\.resetToSha\(target, ctx\.workingDir, undefined, \{[\s\S]{0,200}?sessionDir: ctx\.sessionDir,[\s\S]{0,100}?ticketDir: null,[\s\S]{0,100}?reason: 'microverse_rollback',?[\s\S]{0,50}?\}\)/;
   assert.match(ts, callShape, 'TS source: rollback must pass a session-level archive context');
   assert.match(js, callShape, 'compiled mirror: rollback must pass a session-level archive context');
 });
