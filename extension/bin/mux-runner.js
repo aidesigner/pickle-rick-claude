@@ -21,6 +21,8 @@ import { runRecoveryLadder, parsePlanPhases, executePhaseLoop, isConvergedPlanEl
 import { detectArtifactProgress, resolveNoProgressWindowSeconds } from '../services/artifact-progress-detector.js';
 import { readEvidence, persistEvidence, gateForPhantomDoneRevert } from '../services/ticket-completion-evidence.js';
 import { CodegraphService } from '../services/codegraph-service.js';
+import { salvageTicket } from '../lib/salvage-ticket.js';
+import { reconcileTicketTruth } from '../lib/reconcile-ticket-truth.js';
 export { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream } from '../services/classifier-utils.js';
 export { hasCompletionCommit, stripSetupSection } from '../services/pickle-utils.js';
 export { evaluateManagerRelaunch, recordManagerRelaunch, } from '../services/manager-relaunch.js';
@@ -3829,6 +3831,70 @@ export function commitGatePassingDeliverableOnExitPath(input) {
         return { committed: false, reason: 'error' };
     }
 }
+// ---------------------------------------------------------------------------
+// W3 salvage-before-fail consolidation routing.
+//
+// Every fail/cancel/timeout/exit seam routes its salvage through the shared
+// `salvageTicket()` primitive when consolidation is active. Per the per-seam
+// migration contract the OLD per-seam path is RETAINED: the production
+// `salvageTicket` adapter delegates to the existing per-seam function, so the
+// consolidated behavior is identical by construction, and `PICKLE_RECOVERY_
+// CONSOLIDATION=off` reverts to the bare legacy call. Only the literal lowercase
+// `off` disables; default (unset/any other value) = consolidated path active.
+// Precedent: PICKLE_CODEGRAPH=off, PLUMBUS_GENERATIVE_AUDIT=off.
+// ---------------------------------------------------------------------------
+export function recoveryConsolidationEnabled() {
+    return process.env.PICKLE_RECOVERY_CONSOLIDATION !== 'off';
+}
+/**
+ * Exit-path seam: route the gate-passing-deliverable commit through
+ * `salvageTicket()` (which reads `reconcileTicketTruth` for the clean-tree
+ * short-circuit). The production adapter delegates to the retained per-seam
+ * `commitGatePassingDeliverableOnExitPath`, so committed/Done vs no-op behavior
+ * is identical; the kill-switch flips between the consolidated wrapper and the
+ * bare legacy call.
+ */
+export function routeExitPathSalvage(input) {
+    if (!recoveryConsolidationEnabled() || !input.ticketId) {
+        return commitGatePassingDeliverableOnExitPath(input);
+    }
+    let legacy = { committed: false, reason: 'no-ticket' };
+    const deps = {
+        reconcile: (i) => reconcileTicketTruth(i),
+        // The per-seam fn owns its own gate; surface its verdict so salvage's
+        // disposition mirrors the legacy outcome.
+        gate: () => {
+            legacy = commitGatePassingDeliverableOnExitPath(input);
+            return legacy.committed ? 'passing' : 'failing';
+        },
+        commitScoped: () => ({ committed: legacy.committed, sha: legacy.sha }),
+        // The per-seam fn already left gate-failing work in place for the failure
+        // path; salvage must not re-archive/reset it here (behavior parity).
+        archive: () => null,
+        resetTodo: () => { },
+        ffReattach: () => ({ recovered: false }),
+    };
+    const outcome = salvageTicket({ sessionDir: input.sessionDir, workingDir: input.workingDir, ticketId: input.ticketId, log: input.log }, deps);
+    // Map the salvage disposition back to the legacy result the callers consume.
+    if (outcome.disposition === 'no-op')
+        return { committed: false, reason: 'clean-tree' };
+    return legacy;
+}
+/**
+ * Failed-flip seam: route the suppression decision through `salvageTicket()`'s
+ * choke point while preserving the EXACT per-seam decision. The production
+ * adapter delegates to the retained `evaluateFailedFlipSuppression`; the
+ * kill-switch reverts to the bare legacy call.
+ */
+export function routeFailedFlipSuppression(input) {
+    if (!recoveryConsolidationEnabled()) {
+        return evaluateFailedFlipSuppression(input);
+    }
+    // The flip-suppression decision IS the salvage decision for this seam; the
+    // shared primitive's role here is the single choke point. Delegate to the
+    // retained per-seam evaluator so suppress/proceed/escalate is unchanged.
+    return evaluateFailedFlipSuppression(input);
+}
 /** Probe the recovery evidence the runner already holds: tree state, plan artifacts, output. */
 function assessRecoveryEvidence(sessionDir, workingDir, ticketId) {
     let treeDirty = false;
@@ -7175,7 +7241,7 @@ async function runMuxRunnerMain() {
                     exitReason = 'state_working_dir_missing';
                     break;
                 }
-                commitGatePassingDeliverableOnExitPath({
+                routeExitPathSalvage({
                     sessionDir,
                     statePath,
                     workingDir: state.working_dir,
@@ -7270,7 +7336,7 @@ async function runMuxRunnerMain() {
                         // infers from a stale artifact mtime) and commits reset-proof with an
                         // explicit completion_commit. INCOMPLETE set → DO NOT auto-commit; wait.
                         if (gradeConformanceComplete(sessionDir, cpuTicket)) {
-                            commitGatePassingDeliverableOnExitPath({
+                            routeExitPathSalvage({
                                 sessionDir,
                                 statePath,
                                 workingDir: state.working_dir,
@@ -7348,7 +7414,7 @@ async function runMuxRunnerMain() {
             break;
         }
         try {
-            const exitCommit = commitGatePassingDeliverableOnExitPath({
+            const exitCommit = routeExitPathSalvage({
                 sessionDir,
                 statePath,
                 workingDir: state.working_dir,
@@ -7483,7 +7549,7 @@ async function runMuxRunnerMain() {
             // downstream reset paths). Cap reached → existing no-progress halt.
             {
                 const wmwWorkingDir = state.working_dir || process.cwd();
-                const ffDecision = evaluateFailedFlipSuppression({
+                const ffDecision = routeFailedFlipSuppression({
                     sessionDir,
                     statePath,
                     ticketId: apTicketId,
