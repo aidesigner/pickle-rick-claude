@@ -774,6 +774,10 @@ export const VALID_ACTIVITY_EVENTS = [
   'crashed_ticket_files_quarantined',
   'crashed_ticket_files_quarantine_truncated',
   'pickle_incomplete',
+  // W2.R0: the single operator recovery command (pickle-recover) emits exactly
+  // one of these per real (non-plan) invocation — records the chosen subcommand,
+  // ticket, and resulting disposition.
+  'operator_recovery_transition',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
