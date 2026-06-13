@@ -3380,7 +3380,7 @@ export function runMuxReadinessGate(input) {
     ];
     if (typeof input.skipReason === 'string' && input.skipReason.length > 0) {
         args.push('--skip-readiness', input.skipReason);
-        input.log(`readiness gate skipped via state.flags.skip_readiness_reason: ${input.skipReason}`);
+        input.log(`readiness gate skipped via state.flags.skip_quality_gates_reason: ${input.skipReason}`);
     }
     const result = spawnSync(process.execPath, args, {
         cwd: input.repoRoot,
@@ -3442,7 +3442,7 @@ export function _resetQualityGateSkipDeprecation() {
  */
 export function runTicketAuditGate(input) {
     if (typeof input.skipReason === 'string' && input.skipReason.length > 0) {
-        input.log(`ticket audit gate bypassed via state.flags.skip_ticket_audit_reason: ${input.skipReason}`);
+        input.log(`ticket audit gate bypassed via state.flags.skip_quality_gates_reason: ${input.skipReason}`);
         return { status: 'bypassed', reason: input.skipReason };
     }
     const localBinPath = path.join(input.extensionRoot, 'extension', 'bin', 'audit-ticket-bundle.js');
@@ -7163,8 +7163,15 @@ async function runMuxRunnerMain() {
             exitReason = 'all_tickets_terminal';
             break;
         }
-        // R-BUNDLE-1: bundle bootstrap mode — auto-apply both skip reasons for allowlisted sessions.
-        // Updates local state.flags so the two gate checks below read the derived skip reasons.
+        // R-BUNDLE-1 / W1a: bundle bootstrap mode — auto-apply the quality-gate skip
+        // exemption for allowlisted sessions. Updates local state.flags so the
+        // readiness + ticket-audit gate checks below read the derived skip reason.
+        // W1a: the consolidated path writes ONLY the unified `skip_quality_gates_reason`
+        // (the single operator-facing quality-gate bypass surface). Conflict-resolution
+        // rule: an existing non-empty `skip_quality_gates_reason` WINS over the derived
+        // reason (operator intent preserved). `PICKLE_RECOVERY_CONSOLIDATION=off` reverts
+        // to the legacy per-gate dual-write (`skip_readiness_reason` +
+        // `skip_ticket_audit_reason`), retained until the consolidation is green.
         if (!bundleBootstrapApplied && curIter === 0) {
             bundleBootstrapApplied = true;
             const bootstrapMode = typeof state.flags?.bundle_bootstrap_mode === 'string'
@@ -7173,24 +7180,43 @@ async function runMuxRunnerMain() {
             if (bootstrapMode !== null && BUNDLE_BOOTSTRAP_ALLOWLIST[bootstrapMode]?.has(path.basename(sessionDir))) {
                 const derivedReason = `bundle_bootstrap_mode=${bootstrapMode}`;
                 const existingFlags = state.flags ?? {};
-                const skipReadinessReason = typeof existingFlags.skip_readiness_reason === 'string' && existingFlags.skip_readiness_reason.length > 0
-                    ? existingFlags.skip_readiness_reason
-                    : derivedReason;
-                const skipTicketAuditReason = typeof existingFlags.skip_ticket_audit_reason === 'string' && existingFlags.skip_ticket_audit_reason.length > 0
-                    ? existingFlags.skip_ticket_audit_reason
-                    : derivedReason;
-                state = { ...state, flags: { ...existingFlags, skip_readiness_reason: skipReadinessReason, skip_ticket_audit_reason: skipTicketAuditReason } };
-                logActivity({
-                    event: 'bundle_bootstrap_exemption_applied',
-                    source: 'pickle',
-                    session: path.basename(sessionDir),
-                    gate_payload: {
-                        bundle_id: bootstrapMode,
-                        skip_readiness_reason: skipReadinessReason,
-                        skip_ticket_audit_reason: skipTicketAuditReason,
-                    },
-                });
-                log(`bundle bootstrap mode applied: ${bootstrapMode} — both gates auto-skipped for session ${path.basename(sessionDir)}`);
+                if (recoveryConsolidationEnabled()) {
+                    const existingUnified = typeof existingFlags.skip_quality_gates_reason === 'string'
+                        ? existingFlags.skip_quality_gates_reason.trim()
+                        : '';
+                    const skipQualityGatesReason = existingUnified.length > 0 ? existingUnified : derivedReason;
+                    state = { ...state, flags: { ...existingFlags, skip_quality_gates_reason: skipQualityGatesReason } };
+                    logActivity({
+                        event: 'bundle_bootstrap_exemption_applied',
+                        source: 'pickle',
+                        session: path.basename(sessionDir),
+                        gate_payload: {
+                            bundle_id: bootstrapMode,
+                            skip_quality_gates_reason: skipQualityGatesReason,
+                        },
+                    });
+                    log(`bundle bootstrap mode applied: ${bootstrapMode} — quality gates auto-skipped via skip_quality_gates_reason for session ${path.basename(sessionDir)}`);
+                }
+                else {
+                    const skipReadinessReason = typeof existingFlags.skip_readiness_reason === 'string' && existingFlags.skip_readiness_reason.length > 0
+                        ? existingFlags.skip_readiness_reason
+                        : derivedReason;
+                    const skipTicketAuditReason = typeof existingFlags.skip_ticket_audit_reason === 'string' && existingFlags.skip_ticket_audit_reason.length > 0
+                        ? existingFlags.skip_ticket_audit_reason
+                        : derivedReason;
+                    state = { ...state, flags: { ...existingFlags, skip_readiness_reason: skipReadinessReason, skip_ticket_audit_reason: skipTicketAuditReason } };
+                    logActivity({
+                        event: 'bundle_bootstrap_exemption_applied',
+                        source: 'pickle',
+                        session: path.basename(sessionDir),
+                        gate_payload: {
+                            bundle_id: bootstrapMode,
+                            skip_readiness_reason: skipReadinessReason,
+                            skip_ticket_audit_reason: skipTicketAuditReason,
+                        },
+                    });
+                    log(`bundle bootstrap mode applied: ${bootstrapMode} — both gates auto-skipped for session ${path.basename(sessionDir)}`);
+                }
             }
         }
         if (!readinessGateChecked && curIter === 0) {
@@ -7205,7 +7231,7 @@ async function runMuxRunnerMain() {
             });
             if (readinessStatus !== 0) {
                 log(`READINESS HALT: check-readiness exited ${readinessStatus}; no manager spawn attempted`);
-                process.stderr.write(`[mux-runner] readiness failed (exit ${readinessStatus}): fix the readiness findings or, to bypass with audit trail, set state.flags.skip_readiness_reason in state.json before relaunching\n`);
+                process.stderr.write(`[mux-runner] readiness failed (exit ${readinessStatus}): fix the readiness findings or, to bypass with audit trail, set state.flags.skip_quality_gates_reason in state.json before relaunching\n`);
                 recordExitReason(statePath, 'readiness_halt');
                 safeDeactivate(statePath);
                 exitReason = 'error';
@@ -7233,7 +7259,7 @@ async function runMuxRunnerMain() {
             }
             else if (auditResult.status === 'failed') {
                 log(`TICKET AUDIT HALT: audit-ticket-bundle exited ${auditResult.exitCode}; defects found — no manager spawn attempted`);
-                process.stderr.write(`[mux-runner] ticket audit failed (exit ${auditResult.exitCode}): defects must be resolved before the pipeline can proceed or, to bypass with audit trail, set state.flags.skip_ticket_audit_reason in state.json before relaunching\n`);
+                process.stderr.write(`[mux-runner] ticket audit failed (exit ${auditResult.exitCode}): defects must be resolved before the pipeline can proceed or, to bypass with audit trail, set state.flags.skip_quality_gates_reason in state.json before relaunching\n`);
                 logActivity({
                     event: 'ticket_audit_failed',
                     source: 'pickle',

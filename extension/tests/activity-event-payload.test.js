@@ -259,7 +259,7 @@ const EVENT_CASES = [
     valid: {
       event: 'bundle_bootstrap_exemption_applied',
       ts: TS,
-      gate_payload: { skip_readiness_reason: 'bootstrap', skip_ticket_audit_reason: 'bootstrap' },
+      gate_payload: { bundle_id: '2026-05-08-mega', skip_quality_gates_reason: 'bundle_bootstrap_mode=2026-05-08-mega' },
     },
     drop: 'gate_payload',
   },

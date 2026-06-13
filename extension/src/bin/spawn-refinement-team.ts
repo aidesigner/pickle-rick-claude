@@ -20,6 +20,7 @@ import { buildWorkerInvocation, isBackend, SpawnInvocation } from '../services/b
 import { Backend, PromiseTokens, hasToken, Defaults, VALID_ACTIVITY_EVENTS, PipelineRunnerExitCode } from '../types/index.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { runAcPhaseGate } from '../services/ac-phase-gate.js';
+import { recoveryConsolidationEnabled } from './mux-runner.js';
 
 // PRD refinement is planning, not implementation. Codex is reserved for
 // implementation loops only — if the parent session opted into codex, we
@@ -1579,25 +1580,60 @@ export function evaluateAcShapeAdvisory(manifest: Pick<RefinementManifest, 'prd_
   return manifest.prd_advisory_shape_concerns ?? [];
 }
 
+/**
+ * Reads the unified `state.flags.skip_quality_gates_reason` from the session
+ * state.json (best-effort). W1a: the AC-shape gate is folded into the single
+ * quality-gate bypass surface, so a session carrying the unified flag bypasses
+ * the AC-shape gate just as it bypasses the readiness/ticket-audit gates. The
+ * explicit `--skip-ac-shape-gate <reason>` CLI flag takes precedence over this.
+ * Behind `PICKLE_RECOVERY_CONSOLIDATION=off` the fold-in is inert (CLI flag only).
+ */
+function readUnifiedQualityGateSkipReason(sessionDir?: string): string | undefined {
+  if (!recoveryConsolidationEnabled() || !sessionDir) return undefined;
+  try {
+    const statePath = path.join(sessionDir, 'state.json');
+    const state = readRecoverableJsonObject(statePath) as { flags?: Record<string, unknown> } | null;
+    const raw = state?.flags?.skip_quality_gates_reason;
+    if (typeof raw === 'string' && raw.trim().length > 0) return raw.trim();
+  } catch (err) {
+    // Fail closed: a state-read failure leaves the gate ARMED (runs normally).
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[pickle-rick] ac-shape gate: could not read skip_quality_gates_reason (${msg}); gate stays armed\n`);
+  }
+  return undefined;
+}
+
+/**
+ * Resolves the AC-shape bypass surface and, on a hit, emits the
+ * `ac_shape_gate_bypassed` telemetry. Conflict-resolution rule: an explicit
+ * `--skip-ac-shape-gate <reason>` CLI override wins over the persisted unified
+ * `state.flags.skip_quality_gates_reason` (W1a fold-in). Returns true when the
+ * gate is bypassed.
+ */
+function maybeBypassAcShapeGate(opts?: { sessionDir?: string; skipAcShapeGate?: string }): boolean {
+  const bypassReason = opts?.skipAcShapeGate ?? readUnifiedQualityGateSkipReason(opts?.sessionDir);
+  if (bypassReason === undefined) return false;
+  const surface = opts?.skipAcShapeGate === undefined
+    ? 'state.flags.skip_quality_gates_reason'
+    : '--skip-ac-shape-gate';
+  process.stderr.write(`[pickle-rick] ac-shape gate bypassed via ${surface}: ${bypassReason}\n`);
+  if (opts?.sessionDir) {
+    try {
+      writeActivityEntry(path.join(opts.sessionDir, 'state.json'), {
+        event: 'ac_shape_gate_bypassed',
+        ts: new Date().toISOString(),
+        gate_payload: { reason: bypassReason },
+      });
+    } catch { /* best-effort telemetry */ }
+  }
+  return true;
+}
+
 export function runAcShapeEnforcement(
   manifest: RefinementManifest,
   opts?: { sessionDir?: string; skipAcShapeGate?: string },
 ): number {
-  if (opts?.skipAcShapeGate !== undefined) {
-    const reason = opts.skipAcShapeGate;
-    process.stderr.write(`[pickle-rick] ac-shape gate bypassed: ${reason}\n`);
-    const statePath = opts.sessionDir ? path.join(opts.sessionDir, 'state.json') : undefined;
-    if (statePath) {
-      try {
-        writeActivityEntry(statePath, {
-          event: 'ac_shape_gate_bypassed',
-          ts: new Date().toISOString(),
-          gate_payload: { reason },
-        });
-      } catch { /* best-effort telemetry */ }
-    }
-    return 0;
-  }
+  if (maybeBypassAcShapeGate(opts)) return 0;
 
   const advisoryWarnings = evaluateAcShapeAdvisory(manifest);
   for (const warning of advisoryWarnings) {

@@ -221,10 +221,12 @@
       "properties": {
         "event": { "type": "string", "const": "bundle_bootstrap_exemption_applied" },
         "ts": { "type": "string" },
+        "session": { "type": "string" },
         "gate_payload": {
           "type": "object",
-          "required": ["skip_readiness_reason", "skip_ticket_audit_reason"],
           "properties": {
+            "bundle_id": { "type": "string" },
+            "skip_quality_gates_reason": { "type": "string" },
             "skip_readiness_reason": { "type": "string" },
             "skip_ticket_audit_reason": { "type": "string" }
           }

@@ -82,7 +82,22 @@ When a PRD or ticket needs to bypass the readiness gate and/or the ticket-audit 
 state.flags.skip_quality_gates_reason: "<non-empty reason string>"
 ```
 
-A non-empty trimmed string in `skip_quality_gates_reason` bypasses **both** the readiness gate (R-QGSK-1) and the ticket-audit gate (R-TAQ-3) with a single flag. The reason is recorded as an audit-trail activity event.
+A non-empty trimmed string in `skip_quality_gates_reason` is the **single operator-facing quality-gate bypass surface** (W1a). It bypasses every quality gate with one flag:
+
+- the readiness gate (R-QGSK-1),
+- the ticket-audit gate (R-TAQ-3),
+- the bundle-bootstrap exemption (R-BUNDLE-1 — allowlisted sessions write this flag, not the legacy per-gate reasons), and
+- the refinement **AC-shape gate** (`spawn-refinement-team.ts`) — the `--skip-ac-shape-gate "<reason>"` CLI flag folds into the same surface.
+
+The reason is recorded as an audit-trail activity event.
+
+### Conflict-resolution rule (unified wins)
+
+When BOTH the unified flag and a legacy/CLI per-gate flag are present, the **unified `skip_quality_gates_reason` wins**:
+
+- **Read time** — `mux-runner.ts:resolveQualityGateSkipReason` reads the unified flag first; a per-callsite legacy field is consulted **only** when the unified flag is empty.
+- **Migration** — `state-manager.ts:migrateLegacySkipQualityGatesFlags` is one-way: when the unified flag is already set it **drops** both legacy fields; when it is empty it **promotes** the first non-empty legacy reason (readiness over ticket-audit) into the unified flag and drops both legacy fields.
+- **AC-shape gate** — an explicit `--skip-ac-shape-gate "<reason>"` CLI override wins over the persisted unified flag; otherwise the unified flag bypasses the gate.
 
 ### Legacy flags (deprecated — do not use in new tickets)
 
@@ -93,8 +108,17 @@ A non-empty trimmed string in `skip_quality_gates_reason` bypasses **both** the 
 
 Both legacy flags still work at runtime: `mux-runner.ts` reads them as a fallback (R-QGSK-2) with a deprecation warning, and `state-manager.ts` auto-migrates them into `skip_quality_gates_reason` on the first state read (R-QGSK-3). New PRDs and tickets **MUST** cite `skip_quality_gates_reason`; legacy fields will be removed in a future schema version.
 
+### NOT a quality-gate flag (scoped out)
+
+`state.flags.skip_smoke_gate_reason` (R-CNAR-6) bypasses the **spark-codex backend health gate**, not a quality gate. It is a **distinct** flag and is intentionally NOT collapsed into `skip_quality_gates_reason`.
+
+### Kill-switch
+
+`PICKLE_RECOVERY_CONSOLIDATION=off` reverts the bundle-bootstrap exemption to the legacy per-gate dual-write and disables the AC-shape unified-flag fold-in (CLI flag only). Default (unset / any other value) keeps the single-surface behavior active.
+
 ### Source of truth
 
 - Runtime call site: `mux-runner.ts:resolveQualityGateSkipReason` — reads unified flag first, falls back to per-callsite legacy field with `skip_flag_legacy_used` activity event.
 - Migration: `state-manager.ts:migrateLegacySkipQualityGatesFlags` — one-way promotion on every `StateManager.read()`.
-- Tests: `extension/tests/state-manager-skip-flags-migration.test.js` (AC-4 a..e).
+- AC-shape fold-in: `spawn-refinement-team.ts:runAcShapeEnforcement` — honors the CLI flag then the unified state flag.
+- Tests: `extension/tests/state-manager-skip-flags-migration.test.js` (AC-4 a..e), `extension/tests/one-skip-surface.test.js` (W1a single-surface invariants).
