@@ -122,7 +122,10 @@ test('processRateLimitCycle: rate-limit exhausted returns break', async () => {
   }
 });
 
-test('processRateLimitCycle: pre-wait time limit returns limit break', async () => {
+test('processRateLimitCycle: max_time_minutes already exceeded at entry still parks (B3) — not its concern', async () => {
+  // e9bdac75 B3: time-limit enforcement is the main loop's job, not the rate-limit cycle's.
+  // Even with the wall-clock budget already blown at entry, the park proceeds and resumes
+  // (continue) rather than short-circuiting with a 'limit' break.
   const session = tmpSession();
   try {
     const state = baseState({ max_time_minutes: 1 });
@@ -130,10 +133,12 @@ test('processRateLimitCycle: pre-wait time limit returns limit break', async () 
     const { context, setNow } = ctx(session, {
       exitResult: { type: 'api_limit', rateLimitInfo: { resetsAt: 1714083600 } },
       rateLimitWaitMinutes: 1,
+      parkJitterMs: 0,
+      sleep: async () => setNow(1714083601 * 1000),
     });
     setNow((1714080000 + 61) * 1000);
     const action = await withFrozenDate(1714080000 * 1000, () => processRateLimitCycle(state, context));
-    assert.deepEqual({ kind: action.kind, reason: action.reason }, { kind: 'break', reason: 'limit' });
+    assert.equal(action.kind, 'continue');
   } finally {
     fs.rmSync(session.dir, { recursive: true, force: true });
   }
@@ -159,17 +164,26 @@ test('processRateLimitCycle: cancelled during wait returns cancelled break', asy
   }
 });
 
-test('processRateLimitCycle: time limit during wait returns limit break', async () => {
+test('processRateLimitCycle: parked wall is EXCLUDED from max_time_minutes (B3) — no limit break', async () => {
+  // e9bdac75 B3: a rate-limit park advances start_time_epoch by the parked duration so
+  // the wait is excluded from the max_time_minutes budget. A sub-budget max_time_minutes
+  // therefore must NOT trip a 'limit' break mid-park; the cycle resumes (continue).
   const session = tmpSession();
   try {
     const state = baseState({ max_time_minutes: 1 });
     writeState(session, state);
     const { context, setNow } = ctx(session, {
       exitResult: { type: 'api_limit', rateLimitInfo: { resetsAt: 1714083600 } },
-      sleep: async () => setNow((1714080000 + 61) * 1000),
+      parkJitterMs: 0,
+      // Jump the clock just past the (jitter-free) resume target so the park wait
+      // completes in a single poll — deterministic, no real sleep.
+      sleep: async () => setNow(1714083601 * 1000),
     });
     const action = await withFrozenDate(1714080000 * 1000, () => processRateLimitCycle(state, context));
-    assert.deepEqual({ kind: action.kind, reason: action.reason }, { kind: 'break', reason: 'limit' });
+    assert.equal(action.kind, 'continue');
+    const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+    assert.ok(persisted.start_time_epoch > 1714080000, 'start_time_epoch advanced past parked wall');
+    assert.equal(persisted.rate_limit_park, null);
   } finally {
     fs.rmSync(session.dir, { recursive: true, force: true });
   }
