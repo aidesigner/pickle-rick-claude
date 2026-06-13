@@ -32,9 +32,14 @@ function autoSkipBlock() {
 
 test('AC-R-WMNP-4: ladder is invoked BEFORE the bare Failed flip', () => {
   const block = autoSkipBlock();
-  const recoveryIdx = block.indexOf('attemptRecoveryBeforeTerminal(');
+  // W4a routed every halt seam through the single choke point
+  // `routeRecoveryBeforeTerminal`, which wraps `attemptRecoveryBeforeTerminal`
+  // (the sole `runRecoveryLadder` decision site). The wmw-auto-skip seam now
+  // reaches the ladder through the choke point, not by calling the inner
+  // helper directly — see halt-or-recover-choke-point.test.js for the invariant.
+  const recoveryIdx = block.indexOf('routeRecoveryBeforeTerminal(');
   const flipIdx = block.indexOf("status: 'Failed'");
-  assert.ok(recoveryIdx >= 0, 'wmw-auto-skip calls attemptRecoveryBeforeTerminal (shared ladder seam)');
+  assert.ok(recoveryIdx >= 0, 'wmw-auto-skip routes through routeRecoveryBeforeTerminal (shared ladder choke point)');
   assert.ok(flipIdx >= 0, 'wmw-auto-skip still has the terminal Failed flip');
   assert.ok(recoveryIdx < flipIdx, 'the ladder runs BEFORE the terminal Failed flip, not after');
 });
