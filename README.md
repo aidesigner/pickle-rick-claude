@@ -167,6 +167,8 @@ The auto-refine trigger fires on `refine-prd` / `prd refinement`, on `refine`/`r
 
 **Mid-flight scope recovery (`lock-scope.js`)** — if a pipeline launched without `--scope`, use `lock-scope.js` to patch all three session files atomically without restarting: `node ~/.claude/pickle-rick/extension/bin/lock-scope.js <session-root> --mode branch [--scope-base main]`. Refuses to run while `pipeline-runner.js` is alive. Collapses the 6-step manual state patch to one command. See `PRD_GUIDE.md § Pipeline Scope — Mid-Flight Recovery` for full usage.
 
+**Session recovery (`/pickle-recover`)** — when a session halts in `recovery_exhausted`, the `/pickle-recover` command (wrapping `pickle-recover.js`) performs exactly one hook-safe recovery transition via a shared primitive — never inline git, never a raw `state.json` write. Four subcommands: `--resume-from-todo` (re-queue the lowest runnable Todo, reattaching any orphaned commit first), `--salvage <ticket>` (commit+Done / archive+Todo / ff-reattach / no-op by tree+gate), `--reattach-orphan` (ff-only HEAD-regression recovery), and `--reset-ticket <id>` (archive the diff, then re-queue to Todo). Append `--plan` to any of them for a write-free dry-run that previews the transition. Each real run emits one `operator_recovery_transition` activity event.
+
 **Citadel** — audits the implemented branch against the PRD before deeper review phases. It reads PRD acceptance criteria, interface contracts, changed files, trap-door notes, and sibling phase artifacts when present. Findings are grouped by audit surface: PRD coverage, endpoint contract drift, trap-door enforcement, sibling route divergence, state-machine drift, frontend prop drift, cross-phase findings, pattern conformance, and diff hygiene.
 
 ```bash
