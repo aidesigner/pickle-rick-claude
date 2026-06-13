@@ -4201,11 +4201,15 @@ function exitForCloserTerminalState(
 // R-ORSR-2 — RecoveryController runtime adapters
 //
 // The controller (services/recovery-controller.ts) is dependency-injected; these
-// adapters bind its callbacks to the real runtime. `attemptRecoveryBeforeTerminal`
-// is wired at THREE terminal authorities — (1) closer_handoff_terminal,
-// (2) codex manager-no-progress, and (3) wmw-auto-skip (oversized_no_progress) —
-// so a stalled iteration runs the recovery ladder before parking. (Keep this
-// count in sync with the three call sites; see mux-runner-fix-b.test.js L6.)
+// adapters bind its callbacks to the real runtime. Every no-progress / handoff /
+// self-terminate seam routes its decision through the W4a choke point
+// `routeRecoveryBeforeTerminal` (gated by PICKLE_RECOVERY_CONSOLIDATION): the original
+// THREE terminal authorities — (1) closer_handoff_terminal, (2) codex
+// manager-no-progress, (3) wmw-auto-skip (oversized_no_progress) — plus the W4a
+// additions (4) timeout_repeat and (5) idle_stall_unrecoverable. The DECISION (the
+// `runRecoveryLadder` invocation) lives ONLY in `attemptRecoveryBeforeTerminal`; new
+// halt sites MUST route through `routeRecoveryBeforeTerminal`, never park directly.
+// (See mux-runner-fix-b.test.js L6 + halt-or-recover-choke-point.test.js.)
 // `commitAndContinueDoneFlip` is the 7th `guardCompletionCommitBeforeDone`
 // + `clearStaleDoneWithoutCommitEvidence` pair (R-PEDC parity 6→7).
 // ---------------------------------------------------------------------------
@@ -4512,6 +4516,10 @@ export function routeFailedFlipSuppression(
   // The flip-suppression decision IS the salvage decision for this seam; the
   // shared primitive's role here is the single choke point. Delegate to the
   // retained per-seam evaluator so suppress/proceed/escalate is unchanged.
+  // W4a: surface the backend/mode discriminant for attribution (no behavior change).
+  if ((input.backend || input.mode) && input.log) {
+    input.log(`[failed-flip] choke-point routed ${input.ticketId} at ${input.callsite} [backend=${input.backend ?? 'claude'};mode=${input.mode ?? 'worker'}]`);
+  }
   return evaluateFailedFlipSuppression(input);
 }
 
@@ -4582,6 +4590,10 @@ function spawnRecoveryRemediator(
   }
 }
 
+/** W4a discriminant: which backend authority + lifecycle mode reached the choke point. */
+export type RecoveryBackend = 'claude' | 'codex';
+export type RecoveryMode = 'worker' | 'manager';
+
 export interface AttemptRecoveryBeforeTerminalInput {
   sessionDir: string;
   statePath: string;
@@ -4591,6 +4603,29 @@ export interface AttemptRecoveryBeforeTerminalInput {
   iteration: number;
   flags: Record<string, unknown> | null;
   log: (msg: string) => void;
+  /**
+   * W4a discriminant. Optional/additive so the pre-W4a callers compile unchanged.
+   * `backend` defaults to `state.backend` then `claude`; `mode` defaults to `worker`.
+   * `evidence` is the seam's no-progress / handoff context, recorded into the ladder
+   * attempt ledger reason for observability (no schema change).
+   */
+  backend?: RecoveryBackend;
+  mode?: RecoveryMode;
+  evidence?: Record<string, unknown>;
+}
+
+/** Resolve the W4a discriminant, defaulting backend from persisted state when absent. */
+function resolveRecoveryDiscriminant(
+  input: AttemptRecoveryBeforeTerminalInput,
+): { backend: RecoveryBackend; mode: RecoveryMode } {
+  let backend = input.backend ?? null;
+  if (!backend) {
+    try {
+      const s = readRecoverableJsonObject(input.statePath) as State | null;
+      backend = s?.backend === 'codex' ? 'codex' : s?.backend === 'claude' ? 'claude' : null;
+    } catch { /* best-effort — fall through to claude */ }
+  }
+  return { backend: backend ?? 'claude', mode: input.mode ?? 'worker' };
 }
 
 /** R-ORSR-3 per-Phase verify-command budget (ms). Finite per subsystem invariant #3. */
@@ -4666,6 +4701,9 @@ function executeConvergedPlanAdapter(input: {
  */
 export function attemptRecoveryBeforeTerminal(input: AttemptRecoveryBeforeTerminalInput): RecoveryOutcome {
   const extensionDir = path.join(input.workingDir, 'extension');
+  const discriminant = resolveRecoveryDiscriminant(input);
+  const haltSite = typeof input.evidence?.halt_site === 'string' ? `;halt_site=${input.evidence.halt_site}` : '';
+  const discriminantTag = `[backend=${discriminant.backend};mode=${discriminant.mode}${haltSite}]`;
   let lastGateFailures: BetweenTicketGateFailure[] = [];
   const deps: RecoveryDeps = {
     iteration: input.iteration,
@@ -4696,13 +4734,33 @@ export function attemptRecoveryBeforeTerminal(input: AttemptRecoveryBeforeTermin
       try {
         sm.update(input.statePath, s => {
           if (!Array.isArray(s.recovery_attempts)) s.recovery_attempts = [];
-          s.recovery_attempts.push(attempt);
+          // W4a: annotate the ledger reason with the backend/mode discriminant so
+          // every recovery attempt is attributable to the seam authority that hit
+          // the choke point, without a state-schema change.
+          s.recovery_attempts.push({ ...attempt, reason: `${attempt.reason} ${discriminantTag}` });
         });
       } catch { /* best-effort ledger append */ }
     },
     log: input.log,
   };
   return runRecoveryLadder(deps);
+}
+
+/**
+ * W4a single choke point. Every no-progress / handoff / self-terminate seam routes
+ * its recovery decision through THIS function (claude + codex, worker + manager). When
+ * consolidation is active it runs the ladder via `attemptRecoveryBeforeTerminal`; the
+ * `PICKLE_RECOVERY_CONSOLIDATION=off` kill-switch short-circuits to
+ * `{ kind:'fall_through', reason:'consolidation_off' }` so the caller reverts to its
+ * retained per-seam bare halt (per-seam migration parity). The DECISION (the ladder
+ * invocation) lives only here and in `attemptRecoveryBeforeTerminal`; new halt sites
+ * MUST route through this wrapper rather than emit a terminal disposition directly.
+ */
+export function routeRecoveryBeforeTerminal(input: AttemptRecoveryBeforeTerminalInput): RecoveryOutcome {
+  if (!recoveryConsolidationEnabled()) {
+    return { kind: 'fall_through', reason: 'consolidation_off' };
+  }
+  return attemptRecoveryBeforeTerminal(input);
 }
 
 /** Disposition returned by `haltOrRecoverCodexNoProgress` for the 4 codex no-progress halt sites. */
@@ -4740,7 +4798,7 @@ function haltOrRecoverCodexNoProgress(input: HaltOrRecoverCodexNoProgressInput):
     }
   } catch { /* best-effort — fall through to halt if state is unreadable */ }
   if (!ticketId) return { kind: 'halt' };
-  const recovery = attemptRecoveryBeforeTerminal({
+  const recovery = routeRecoveryBeforeTerminal({
     sessionDir: input.sessionDir,
     statePath: input.statePath,
     extensionRoot: input.extensionRoot,
@@ -4749,6 +4807,8 @@ function haltOrRecoverCodexNoProgress(input: HaltOrRecoverCodexNoProgressInput):
     iteration: input.iteration,
     flags,
     log: input.log,
+    backend: 'codex',
+    mode: 'manager',
   });
   if (recovery.kind === 'advanced') {
     input.log(`recovery: ${recovery.strategy} advanced ${ticketId} before codex_manager_no_progress — relaunching.`);
@@ -5575,6 +5635,33 @@ function processTimeoutOutcome(state: State, outcome: IterationOutcome, ctx: Loo
     });
   }
   if (!counterNext.halt) return { kind: 'noop', timeoutCount: counterNext.count, lastTimeoutTicket: counterNext.ticket };
+  // W4a: route the timeout-repeat halt through the single choke point BEFORE parking.
+  // A near-green diff recovered by the ladder continues the loop (counter reset); the
+  // bare `executeTimeoutHalt` park survives only on fall_through / exhausted, and the
+  // PICKLE_RECOVERY_CONSOLIDATION=off kill-switch reverts to the legacy halt directly.
+  // AC-2 fail-safe: the git-mutating recovery call MUST have an explicit working_dir
+  // (never process.cwd() / the real repo); when absent, park without recovering.
+  const timeoutWorkingDir = (() => {
+    try { return ctxReadState(ctx).working_dir || null; } catch { return null; }
+  })();
+  if (ticketForTimeout && timeoutWorkingDir) {
+    const recovery = routeRecoveryBeforeTerminal({
+      sessionDir: ctx.sessionDir,
+      statePath: ctx.statePath,
+      extensionRoot: ctx.extensionRoot,
+      workingDir: timeoutWorkingDir,
+      ticketId: ticketForTimeout,
+      iteration: ctx.iteration,
+      flags: (state.flags as Record<string, unknown> | undefined) ?? null,
+      log: ctx.log,
+      mode: 'worker',
+      evidence: { halt_site: 'timeout_repeat', timeout_count: counterNext.count },
+    });
+    if (recovery.kind === 'advanced') {
+      ctx.log(`recovery: ${recovery.strategy} advanced ${ticketForTimeout} before timeout_repeat halt — continuing.`);
+      return { kind: 'continue', resetStall: true, timeoutCount: 0, lastTimeoutTicket: null };
+    }
+  }
   ctx.log(`Timeout halt: ticket ${ticketForTimeout} timed out ${counterNext.count} consecutive iterations`);
   executeTimeoutHalt({ statePath: ctx.statePath, sessionDir: ctx.sessionDir, ticketNow: ticketForTimeout, timeoutCount: counterNext.count });
   // Preserves the legacy source-order invariant: exitReason = 'timeout_repeat' before break.
@@ -6821,6 +6908,9 @@ export interface FailedFlipSuppressionInput {
   /** Injectable for tests; defaults to `resolveHardeningSettings(loadPickleSettingsBag())`. */
   settings?: HardeningSettings | null;
   log?: (msg: string) => void;
+  /** W4a discriminant (observability only — the suppression decision is unchanged). */
+  backend?: RecoveryBackend;
+  mode?: RecoveryMode;
 }
 
 export type FailedFlipSuppressionDecision =
@@ -7767,7 +7857,7 @@ async function runMuxRunnerMain() {
             exitReason = 'state_working_dir_missing';
             break;
           }
-          const recovery = attemptRecoveryBeforeTerminal({
+          const recovery = routeRecoveryBeforeTerminal({
             sessionDir,
             statePath,
             extensionRoot,
@@ -7776,6 +7866,7 @@ async function runMuxRunnerMain() {
             iteration,
             flags: (state.flags as Record<string, unknown> | undefined) ?? null,
             log,
+            mode: 'manager',
           });
           if (recovery.kind === 'advanced') {
             log(`recovery: ${recovery.strategy} advanced ${state.current_ticket} before closer_handoff_terminal — continuing.`);
@@ -8110,6 +8201,33 @@ async function runMuxRunnerMain() {
         // and escalates once it exceeds the cap rather than spinning forever.
         idleStallRecoveryCount += 1;
         if (evaluateIdleStallRecoveryCap(idleStallRecoveryCount, idleStallRecoveryCap)) {
+          // W4a: route the idle-stall escalation through the single choke point before
+          // the terminal `idle_stall_unrecoverable` park. A ladder-advanced ticket
+          // resets the streak and continues; only fall_through / exhausted parks (and
+          // PICKLE_RECOVERY_CONSOLIDATION=off reverts to the bare escalation directly).
+          // AC-2 fail-safe: never run the git-mutating recovery against process.cwd().
+          if (state.current_ticket && state.working_dir) {
+            const recovery = routeRecoveryBeforeTerminal({
+              sessionDir,
+              statePath,
+              extensionRoot,
+              workingDir: state.working_dir,
+              ticketId: state.current_ticket,
+              iteration,
+              flags: (state.flags as Record<string, unknown> | undefined) ?? null,
+              log,
+              mode: 'worker',
+              evidence: { halt_site: 'idle_stall_unrecoverable', idle_seconds: idleDecision.idleSeconds },
+            });
+            if (recovery.kind === 'advanced') {
+              log(`recovery: ${recovery.strategy} advanced ${state.current_ticket} before idle_stall_unrecoverable — continuing.`);
+              idleStallRecoveryCount = 0;
+              lastStateIteration = -1;
+              stallCount = 0;
+              lastProgressEpoch = muxNow();
+              continue;
+            }
+          }
           const msg = `[idle-stall] self-recovery exceeded cap (${idleStallRecoveryCount} > ${idleStallRecoveryCap}) — escalating idle_stall_unrecoverable at iteration ${iteration}`;
           log(msg);
           process.stderr.write(`[mux-runner] ${msg}\n`);
@@ -8397,7 +8515,7 @@ async function runMuxRunnerMain() {
           exitReason = 'state_working_dir_missing';
           break;
         }
-        const wmwRecovery = attemptRecoveryBeforeTerminal({
+        const wmwRecovery = routeRecoveryBeforeTerminal({
           sessionDir,
           statePath,
           extensionRoot,
@@ -8406,6 +8524,7 @@ async function runMuxRunnerMain() {
           iteration,
           flags: (state.flags as Record<string, unknown> | undefined) ?? null,
           log,
+          mode: 'worker',
         });
         if (wmwRecovery.kind === 'advanced') {
           log(`recovery: ${wmwRecovery.strategy} advanced ${apTicketId} before wmw-auto-skip Failed flip — continuing.`);
@@ -8463,6 +8582,7 @@ async function runMuxRunnerMain() {
           windowEndMs: Date.now(),
           preSha: preIterSha,
           log,
+          mode: 'worker',
         });
         if (ffDecision.action === 'suppress') {
           const holdMsg = `[wmw-auto-skip] ticket ${apTicketId}: Failed flip suppressed (${ffDecision.evidence}) — ticket held, status preserved`;
@@ -8887,6 +9007,31 @@ async function runMuxRunnerMain() {
             latest_commit_sha: lastArtifactProgressSnapshot.latestCommitSha,
           },
         });
+        // W4a: route through the single choke point before the bare timeout park.
+        // AC-2 fail-safe: a git-mutating recovery call MUST have an explicit
+        // working_dir (never process.cwd() / the real repo).
+        if (ticketForTimeout && state.working_dir) {
+          const recovery = routeRecoveryBeforeTerminal({
+            sessionDir,
+            statePath,
+            extensionRoot,
+            workingDir: state.working_dir,
+            ticketId: ticketForTimeout,
+            iteration,
+            flags: (state.flags as Record<string, unknown> | undefined) ?? null,
+            log,
+            mode: 'worker',
+            evidence: { halt_site: 'timeout_repeat', timeout_count: timeoutCount },
+          });
+          if (recovery.kind === 'advanced') {
+            log(`recovery: ${recovery.strategy} advanced ${ticketForTimeout} before timeout_repeat halt — continuing.`);
+            timeoutCount = 0;
+            lastTimeoutTicket = null;
+            lastStateIteration = -1;
+            stallCount = 0;
+            continue;
+          }
+        }
         log(`Timeout halt: ticket ${ticketForTimeout} timed out ${timeoutCount} consecutive iterations`);
         executeTimeoutHalt({ statePath, sessionDir, ticketNow: ticketForTimeout, timeoutCount });
         exitReason = 'timeout_repeat';

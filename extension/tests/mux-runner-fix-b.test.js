@@ -230,22 +230,30 @@ test('L5: all_tickets_terminal is a CLEAN (non-failure) exit', () => {
 // L6 — recovery-ladder entry-point parity (comment + grep)
 // ---------------------------------------------------------------------------
 
-test('L6: attemptRecoveryBeforeTerminal is invoked at exactly THREE call sites', () => {
-  // Count call sites (exclude the export-function definition line and the doc comment).
-  const callSites = src.split('\n').filter(line =>
+test('L6 (W4a): attemptRecoveryBeforeTerminal runs the ladder from exactly ONE place', () => {
+  // Post-W4a topology: the choke point is `routeRecoveryBeforeTerminal`; every seam
+  // routes through IT, and `attemptRecoveryBeforeTerminal` (which holds the sole
+  // `runRecoveryLadder` invocation) is called only by the wrapper. The "single
+  // decision site" invariant is what AC-W4a-1 pins — see
+  // extension/tests/halt-or-recover-choke-point.test.js for the full matrix + lint.
+  const directCallSites = src.split('\n').filter(line =>
     /\battemptRecoveryBeforeTerminal\(/.test(line) &&
     !/export function attemptRecoveryBeforeTerminal/.test(line) &&
-    !/^\s*\/\//.test(line),
+    !/^\s*\/\//.test(line) &&
+    !/\* /.test(line),
   );
-  assert.equal(callSites.length, 3, `expected 3 attemptRecoveryBeforeTerminal call sites, found ${callSites.length}`);
+  assert.equal(directCallSites.length, 1,
+    `expected 1 direct attemptRecoveryBeforeTerminal call (inside routeRecoveryBeforeTerminal), found ${directCallSites.length}`);
+  // The DECISION (ladder invocation) is unique.
+  const ladderCalls = src.split('\n').filter(line => /runRecoveryLadder\(deps\)/.test(line));
+  assert.equal(ladderCalls.length, 1, 'runRecoveryLadder must be invoked at exactly one decision site');
 });
 
-test('L6: the recovery-adapter doc comment names THREE terminal authorities, not two', () => {
-  // The drifted comment said "BOTH terminal authorities"; it must now name all three.
+test('L6 (W4a): the recovery-adapter doc comment enumerates every routed seam', () => {
   assert.ok(!/BOTH terminal authorities/.test(src), 'stale "BOTH terminal authorities" comment must be gone');
-  assert.ok(/THREE terminal authorities|three terminal authorities/.test(src),
-    'comment must name three terminal authorities');
-  // Name the three entry points so the comment stays anchored to the call sites.
+  // The W4a comment names the original THREE plus the two W4a additions.
   assert.ok(/closer.?handoff/i.test(src) && /codex/i.test(src) && /wmw.?auto.?skip/i.test(src),
     'comment must enumerate closer-handoff, codex-no-progress, wmw-auto-skip');
+  assert.ok(/timeout_repeat/.test(src) && /idle_stall_unrecoverable/.test(src),
+    'comment must enumerate the W4a additions timeout_repeat + idle_stall_unrecoverable');
 });
