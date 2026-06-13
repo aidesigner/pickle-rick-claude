@@ -25,6 +25,7 @@
     "tests/integration/pipeline-runner-dirty-tree-relaunch.test.js": "real-repo-isolation",
     "tests/integration/readiness-bundle-prd.test.js": "subprocess-timeout-coupling",
     "tests/integration/session-map-collision-block.test.js": "subprocess-spawn-timing",
+    "tests/integration/session-scoped-kills.test.js": "subprocess-spawn-timing",
     "tests/integration/worker-lint-gate-forensic.test.js": "subprocess-timeout-coupling",
     "tests/integration/worker-lint-gate.test.js": "subprocess-timeout-coupling",
     "tests/integration/worker-partial-lifecycle-exit.test.js": "subprocess-timeout-coupling",

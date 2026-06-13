@@ -25,6 +25,7 @@
     "tests/integration/pipeline-runner-dirty-tree-relaunch.test.js",
     "tests/integration/readiness-bundle-prd.test.js",
     "tests/integration/session-map-collision-block.test.js",
+    "tests/integration/session-scoped-kills.test.js",
     "tests/integration/worker-lint-gate-forensic.test.js",
     "tests/integration/worker-lint-gate.test.js",
     "tests/integration/worker-partial-lifecycle-exit.test.js",
