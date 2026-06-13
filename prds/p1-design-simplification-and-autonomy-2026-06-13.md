@@ -34,6 +34,37 @@ This is the same principle the babysitter playbook already encodes *by hand* (fr
 
 ---
 
+## Reconciliation with B-RRH — the design rework is *justified by* the point-fixes, not a parallel rebuild
+
+B-RRH (`prds/p1-bug-mega-bundle-b-rrh-runtime-recovery-resilience-hardening.md`, drain row 111, ship-ready) is the **per-incident point-fix** of the same weekend. It already lands the individual seam fixes this PRD generalizes. **Nothing below re-implements a B-RRH AC** — the design bundles assume B-RRH has shipped and build the *consolidation + the genuinely-uncovered prevention* on top. This is the rationalization: the recurring meta-failure is **"a fix existed but the next new seam bypassed it"** (R-WMNP respawned in-phase forever though the ladder existed; R-CHTS-CODEX's 4 codex sites each needed separate wiring). B-RRH wires ~8 salvage seams *by hand*; the design rework's entire value is making seam **N+1** inherit the behavior for free.
+
+| B-RRH AC (point-fix, lands first) | Design workstream that generalizes it | Delta AFTER B-RRH ships |
+|---|---|---|
+| **A0** event taxonomy (`pickle_incomplete`, `crashed_ticket_files_quarantined`, `ticket_ladder_exhausted`…) | W2/W3/W4 | **Reuse** the frozen events — no new taxonomy. |
+| **A1** Done-guard re-reads frontmatter before charging no-progress | W4 + `reconcileTicketTruth()` | A1 *is* the frontmatter-truth read at one seam; W4 makes it the single shared read all seams call. |
+| **A2** `ticket_ladder_exhausted` advances while a runnable Todo remains | W4 (recover-don't-park) | Consolidate A2 + B-ORSR ladder + the codex sites into **one** `haltOrRecover` choke point. |
+| **A3** scoped source-signature (peer-session `prds/` churn ignored) | W2.R1-adjacent | Landed; W2.R1 adds *process*-scoping (kills), a different surface. |
+| **A4** phase-aware progress credit (oversized false-flag) | W4 | Landed point-fix; W4 evidence-gates the decision it feeds. |
+| **A5 / B1–B6 / C6a** rate-limit park, resume, ceiling, breaker immunity | — | **Fully owned by B-RRH** — out of design scope. |
+| **C1/C2** pickle completion gated on all-tickets-Done + `pickle_incomplete` sentinel | **W2.R2** (frontmatter-truth advance) | **Largely landed.** Delta: extend the same predicate to the codex `EPIC_COMPLETED`-token path (S4) via the shared `reconcileTicketTruth()`, so it's one predicate not two. |
+| **C3** committed ticket never Failed-flipped (both sites) | **W3** salvage | Landed per-seam; W3 routes both sites through `salvageTicket()`. |
+| **C4** is-ancestor-guarded reset (H1 `detectAndRecoverHeadRegression`) on real `resetToSha` callers | **W3** | Landed per-caller; W3 makes `salvageTicket()` own "never reset over uncommitted/committed work" so new callers can't regress it. |
+| **C5** resume ff-reattaches an orphaned commit | **W3** + **W2.R0** | Landed; `pickle-recover --resume-from-todo` reuses C5's reattach instead of a manual `git merge --ff-only`. |
+| **C6/C7** CPU watchdog + conformance-present salvage of a hung/silent worker | **W3** | Landed per-seam (silent-exit/`/login`-hang); W3 = same archive-before-destroy default. |
+| **C8** dirty-tree quarantine (archive-not-destroy, truncation-FATAL) | **W3** | Landed; W3 elevates "archive gate-failing diff + reset to Todo" to the shared default at every seam. |
+| **D1/D2** promote-once inferred→explicit + bounded activity log | **W3 #4** | Landed (phantom-Done backfill). |
+| **D3/D4/D5** `prd_path` populated on paused-refine→resume + citadel self-heal | **W2.R3** (prior art) | Landed — fix-plan already credits B-RRH here. |
+| **E1–E6** forward-created validator awareness (extends R-FRA-6: bundle-creation index, command-string/table coverage, contract-resolver annotation honor) | **W1b** | **Largely landed.** Delta: W1b keeps only what E1–E6 leaves uncovered (event-literal refs per R-RTRC-7; the *refiner auto-emits* the annotation so the operator never hand-annotates). |
+| **E7** review-hammer cross-file scope · **E8** flake-tolerant release gate | — (R-RGED / release-gate family) | Out of design scope. |
+
+**Net effect — the design bundles SHRINK once B-RRH lands:**
+- **B-GROUND (W2+W3+W4)** is mostly a **consolidation refactor**: extract `reconcileTicketTruth()` (from A1/C1/C2), `salvageTicket()` (from C3/C4/C5/C6/C7/C8/D1), and `haltOrRecover()` (from A2 + B-ORSR + the codex sites) into three primitives every current **and future** seam routes through — proven by a single-choke-point `git grep` + forward-protection lint. Its only genuinely *net-new* code is the prevention B-RRH never touches: **W2.R0** `pickle-recover` command, **W2.R1** session-scoped kills (R-CSI — not in B-RRH at all), **W2.R3a** stale-pin re-pin (R-RSPIN-A — B-RRH does `prd_path` but not the branch/SHA pin).
+- **B-PROPORTION (W1+W5)** drops W1b to a thin delta (E1–E6 did the heavy lifting); its real content is **W1a** collapse-skip-flags, **W1c** resolver-indeterminate-not-defect, **W1d** scope-aware dirty-tree *preflight* (B-RRH C8 is the crash-quarantine, not the launch preflight; R-SMAF shipped only the microverse one), **W1e** greenfield-corpus CI, and **W5** removals + governance.
+
+**Therefore the design rework is not redundant with the point-fixes — it is the step that makes them durable.** Each AC below is annotated `[B-RRH lands X → delta Y]` so refinement builds only the delta.
+
+---
+
 ## Design principles (the law W1–W5 enforce)
 
 1. **Ground truth beats ambient signals.** Every decisive transition (phase-advance, mark-Done, no-progress, completion, kill-target) reads tree-state-passing-gates + ticket frontmatter + live HEAD — never commits-landed, exit-code, log-token, inferred status, or binary name. *(D2)*
@@ -52,7 +83,7 @@ This is the same principle the babysitter playbook already encodes *by hand* (fr
 
 **Simplifying design.**
 - **W1a — One skip surface.** Finish collapsing all gate-bypass flags to the single `skip_quality_gates_reason` (legacy `skip_readiness_reason`/`skip_ticket_audit_reason` already auto-migrate; add `--skip-ac-shape-gate` and any dirty-tree bypass to the same surface). One flag, one reason string, documented in one place.
-- **W1b — Refiner emits annotations, operator does not.** `/pickle-refine-prd` Step 7 auto-annotates every forward-created `MODIFIED_FILES`/symbol with the canonical `(created by ticket <8hex>)` (and `(forward-created)` for self-creates). The decomposer never emits the non-canonical `(ticket <hash>)`. A bundle-creation index makes readiness treat a ref as resolved if a lower-`order` same-bundle ticket declares it — **even unannotated** (belt-and-suspenders; this is fix-plan R3b, owned here).
+- **W1b — Refiner emits annotations, operator does not.** `[B-RRH E1–E6 lands the validator-side awareness (bundle-creation index, command-string/table coverage, contract-resolver annotation honor) → W1b's delta is the *producer* side + event-literal gap.]` After B-RRH, the checkers already honor annotations; W1b makes `/pickle-refine-prd` Step 7 **auto-emit** the canonical `(created by ticket <8hex>)` (and `(forward-created)` for self-creates) so the operator never hand-annotates and the decomposer never emits the non-canonical `(ticket <hash>)`, plus closes the event-literal ref gap (R-RTRC-7) if E1–E6 leaves it. The bundle-creation index itself is B-RRH E1–E6; W1b consumes it, doesn't rebuild it.
 - **W1c — A checker that can't finish is not a defect verdict.** When a readiness sub-checker exhausts its wall budget (the contract/symbol resolver on a large monorepo), it emits an **`indeterminate`** result that does **not** halt the bundle — never a `wall_budget_exceeded` *finding against the work*. Raise the default resolver budget and make it the indeterminate path, not the fail path.
 - **W1d — Scope-aware dirty-tree (generalize R-SMAF).** Every clean-tree precondition (pipeline-runner, microverse-runner, anatomy/szechuan) evaluates dirtiness **only over `allowed_paths`** (via the existing `filterByScope`), and matches `docs/`/`prds/` segments at any depth. Out-of-scope autofix churn is ignored, not aborted on.
 - **W1e — Greenfield passes by construction (regression corpus).** A standing fixture corpus of real greenfield/refined bundles (the ones that historically false-blocked: LOA-727 AC-shape, the 5 R-FRA forward-created bundles, the wall-budget monorepo) runs in CI; the gates must pass them with **no skip-flag**.
@@ -79,9 +110,11 @@ This workstream **is** `prds/p1-fix-plan-session-isolation-and-ground-truth-2026
 
 **Closes:** R-WCUC (uncommitted gate-passing work discarded), R-XCOR/R-XSPA-2 (cancel/signal orphans a committed ticket + Failed-flips it), R-MWIS (silent-exit strands green work), R-MCDT (mid-implement crash leaves non-gate-passing dirty tree), R-HUNG (re-login strands completed worker), phantom-Done backfill. The shipped R-WCUC fix commits gate-passing work *but still parks*; this generalizes it to **every fail/cancel/timeout/exit seam** and pairs it with W4 so it continues instead of parking.
 
-**Current anti-pattern.** Five distinct human recovery recipes exist because the runtime discards or orphans verified work at: no-progress fail, external cancel, signal-shutdown, silent worker exit, manager crash. Each seam independently fails to read tree truth before destroying it.
+**`[B-RRH lands the per-seam fixes → this workstream's delta is the shared helper]`.** B-RRH already implements salvage at each seam individually: C3 (committed-not-Failed, both sites), C4 (is-ancestor reset guard), C5 (resume ff-reattach), C6/C7 (watchdog + conformance salvage), C8 (dirty-tree quarantine), D1/D2 (promote-once + activity cap). **W3 does not re-implement any of these.** It extracts them into one `salvageTicket()` primitive every seam — *including seams added after B-RRH* — must route through, closing the recurrence where a new interruption type (the N+1th seam) silently bypasses the hand-wired fix.
 
-**Simplifying design.** One `salvageTicket(session, ticket)` helper, called at **every** seam before any Failed-flip / `resetToSha` / clean-tree relaunch:
+**Current anti-pattern.** Five distinct human recovery recipes exist because the runtime discards or orphans verified work at: no-progress fail, external cancel, signal-shutdown, silent worker exit, manager crash. B-RRH fixes each seam *by hand*; without consolidation the next novel seam regresses (the exact R-WMNP / R-CHTS-CODEX pattern — a fix existed, the new site didn't call it).
+
+**Simplifying design.** Extract B-RRH's per-seam salvage logic into one `salvageTicket(session, ticket)` helper, called at **every** seam (current + future) before any Failed-flip / `resetToSha` / clean-tree relaunch:
 1. If the in-scope tree **passes the ticket's gates** → commit it (scoped paths only, never `add -A`/dir-wide `restore`) and mark Done with the real commit. *(retires "verify+commit+Done" + "ff-only reattach")*
 2. If the in-scope tree is **dirty but gate-failing** → archive the diff to the session dir and reset the ticket to Todo (so a relaunch re-attempts from a clean base without losing the diff). *(retires "clean+reset-to-Todo" + R-MCDT)*
 3. **Never** `git reset --hard` / `git restore <dir>` over uncommitted work; HEAD-regression off a committed ticket auto-ff-reattaches (deploy the H1 `detectAndRecoverHeadRegression` to the resume + cancel seams). *(retires "ff-only reattach" as a manual step)*
@@ -99,7 +132,9 @@ This workstream **is** `prds/p1-fix-plan-session-isolation-and-ground-truth-2026
 
 **Closes:** R-CHTS-class single-iteration parks that B-ORSR/B-CHTS-CODEX fixed *only for specific seams*; R-ONPD (oversized never-converge); R-WMNP (wmw-auto-skip in-phase respawn loop) — by routing **all** no-progress/handoff sites through one ladder.
 
-**Current anti-pattern.** B-ORSR shipped a `RecoveryController` ladder, but new no-progress sites keep bypassing it (R-WMNP respawned in-phase forever; R-CHTS-CODEX's 4 codex sites needed separate wiring). The ladder exists; the wiring doesn't reach every caller — so "trigger-happy park" recurs at the next un-wired site.
+**`[B-RRH lands A1/A2 progress accounting → this workstream's delta is the single choke point]`.** B-RRH A1 (Done-guard frontmatter re-read) and A2 (`ticket_ladder_exhausted` advance-while-runnable) add two more correctly-behaving sites — but they are *more* hand-wired sites, not a consolidation. W4 takes A1/A2 + the B-ORSR ladder + the B-CHTS-CODEX codex sites and routes them through **one** `haltOrRecover` decision, so A2's "advance while runnable" can't be the next thing a new site forgets to call.
+
+**Current anti-pattern.** B-ORSR shipped a `RecoveryController` ladder, but new no-progress sites keep bypassing it (R-WMNP respawned in-phase forever; R-CHTS-CODEX's 4 codex sites needed separate wiring). The ladder exists; the wiring doesn't reach every caller — so "trigger-happy park" recurs at the next un-wired site. B-RRH adds correctly-behaving sites without removing the bypass risk; W4 removes the bypass risk.
 
 **Simplifying design.**
 - **W4a — Single choke point.** Every no-progress / handoff / self-terminate decision (claude + codex, worker-mode + manager-mode, all caps) routes through **one** `haltOrRecover(session, evidence)` seam. A `git grep` proves there is exactly one decision site; new sites cannot bypass it (lint/trap-door).
@@ -133,12 +168,12 @@ This workstream **is** `prds/p1-fix-plan-session-isolation-and-ground-truth-2026
 
 ## Recommended sequencing & bundle split
 
-The four P1 workstreams are large; refinement decides the exact split. Suggested two-bundle frame:
+**Hard ordering precondition: B-RRH ships FIRST.** Both design bundles are *consolidation + net-new prevention on top of B-RRH's landed point-fixes* (see Reconciliation table). Launching them before B-RRH would mean refactoring code that's still changing under the closer. The four P1 workstreams are large; refinement decides the exact split. Suggested two-bundle frame:
 
-1. **B-GROUND (P1) = W2 + W3 + W4** — the autonomy core: ground-truth at every seam, salvage-before-fail, one recovery ladder, the `pickle-recover` keystone (W2.R0). Build W2.R0 first (codifies the proven playbook into a hook-safe tool *today*, lowest risk), then W3 (shared `salvageTicket`), then W4 (one `haltOrRecover` choke point), with W2.R1/R2/R3 prevention landing alongside. These three share two helpers — `reconcileTicketTruth()` and `salvageTicket()` — so build them in one bundle to avoid two parallel scanners.
-2. **B-PROPORTION (P1→P2) = W1 + W5** — validation proportionality + governance: one skip surface, refiner-emitted annotations, indeterminate-not-defect resolver, scope-aware dirty-tree, greenfield-corpus CI (W1); then ship the removal backlog + governance rule + recurrence dashboard (W5). W1e's greenfield corpus is the regression net that keeps W1's loosening honest.
+1. **B-GROUND (P1) = W2 + W3 + W4** — the autonomy core, post-B-RRH. Mostly a **consolidation refactor**: extract `reconcileTicketTruth()` (from B-RRH A1/C1/C2), `salvageTicket()` (from C3/C4/C5/C6/C7/C8/D1), `haltOrRecover()` (from A2 + B-ORSR + codex sites) into three primitives every current + future seam routes through (proven by single-choke-point `git grep` + lint). Net-new code = only what B-RRH never touches: **W2.R0** `pickle-recover` (build first — codifies the playbook into a hook-safe tool, lowest risk), **W2.R1** session-scoped kills (R-CSI), **W2.R3a** stale-pin re-pin (R-RSPIN-A).
+2. **B-PROPORTION (P1→P2) = W1 + W5** — validation proportionality + governance, post-B-RRH. W1b shrinks to a thin delta over B-RRH E1–E6 (refiner-emits-annotation producer side + event-literal gap). Real content: **W1a** one skip surface, **W1c** indeterminate-not-defect resolver, **W1d** scope-aware dirty-tree *preflight* (B-RRH C8 is crash-quarantine, not launch preflight), **W1e** greenfield-corpus CI; then **W5** removal backlog + governance rule + recurrence dashboard. W1e is the regression net that keeps W1's loosening honest.
 
-**Dependency note:** B-GROUND's W2.R1 (session-scoped kills) should land before any further concurrent multi-repo runs — it is the highest-leverage SIGTERM-storm prevention. W1's gate-loosening is independently shippable and removes the most operator friction per ticket.
+**Dependency note:** B-GROUND's W2.R1 (session-scoped kills, R-CSI) is **not** in B-RRH and is the highest-leverage SIGTERM-storm prevention — if the concurrent-session SIGTERMs recur before B-GROUND is scheduled, pull W2.R1 out as a standalone fast-follow on B-RRH. W1's gate-loosening is independently shippable and removes the most operator friction per ticket.
 
 **Expected outcome.** Closing D1+D2+D3 retires ~9 open findings, the 5 work-loss recovery recipes, and the recurring SIGTERM/park/false-block interventions — converting the babysitter from a required human-in-the-loop into an exception handler that, when it must act, runs **one** sanctioned command.
 
