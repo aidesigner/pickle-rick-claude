@@ -763,6 +763,50 @@ export function backendEnvOverrides(backend: Backend): NodeJS.ProcessEnv {
   return env;
 }
 
+// ---------------------------------------------------------------------------
+// R-CSI / W2.R1 — session-scoped process isolation (setpgid + stamp)
+//
+// Every subprocess pickle-rick spawns is stamped with the owning session id and
+// working_dir and (on POSIX) launched `detached` so it leads its OWN process
+// group. The single source of truth for both is here so every spawn site (the
+// worker spawn in spawn-morty.ts, the manager spawn in mux-runner.ts) stamps and
+// scopes identically — a kill that targets `process.kill(-pid, sig)` then reaps
+// exactly that session's subtree and CANNOT reach a concurrent session's (or an
+// out-of-repo pipeline's) healthy workers by a bare binary name.
+//
+// Kill-switch: PICKLE_RECOVERY_CONSOLIDATION=off reverts to the per-seam behaviour
+// (no detach → kills fall back to the direct child as before this fix landed). Only
+// the literal lowercase string 'off' disables; any other value / absent keeps the
+// consolidated session-group isolation active.
+// ---------------------------------------------------------------------------
+
+export const SESSION_ISOLATION_KILL_SWITCH = 'PICKLE_RECOVERY_CONSOLIDATION';
+
+/**
+ * Env stamp identifying the owning session for every spawned subprocess.
+ * `sessionId` is the session directory basename (e.g. `2026-06-13-2bd4740a`);
+ * `workingDir` is the session's canonical project directory. Both are read back
+ * by kill/reaping paths to scope targets to this session only.
+ */
+export function sessionStampEnv(sessionId: string, workingDir: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (sessionId) env.PICKLE_SESSION = sessionId;
+  if (workingDir) env.PICKLE_WORKING_DIR = workingDir;
+  return env;
+}
+
+/**
+ * Whether a spawned subprocess should lead its own process group (POSIX
+ * `setpgid` via Node's `detached: true`). False on win32 (no process groups) and
+ * when the `PICKLE_RECOVERY_CONSOLIDATION=off` kill-switch reverts to per-seam
+ * behaviour. `env` defaults to `process.env` and is injectable for testing.
+ */
+export function shouldIsolateSessionGroup(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (process.platform === 'win32') return false;
+  if (env[SESSION_ISOLATION_KILL_SWITCH] === 'off') return false;
+  return true;
+}
+
 export function loadBackendFromSession(sessionDir: string): Backend {
   return resolveBackendFromStateFile(path.join(sessionDir, 'state.json'));
 }

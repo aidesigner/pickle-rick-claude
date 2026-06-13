@@ -9,7 +9,7 @@ import { PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, h
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker } from '../services/circuit-breaker.js';
-import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides } from '../services/backend-spawn.js';
+import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides, sessionStampEnv } from '../services/backend-spawn.js';
 import { resolveCodexModel } from './spawn-morty.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream, CODEX_DELIMITER_RE } from '../services/classifier-utils.js';
@@ -2618,6 +2618,10 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
         ...runtimeOverrides.envOverrides,
         ...backendEnvOverrides(backend),
         ...(invocation.env ?? {}),
+        // R-CSI / W2.R1: stamp the owning session so the manager subprocess (and the
+        // worker subtree it spawns, which inherits these) is identifiable by session
+        // for session-scoped reaping rather than a bare binary-name kill.
+        ...sessionStampEnv(path.basename(sessionDir), state.working_dir || process.cwd()),
         PICKLE_STATE_FILE: statePath,
         PYTHONUNBUFFERED: '1',
     };

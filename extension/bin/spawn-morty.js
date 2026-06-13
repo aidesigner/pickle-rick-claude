@@ -8,7 +8,7 @@ import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS } fro
 import { CodegraphService } from '../services/codegraph-service.js';
 import { isRecord } from '../lib/is-record.js';
 import { ArchiveAbortError, getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
-import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile } from '../services/backend-spawn.js';
+import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile, sessionStampEnv, shouldIsolateSessionGroup } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { autoFillCompletionCommit } from './auto-fill-completion-commit.js';
@@ -1710,9 +1710,13 @@ export async function runWorkerProcess(ctx) {
     }
     catch { /* best-effort */ }
     sessionLog.on('error', err => console.error(`${Style.RED}❌ Log stream error: ${safeErrorMessage(err)}${Style.RESET}`));
-    const env = { ...process.env, ...backendEnvOverrides(args.backend), ...(invocation.env ?? {}), PICKLE_STATE_FILE: ctx.timeoutStatePath || ctx.workerStatePath, PICKLE_ROLE: 'worker', PYTHONUNBUFFERED: '1' };
+    const env = { ...process.env, ...backendEnvOverrides(args.backend), ...(invocation.env ?? {}), ...sessionStampEnv(path.basename(sessionRoot), sessionWorkingDir), PICKLE_STATE_FILE: ctx.timeoutStatePath || ctx.workerStatePath, PICKLE_ROLE: 'worker', PYTHONUNBUFFERED: '1' };
     delete env['CLAUDECODE'];
-    const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: ['inherit', 'pipe', 'pipe'] });
+    // R-CSI / W2.R1: detach so the worker subtree leads its own process group;
+    // killProcessTree's existing `process.kill(-pid, sig)` then reaps exactly this
+    // session's group and cannot reach a concurrent session's healthy workers.
+    // PICKLE_RECOVERY_CONSOLIDATION=off reverts to the per-seam (non-detached) path.
+    const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: ['inherit', 'pipe', 'pipe'], detached: shouldIsolateSessionGroup() });
     proc.stdout?.pipe(sessionLog, { end: false });
     proc.stderr?.pipe(sessionLog, { end: false });
     attachCompletionCommitAckListener(proc, ticketId, path.join(sessionRoot, 'state.json'));
@@ -1731,15 +1735,22 @@ export async function runWorkerProcess(ctx) {
     const timeoutHandle = setTimeout(() => {
         ctx.mutableState.timedOut = true;
         console.log(`\n${Style.RED}❌ Worker timed out after ${Math.floor(ctx.effectiveTimeoutMs / 1000)}s${Style.RESET}`);
-        try {
-            proc.kill('SIGTERM');
-        }
-        catch { /* already dead */ }
-        killEscalation = setTimeout(() => {
+        // R-CSI / W2.R1: reap the whole session-scoped worker group (detached →
+        // `process.kill(-pid)`); fall back to the leader-only kill when the group is
+        // gone or the kill-switch reverted to the non-detached per-seam path.
+        if (!killProcessTree(proc, 'SIGTERM')) {
             try {
-                proc.kill('SIGKILL');
+                proc.kill('SIGTERM');
             }
             catch { /* already dead */ }
+        }
+        killEscalation = setTimeout(() => {
+            if (!killProcessTree(proc, 'SIGKILL')) {
+                try {
+                    proc.kill('SIGKILL');
+                }
+                catch { /* already dead */ }
+            }
         }, 2000);
     }, ctx.effectiveTimeoutMs);
     const hangGuard = setTimeout(async () => {
