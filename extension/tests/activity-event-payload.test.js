@@ -926,6 +926,26 @@ const EVENT_CASES = [
   },
 ];
 
+// B-RRH ed840487 (data-flow audit): the C3 signal-teardown arm returns a new
+// FailedFlipEvidenceKind 'signal_committed' (mux-runner.ts detectFailedFlipEvidence),
+// emitted in the failed_flip_suppressed payload. The schema enum MUST accept it or a
+// real C3 suppression writes a schema-non-conformant JSONL line.
+test('activity-event-payload: failed_flip_suppressed accepts signal_committed evidence (B-RRH C3)', () => {
+  const result = validate(
+    { event: 'failed_flip_suppressed', ts: TS, ticket: 'abc12345', evidence: 'signal_committed', suppression_count: 1 },
+    'failed_flip_suppressed',
+  );
+  assert.equal(result.valid, true, `signal_committed must be a valid evidence value: ${result.error}`);
+});
+
+test('activity-event-payload: failed_flip_suppressed rejects unknown evidence value', () => {
+  const result = validate(
+    { event: 'failed_flip_suppressed', ts: TS, ticket: 'abc12345', evidence: 'made_up', suppression_count: 1 },
+    'failed_flip_suppressed',
+  );
+  assert.equal(result.valid, false, 'an evidence value outside the enum must fail');
+});
+
 for (const { type, valid, drop } of EVENT_CASES) {
   test(`activity-event-payload: ${type} valid payload passes required-field check`, () => {
     const result = validate(valid, type);
@@ -1214,6 +1234,8 @@ test('activity-event-payload: schema defines all registered event type definitio
     'crashed_ticket_files_quarantine_truncated',
     'rate_limit_park_exhausted',
     'rate_limited_without_reset_at',
+    'ticket_ladder_exhausted',
+    'pickle_incomplete',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

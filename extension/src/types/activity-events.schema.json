@@ -1633,7 +1633,7 @@
         "event": { "type": "string", "const": "failed_flip_suppressed" },
         "ts": { "type": "string" },
         "ticket": { "type": "string" },
-        "evidence": { "type": "string", "enum": ["fresh_artifacts", "ticket_commit", "both"] },
+        "evidence": { "type": "string", "enum": ["fresh_artifacts", "ticket_commit", "signal_committed", "both"] },
         "suppression_count": { "type": "integer", "minimum": 1 }
       }
     },
