@@ -178,3 +178,57 @@ This workstream **is** `prds/p1-fix-plan-session-isolation-and-ground-truth-2026
 **Expected outcome.** Closing D1+D2+D3 retires ~9 open findings, the 5 work-loss recovery recipes, and the recurring SIGTERM/park/false-block interventions — converting the babysitter from a required human-in-the-loop into an exception handler that, when it must act, runs **one** sanctioned command.
 
 **DO NOT IMPLEMENT.** Next action: refine W2 from its existing fix-plan; `/pickle-refine-prd` this file for W1/W3/W4/W5 into atomic, machine-checkable tickets; route through the standard pipeline once the concurrent sessions clear and beta.3 has shipped.
+
+---
+
+# Refinement Reconciliation (2026-06-13) — AUTHORITATIVE decomposition spec
+
+*(refined: 3-analyst team × 3 cycles — requirements / codebase / risk-scope; session `2026-06-13-2bd4740a`. This appendix OVERRIDES the prose above where they conflict; all coordinates HEAD-verified.)*
+
+## Owner rulings (resolved autonomously — greenfield / observable-signals / parent-PRD-wins)
+
+1. **Bundle split:** `B-GROUND = W2+W3+W4`, `B-PROPORTION = W1+W5` (this parent PRD wins; the fix-plan's older `B-A/B-B` prose split is superseded).
+2. **`skip_smoke_gate_reason` scoped OUT** of the W1a unified surface — it guards a distinct concern (R-CNAR-6 spark-codex health), not a quality gate. W1a collapses only the 4 quality-gate reasons + `--skip-ac-shape-gate` advisory channel.
+3. **AC-W5c-1 keys on skip-flag-use rate ONLY** (drop the non-existent `gate_false_positive` event). Implementable today over existing `gate_skipped{source,reason}` (`finalize-gate.ts:367`, `microverse-runner.ts:847`, `convergence-gate.ts:817/1211`), `readiness_skipped` (`check-readiness.ts:1209`), `skip_flag_legacy_used` (`mux-runner.ts:3832`) — all in `VALID_ACTIVITY_EVENTS`. Residual: events carry `{source,reason}` not `gate_id`; budget keys on `{source,reason}` OR a named one-line `gate_id` payload sub-task.
+
+## W2 routing fix (closes the by-reference-to-nothing crack)
+
+- Fix-plan has **7 atoms: R0–R3 + S1–S3** (NOT S4 — that is an external bug-report finding; emitting it violates fan-out rule 6).
+- Resolution: **W2's atoms are INLINED here** (below) so they decompose in this bundle. `reconcileTicketTruth` interface contract stated in both W2 and W3; `AC: git grep -c 'function reconcileTicketTruth' == 1`, B-GROUND owns.
+- `pickle-recover` single ownership: **R0 builds it; W3/W4 consume the shared primitives it calls.**
+
+## Cross-cutting SAFETY requirements (apply to every W3/W4/W1a mux-runner ticket)
+
+- **T-PRE-RRH-RECONCILE (order 10, blocking):** before any consolidation ticket, `git grep` each B-RRH primitive and emit a Reconciliation table with a `landed: yes/partial/no` column + one HEAD citation per row. Zero rows may remain `assumed-landed`. Blocks B-GROUND + B-PROPORTION impl.
+- **Per-seam migration:** old path retained until that seam's AC is green; never a big-bang cutover.
+- **Kill-switch:** `PICKLE_RECOVERY_CONSOLIDATION=off` reverts to per-seam paths (precedent: `PICKLE_CODEGRAPH=off` `setup.ts:202`, `PLUMBUS_GENERATIVE_AUDIT=off`).
+- **CATCH-22 deploy-ordering AC (every mux-runner ticket):** `npx tsc` emits the matching compiled `.js` in the SAME commit; the edit MUST NOT be expected to self-activate under a running runner.
+
+## CUJ-1 — Operator resolves a genuinely-exhausted session (the only human-facing journey)
+
+Entry state = **`recovery_exhausted` ONLY** (W3/W4 auto-salvage the 5 seams without an operator). Operator runs the exact `pickle-recover <subcommand>` named in the `## Recovery Handoff` artifact; the tool reads `reconcileTicketTruth`, performs exactly ONE transition via a shared primitive (never reimplements, never writes `state.json` outside the R-WSRC-sanctioned path), emits a recovery event; `/pickle-status` confirms.
+
+## Final ticket bundle (tiers + exact coordinates; matrix ACs MUST stay single parametrized tickets — do NOT fan out)
+
+| Order | Ticket | Tier | Scope (HEAD-anchored) |
+|---|---|---|---|
+| 10 | **T-PRE-RRH-RECONCILE** | small | Verify-first: `git grep` each `[B-RRH lands X]` primitive → landed/partial/absent + citation. Blocks the rest. |
+| 20 | **W2.R1 session-scoped kills** | large | `setpgid` + `PICKLE_SESSION`/`PICKLE_WORKING_DIR` stamp via one spawn helper; every `pkill/killall/process.kill` targets the session group/stamp only. AC-R1-1 `git grep -nE "pkill|killall|process\.kill"` all session-scoped; AC-R1-2 cross-repo isolation integration test. **NOT in B-RRH — highest prevention leverage.** |
+| 30 | **W3 salvageTicket** | large | Consolidate 5 fns → `salvageTicket()`: `applyAllTicketsDoneCompletion`:1743, `commitPendingProbe`:3397, `guardCompletionCommitBeforeDone`:4000, `commitGatePassingDeliverableOnExitPath`:4380, `evaluateFailedFlipSuppression`:6861; PRESERVE `partitionExitPathDirtyByOwnership`:4350. AC-W3-1 = `describe.each([5 seams]) × describe.each([gate-passing, gate-failing, gate-errored, clean-tree])`: commit+Done / archive+Todo / never `reset --hard` over uncommitted; reflog has no orphan; ownership-partition survives. Kill-switch + per-seam + CATCH-22. |
+| 40 | **W4a generalize attemptRecoveryBeforeTerminal** | large | Route closer/timeout/idle/failed-flip through the EXISTING `attemptRecoveryBeforeTerminal`:4587 (already wraps `runRecoveryLadder`, callers :4663/:7690/:8320). Sites: `haltOrRecoverCodexNoProgress`(×6), `evaluateCloserTerminalState`(×4, currently parks WITHOUT the ladder), `evaluateFailedFlipSuppression`:6861, `executeTimeoutHalt`, `evaluateMuxIdleStallWatchdog`. Add backend/mode discriminant to `AttemptRecoveryBeforeTerminalInput`→`RecoveryOutcome`. AC-W4a-1 = single-choke-point `git grep` + forward-protection lint. Kill-switch + per-seam + CATCH-22 (highest-risk ticket — stage first). |
+| 50 | **W4b bind terminal + empty-state** | small | Ladder terminates in EXISTING `recovery_exhausted` (`mux-runner.ts:3899`, in `isFailureExit`:3908, recorded :5643/5732/6685/7710). AC-W4b-3: `git grep` no other honest-terminal literal; `isFailureExit`/auto-resume-stop preserved; `## Recovery Handoff` artifact written; empty-roster {all-Done→completion, all-Failed-no-runnable→recovery_exhausted}. |
+| 60 | **W4c caps from frontmatter** | small | Cite R-CNAR-1 `applyTicketTierBudget` prior art (already derives `current_ticket_max_iterations` + guards stale-cache undefined). Regression over R-WMNP repro. |
+| 70 | **W2.R0 pickle-recover** | medium | 4 subcommands, each calls a shared primitive (never inline git): `--resume-from-todo`→lowest runnable Todo (reuses C5 ff-reattach); `--salvage <ticket>`→`salvageTicket()`; `--reattach-orphan`→`detectAndRecoverHeadRegression`; `--reset-ticket <id>`→archive+reset-Todo. Hook-safe (writes via StateManager, passes config-protection). `--plan` dry-run. AC-R0-COVERAGE: each of W3's 4 dispositions has a subcommand; `git grep` proves each calls the shared primitive. |
+| 80 | **W2.R3a re-pin on resume** | small | `setup.js --resume` re-derives `pinned_branch`/`pinned_sha` from working-dir HEAD when they differ; documented `--repin`; dirty-tree guard copy names it. |
+| 90 | **W1a collapse skip-flags** | medium | Migrate bundle-bootstrap exemption (`mux-runner.ts:7801-7815`, `BUNDLE_BOOTSTRAP_ALLOWLIST`) + resume path (:7807/:7814/:7815) to write ONLY `skip_quality_gates_reason`. AC-W1a-1: `git grep -nE "skip_readiness_reason:|skip_ticket_audit_reason:"` finds no assignment outside the migration shim; conflict-resolution rule stated; `skip_smoke_gate_reason` scoped out (ruling 2). |
+| 100 | **W1b refiner auto-emits annotations** | small | Delta over B-RRH E1–E6 (validator side already lands): `/pickle-refine-prd` Step 7 auto-emits canonical `(created by ticket <8hex>)`; decomposer never emits non-canonical `(ticket <hash>)`; event-literal ref gap (R-RTRC-7) closed. |
+| 110 | **W1c resolver_indeterminate** | small | `check-readiness.ts` wall-budget already non-blocking (R-RHFP, `blockingFindings` excludes `kind:'performance'` :1160). Delta = named `resolver_indeterminate` activity event (AC-EVENT-PAYLOAD-01) + `DEFAULT_MAX_WALL_MS`:86 bump (state new value + latency ceiling). |
+| 120 | **W1d dirty-tree allowlist 3→1 migration** | medium | MIGRATE `ignore_dirty_paths` (`pipeline-runner.ts:92,187-204,2752,2767`) + `.pipeline-runner-dirty-allowed.json` (`DIRTY_ALLOWED_FILE_REL:98,371`) into one scope-aware resolver; AC: `git grep ignore_dirty_paths extension/src/bin/pipeline-runner.ts` → 0 (or documented survivor). Do NOT add `filterByScope` as a 3rd path. |
+| 130 | **W1e greenfield-corpus CI** | medium | ≥4 historically-blocking fixtures pass gates with NO skip-flag (forced-budget-override fixture for wall-budget, NOT a real large repo) + PAIRED-NEGATIVE corpus (≥N genuinely-unready bundles still FAIL — proves a loosened gate is still a gate). |
+| 140 | **W5a ship removals** | medium | Verify-first then ship `p2-remove-pipeline-wall-clock-time-cap` (default-off; rate-limit reset no longer exits false-success) + `p1-strip-excessive-defense` (to load-bearing AC only; deploy-reversion regression still green). |
+| 150 | **W5b+W5c governance + dashboard** | small | CLAUDE.md subtract-before-add rule + meta-lint flags new non-unified skip-flags; `/pickle-metrics` reports per-`{source,reason}` skip-flag-use rate + budget object (ruling 3); over-budget gate flagged. |
+| 160 | Wire | — | per template |
+| 170-200 | 4 hardening tickets | — | code-quality / data-flow / test-quality / cross-ref |
+| 210 | Closer | — | `[worker]` full gate; `[manager]` bump+install+tag+release HELD until concurrent loanlight-api session clears |
+
+**Non-Goals:** does NOT touch refinement-team analyst prompts beyond W1b, the attractor server, or the metrics schema beyond W5c's budget object. External deps: codex backend (4 wired sites), attractor (`.dot`), Linear MCP.
