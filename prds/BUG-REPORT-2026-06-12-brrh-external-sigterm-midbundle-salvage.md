@@ -65,3 +65,9 @@ The deployed C1/C2 / R-ICP-2 / R-PHC-6 incomplete-bundle guard fires on a **non-
 4. Runner re-entered PHASE 1 PICKLE (pid 53498, worker 53945), resumed 71001154 at `step=implement`.
 
 **Escalating R-XSIG/R-XSPA-2 to P1** — this is the 2nd manual salvage in one bundle AND it exposed a premature-advance code gap, not just a missing wrapper.
+
+---
+
+## RECURRENCE LOG
+
+- **#4 — 2026-06-13T00:10:45Z (3rd salvage).** External SIGTERM during pickle (building ed840487, after 71001154 reached Done). This time the **cancel-marker path caught it cleanly** — `Phase pickle exited code 0` → `Pipeline cancelled (cancel marker found) — stopping` → finished 1/4 phases, NO premature advance (contrast the 22:52 exit-0 advance). Strays left behind: a duplicate pipeline-runner (21344) + idle launch.sh (53388) — killed. No cancel marker persisted. ed840487 auto-reset Todo; tree clean; no work lost. Recovered: reset state → relaunch → pid 38204 resumed pickle on ed840487. **NOTE: `auto-resume.sh` (R-XSIG-1) does NOT fix this class — it STOPS on `exit_reason=failed` (R-CNAR-4c), which is exactly what these signal kills produce. Only the R-XSPA-2 code fix (signal-shutdown exits `pipeline_phase_incomplete`) would make the run auto-recoverable.** Signal cadence ~hourly; manual salvage required per occurrence until R-XSPA-2 ships. State: 17/21 done, 3 hardening + closer remain.
