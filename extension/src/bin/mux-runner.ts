@@ -3347,6 +3347,48 @@ export function writeHandoffAtomic(
   }
 }
 
+/**
+ * W4b: on `recovery_exhausted` (the SINGLE honest terminal, CUJ-1 entry state),
+ * write a `## Recovery Handoff` artifact to the session dir naming the exact
+ * `pickle-recover` subcommand the operator should run. The ladder auto-salvaged
+ * every recoverable seam; reaching here means recovery is genuinely exhausted and
+ * the operator picks up via the named command (PRD order 70 owns the command
+ * itself — this only writes the artifact that names it). Best-effort: a write
+ * failure never blocks the terminal path. Default subcommand is
+ * `--resume-from-todo` (re-queue the lowest runnable Todo); a missing/empty ticket
+ * surfaces the same re-queue path.
+ */
+export function writeRecoveryHandoffArtifact(
+  sessionDir: string,
+  ticketId: string | null,
+  reason: string,
+  log: (msg: string) => void,
+): void {
+  const ticket = (ticketId || '').trim();
+  const subcommand = ticket
+    ? `pickle-recover --resume-from-todo   # or: pickle-recover --reset-ticket ${ticket}`
+    : 'pickle-recover --resume-from-todo';
+  const content =
+    `## Recovery Handoff\n\n` +
+    `The recovery ladder is exhausted (\`recovery_exhausted\`). All auto-salvage ` +
+    `strategies were attempted and none advanced the run.\n\n` +
+    `- ticket: ${ticket || '(none — empty roster / all-Failed)'}\n` +
+    `- reason: ${reason}\n\n` +
+    `Operator action — run the named \`pickle-recover\` subcommand from the project root:\n\n` +
+    '```\n' + `${subcommand}\n` + '```\n\n' +
+    `Then confirm with \`/pickle-status\`. Recovery entry state is \`recovery_exhausted\` ONLY.\n`;
+  const target = path.join(sessionDir, 'recovery_handoff.md');
+  const tmp = `${target}.tmp.${process.pid}`;
+  try {
+    fs.writeFileSync(tmp, content);
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`WARNING: recovery_handoff.md write failed (non-critical): ${msg}`);
+    try { fs.unlinkSync(tmp); } catch { /* tmp may not exist */ }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Commit-pending health probe (codex-only) — RCA: codex-backend "commit-skip"
 // failure mode. Codex sometimes produces edits but never `git add` + `git
@@ -5188,6 +5230,11 @@ function ctxReadState(ctx: LoopContext): State {
   return (ctx.readState || readRunnerState)(ctx.statePath);
 }
 
+/** Best-effort current-ticket read for the LoopContext recovery-exhausted handoff. */
+function ctxCurrentTicket(ctx: LoopContext): string | null {
+  try { return ctxReadState(ctx).current_ticket ?? null; } catch { return null; }
+}
+
 function ctxDeactivate(ctx: LoopContext): void {
   (ctx.deactivate || safeDeactivate)(ctx.statePath);
 }
@@ -5807,6 +5854,7 @@ export async function processCompletionBranch(state: State, result: IterationOut
               return { kind: 'relaunch', relaunchCount: inactiveDecision.nextRelaunchCount, pendingTickets: inactiveDecision.pendingCount, resetStall: true };
             }
             if (codexRecovery.kind === 'recovery_exhausted') {
+              writeRecoveryHandoffArtifact(ctx.sessionDir, ctxCurrentTicket(ctx), 'codex_manager_no_progress: ladder_exhausted', ctx.log);
               recordExitReason(ctx.statePath, 'recovery_exhausted');
               ctxDeactivate(ctx);
               return { kind: 'break', reason: 'recovery_exhausted' };
@@ -5896,6 +5944,7 @@ export async function processCompletionBranch(state: State, result: IterationOut
           return { kind: 'relaunch', relaunchCount: decision.nextRelaunchCount, pendingTickets: decision.pendingCount, resetStall: true };
         }
         if (codexRecovery.kind === 'recovery_exhausted') {
+          writeRecoveryHandoffArtifact(ctx.sessionDir, ctxCurrentTicket(ctx), 'codex_manager_no_progress: ladder_exhausted', ctx.log);
           recordExitReason(ctx.statePath, 'recovery_exhausted');
           ctxDeactivate(ctx);
           return { kind: 'break', reason: 'recovery_exhausted' };
@@ -7879,6 +7928,7 @@ async function runMuxRunnerMain() {
           }
           if (recovery.kind === 'exhausted') {
             log(`recovery_exhausted: ladder exhausted for ${state.current_ticket} (${recovery.reason}). Exiting at iteration ${iteration}.`);
+            writeRecoveryHandoffArtifact(sessionDir, state.current_ticket ?? null, `closer_handoff_terminal: ${recovery.reason}`, log);
             recordExitReason(statePath, 'recovery_exhausted');
             safeDeactivate(statePath);
             removeRunnerSessionMapEntry(statePath, log);
@@ -7952,6 +8002,21 @@ async function runMuxRunnerMain() {
     // no work and re-arms the idle-stall watchdog every pass). Matches the all-Done
     // clean-deactivation pattern but with a distinct, non-failure exit reason.
     if (templateName !== 'meeseeks.md' && !preTicket && noRunnableTicketsRemain(sessionDir)) {
+      // W4b empty-roster resolution: all-Done already exited above via
+      // applyAllTicketsDoneCompletion (→ completion). Reaching here means the
+      // roster is all-Failed with no runnable Todo — the honest ladder terminal
+      // `recovery_exhausted` (single CUJ-1 entry state, ∈ isFailureExit so
+      // auto-resume.sh stops). The PICKLE_RECOVERY_CONSOLIDATION=off kill-switch
+      // reverts to the legacy clean `all_tickets_terminal` per-seam terminal.
+      if (recoveryConsolidationEnabled()) {
+        log('empty roster (all-Failed, no runnable ticket) — honest terminal recovery_exhausted before runIteration.');
+        writeRecoveryHandoffArtifact(sessionDir, null, 'empty_roster_all_failed_no_runnable', log);
+        recordExitReason(statePath, 'recovery_exhausted');
+        safeDeactivate(statePath);
+        removeRunnerSessionMapEntry(statePath, log);
+        exitReason = 'recovery_exhausted';
+        break;
+      }
       log('all tickets terminal (no runnable ticket and no all-Done completion) — clean exit before runIteration.');
       recordExitReason(statePath, 'all_tickets_terminal');
       finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'completed' });
@@ -8557,6 +8622,7 @@ async function runMuxRunnerMain() {
             continue;
           }
           log(`recovery_exhausted: ladder exhausted for ${apTicketId} (${wmwRecovery.reason}) and no runnable ticket remains — exiting at iteration ${iteration}.`);
+          writeRecoveryHandoffArtifact(sessionDir, apTicketId, `wmw_oversized: ${wmwRecovery.reason}`, log);
           recordExitReason(statePath, 'recovery_exhausted');
           safeDeactivate(statePath);
           removeRunnerSessionMapEntry(statePath, log);
@@ -8613,6 +8679,7 @@ async function runMuxRunnerMain() {
             continue;
           }
           log(`recovery_exhausted: suppression cap reached for ${apTicketId} and no runnable ticket remains — halting.`);
+          writeRecoveryHandoffArtifact(sessionDir, apTicketId, `wmw_suppression_cap: ${ffDecision.cap}`, log);
           recordExitReason(statePath, 'recovery_exhausted');
           safeDeactivate(statePath);
           removeRunnerSessionMapEntry(statePath, log);
@@ -8741,6 +8808,7 @@ async function runMuxRunnerMain() {
                 const msg = `[failed-flip] suppression cap exhausted for ${prevTicketInfo.id} at head-regression — halting (recovery_exhausted).`;
                 log(msg);
                 process.stderr.write(`${msg}\n`);
+                writeRecoveryHandoffArtifact(sessionDir, prevTicketInfo.id ?? null, 'head_regression_suppression_cap', log);
                 recordExitReason(statePath, 'recovery_exhausted');
                 safeDeactivate(statePath);
                 removeRunnerSessionMapEntry(statePath, log);
@@ -9376,6 +9444,7 @@ async function runMuxRunnerMain() {
                 continue;
               }
               if (codexRecovery.kind === 'recovery_exhausted') {
+                writeRecoveryHandoffArtifact(sessionDir, state.current_ticket ?? null, 'codex_manager_no_progress: ladder_exhausted', log);
                 recordExitReason(statePath, 'recovery_exhausted');
                 safeDeactivate(statePath);
                 removeRunnerSessionMapEntry(statePath, log);
@@ -9459,6 +9528,7 @@ async function runMuxRunnerMain() {
             continue;
           }
           if (codexRecovery.kind === 'recovery_exhausted') {
+            writeRecoveryHandoffArtifact(sessionDir, state.current_ticket ?? null, 'codex_manager_no_progress: ladder_exhausted', log);
             recordExitReason(statePath, 'recovery_exhausted');
             safeDeactivate(statePath);
             removeRunnerSessionMapEntry(statePath, log);
