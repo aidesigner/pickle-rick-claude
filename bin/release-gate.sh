@@ -127,10 +127,9 @@ tarball_has_unsafe_entries() {
     }
     {
       entry = normalized($0)
-      if (entry ~ /^\// || entry ~ /(^|\/)\.\.?($|\/)/) {
+      if (!found && (entry ~ /^\// || entry ~ /(^|\/)\.\.?($|\/)/)) {
         print entry
         found = 1
-        exit
       }
     }
     END {

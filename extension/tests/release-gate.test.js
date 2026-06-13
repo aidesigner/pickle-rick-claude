@@ -439,6 +439,43 @@ esac
     }
   });
 
+  test('exits 21 when an unsafe entry precedes a large listing that would SIGPIPE the tar producer', () => {
+    // Regression: tarball_has_unsafe_entries piped `tar -tzf | awk`, and the awk
+    // exited on the first unsafe match. Under `set -o pipefail`, an early awk exit
+    // SIGPIPEs the still-writing tar producer (listing > 64KB pipe buffer), so the
+    // pipeline returns 141 and the `if`-guard read it as "no unsafe entry" — the
+    // traversal entry slipped through. Small-listing fixtures hid this because tar
+    // finished before the pipe filled. The valid payload root below makes the gate
+    // exit 0 ("ok") under the bug, proving the unsafe entry was never seen.
+    const { dir: repoDir, tagName } = makeGitFixture();
+    const padding = Array.from(
+      { length: 6000 },
+      (_unused, index) => `pickle-rick-claude/extension/services/generated_module_${index}.js`,
+    );
+    const fakeTar = makeFakeTarFixture(
+      [
+        '../escape-root/payload.txt',
+        'pickle-rick-claude/extension/package.json',
+        'pickle-rick-claude/install.sh',
+        ...padding,
+      ],
+      {
+        'pickle-rick-claude/extension/package.json': JSON.stringify({ version: '1.67.0' }, null, 2),
+      },
+    );
+    const ghDir = makeGhFixture({ tarball: fakeTar.tarball });
+    writeFileSync(path.join(ghDir, 'tar'), readFileSync(fakeTar.tarPath, 'utf8'), { mode: 0o755 });
+    try {
+      const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
+      assert.equal(result.status, 21, result.stdout || result.stderr);
+      assert.match(result.stderr, /unsafe archive entry \.\.\/escape-root\/payload\.txt/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(fakeTar.dir, { recursive: true, force: true });
+      rmSync(ghDir, { recursive: true, force: true });
+    }
+  });
+
   test('exits 20 when release asset download fails', () => {
     const { dir: repoDir, tagName } = makeGitFixture();
     const ghDir = makeGhFixture({ mode: 'download-fail' });
