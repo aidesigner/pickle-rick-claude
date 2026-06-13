@@ -281,7 +281,7 @@ Release closer flows must run `bin/release-gate.sh --pre-tag <tag>` before publi
 
 Use `bin/purge-update-cache.js [--dry-run]` to remove poisoned updater cache state before or during a release. Updater cache lives at `~/.claude/pickle-rick/update-check.json`, and install audit entries live at `~/.claude/pickle-rick/deploy-audit.log`.
 
-Gate-baseline activity events are `baseline_recapture_attempted`, `baseline_recapture_succeeded`, and `baseline_recapture_failed`. B-RRH recovery/resilience events are `rate_limit_park_exhausted`, `rate_limited_without_reset_at`, `ticket_ladder_exhausted`, `crashed_ticket_files_quarantined`, `crashed_ticket_files_quarantine_truncated`, and `pickle_incomplete`. Deploy audit-log event types are `DOWNGRADE`, `CACHE_PURGE`, and `INSTALL_BYPASS_ACTIVE_SESSION`.
+Gate-baseline activity events are `baseline_recapture_attempted`, `baseline_recapture_succeeded`, and `baseline_recapture_failed`. B-RRH recovery/resilience events are `rate_limit_park_exhausted`, `rate_limited_without_reset_at`, `ticket_ladder_exhausted`, `crashed_ticket_files_quarantined`, `crashed_ticket_files_quarantine_truncated`, and `pickle_incomplete`. Readiness gate events include `resolver_indeterminate` (warn, non-blocking: contract resolver exceeded its wall budget and cannot report completeness; exits 0). Deploy audit-log event types are `DOWNGRADE`, `CACHE_PURGE`, and `INSTALL_BYPASS_ACTIVE_SESSION`.
 
 ### 2. Add the Pickle Rick persona to your project
 
