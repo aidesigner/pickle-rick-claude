@@ -1,0 +1,16 @@
+{
+  "ac_shape_smells": [
+    {
+      "ac_id": "NEG-AC-1",
+      "ticket_ids": ["NEG-T1"]
+    }
+  ],
+  "tickets": [
+    {
+      "id": "NEG-T1",
+      "title": "Add retry to the runs handler",
+      "source_ac_ids": ["NEG-AC-1"],
+      "acceptance_test": "POST /api/runs/{id}/retry returns 200; POST /api/runs/{id}/cancel returns 200; PATCH /api/runs/{id}/override returns 200"
+    }
+  ]
+}
