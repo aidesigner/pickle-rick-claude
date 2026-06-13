@@ -74,6 +74,59 @@ export interface MetricsCache {
 }
 
 // ---------------------------------------------------------------------------
+// Skip-flag budget dashboard (W5c)
+//
+// Counts skip-flag USES per {source,reason} over the existing activity events
+// `gate_skipped` / `readiness_skipped` / `skip_flag_legacy_used` and flags any
+// gate whose use rate exceeds its stated budget as a removal candidate. Keys on
+// skip-flag-USE rate ONLY (owner ruling 3 — no `gate_false_positive` event).
+// ---------------------------------------------------------------------------
+
+/** The three existing activity events that record a skip-flag use. */
+export const SKIP_FLAG_EVENT_NAMES = ['gate_skipped', 'readiness_skipped', 'skip_flag_legacy_used'] as const;
+
+/** Default recurrence budget applied to any {source,reason} without an explicit entry. */
+export const DEFAULT_SKIP_FLAG_BUDGET = 5;
+
+/**
+ * Stated per-gate recurrence budgets, keyed `<source>::<reason>`. A gate whose
+ * skip-flag-use count over the window exceeds its budget is flagged as a
+ * removal candidate. Intentional kill-switch / bundle-bootstrap reasons get a
+ * generous budget; everything else falls back to DEFAULT_SKIP_FLAG_BUDGET.
+ */
+export const SKIP_FLAG_BUDGETS: Record<string, number> = {
+  'pickle::kill_switch': 1000,
+  'pickle::no_commits': 1000,
+  'pickle::no_project_type_detected': 50,
+  'pickle::project_type_low_confidence': 50,
+  'pickle::dirty_worktree_no_rescue': 20,
+};
+
+/** A single normalized skip-flag use extracted from an activity event. */
+export interface SkipFlagEvent {
+  event: string;
+  source: string;
+  reason: string;
+}
+
+/** Per-{source,reason} budget tally. */
+export interface SkipFlagBudgetEntry {
+  source: string;
+  reason: string;
+  uses: number;
+  budget: number;
+  over_budget: boolean;
+  removal_candidate: boolean;
+}
+
+export interface SkipFlagBudgetReport {
+  since: string;
+  until: string;
+  total_uses: number;
+  entries: SkipFlagBudgetEntry[];
+}
+
+// ---------------------------------------------------------------------------
 // Utility Functions
 // ---------------------------------------------------------------------------
 
@@ -592,4 +645,113 @@ export function buildReport(
   const totals = sumProjectTotals(projects);
 
   return { since, until, grouping, rows, projects, totals, tokens_per_backend: aggregateBackendTotals(tokens) };
+}
+
+// ---------------------------------------------------------------------------
+// Skip-flag budget report builder
+// ---------------------------------------------------------------------------
+
+const MAX_ACTIVITY_FILE_BYTES = 10 * 1024 * 1024; // 10 MB guard (mirrors standup)
+
+function budgetKey(source: string, reason: string): string {
+  return `${source}::${reason}`;
+}
+
+/**
+ * Normalize one activity event into a {source,reason} skip-flag use, or null if
+ * the event is not a skip-flag event. `gate_skipped`/`readiness_skipped` carry
+ * the reason in `gate_payload.reason`; `skip_flag_legacy_used` carries the flag
+ * name in `gate_payload.legacy_field`.
+ */
+export function extractSkipFlagUse(ev: unknown): SkipFlagEvent | null {
+  if (typeof ev !== 'object' || ev === null) return null;
+  const obj = ev as Record<string, unknown>;
+  const event = typeof obj.event === 'string' ? obj.event : '';
+  if (!(SKIP_FLAG_EVENT_NAMES as readonly string[]).includes(event)) return null;
+
+  const source = typeof obj.source === 'string' && obj.source ? obj.source : 'pickle';
+  const payload = typeof obj.gate_payload === 'object' && obj.gate_payload !== null
+    ? (obj.gate_payload as Record<string, unknown>)
+    : {};
+  const rawReason = event === 'skip_flag_legacy_used' ? payload.legacy_field : payload.reason;
+  const reason = typeof rawReason === 'string' && rawReason ? rawReason : 'unspecified';
+
+  return { event, source, reason };
+}
+
+/**
+ * Scan `<activityDir>/*.jsonl` for skip-flag uses within the `[since, until]`
+ * date window (inclusive local-date keys, matching the metrics report range).
+ */
+export function scanSkipFlagEvents(activityDir: string, since: string, until: string): SkipFlagEvent[] {
+  const out: SkipFlagEvent[] = [];
+  let files: string[];
+  try {
+    files = fs.readdirSync(activityDir).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    return out;
+  }
+
+  for (const file of files) {
+    const filePath = path.join(activityDir, file);
+    let content: string;
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.size > MAX_ACTIVITY_FILE_BYTES) continue;
+      content = fs.readFileSync(filePath, 'utf-8');
+    } catch (err) {
+      const msg = safeErrorMessage(err);
+      process.stderr.write(`[metrics] skip-flag scan skipped ${file}: ${msg}\n`);
+      continue;
+    }
+
+    for (const rawLine of content.split('\n')) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const ts = (parsed as Record<string, unknown>)?.ts;
+      if (typeof ts !== 'string') continue;
+      const dateKey = formatLocalDateKey(new Date(ts));
+      if (dateKey < since || dateKey > until) continue;
+      const use = extractSkipFlagUse(parsed);
+      if (use) out.push(use);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Tally skip-flag uses per {source,reason} and flag any whose use count exceeds
+ * its stated budget as a removal candidate (W5c). Keys on skip-flag-use rate
+ * ONLY — there is no false-positive signal in the model.
+ */
+export function buildSkipFlagBudgetReport(
+  events: SkipFlagEvent[],
+  budgets: Record<string, number>,
+  since: string,
+  until: string,
+): SkipFlagBudgetReport {
+  const tally = new Map<string, { source: string; reason: string; uses: number }>();
+  for (const ev of events) {
+    const key = budgetKey(ev.source, ev.reason);
+    const cur = tally.get(key);
+    if (cur) cur.uses += 1;
+    else tally.set(key, { source: ev.source, reason: ev.reason, uses: 1 });
+  }
+
+  const entries: SkipFlagBudgetEntry[] = [...tally.entries()].map(([key, t]) => {
+    const budget = budgets[key] ?? DEFAULT_SKIP_FLAG_BUDGET;
+    const over_budget = t.uses > budget;
+    return { source: t.source, reason: t.reason, uses: t.uses, budget, over_budget, removal_candidate: over_budget };
+  });
+
+  entries.sort((a, b) => b.uses - a.uses || budgetKey(a.source, a.reason).localeCompare(budgetKey(b.source, b.reason)));
+
+  return { since, until, total_uses: events.length, entries };
 }

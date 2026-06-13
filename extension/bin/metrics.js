@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import * as path from 'path';
 import * as os from 'os';
-import { scanSessionFiles, scanGitRepos, buildReport, formatNumber, shortenSlug, } from '../services/metrics-utils.js';
+import { scanSessionFiles, scanGitRepos, buildReport, formatNumber, shortenSlug, scanSkipFlagEvents, buildSkipFlagBudgetReport, SKIP_FLAG_BUDGETS, } from '../services/metrics-utils.js';
 import { printMinimalPanel, Style, formatLocalDateKey, getDataRoot, } from '../services/pickle-utils.js';
+import { getActivityDir } from '../services/activity-logger.js';
 import { BACKENDS } from '../types/index.js';
 function parseExactLocalDate(dateStr) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr))
@@ -317,6 +318,33 @@ function printWeeklyTable(report) {
     process.stdout.write('\n');
 }
 // ---------------------------------------------------------------------------
+// Skip-flag Budget Table (W5c)
+// ---------------------------------------------------------------------------
+function printSkipFlagBudgetTable(budget) {
+    const overCount = budget.entries.filter((e) => e.over_budget).length;
+    printMinimalPanel('Skip-flag budgets', {
+        'Skip-flag uses': formatNumber(budget.total_uses),
+        Gates: String(budget.entries.length),
+        'Over budget': String(overCount),
+    }, overCount > 0 ? 'YELLOW' : 'CYAN', '🛑');
+    if (budget.entries.length === 0) {
+        process.stdout.write('  No skip-flag uses in window.\n\n');
+        return;
+    }
+    printTable([
+        { header: 'Source', align: 'left', values: budget.entries.map((e) => e.source) },
+        { header: 'Reason', align: 'left', values: budget.entries.map((e) => e.reason) },
+        { header: 'Uses', align: 'right', values: budget.entries.map((e) => formatNumber(e.uses)) },
+        { header: 'Budget', align: 'right', values: budget.entries.map((e) => formatNumber(e.budget)) },
+        {
+            header: 'Status',
+            align: 'left',
+            values: budget.entries.map((e) => (e.over_budget ? 'OVER — removal candidate' : 'ok')),
+        },
+    ]);
+    process.stdout.write('\n');
+}
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 function main() {
@@ -329,20 +357,25 @@ function main() {
     const loc = scanGitRepos(repoRoot, since, until);
     const grouping = args.weekly ? 'weekly' : 'daily';
     const report = buildReport(tokens, loc, since, until, grouping);
+    const skipFlagEvents = scanSkipFlagEvents(getActivityDir(), since, until);
+    const skipFlagBudget = buildSkipFlagBudgetReport(skipFlagEvents, SKIP_FLAG_BUDGETS, since, until);
     if (args.json) {
-        console.log(JSON.stringify(report, null, 2));
+        console.log(JSON.stringify({ ...report, skip_flag_budget: skipFlagBudget }, null, 2));
         return;
     }
-    if (report.rows.length === 0) {
+    if (report.rows.length === 0 && skipFlagBudget.total_uses === 0) {
         console.log(`No metrics data found for ${since} to ${until}.`);
         return;
     }
-    if (args.weekly) {
-        printWeeklyTable(report);
+    if (report.rows.length > 0) {
+        if (args.weekly) {
+            printWeeklyTable(report);
+        }
+        else {
+            printDailyTable(report);
+        }
     }
-    else {
-        printDailyTable(report);
-    }
+    printSkipFlagBudgetTable(skipFlagBudget);
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'metrics.js') {
     main();

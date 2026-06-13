@@ -737,6 +737,12 @@ Every slash command and flag — including command-scoped families and the `†`
 /pickle-metrics --json             # Machine-readable JSON output
 ```
 
+### Skip-flag budget dashboard
+
+`/pickle-metrics` also reports a **skip-flag budget** view (W5c governance dashboard). It counts how often each quality gate's skip-flag is used over the window — keyed by `{source, reason}` — from the existing `gate_skipped`, `readiness_skipped`, and `skip_flag_legacy_used` activity events. Each gate has a stated recurrence budget (`SKIP_FLAG_BUDGETS` in `extension/src/services/metrics-utils.ts`); a gate whose skip-flag-use rate exceeds its budget is flagged as a **removal candidate**.
+
+This is the data behind the *subtract-before-add* governance rule (see `extension/CLAUDE.md`): a guard that false-blocks beyond its budget should be loosened or removed, never handed a second escape hatch. The `--json` output includes the report under the `skip_flag_budget` key. The lint `extension/scripts/audit-skip-flag-unification.sh` fails the build if a new non-unified skip-flag is added.
+
 ---
 
 ## 🛠️ Troubleshooting

@@ -57,6 +57,16 @@ Never substitute these for the terms above:
 
 Reject the Ousterhout line-ratio reading of "deep module." Depth is not "many implementation lines behind a few interface lines" — it is leverage: how much capability a caller gets per unit of interface they must learn. A short implementation can be deep if it concentrates real decisions; a long one can be shallow if it merely forwards calls.
 
+### Subtract-before-add governance (W5b)
+
+The system reliably adds guards and reliably fails to subtract them. This rule forces the subtraction to be data-driven, not memory-driven.
+
+- **Subtract-before-add** — before adding a new gate, guard, or skip flag, prefer loosening or removing the existing one that prompted it. A guard that false-blocks beyond its budget is **loosened or removed, never given a second escape hatch**. Two escape hatches for one guard is the smell that the guard itself is wrong.
+- **Every new gate ships with two things, no exceptions:**
+  1. **A documented escape hatch on the UNIFIED skip surface** — `state.flags.skip_quality_gates_reason` (the W1a unified surface). Do NOT introduce a new per-gate `skip_<gate>_reason` flag; the only sanctioned skip flag for new quality gates is the unified one. (Documented survivors: `skip_readiness_reason`, `skip_ticket_audit_reason` are legacy back-compat reads; `skip_smoke_gate_reason` is the W1a ruling-2 survivor. None of these is a license to add a new one.)
+  2. **A stated recurrence budget** — the maximum skip-flag-use rate the gate may incur before it is treated as a removal candidate. Budgets live in `SKIP_FLAG_BUDGETS` (`extension/src/services/metrics-utils.ts`); `/pickle-metrics` surfaces over-budget gates (W5c dashboard).
+- **Enforcement** — the meta-lint `extension/scripts/audit-skip-flag-unification.sh` fails the build if a NEW non-unified `skip_*_reason` field is added to `StateFlags`. The recurrence dashboard (`/pickle-metrics`, W5c) flags any gate whose skip-flag-use rate exceeds its stated budget.
+
 ## Trap Doors
 
 - `extension/scripts/regression-test-fast-integration-3x.sh` (R-TFP-C3 3× regression loop) — INVARIANT: the script MUST (a) skip with exit 0 when `RUN_REGRESSION_3X` is unset/empty, (b) loop exactly 3 times running `npm run test:fast` then `npm run test:integration` in sequence, (c) exit non-zero immediately on any failure, and (d) append a JSONL record `{"ts","run","status","fast_exit","integration_exit","duration_ms"}` to `~/.claude/pickle-rick/r-tfp-regression-log.jsonl` after each run. BREAKS: removing the skip-guard makes the script run unconditionally and adds ~30-45 min to the test:fast/integration tier; removing the JSONL append loses the consecutive-green count needed to close R-TFP; adding a `test:regression-3x` npm script without the `RUN_REGRESSION_3X` guard causes accidental invocation from `test:expensive`. ENFORCE: extension/tests/regression-test-fast-integration-3x.test.js (covers syntax, executable bit, npm script wiring, skip-guard, loop count, JSONL fields). PATTERN_SHAPE: `RUN_REGRESSION_3X` guard present, `r-tfp-regression-log.jsonl` append present, loop count = 3.
