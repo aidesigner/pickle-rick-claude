@@ -67,6 +67,9 @@ export interface SetupArgs {
   acknowledgeUndersized: boolean;
   managerIdleBackoffFallbackMs: number;
   forceTicketStatusSync: boolean;
+  // R-RSPIN-A: force re-derivation of pinned_branch/pinned_sha from working-dir
+  // HEAD on --resume, even when the stored pin already matches.
+  repin: boolean;
 }
 
 export const DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS = 60_000;
@@ -282,6 +285,7 @@ function createSetupConfig(): SetupArgs {
     acknowledgeUndersized: false,
     managerIdleBackoffFallbackMs: DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS,
     forceTicketStatusSync: false,
+    repin: false,
   };
 }
 
@@ -722,6 +726,14 @@ const ARG_HANDLERS: Record<string, ArgHandler> = {
     config.explicitFlags.add('force-ticket-status-sync');
     return index;
   },
+  // R-RSPIN-A: --repin forces re-derivation of pinned_branch/pinned_sha from
+  // working-dir HEAD on --resume even when the stored pin already matches. On
+  // resume the pin is also re-derived automatically whenever it differs from HEAD.
+  '--repin': (config, _args, index) => {
+    config.repin = true;
+    config.explicitFlags.add('repin');
+    return index;
+  },
   '-s': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
   '--session-id': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
 };
@@ -987,6 +999,32 @@ function applyResumeConfig(s: State, config: SetupArgs, fullSessionPath: string,
   // resume). config.prdPath was populated upstream in resumeSession from the
   // session dir, so this fires for paused-refine → --resume.
   if (config.prdPath) s.prd_path = config.prdPath;
+  repinFromHeadOnResume(s, config);
+}
+
+/**
+ * R-RSPIN-A: re-derive pinned_branch/pinned_sha from working-dir HEAD on resume.
+ * B-RRH repopulated prd_path on resume but not the branch/SHA pin, so a resumed
+ * session whose branch moved / SHA advanced reasoned against a dead pin in
+ * mux-runner.ts:checkHeadPinMismatch. Reads ONLY working-dir HEAD (process.cwd()
+ * is already the resumed working_dir — chdir ran upstream in resumeSession) and
+ * mutates ONLY the two pin fields. Re-derives when the stored pin differs from
+ * HEAD, or unconditionally under --repin. Mirrors createInitialState's capture:
+ * getHeadBranch returns null on detached HEAD; the sha is only overwritten when a
+ * real HEAD sha is readable so a non-repo resume never clobbers a good pin.
+ */
+function repinFromHeadOnResume(s: State, config: SetupArgs): void {
+  const observedBranch = (() => {
+    try { return getHeadBranch(process.cwd()); } catch { return null; }
+  })();
+  let observedSha: string | undefined;
+  try { observedSha = getHeadSha(process.cwd()); } catch { observedSha = undefined; }
+
+  const differs = s.pinned_branch !== observedBranch || s.pinned_sha !== observedSha;
+  if (!config.repin && !differs) return;
+
+  s.pinned_branch = observedBranch;
+  if (observedSha) s.pinned_sha = observedSha;
 }
 
 /**

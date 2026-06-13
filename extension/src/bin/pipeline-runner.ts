@@ -413,7 +413,8 @@ export function assertCleanWorkingTree(workingDir: string, ignoreDirtyPaths?: st
   if (blockingPaths.length === 0) return;
   const suffix = ignore.length > 0 ? ` (ignored prefixes: ${ignore.join(', ')})` : '';
   throw new Error(
-    `Working tree at ${workingDir} is dirty${suffix}. Dirty files:\n${blockingPaths.join('\n')}\nCommit, stash, or discard changes before starting the pipeline.`,
+    `Working tree at ${workingDir} is dirty${suffix}. Dirty files:\n${blockingPaths.join('\n')}\nCommit, stash, or discard changes before starting the pipeline.\n` +
+      `If a moved branch or advanced HEAD left a stale pin, run \`setup --repin\` to re-pin from HEAD, or \`pickle-recover\` to salvage in-flight work.`,
   );
 }
 
