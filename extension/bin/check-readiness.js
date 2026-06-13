@@ -14,7 +14,14 @@ import { FORWARD_REF_ANNOTATION_RE } from '../services/forward-ref-annotation.js
 const SNAPSHOT_FILE = 'readiness_snapshot.json';
 const READINESS_MAX_RECYCLE_CYCLES = 3;
 const DEFAULT_HISTORY_LIMIT = 10;
-const DEFAULT_MAX_WALL_MS = 60_000;
+// W1c: raised 60_000 -> 120_000. A readiness pre-flight on a large monorepo can
+// legitimately spend >60s scanning git-tracked source + declared-dependency `.d.ts`
+// files; the old 60s ceiling clipped real resolution and produced a spurious
+// indeterminate signal. 120s is the latency ceiling — high enough to finish on big
+// repos, low enough that the gate never *feels* hung (it is a batch pre-flight, not an
+// interactive prompt). Over-budget is non-blocking: it emits `resolver_indeterminate`
+// (warn) and the gate still exits 0 — a checker that can't finish is not a defect.
+const DEFAULT_MAX_WALL_MS = 120_000;
 const FIND_IMPORTERS_TIMEOUT_MS = 3_000;
 const MACHINE_HINT_RE = /\b(\d+(?:\.\d+)?%?|exit\s+\d+|<\s*\d+|>\s*\d+|<=\s*\d+|>=\s*\d+|under\s+\d+|within\s+\d+|exact(?:ly)?|regex|matches?|JSON|field|file exists|writes?|emits?|test|describe\.each|node --test|npm test|tsc|eslint|table|input\/output)\b/i;
 const PURE_PROSE_RE = /\b(must|should)\s+(?:be|feel)\s+(?:intuitive|performant|fast|easy|simple|clear|usable|nice|good|robust|reliable)\b/i;
@@ -1057,6 +1064,28 @@ function writeReport(sessionDir, tickets, findings, escalation) {
     fs.writeFileSync(reportPath, lines.join('\n'));
     return reportPath;
 }
+// W1c: name the resolution phase the over-budget gate ran, for the indeterminate event.
+function resolverPhase(checkContracts, checkMachinability) {
+    if (checkContracts && !checkMachinability)
+        return 'contract';
+    if (checkMachinability && !checkContracts)
+        return 'machinability';
+    return 'mixed';
+}
+function maybeEmitResolverIndeterminate(input) {
+    if (!input.truncated)
+        return;
+    logActivity({
+        event: 'resolver_indeterminate',
+        source: 'pickle',
+        session: path.basename(input.sessionDir),
+        gate_payload: {
+            wall_ms: input.wallMs,
+            budget_ms: input.budgetMs,
+            phase: resolverPhase(input.checkContracts, input.checkMachinability),
+        },
+    });
+}
 export function runReadiness(args) {
     const started = Date.now();
     const state = readState(args.sessionDir);
@@ -1087,6 +1116,20 @@ export function runReadiness(args) {
         ...selected.files.flatMap((file) => findReadinessFindings(file, args.repoRoot, { checkMachinability, checkContracts, cache: resolverCache, maxWallMs: args.maxWallMs, allowlist })),
     ];
     const ticketsVersion = getTicketsVersion(state);
+    // W1c (AC-W1c-1): when the contract/symbol resolver exhausts its wall budget it
+    // sets `cache.truncated` and self-reports a `kind:'performance'` finding (which the
+    // R-RHFP filter below already keeps out of the blocking set). Emit a NAMED, observable
+    // `resolver_indeterminate` (warn) event so the over-budget condition is auditable —
+    // never a `wall_budget_exceeded` finding that halts the bundle. This is purely
+    // additive: the exit-0 path is already taken via `blockingFindings`.
+    maybeEmitResolverIndeterminate({
+        truncated: (resolverCache?.truncated ?? false) || pathCache.truncated,
+        sessionDir: args.sessionDir,
+        wallMs: Date.now() - started,
+        budgetMs: args.maxWallMs,
+        checkContracts,
+        checkMachinability,
+    });
     // R-RHFP (Finding #64 BUG #1): `kind:'performance'` findings are the checker
     // reporting its OWN incompleteness (contract-resolution wall budget exceeded
     // on a large/slow target repo), not a ticket defect. They stay in `findings`

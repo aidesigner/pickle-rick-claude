@@ -778,6 +778,10 @@ export const VALID_ACTIVITY_EVENTS = [
   // one of these per real (non-plan) invocation — records the chosen subcommand,
   // ticket, and resulting disposition.
   'operator_recovery_transition',
+  // W1c: readiness contract/symbol resolver exhausted its wall budget — a warn-class
+  // indeterminate signal (the checker couldn't finish), NOT a ticket defect. Emitted by
+  // check-readiness.ts:runReadiness; the gate still exits 0 (non-blocking).
+  'resolver_indeterminate',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

@@ -275,6 +275,24 @@
         "session": { "type": "string" }
       }
     },
+    "resolver_indeterminate": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "resolver_indeterminate" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["wall_ms", "budget_ms", "phase"],
+          "properties": {
+            "wall_ms": { "type": "integer", "minimum": 0 },
+            "budget_ms": { "type": "integer", "minimum": 1 },
+            "phase": { "type": "string", "enum": ["contract", "machinability", "mixed"] }
+          }
+        }
+      }
+    },
     "ticket_audit_manual_edit": {
       "type": "object",
       "required": ["event", "ts", "gate_payload"],
@@ -1703,6 +1721,7 @@
     { "$ref": "#/definitions/skip_flag_legacy_used" },
     { "$ref": "#/definitions/ticket_audit_bypassed" },
     { "$ref": "#/definitions/ticket_audit_failed" },
+    { "$ref": "#/definitions/resolver_indeterminate" },
     { "$ref": "#/definitions/ticket_audit_manual_edit" },
     { "$ref": "#/definitions/smoke_gate_bypassed" },
     { "$ref": "#/definitions/ac_shape_gate_bypassed" },

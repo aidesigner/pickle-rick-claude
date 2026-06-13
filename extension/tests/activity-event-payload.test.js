@@ -288,6 +288,16 @@ const EVENT_CASES = [
     drop: 'ts',
   },
   {
+    type: 'resolver_indeterminate',
+    valid: {
+      event: 'resolver_indeterminate',
+      ts: TS,
+      session: 'session-1',
+      gate_payload: { wall_ms: 1234, budget_ms: 120000, phase: 'contract' },
+    },
+    drop: 'gate_payload',
+  },
+  {
     type: 'ticket_audit_manual_edit',
     valid: { event: 'ticket_audit_manual_edit', ts: TS, gate_payload: { edit_count: 2 } },
     drop: 'gate_payload',
@@ -1140,6 +1150,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'skip_flag_legacy_used',
     'ticket_audit_bypassed',
     'ticket_audit_failed',
+    'resolver_indeterminate',
     'ticket_audit_manual_edit',
     'smoke_gate_bypassed',
     'ac_shape_gate_bypassed',
