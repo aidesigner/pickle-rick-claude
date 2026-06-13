@@ -392,8 +392,21 @@ function gitRepoRoot(cwd) {
  * the working dir — Branch 4 (no scope creep).
  */
 function isDirtyPathUnderWorkingDir(repoRoot, workingDir, dirtyPath) {
-    const resolvedWorking = path.resolve(workingDir);
-    const resolved = path.resolve(repoRoot, dirtyPath);
+    // Resolve symlinks on BOTH anchors before comparing. `gitRepoRoot` returns git's
+    // `--show-toplevel`, which is already realpath-resolved (e.g. macOS /var → /private/var),
+    // while `workingDir` (from state.json) is not. Comparing the two raw would mis-classify
+    // in-working_dir dirt as "outside" whenever the repo lives under a symlinked path
+    // (/var, /tmp), tripping a spurious Branch-4 FATAL and defeating the dirty-tree self-heal.
+    const realpathOrResolve = (p) => {
+        try {
+            return fs.realpathSync(path.resolve(p));
+        }
+        catch {
+            return path.resolve(p);
+        }
+    };
+    const resolvedWorking = realpathOrResolve(workingDir);
+    const resolved = path.resolve(realpathOrResolve(repoRoot), dirtyPath);
     return resolved === resolvedWorking || resolved.startsWith(resolvedWorking + path.sep);
 }
 function emitQuarantineEvent(event, payload) {
