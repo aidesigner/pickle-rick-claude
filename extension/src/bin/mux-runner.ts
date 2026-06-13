@@ -1727,6 +1727,50 @@ export function clearStalePerTicketCacheAtIterationStart(
 }
 
 /**
+ * W4c (AC-W4c-1): guarantee the per-ticket no-progress cap is ALWAYS bounded
+ * from frontmatter at decision time. The R-WMNP root cause was a SET
+ * `current_ticket` whose per-ticket cap cache was invalid/undefined: the
+ * cap-check then reads `ticketMaxIter = 0`, the `ticketMaxIter > 0` guard
+ * skips the cap, and the ticket respawns in-phase forever (unbounded loop
+ * because the cap silently disabled itself).
+ *
+ * This is a belt-and-suspenders re-assertion of the R-CNAR-1 self-heal
+ * (`clearStalePerTicketCacheAtIterationStart`): for a SET ticket with an
+ * invalid cap cache it re-derives the cap via `applyTicketTierBudget` (reading
+ * the ticket's `complexity_tier` frontmatter → tier budget), so any code path
+ * that left `current_ticket_max_iterations` undefined/0 cannot disable the cap.
+ * It NEVER touches the no-ticket case (owned by `shouldEmitStalePerTicketCapSkip`)
+ * and NEVER overwrites `state.max_iterations` (R-CNAR-1 part-2 trap door —
+ * `applyTicketTierBudget` is the part-2-compliant deriver).
+ *
+ * Behind the `PICKLE_RECOVERY_CONSOLIDATION=off` kill-switch this reverts to the
+ * per-seam R-CNAR-1-only path (returns state untouched). Best-effort: a state
+ * write failure falls open to the existing `ticketMaxIter=0` skip — never worse
+ * than the pre-W4c behavior.
+ */
+export function repopulateNoProgressCapFromFrontmatter(
+  statePath: string,
+  state: State,
+  log: (msg: string) => void,
+  sessionDir: string,
+): State {
+  if (!recoveryConsolidationEnabled()) return state;
+  const hasTicket = typeof state.current_ticket === 'string' && state.current_ticket.length > 0;
+  if (!hasTicket || isValidPerTicketCapCache(state)) return state;
+  try {
+    log(`W4c: repopulating no-progress cap from frontmatter (current_ticket=${state.current_ticket})`);
+    return sm.update(statePath, s => {
+      clearStaleTicketCacheFields(s);
+      applyTicketTierBudget(s, sessionDir);
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`W4c: cap repopulation failed: ${msg}`);
+    return state;
+  }
+}
+
+/**
  * Proactive empty-queue completion check, run at iteration_start before any
  * manager spawn. If all `linear_ticket_*.md` files in the session report
  * `status: Done` (and there is at least one ticket), synthesizes an
@@ -7727,6 +7771,11 @@ async function runMuxRunnerMain() {
     }
 
     state = clearStalePerTicketCacheAtIterationStart(statePath, state, log, sessionDir);
+    // W4c (AC-W4c-1): re-assert the per-ticket no-progress cap from frontmatter
+    // ground truth so a SET ticket can never reach the cap-check below with an
+    // invalid cache (ticketMaxIter=0 → cap silently disabled → R-WMNP unbounded
+    // respawn). Kill-switch PICKLE_RECOVERY_CONSOLIDATION=off reverts this.
+    state = repopulateNoProgressCapFromFrontmatter(statePath, state, log, sessionDir);
 
     const rawGlobalMaxIter = Number(state.max_iterations);
     const globalMaxIter = Number.isFinite(rawGlobalMaxIter) ? rawGlobalMaxIter : 0;
