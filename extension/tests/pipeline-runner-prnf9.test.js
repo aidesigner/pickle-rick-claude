@@ -105,7 +105,7 @@ function makeRuntime({ withFollowupCommit = false, stateOverrides = {} } = {}) {
       anatomy_max_iterations: 100,
       szechuan_max_iterations: 50,
       citadel_strict: false,
-      ignore_dirty_paths: ['prds', 'docs'],
+      dirty_exempt_segments: ['prds', 'docs'],
     },
     target: repo,
     workingDir: repo,

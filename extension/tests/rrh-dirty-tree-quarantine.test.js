@@ -333,9 +333,9 @@ test('AC4: dirty path OUTSIDE working_dir → FATAL (no scope creep)', () => {
       statePath: path.join(sessionDir, 'state.json'),
       currentTicket: null,
       declaredFilesByTicket: new Map(),
-      // Empty ignore so the repo-root-relative outside path is in the blocking set
+      // Empty exempt-segments so the repo-root-relative outside path is in the blocking set
       // (the default '-- .' subdir pathspec would otherwise scope it away).
-      ignoreDirtyPaths: [],
+      exemptSegments: [],
       log: NO_OP_LOG,
     }),
     /OUTSIDE working_dir/,

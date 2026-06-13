@@ -60,7 +60,7 @@ function writePipeline(sessionDir, repo) {
     szechuan_stall_limit: 5,
     anatomy_max_iterations: 100,
     szechuan_max_iterations: 50,
-    ignore_dirty_paths: ['prds', 'docs'],
+    dirty_exempt_segments: ['prds', 'docs'],
   }, null, 2));
 }
 
@@ -136,7 +136,7 @@ test('relaunch boundary: unrelated exempt tracked changes in docs/ are preserved
     // Simulate interrupted worker: dirty the tracked source file
     fs.writeFileSync(srcFile, 'export const v = 2; // partial\n');
 
-    // Simulate unrelated docs/ change (exempt via ignore_dirty_paths)
+    // Simulate unrelated docs/ change (exempt via dirty_exempt_segments)
     fs.writeFileSync(path.join(docsDir, 'notes.md'), '# updated by user\n');
 
     const result = spawnSync(process.execPath, [CLI, sessionDir], {

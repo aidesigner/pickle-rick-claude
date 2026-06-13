@@ -89,10 +89,13 @@ interface PipelineConfig {
   // (High+ when true, Critical-only when false) — it no longer gates a halt threshold.
   citadel_strict: boolean;
   backend?: Backend;
-  ignore_dirty_paths: string[];
+  // W1d: path SEGMENTS (e.g. 'prds','docs') exempt from the dirty-tree preflight at any depth.
+  // This is the single migrated dirty-exemption config input, folded into the one scope-aware dirty
+  // resolver alongside the `.pipeline-runner-dirty-allowed.json` allowlist and `allowed_paths` scope.
+  dirty_exempt_segments: string[];
 }
 
-const DEFAULT_IGNORE_DIRTY_PATHS: readonly string[] = ['prds', 'docs'];
+const DEFAULT_DIRTY_EXEMPT_SEGMENTS: readonly string[] = ['prds', 'docs'];
 const CODEX_REQUIRED_BACKEND = 'codex-required';
 const WATCHER_TERMINATED_BANNER = '◤ FEED TERMINATED ◢';
 const DIRTY_ALLOWED_FILE_REL = path.join('extension', '.pipeline-runner-dirty-allowed.json');
@@ -184,10 +187,10 @@ export function parsePipelineConfig(raw: Record<string, unknown>): PipelineConfi
     typeof rawBackend === 'string' && (BACKENDS as readonly string[]).includes(rawBackend)
       ? (rawBackend as Backend)
       : undefined;
-  const rawIgnore = raw.ignore_dirty_paths;
-  const ignore_dirty_paths = Array.isArray(rawIgnore) && rawIgnore.every((p) => typeof p === 'string')
-    ? (rawIgnore as string[])
-    : [...DEFAULT_IGNORE_DIRTY_PATHS];
+  const rawExempt = raw.dirty_exempt_segments;
+  const dirty_exempt_segments = Array.isArray(rawExempt) && rawExempt.every((p) => typeof p === 'string')
+    ? (rawExempt as string[])
+    : [...DEFAULT_DIRTY_EXEMPT_SEGMENTS];
   return {
     phases: normalizePipelinePhases(raw.phases),
     target: (raw.target as string) || '',
@@ -201,7 +204,7 @@ export function parsePipelineConfig(raw: Record<string, unknown>): PipelineConfi
     szechuan_max_iterations: parsePositiveInteger(raw.szechuan_max_iterations, 50),
     citadel_strict: raw.citadel_strict === true || raw.strict === true,
     backend,
-    ignore_dirty_paths,
+    dirty_exempt_segments,
   };
 }
 
@@ -363,9 +366,15 @@ export function discoverSubsystems(target: string): { name: string; fileCount: n
  * would otherwise auto-commit the user's pre-existing work under a generic
  * message. Fail fast so the user makes that call deliberately.
  *
- * `ignoreDirtyPaths` excludes those path prefixes (typically docs/prds) from
- * the dirty check — frequent doc edits during a long-running epic shouldn't
- * block resume. Defaults to ['prds', 'docs'] when omitted.
+ * W1d: a SINGLE scope-aware resolver (`allowedDirtyPathsForLaunch`) owns every
+ * dirty-tree exemption. A dirty path is exempt when ANY of these hold:
+ *   1. one of its path segments matches `exemptSegments` at any depth
+ *      (default ['prds','docs'] — frequent doc churn shouldn't block resume),
+ *   2. it is listed in `.pipeline-runner-dirty-allowed.json`,
+ *   3. it matches `.gitignore`,
+ *   4. `allowedPaths` (the run scope) is non-empty AND the path is NOT under
+ *      any allowed path — an out-of-scope autofix (`lint --fix` churn) must
+ *      not abort a scoped launch.
  */
 function loadAllowedDirtyPaths(workingDir: string): Set<string> {
   const filePath = path.join(workingDir, DIRTY_ALLOWED_FILE_REL);
@@ -390,28 +399,49 @@ function loadAllowedDirtyPaths(workingDir: string): Set<string> {
 
 // Match the path SEGMENT (e.g. 'docs', 'prds') at ANY depth, not just as a root prefix.
 // git pathspec :!docs/** only excludes root-level docs/; this catches packages/api/docs/prd/foo.md.
-function isDirtyPathIgnoredBySegment(filePath: string, ignoreSegments: string[]): boolean {
+function isDirtyPathExemptBySegment(filePath: string, exemptSegments: string[]): boolean {
   const parts = filePath.replace(/\\/g, '/').split('/');
-  return ignoreSegments.some((seg) => parts.includes(seg));
+  return exemptSegments.some((seg) => parts.includes(seg));
 }
 
-function allowedDirtyPathsForLaunch(workingDir: string, ignoreDirtyPaths?: string[]): string[] {
-  const ignore = ignoreDirtyPaths ?? [...DEFAULT_IGNORE_DIRTY_PATHS];
+// W1d scope restriction: a dirty path is in-scope when it equals an allowed path or sits under one
+// (segment-boundary prefix). Reuses the local path machinery — no convergence-gate scope import.
+function isDirtyPathInScope(filePath: string, allowedPaths: string[]): boolean {
+  const norm = filePath.replace(/\\/g, '/');
+  return allowedPaths.some((allowed) => {
+    const a = allowed.replace(/\\/g, '/').replace(/\/+$/, '');
+    return norm === a || norm.startsWith(`${a}/`);
+  });
+}
+
+/** W1d: the bag of exemption inputs the single dirty resolver consumes. */
+interface DirtyResolverScope {
+  /** Path segments exempt at any depth (default ['prds','docs']). */
+  exemptSegments?: string[];
+  /** Run scope — when non-empty, dirty paths NOT under any allowed path are exempt. */
+  allowedPaths?: string[];
+}
+
+function allowedDirtyPathsForLaunch(workingDir: string, opts?: DirtyResolverScope): string[] {
+  const exemptSegments = opts?.exemptSegments ?? [...DEFAULT_DIRTY_EXEMPT_SEGMENTS];
+  const allowedPaths = opts?.allowedPaths;
+  const scopeActive = Array.isArray(allowedPaths) && allowedPaths.length > 0;
   const allowlist = loadAllowedDirtyPaths(workingDir);
-  const dirtyPaths = listWorkingTreeDirtyPaths(workingDir, ignore);
+  const dirtyPaths = listWorkingTreeDirtyPaths(workingDir, exemptSegments);
   return dirtyPaths.filter(
     (filePath) =>
-      !isDirtyPathIgnoredBySegment(filePath, ignore) &&
+      !isDirtyPathExemptBySegment(filePath, exemptSegments) &&
       !allowlist.has(filePath) &&
-      !isGitIgnoredPath(workingDir, filePath),
+      !isGitIgnoredPath(workingDir, filePath) &&
+      (!scopeActive || isDirtyPathInScope(filePath, allowedPaths)),
   );
 }
 
-export function assertCleanWorkingTree(workingDir: string, ignoreDirtyPaths?: string[]): void {
-  const ignore = ignoreDirtyPaths ?? [...DEFAULT_IGNORE_DIRTY_PATHS];
-  const blockingPaths = allowedDirtyPathsForLaunch(workingDir, ignore);
+export function assertCleanWorkingTree(workingDir: string, opts?: DirtyResolverScope): void {
+  const exemptSegments = opts?.exemptSegments ?? [...DEFAULT_DIRTY_EXEMPT_SEGMENTS];
+  const blockingPaths = allowedDirtyPathsForLaunch(workingDir, opts);
   if (blockingPaths.length === 0) return;
-  const suffix = ignore.length > 0 ? ` (ignored prefixes: ${ignore.join(', ')})` : '';
+  const suffix = exemptSegments.length > 0 ? ` (exempt segments: ${exemptSegments.join(', ')})` : '';
   throw new Error(
     `Working tree at ${workingDir} is dirty${suffix}. Dirty files:\n${blockingPaths.join('\n')}\nCommit, stash, or discard changes before starting the pipeline.\n` +
       `If a moved branch or advanced HEAD left a stale pin, run \`setup --repin\` to re-pin from HEAD, or \`pickle-recover\` to salvage in-flight work.`,
@@ -422,7 +452,7 @@ export function assertCleanWorkingTree(workingDir: string, ignoreDirtyPaths?: st
  * At a manager-boundary relaunch (state.manager_relaunch_count > 0), the
  * in-flight ticket's interrupted worker may have left uncommitted partial
  * changes. This resets ONLY the blocking dirty paths (those assertCleanWorkingTree
- * would reject) — exempted paths (prds/, docs/, allowlist) are never touched.
+ * would reject) — exempted paths (prds/, docs/, allowlist, out-of-scope) are never touched.
  *
  * Since the pipeline requires a clean tree at first launch, all blocking dirty
  * files at a relaunch boundary MUST be from the interrupted worker, so resetting
@@ -430,10 +460,10 @@ export function assertCleanWorkingTree(workingDir: string, ignoreDirtyPaths?: st
  */
 export function resetInterruptedTicketWorkForRelaunch(
   workingDir: string,
-  ignoreDirtyPaths: string[] | undefined,
+  scope: DirtyResolverScope | undefined,
   log: (msg: string) => void,
 ): void {
-  const blockingPaths = allowedDirtyPathsForLaunch(workingDir, ignoreDirtyPaths);
+  const blockingPaths = allowedDirtyPathsForLaunch(workingDir, scope);
   if (blockingPaths.length === 0) return;
   log(`[relaunch-reset] Resetting ${blockingPaths.length} dirty blocking file(s) from interrupted in-flight ticket`);
 
@@ -605,7 +635,9 @@ export interface CrashedTicketQuarantineArgs {
   currentTicket: string | null;
   /** Declared files keyed by ticket id for the In-Progress/Todo set. */
   declaredFilesByTicket: Map<string, string[]>;
-  ignoreDirtyPaths?: string[];
+  /** Path segments + run scope folded into the single dirty resolver (W1d). */
+  exemptSegments?: string[];
+  allowedPaths?: string[];
   log: (msg: string) => void;
   /** Byte cap forwarded to the archive primitive (injectable for tests). */
   byteCap?: number;
@@ -682,14 +714,14 @@ export function classifyDirtyTreeBranch(
 }
 
 export function quarantineCrashedTicketFilesOrFatal(args: CrashedTicketQuarantineArgs): void {
-  const { workingDir, sessionDir, currentTicket, declaredFilesByTicket, ignoreDirtyPaths, log } = args;
+  const { workingDir, sessionDir, currentTicket, declaredFilesByTicket, exemptSegments, allowedPaths, log } = args;
   const archive = args.archive ?? ((cwd, sd, ticketDir, byteCap) =>
     archiveBeforeDestructive({ cwd, sessionDir: sd, ticketDir, reason: 'pre_reset' }, byteCap ?? ARCHIVE_UNTRACKED_BYTE_CAP));
   const applyClean = args.applyClean ?? cleanScopedDirtyPaths;
   const ticketDir = currentTicket ? path.join(sessionDir, currentTicket) : null;
 
   const repoRoot = gitRepoRoot(workingDir);
-  const blocking = allowedDirtyPathsForLaunch(workingDir, ignoreDirtyPaths);
+  const blocking = allowedDirtyPathsForLaunch(workingDir, { exemptSegments, allowedPaths });
   const decision = classifyDirtyTreeBranch(repoRoot, workingDir, blocking, currentTicket, declaredFilesByTicket);
 
   if (decision.branch === 'clean') return;
@@ -2746,11 +2778,17 @@ function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: stri
   }
 
   const { backend, phaseEnv } = resolvePipelineBackend(statePath, state, config, sessionDir, log);
+  // W1d: the dirty-tree preflight evaluates dirtiness ONLY over `allowed_paths` (the run scope) when a
+  // persisted scope.json exists, so an out-of-scope autofix (lint --fix) cannot abort launch/relaunch.
+  const dirtyScope: DirtyResolverScope = {
+    exemptSegments: config.dirty_exempt_segments,
+    allowedPaths: readPersistedAllowedPaths(sessionDir),
+  };
   // At manager-boundary relaunch, reset dirty files left by the interrupted
   // in-flight ticket so the subsequent assertCleanWorkingTree does not throw.
   const relaunchCount = typeof state.manager_relaunch_count === 'number' ? state.manager_relaunch_count : 0;
   if (relaunchCount > 0) {
-    resetInterruptedTicketWorkForRelaunch(workingDir, config.ignore_dirty_paths, log);
+    resetInterruptedTicketWorkForRelaunch(workingDir, dirtyScope, log);
   }
   // R-RRH C8: a cold manager crash mid-implement strands the in-flight ticket's
   // non-gate-passing source files. Self-heal the crashed ticket's files (archive
@@ -2762,10 +2800,11 @@ function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: stri
     statePath,
     currentTicket: typeof state.current_ticket === 'string' ? state.current_ticket : null,
     declaredFilesByTicket: buildDeclaredFilesByTicket(sessionDir),
-    ignoreDirtyPaths: config.ignore_dirty_paths,
+    exemptSegments: dirtyScope.exemptSegments,
+    allowedPaths: dirtyScope.allowedPaths,
     log,
   });
-  assertCleanWorkingTree(workingDir, config.ignore_dirty_paths);
+  assertCleanWorkingTree(workingDir, dirtyScope);
   setupRuntimeScope(sessionDir, workingDir, config.target || workingDir, opts, pipelineRaw, log);
 
   let repoRoot = workingDir;

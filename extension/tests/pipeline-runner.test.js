@@ -1090,29 +1090,29 @@ describe('parsePipelineConfig', () => {
     assert.equal(config.backend, undefined);
   });
 
-  test('defaults ignore_dirty_paths to ["prds","docs"]', () => {
+  test('defaults dirty_exempt_segments to ["prds","docs"]', () => {
     const config = parsePipelineConfig({ phases: [], target: '' });
-    assert.deepEqual(config.ignore_dirty_paths, ['prds', 'docs']);
+    assert.deepEqual(config.dirty_exempt_segments, ['prds', 'docs']);
   });
 
-  test('roundtrips ignore_dirty_paths when array of strings', () => {
-    const config = parsePipelineConfig({ phases: [], target: '', ignore_dirty_paths: ['notes', 'wip'] });
-    assert.deepEqual(config.ignore_dirty_paths, ['notes', 'wip']);
+  test('roundtrips dirty_exempt_segments when array of strings', () => {
+    const config = parsePipelineConfig({ phases: [], target: '', dirty_exempt_segments: ['notes', 'wip'] });
+    assert.deepEqual(config.dirty_exempt_segments, ['notes', 'wip']);
   });
 
-  test('roundtrips empty ignore_dirty_paths (opt-out)', () => {
-    const config = parsePipelineConfig({ phases: [], target: '', ignore_dirty_paths: [] });
-    assert.deepEqual(config.ignore_dirty_paths, []);
+  test('roundtrips empty dirty_exempt_segments (opt-out)', () => {
+    const config = parsePipelineConfig({ phases: [], target: '', dirty_exempt_segments: [] });
+    assert.deepEqual(config.dirty_exempt_segments, []);
   });
 
-  test('falls back to default when ignore_dirty_paths is non-array', () => {
-    const config = parsePipelineConfig({ phases: [], target: '', ignore_dirty_paths: 'prds' });
-    assert.deepEqual(config.ignore_dirty_paths, ['prds', 'docs']);
+  test('falls back to default when dirty_exempt_segments is non-array', () => {
+    const config = parsePipelineConfig({ phases: [], target: '', dirty_exempt_segments: 'prds' });
+    assert.deepEqual(config.dirty_exempt_segments, ['prds', 'docs']);
   });
 
-  test('falls back to default when ignore_dirty_paths contains non-strings', () => {
-    const config = parsePipelineConfig({ phases: [], target: '', ignore_dirty_paths: ['prds', 42] });
-    assert.deepEqual(config.ignore_dirty_paths, ['prds', 'docs']);
+  test('falls back to default when dirty_exempt_segments contains non-strings', () => {
+    const config = parsePipelineConfig({ phases: [], target: '', dirty_exempt_segments: ['prds', 42] });
+    assert.deepEqual(config.dirty_exempt_segments, ['prds', 'docs']);
   });
 });
 
@@ -1268,12 +1268,12 @@ describe('assertCleanWorkingTree', () => {
     fs.mkdirSync(path.join(dir, 'prds'));
     fs.writeFileSync(path.join(dir, 'prds', 'idea.md'), 'wip');
     // Empty list disables exclusions — prds/ now trips the check.
-    assert.throws(() => assertCleanWorkingTree(dir, []), /dirty/);
+    assert.throws(() => assertCleanWorkingTree(dir, { exemptSegments: [] }), /dirty/);
     // Custom list accepts unrelated dirs.
     fs.rmSync(path.join(dir, 'prds'), { recursive: true });
     fs.mkdirSync(path.join(dir, 'notes'));
     fs.writeFileSync(path.join(dir, 'notes', 'jot.md'), 'wip');
-    assert.doesNotThrow(() => assertCleanWorkingTree(dir, ['notes']));
+    assert.doesNotThrow(() => assertCleanWorkingTree(dir, { exemptSegments: ['notes'] }));
     fs.rmSync(dir, { recursive: true });
   });
 
@@ -2174,7 +2174,7 @@ describe('R-HRP-1 citadel fix-forward (stops halting; feeds the remediator)', ()
         anatomy_max_iterations: 100,
         szechuan_max_iterations: 50,
         citadel_strict: strict,
-        ignore_dirty_paths: [],
+        dirty_exempt_segments: [],
       },
     };
   }

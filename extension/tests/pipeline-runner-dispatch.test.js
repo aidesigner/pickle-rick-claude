@@ -72,7 +72,7 @@ function writePipeline(sessionDir, repo, phases, extra = {}) {
     szechuan_stall_limit: 5,
     anatomy_max_iterations: 100,
     szechuan_max_iterations: 50,
-    ignore_dirty_paths: ['prds', 'docs'],
+    dirty_exempt_segments: ['prds', 'docs'],
     ...extra,
   }, null, 2));
 }
@@ -220,7 +220,7 @@ describe('pipeline phase config dispatch', () => {
       szechuan_max_iterations: 50,
       szechuan_domain: 'typescript',
       szechuan_focus: 'error handling',
-      ignore_dirty_paths: [],
+      dirty_exempt_segments: [],
       citadel_strict: false,
     };
 
@@ -425,7 +425,7 @@ describe('pipeline phase config dispatch', () => {
       szechuan_stall_limit: 5,
       anatomy_max_iterations: 100,
       szechuan_max_iterations: 50,
-      ignore_dirty_paths: ['prds', 'docs'],
+      dirty_exempt_segments: ['prds', 'docs'],
     }, null, 2));
     const future = new Date(Date.now() + 1000);
     fs.utimesSync(tmpPath, future, future);

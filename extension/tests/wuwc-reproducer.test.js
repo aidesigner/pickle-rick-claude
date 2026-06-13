@@ -86,7 +86,7 @@ function writePipeline(sessionDir, repo) {
     szechuan_stall_limit: 5,
     anatomy_max_iterations: 100,
     szechuan_max_iterations: 50,
-    ignore_dirty_paths: ['prds', 'docs'],
+    dirty_exempt_segments: ['prds', 'docs'],
   }, null, 2));
 }
 
