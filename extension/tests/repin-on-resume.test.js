@@ -10,7 +10,6 @@ import { fileURLToPath } from 'node:url';
 import { assertCleanWorkingTree } from '../bin/pipeline-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SETUP = path.resolve(__dirname, '../bin/setup.js');
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf-8' }).trim();
@@ -28,7 +27,10 @@ function makeRepo() {
   return repo;
 }
 
+const SETUP = path.resolve(__dirname, '../bin/setup.js');
+
 function setup(args, repo, dataRoot) {
+  // PICKLE_DATA_ROOT sandboxes every setup.js session write into a tmp dir (R-PTSB).
   return execFileSync(process.execPath, [SETUP, ...args], {
     cwd: repo,
     encoding: 'utf-8',
