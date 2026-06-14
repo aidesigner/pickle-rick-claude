@@ -38,7 +38,7 @@ test('command docs surface Skip-flag overrides in /pickle-tmux and /pickle-pipel
   }
 });
 
-test('mux-runner readiness halt error names state.flags.skip_readiness_reason', () => {
+test('mux-runner readiness halt error names state.flags.skip_quality_gates_reason', () => {
   const tmpRoot = makeTmpRoot();
   try {
     const sessionDir = path.join(tmpRoot, 'session');
@@ -73,7 +73,7 @@ test('mux-runner readiness halt error names state.flags.skip_readiness_reason', 
 
     const result = run([sessionDir], REPO_ROOT);
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /state\.flags\.skip_readiness_reason/);
+    assert.match(result.stderr, /state\.flags\.skip_quality_gates_reason/);
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }

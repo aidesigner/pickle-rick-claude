@@ -25,7 +25,7 @@ test('check-readiness tracked-file discovery passes explicit git timeout', () =>
 test('check-readiness contract resolution has overall wall budget', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
-  assert.match(source, /const DEFAULT_MAX_WALL_MS = 60_000;/);
+  assert.match(source, /const DEFAULT_MAX_WALL_MS = 120_000;/);
   assert.match(source, /--max-wall-ms/);
   assert.match(source, /Date\.now\(\) > cache\.deadline/);
 });

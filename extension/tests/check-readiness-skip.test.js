@@ -212,7 +212,7 @@ process.exit(0);
             '--repo-root', process.cwd(),
             '--skip-readiness', 'pre-validated by refinement team',
         ]);
-        assert.ok(logs.some((m) => /skip_readiness_reason/.test(m)), `expected log to mention skip_readiness_reason: ${logs.join(' | ')}`);
+        assert.ok(logs.some((m) => /skip_quality_gates_reason/.test(m)), `expected log to mention skip_quality_gates_reason: ${logs.join(' | ')}`);
     } finally {
         fs.rmSync(sessionDir, { recursive: true, force: true });
         fs.rmSync(extensionRoot, { recursive: true, force: true });

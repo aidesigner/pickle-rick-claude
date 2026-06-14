@@ -190,7 +190,7 @@ test('wiring: mux-runner main loop calls evaluateCpuLivenessWatchdog and routes 
   const tripSlice = src.slice(src.indexOf('evaluateCpuLivenessWatchdog({'));
   assert.ok(
     /gradeConformanceComplete\(sessionDir, cpuTicket\)/.test(tripSlice) &&
-      /commitGatePassingDeliverableOnExitPath\(/.test(tripSlice),
+      /routeExitPathSalvage\(/.test(tripSlice),
     'a cpu_stall trip must grade =conformance then call the C7 salvage committer',
   );
   // INCOMPLETE set must NOT auto-commit (the else branch logs and waits).
