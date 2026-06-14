@@ -150,7 +150,7 @@ test('mux-runner skip flags emit ticket_audit_bypassed on the audit bypass path'
     });
 
     const result = runMuxRunner(sessionDir, dataRoot, stubBinDir);
-    assert.match(result.stderr, /ticket audit gate bypassed via state\.flags\.skip_ticket_audit_reason/);
+    assert.match(result.stderr, /ticket audit gate bypassed via state\.flags\.skip_quality_gates_reason/);
 
     const events = readActivityLines(dataRoot);
     const readinessEvent = events.find((entry) => entry.event === 'readiness_skipped');
