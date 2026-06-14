@@ -15,6 +15,7 @@ import {
   tierUsesGraphContext,
 } from '../bin/spawn-morty.js';
 import { buildWorkerPrompt as refinementBuildWorkerPrompt } from '../bin/spawn-refinement-team.js';
+import { countCodegraphContextEvents } from '../bin/mux-runner.js';
 
 const SECTION_HEADER = '## Code Graph Context';
 const TIERS = ['trivial', 'small', 'medium', 'large'];
@@ -159,6 +160,84 @@ test('renderCodegraphSection: whole section fits → no marker; degenerate cap �
   assert.ok(fit.includes(SECTION_HEADER) && fit.includes('- `a`') && fit.includes('- `b`'));
   assert.ok(!fit.includes('[truncated]'));
   assert.equal(renderCodegraphSection(['- `a`'], 5), '', 'header alone over cap → empty');
+});
+
+// ── REGRESSION (anatomy-park): empty render under the byte cap is a SKIP, not a
+//    phantom injection. acbf4225 emitted codegraph_context_injected (counter++ +
+//    event with bytes:0, hits_count>0) even when renderCodegraphSection returned ''
+//    because no entry fit under context_max_bytes — nothing reached the prompt, yet
+//    the codegraph efficacy metric counted an injection. Data flow under test:
+//    buildCodegraphContextSection emit → state.json activity → countCodegraphContextEvents.
+function seedState(sessionDir) {
+  const statePath = path.join(sessionDir, 'state.json');
+  fs.writeFileSync(statePath, JSON.stringify({
+    active: false, working_dir: sessionDir, step: 'implement', iteration: 0,
+    max_iterations: 100, max_time_minutes: 720, worker_timeout_seconds: 1200,
+    start_time_epoch: 1000, completion_promise: null, original_prompt: 'cg empty-render test',
+    current_ticket: null, history: [], started_at: new Date().toISOString(),
+    session_dir: sessionDir, schema_version: 3, tmux_mode: false, chain_meeseeks: false,
+    backend: 'claude', activity: [],
+  }, null, 2));
+  return statePath;
+}
+
+function spyService({ hits, summary }) {
+  const calls = { injected: 0, skipped: 0 };
+  return {
+    service: {
+      async searchNodes() { return hits; },
+      async getCallers() { return [{ node: { id: 'c', name: 'someCaller' } }]; },
+      async buildContext() { return summary; },
+      recordContextInjected() { calls.injected += 1; },
+      recordContextSkipped() { calls.skipped += 1; },
+      close() {},
+    },
+    calls,
+  };
+}
+
+test('empty render under tiny cap → SKIP (no phantom injection), normal cap → INJECT', async () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-empty-render-'));
+  try {
+    const hits = [searchHit('n1', 'fooFn', 5), searchHit('n2', 'barFn', 3)];
+    const summary = 'a long enough summary to guarantee non-empty entries before the cap is applied';
+
+    // Tiny cap: not even the section header fits → renderCodegraphSection returns ''.
+    const tiny = spyService({ hits, summary });
+    const tinyState = seedState(sessionDir);
+    const tinySection = await buildCodegraphContextSection({
+      tier: 'medium', title: makeTicket().task, ticketContent: makeTicket().ticketContent,
+      service: tiny.service, settings: makeSettings({ context_max_bytes: 8 }),
+      sessionDir, ticketId: 'tcap',
+    });
+    assert.equal(tinySection, '', 'nothing fits under the cap → empty section');
+    assert.equal(tiny.calls.injected, 0, 'must NOT record an injection when nothing was injected');
+    assert.equal(tiny.calls.skipped, 1, 'empty render must record a skip');
+    const tinyActivity = JSON.parse(fs.readFileSync(tinyState, 'utf8')).activity;
+    assert.ok(tinyActivity.some((e) => e.event === 'codegraph_context_skipped'),
+      'must emit codegraph_context_skipped');
+    assert.ok(!tinyActivity.some((e) => e.event === 'codegraph_context_injected'),
+      'must NOT emit a phantom codegraph_context_injected');
+    assert.deepEqual(countCodegraphContextEvents(tinyActivity), { injected: 0, skipped: 1 },
+      'consumer-side count must reflect the skip, not a phantom injection');
+
+    // Adequate cap: the happy path still injects (guard against over-correction).
+    const wide = spyService({ hits, summary });
+    fs.rmSync(path.join(sessionDir, 'state.json'));
+    const wideState = seedState(sessionDir);
+    const wideSection = await buildCodegraphContextSection({
+      tier: 'medium', title: makeTicket().task, ticketContent: makeTicket().ticketContent,
+      service: wide.service, settings: makeSettings({ context_max_bytes: 8192 }),
+      sessionDir, ticketId: 'twide',
+    });
+    assert.ok(wideSection.includes(SECTION_HEADER), 'adequate cap → real section injected');
+    assert.equal(wide.calls.injected, 1, 'happy path must still record an injection');
+    assert.equal(wide.calls.skipped, 0, 'happy path must not record a skip');
+    const wideActivity = JSON.parse(fs.readFileSync(wideState, 'utf8')).activity;
+    assert.deepEqual(countCodegraphContextEvents(wideActivity), { injected: 1, skipped: 0 });
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
 });
 
 // ── AC: absence (zero hits / null / disabled / kill-switch) ──────────────────

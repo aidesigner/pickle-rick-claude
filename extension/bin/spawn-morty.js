@@ -624,6 +624,15 @@ export async function buildCodegraphContextSection(opts) {
         return '';
     }
     const section = renderCodegraphSection(entries, settings.context_max_bytes);
+    // Nothing fit under context_max_bytes (renderCodegraphSection returns '') → no
+    // context reaches the prompt, so this is a productive skip, not an injection
+    // (mirrors the post-hits `entries.length === 0` zero_hits branch above). Without
+    // this guard the injected counter + event fire with bytes:0, inflating the
+    // codegraph efficacy metric the default-on decision depends on.
+    if (section.length === 0) {
+        emitSkipped('zero_hits');
+        return '';
+    }
     try {
         service.recordContextInjected();
     }
