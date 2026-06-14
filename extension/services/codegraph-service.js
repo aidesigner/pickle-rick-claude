@@ -185,8 +185,8 @@ export class CodegraphService {
                 }
             }
             catch {
-                if (attempt < MCP_STARTUP_MAX_RETRIES)
-                    continue;
+                // Transient load failure — fall through to the next attempt; once the
+                // loop exhausts MCP_STARTUP_MAX_RETRIES, loadFailed is latched below.
             }
         }
         this.loadFailed = true;
