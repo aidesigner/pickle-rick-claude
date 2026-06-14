@@ -3967,14 +3967,13 @@ export function routeExitPathSalvage(input) {
  * kill-switch reverts to the bare legacy call.
  */
 export function routeFailedFlipSuppression(input) {
-    if (!recoveryConsolidationEnabled()) {
-        return evaluateFailedFlipSuppression(input);
-    }
     // The flip-suppression decision IS the salvage decision for this seam; the
-    // shared primitive's role here is the single choke point. Delegate to the
-    // retained per-seam evaluator so suppress/proceed/escalate is unchanged.
-    // W4a: surface the backend/mode discriminant for attribution (no behavior change).
-    if ((input.backend || input.mode) && input.log) {
+    // shared primitive's role here is the single choke point. The decision always
+    // delegates to the retained per-seam evaluator (suppress/proceed/escalate is
+    // unchanged whether or not consolidation is active) — the ONLY consolidation-
+    // gated effect is the W4a attribution log, which is only meaningful when the
+    // choke point is actually routing (consolidation on).
+    if (recoveryConsolidationEnabled() && (input.backend || input.mode) && input.log) {
         input.log(`[failed-flip] choke-point routed ${input.ticketId} at ${input.callsite} [backend=${input.backend ?? 'claude'};mode=${input.mode ?? 'worker'}]`);
     }
     return evaluateFailedFlipSuppression(input);
