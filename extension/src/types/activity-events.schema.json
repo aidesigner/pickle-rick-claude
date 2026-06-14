@@ -1588,6 +1588,19 @@
         "reason": { "type": "string", "enum": ["no_service", "non_graph_tier", "no_terms", "zero_hits"] }
       }
     },
+    "codegraph_efficacy_sample": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "with_codegraph", "hallucinated_ref_count", "consumer_file_jaccard", "gate_pass"],
+      "properties": {
+        "event": { "type": "string", "const": "codegraph_efficacy_sample" },
+        "ts": { "type": "string" },
+        "ticket": { "type": "string" },
+        "with_codegraph": { "type": "boolean" },
+        "hallucinated_ref_count": { "type": "integer", "minimum": 0 },
+        "consumer_file_jaccard": { "type": "number", "minimum": 0, "maximum": 1 },
+        "gate_pass": { "type": "boolean" }
+      }
+    },
     "scope_impact_warning": {
       "type": "object",
       "required": ["event", "ts", "staged_paths", "transitive_dependents_outside_scope", "radius_depth"],
@@ -1832,6 +1845,7 @@
     { "$ref": "#/definitions/codegraph_session_summary" },
     { "$ref": "#/definitions/codegraph_context_injected" },
     { "$ref": "#/definitions/codegraph_context_skipped" },
+    { "$ref": "#/definitions/codegraph_efficacy_sample" },
     { "$ref": "#/definitions/scope_impact_warning" },
     { "$ref": "#/definitions/orphan_commit_reattached" },
     { "$ref": "#/definitions/orphan_commit_unreattachable" },

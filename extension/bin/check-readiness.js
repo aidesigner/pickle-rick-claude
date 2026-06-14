@@ -590,6 +590,35 @@ export function findReadinessFindings(ticketFile, repoRoot, opts) {
     }
     return findings;
 }
+/**
+ * CGH-3 (61d02c4e): count backticked path/symbol refs in arbitrary text that FAIL the same
+ * resolution used to produce `path_not_verified` / `contract` findings. Reuses the canonical
+ * extraction (`extractContractReferences`) and resolvers (`resolvePathRef`/`resolveSymbolRef`)
+ * — NO duplicated regex. Path-shaped refs (`/`) go through `resolvePathRef`; symbol-shaped refs
+ * through `resolveSymbolRef`. Consumed by `codegraph-efficacy-probe.ts` to score hallucinated
+ * references in a captured worker diff.
+ */
+export function countUnresolvedReferences(text, repoRoot) {
+    const cache = createResolverCache(repoRoot, DEFAULT_MAX_WALL_MS);
+    const ticket = {
+        file: path.join(repoRoot, '__codegraph_efficacy_probe_synthetic__.md'),
+        id: '__probe__',
+        mappedRequirements: [],
+        acIds: [],
+        dependencies: [],
+    };
+    let count = 0;
+    for (const ref of extractContractReferences(text)) {
+        if (cache.allowlist.has(ref))
+            continue;
+        const resolved = ref.includes('/')
+            ? resolvePathRef(ref, repoRoot, ticket, repoRoot, cache)
+            : resolveSymbolRef(ref, repoRoot, cache);
+        if (!resolved)
+            count += 1;
+    }
+    return count;
+}
 function parseFrontmatter(content) {
     const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
     return match ? match[1] : '';

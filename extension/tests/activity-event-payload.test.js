@@ -875,6 +875,19 @@ const EVENT_CASES = [
     drop: 'reason',
   },
   {
+    type: 'codegraph_efficacy_sample',
+    valid: {
+      event: 'codegraph_efficacy_sample',
+      ts: TS,
+      ticket: 'abc12345',
+      with_codegraph: true,
+      hallucinated_ref_count: 2,
+      consumer_file_jaccard: 0.5,
+      gate_pass: true,
+    },
+    drop: 'ts',
+  },
+  {
     type: 'scope_impact_warning',
     valid: {
       event: 'scope_impact_warning',
@@ -1261,6 +1274,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'codegraph_session_summary',
     'codegraph_context_injected',
     'codegraph_context_skipped',
+    'codegraph_efficacy_sample',
     'scope_impact_warning',
     'orphan_commit_reattached',
     'orphan_commit_unreattachable',

@@ -124,7 +124,8 @@ Machine-maintained export index for the `bin/` subsystem. The audit script treat
 - `cancel.ts` -> `cancelSession`, `cleanupStaleIndexLock`
 - `check-flake-budget.ts` -> `checkFlakeBudgetMain`
 - `check-gate.ts` -> `CheckGateMainOpts`, `checkGateMain`
-- `check-readiness.ts` -> `ForwardRefAnnotation`, `ReadinessArgs`, `ReadinessFinding`, `extractAcceptanceCriteria`, `extractContractReferences`, `extractForwardRefAnnotations`, `findReadinessFindings`, `isMachineCheckable`, `loadReadinessAllowlist`, `parseArgs`, `runHistory`, `runReadiness`
+- `check-readiness.ts` -> `ForwardRefAnnotation`, `ReadinessArgs`, `ReadinessFinding`, `countUnresolvedReferences`, `extractAcceptanceCriteria`, `extractContractReferences`, `extractForwardRefAnnotations`, `findReadinessFindings`, `isMachineCheckable`, `loadReadinessAllowlist`, `parseArgs`, `runHistory`, `runReadiness`
+- `codegraph-efficacy-probe.ts` -> `CorpusTicket`, `PROBE_SPAWN_TIMEOUT_MS`, `ProbeArgs`, `buildEfficacySample`, `captureWorkerDiff`, `consumerFileJaccard`, `diffTouchedFiles`, `hallucinatedRefCount`, `loadCorpus`, `main`, `parseArgs`, `runProbe`
 - `check-scope-diff.ts` -> `CheckScopeDiffOpts`, `ScopeDiffResult`, `checkScopeDiff`
 - `check-update.ts` -> `BlockedDowngradeError`, `CheckForUpdateOptions`, `PerformUpgradeOptions`, `checkForUpdate`, `compareSemver`, `downloadRelease`, `extractAndInstall`, `getCurrentVersion`, `getLatestRelease`, `isCacheStale`, `parseVersion`, `performUpgrade`, `readCache`, `readSettings`, `writeCache`
 - `correct-course.ts` -> `CorrectCourseArgs`, `CorrectCourseRunOptions`, `CorrectCourseRunResult`, `CourseCorrectionProposalValidationInput`, `CourseCorrectionProposalValidationResult`, `buildCorrectCourseBrief`, `main`, `parseArgs`, `runCorrectCourse`, `validateCourseCorrectionProposal`, `validateDiscovery`

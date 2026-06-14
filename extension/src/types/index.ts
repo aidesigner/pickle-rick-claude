@@ -767,6 +767,9 @@ export const VALID_ACTIVITY_EVENTS = [
   // `disabled` branch is suppressed to avoid per-spawn flooding while default is OFF.
   'codegraph_context_injected',
   'codegraph_context_skipped',
+  // CGH-3 (61d02c4e): one efficacy sample per probed ticket — scores a worker diff
+  // WITH vs WITHOUT the `## Code Graph Context` section over a fixed corpus.
+  'codegraph_efficacy_sample',
   'scope_impact_warning',
   'orphan_commit_reattached',
   'orphan_commit_unreattachable',
@@ -1085,6 +1088,24 @@ export interface CodegraphContextSkippedPayload {
   event: 'codegraph_context_skipped';
   ts: string;
   reason: CodegraphContextSkipReason;
+}
+
+/**
+ * CGH-3 (61d02c4e): one deterministic efficacy sample per probed ticket. The probe scores
+ * a worker diff produced WITH vs WITHOUT the `## Code Graph Context` section.
+ */
+export interface CodegraphEfficacySamplePayload {
+  event: 'codegraph_efficacy_sample';
+  ts: string;
+  ticket: string;
+  /** Whether the worker prompt for this sample carried the `## Code Graph Context` section. */
+  with_codegraph: boolean;
+  /** Backticked refs in the diff that fail the `path_not_verified` resolver (check-readiness). */
+  hallucinated_ref_count: number;
+  /** Jaccard overlap of the diff's touched files vs the fixture's `expected_consumer_files`. */
+  consumer_file_jaccard: number;
+  /** Result of the full worker conformance gate (`runWorkerGate(...).ok`), NOT tsc-only. */
+  gate_pass: boolean;
 }
 
 // ---------------------------------------------------------------------------

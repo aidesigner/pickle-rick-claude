@@ -312,6 +312,9 @@ export const VALID_ACTIVITY_EVENTS = [
     // `disabled` branch is suppressed to avoid per-spawn flooding while default is OFF.
     'codegraph_context_injected',
     'codegraph_context_skipped',
+    // CGH-3 (61d02c4e): one efficacy sample per probed ticket — scores a worker diff
+    // WITH vs WITHOUT the `## Code Graph Context` section over a fixed corpus.
+    'codegraph_efficacy_sample',
     'scope_impact_warning',
     'orphan_commit_reattached',
     'orphan_commit_unreattachable',
