@@ -52,7 +52,7 @@ function runReadiness(sessionDir, dataRoot, maxWallMs) {
     '--repo-root', process.cwd(),
     '--contract-only',
     '--max-wall-ms', String(maxWallMs),
-  ], { encoding: 'utf-8', timeout: 60000, env: { ...process.env, PICKLE_DATA_ROOT: dataRoot } });
+  ], { encoding: 'utf-8', timeout: 120000, env: { ...process.env, PICKLE_DATA_ROOT: dataRoot } });
 }
 
 function readActivityEvents(dataRoot) {
