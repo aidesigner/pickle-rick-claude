@@ -780,6 +780,29 @@ function resolveRepoRoot(dir: string, stableBase: string): string {
 }
 
 /**
+ * Count persisted `codegraph_context_injected` / `codegraph_context_skipped`
+ * events from a session's `state.activity` log.
+ *
+ * These events are produced by `buildCodegraphContextSection` in the per-spawn
+ * spawn-morty PROCESS, so mux-runner's own in-memory `CodegraphService` counters
+ * never observe them — reading `getSessionCounters().injected/.skipped` here would
+ * always report 0 (b1089e97 cross-process aggregation gap). Both processes append
+ * to the same `state.json`, so the persisted events are the ground truth for the
+ * `codegraph_session_summary` aggregate.
+ */
+export function countCodegraphContextEvents(
+  activity: readonly ActivityLogEntry[] | undefined,
+): { injected: number; skipped: number } {
+  let injected = 0;
+  let skipped = 0;
+  for (const entry of activity ?? []) {
+    if (entry?.event === 'codegraph_context_injected') injected += 1;
+    else if (entry?.event === 'codegraph_context_skipped') skipped += 1;
+  }
+  return { injected, skipped };
+}
+
+/**
  * Detects whether tickets in a session span multiple repositories.
  * Returns an array of distinct repo roots if 2+, null otherwise.
  * Tickets with working_dir: null are excluded (they use session default).
@@ -7601,14 +7624,19 @@ async function runMuxRunnerMain() {
       const ctrs = cgService.getSessionCounters();
       const index_status: 'healthy' | 'degraded' | 'latched' | 'disabled' =
         ctrs.latched > 0 ? 'latched' : ctrs.degraded > 0 ? 'degraded' : 'healthy';
+      // injected/skipped are produced in the per-spawn spawn-morty process, so
+      // mux-runner's in-memory counters never see them — count the persisted
+      // events from the shared state.json instead (b1089e97 aggregation gap).
+      const persisted = readRecoverableJsonObject(statePath) as State | null;
+      const { injected, skipped } = countCodegraphContextEvents(persisted?.activity);
       writeActivityEntry(statePath, {
         event: 'codegraph_session_summary',
         ts: new Date().toISOString(),
         tickets: cgTicketCount,
         degraded_ops: ctrs.degraded,
         index_status,
-        injected: ctrs.injected,
-        skipped: ctrs.skipped,
+        injected,
+        skipped,
       });
     } catch { /* best-effort */ }
   };
