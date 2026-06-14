@@ -21,17 +21,19 @@ import { fileURLToPath } from 'node:url';
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDir, '..', '..');
 const claudeMdPath = path.join(repoRoot, 'extension', 'CLAUDE.md');
+const servicesClaudeMdPath = path.join(repoRoot, 'extension', 'src', 'services', 'CLAUDE.md');
 const muxRunnerPath = path.join(repoRoot, 'extension', 'src', 'bin', 'mux-runner.ts');
 
 const claudeMd = fs.readFileSync(claudeMdPath, 'utf8');
+const servicesClaudeMd = fs.readFileSync(servicesClaudeMdPath, 'utf8');
 const muxRunner = fs.readFileSync(muxRunnerPath, 'utf8');
 
 /** Pull a single trap-door bullet (one `- ...` line) by a unique substring. */
-function trapDoorEntry(needle) {
-  const line = claudeMd
+function trapDoorEntry(needle, source = claudeMd, label = 'extension/CLAUDE.md') {
+  const line = source
     .split('\n')
     .find((l) => l.trimStart().startsWith('- ') && l.includes(needle));
-  assert.ok(line, `trap-door entry containing "${needle}" not found in extension/CLAUDE.md`);
+  assert.ok(line, `trap-door entry containing "${needle}" not found in ${label}`);
   return line;
 }
 
@@ -87,7 +89,32 @@ test('R-CCRC-1 trap door names the live readEvidence anchor, not the deprecated 
   );
 });
 
-test('ticket-completion-evidence.ts implements the R-CCQF/R-CCRC-1 invariants the trap doors point at (post R-AFCC-DEEP-4A)', () => {
+test('R-RIC-EXPLICIT trap door names the live readEvidence anchor in ticket-completion-evidence.ts, not the deprecated pickle-utils hasCompletionCommit shim', () => {
+  // R-RIC-EXPLICIT lives in src/services/CLAUDE.md, not the top-level extension/CLAUDE.md.
+  const entry = trapDoorEntry(
+    'R-RIC-EXPLICIT',
+    servicesClaudeMd,
+    'extension/src/services/CLAUDE.md',
+  );
+  assert.ok(
+    entry.includes('ticket-completion-evidence.ts'),
+    'R-RIC-EXPLICIT trap door must anchor to ticket-completion-evidence.ts (readEvidence), not the deprecated pickle-utils hasCompletionCommit shim',
+  );
+  assert.ok(
+    entry.includes('readEvidence'),
+    'R-RIC-EXPLICIT trap door must reference readEvidence (the live explicit-source home)',
+  );
+  assert.ok(
+    !/`hasCompletionCommit` MUST honor/.test(entry),
+    'R-RIC-EXPLICIT INVARIANT still anchors explicit-source honoring to the deprecated hasCompletionCommit shim',
+  );
+  assert.ok(
+    !/PATTERN_SHAPE: `readFrontmatterField` call against/.test(entry),
+    'R-RIC-EXPLICIT PATTERN_SHAPE still uses the pre-migration grep-on-message-body anchor',
+  );
+});
+
+test('ticket-completion-evidence.ts implements the R-CCQF/R-CCRC-1/R-RIC-EXPLICIT invariants the trap doors point at (post R-AFCC-DEEP-4A)', () => {
   const evidenceSrc = fs.readFileSync(
     path.join(repoRoot, 'extension', 'src', 'services', 'ticket-completion-evidence.ts'),
     'utf8',
@@ -103,6 +130,18 @@ test('ticket-completion-evidence.ts implements the R-CCQF/R-CCRC-1 invariants th
       `ticket-completion-evidence.ts missing R-CCQF/R-CCRC-1 anchor: ${symbol}`,
     );
   }
+  // R-RIC-EXPLICIT: the explicit completion_commit field MUST be honored before
+  // the git-log scan. Pin the source ordering so the explicit branch can never
+  // silently regress below scanGitLog (which would re-open the MASTER_PLAN #83 fatal).
+  const explicitIdx = evidenceSrc.indexOf(
+    "normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit')",
+  );
+  const scanIdx = evidenceSrc.indexOf('scanGitLog({');
+  assert.ok(explicitIdx !== -1 && scanIdx !== -1, 'readEvidence missing explicit-source or scanGitLog anchors');
+  assert.ok(
+    explicitIdx < scanIdx,
+    'R-RIC-EXPLICIT: explicit completion_commit read must precede scanGitLog in readEvidence',
+  );
   // hasCompletionCommit in pickle-utils.ts must remain a thin delegate to
   // readEvidence — if it ever re-grows the parsing logic the anchors must move back.
   const pickleUtils = fs.readFileSync(
