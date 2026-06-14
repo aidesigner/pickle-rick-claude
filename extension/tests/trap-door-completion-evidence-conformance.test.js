@@ -63,6 +63,59 @@ test('R-CCRC-2 trap door names the inline upsertFrontmatterField anchor, not aut
   );
 });
 
+test('R-CCQF trap door names the live readEvidence anchor, not the deprecated hasCompletionCommit shim', () => {
+  const entry = trapDoorEntry('R-CCQF quoted-form completion_commit parser');
+  assert.ok(
+    entry.includes('ticket-completion-evidence.ts'),
+    'R-CCQF trap door must anchor to ticket-completion-evidence.ts (readEvidence), not the deprecated pickle-utils hasCompletionCommit shim',
+  );
+  assert.ok(
+    !entry.includes('inside `hasCompletionCommit`'),
+    'R-CCQF PATTERN_SHAPE still anchors its replay marker inside the deprecated hasCompletionCommit shim',
+  );
+});
+
+test('R-CCRC-1 trap door names the live readEvidence anchor, not the deprecated hasCompletionCommit shim', () => {
+  const entry = trapDoorEntry('R-CCRC-1 ref-code fallback');
+  assert.ok(
+    entry.includes('readEvidence'),
+    'R-CCRC-1 trap door must reference readEvidence (the live r_code grep home)',
+  );
+  assert.ok(
+    !entry.includes('`hasCompletionCommit` reads `r_code:`'),
+    'R-CCRC-1 PATTERN_SHAPE still anchors r_code reading to the deprecated hasCompletionCommit shim',
+  );
+});
+
+test('ticket-completion-evidence.ts implements the R-CCQF/R-CCRC-1 invariants the trap doors point at (post R-AFCC-DEEP-4A)', () => {
+  const evidenceSrc = fs.readFileSync(
+    path.join(repoRoot, 'extension', 'src', 'services', 'ticket-completion-evidence.ts'),
+    'utf8',
+  );
+  for (const symbol of [
+    "normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit')",
+    "normalizeCompletionCommitField(readFrontmatterField(content, 'completion_commit_inferred')",
+    "readFrontmatterField(content, 'r_code')",
+    'export function readEvidence',
+  ]) {
+    assert.ok(
+      evidenceSrc.includes(symbol),
+      `ticket-completion-evidence.ts missing R-CCQF/R-CCRC-1 anchor: ${symbol}`,
+    );
+  }
+  // hasCompletionCommit in pickle-utils.ts must remain a thin delegate to
+  // readEvidence — if it ever re-grows the parsing logic the anchors must move back.
+  const pickleUtils = fs.readFileSync(
+    path.join(repoRoot, 'extension', 'src', 'services', 'pickle-utils.ts'),
+    'utf8',
+  );
+  assert.match(
+    pickleUtils,
+    /export function hasCompletionCommit[\s\S]{0,400}readEvidence\(args\)/,
+    'hasCompletionCommit must delegate to readEvidence (deprecated shim); R-CCQF/R-CCRC-1 anchors now live in ticket-completion-evidence.ts',
+  );
+});
+
 test('mux-runner.ts implements completion-evidence auto-promotion via persistEvidence/upsertFrontmatterField (post R-AFCC-DEEP-4A)', () => {
   // The migrated-away symbol must be gone from THIS file (it legitimately still
   // lives in spawn-morty.ts / auto-fill-completion-commit.ts).
