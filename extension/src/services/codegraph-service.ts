@@ -16,6 +16,10 @@ export interface CodegraphCounters {
   ops: number;
   degraded: number;
   latched: number;
+  /** b1089e97: `codegraph_context_injected` emissions this session. */
+  injected: number;
+  /** b1089e97: `codegraph_context_skipped` emissions this session. */
+  skipped: number;
 }
 
 /**
@@ -123,7 +127,7 @@ export class CodegraphService {
   private loadDegradeEmitted = false;
   private latched = false;
   private rebuildAttempted = false;
-  private readonly counters: CodegraphCounters = { ops: 0, degraded: 0, latched: 0 };
+  private readonly counters: CodegraphCounters = { ops: 0, degraded: 0, latched: 0, injected: 0, skipped: 0 };
 
   private constructor(workingDir: string, settings: CodegraphSettings, deps: CodegraphDeps) {
     this.workingDir = workingDir;
@@ -140,6 +144,16 @@ export class CodegraphService {
 
   getSessionCounters(): CodegraphCounters {
     return { ...this.counters };
+  }
+
+  /** b1089e97: record a `codegraph_context_injected` emission (count only — no event). */
+  recordContextInjected(): void {
+    this.counters.injected += 1;
+  }
+
+  /** b1089e97: record a `codegraph_context_skipped` emission (count only — no event). */
+  recordContextSkipped(): void {
+    this.counters.skipped += 1;
   }
 
   /** True while the instance answers every call with null and emits nothing. */

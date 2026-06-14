@@ -1560,7 +1560,32 @@
         "session": { "type": "string" },
         "tickets": { "type": "integer", "minimum": 0 },
         "degraded_ops": { "type": "integer", "minimum": 0 },
-        "index_status": { "type": "string", "enum": ["healthy", "degraded", "latched", "disabled"] }
+        "index_status": { "type": "string", "enum": ["healthy", "degraded", "latched", "disabled"] },
+        "injected": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "codegraph_context_injected": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "tier", "terms_count", "hits_count", "bytes", "build_ms"],
+      "properties": {
+        "event": { "type": "string", "const": "codegraph_context_injected" },
+        "ts": { "type": "string" },
+        "ticket": { "type": "string" },
+        "tier": { "type": "string" },
+        "terms_count": { "type": "integer", "minimum": 0 },
+        "hits_count": { "type": "integer", "minimum": 0 },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "build_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "codegraph_context_skipped": {
+      "type": "object",
+      "required": ["event", "ts", "reason"],
+      "properties": {
+        "event": { "type": "string", "const": "codegraph_context_skipped" },
+        "ts": { "type": "string" },
+        "reason": { "type": "string", "enum": ["no_service", "non_graph_tier", "no_terms", "zero_hits"] }
       }
     },
     "scope_impact_warning": {
@@ -1805,6 +1830,8 @@
     { "$ref": "#/definitions/codegraph_sync_completed" },
     { "$ref": "#/definitions/codegraph_degraded" },
     { "$ref": "#/definitions/codegraph_session_summary" },
+    { "$ref": "#/definitions/codegraph_context_injected" },
+    { "$ref": "#/definitions/codegraph_context_skipped" },
     { "$ref": "#/definitions/scope_impact_warning" },
     { "$ref": "#/definitions/orphan_commit_reattached" },
     { "$ref": "#/definitions/orphan_commit_unreattachable" },

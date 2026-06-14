@@ -761,6 +761,12 @@ export const VALID_ACTIVITY_EVENTS = [
   'codegraph_sync_completed',
   'codegraph_degraded',
   'codegraph_session_summary',
+  // b1089e97 (CGH-2): efficacy telemetry from buildCodegraphContextSection.
+  // injected on the success path, skipped on productive-skip branches
+  // (no_service / non_graph_tier / no_terms / zero_hits). The steady-state
+  // `disabled` branch is suppressed to avoid per-spawn flooding while default is OFF.
+  'codegraph_context_injected',
+  'codegraph_context_skipped',
   'scope_impact_warning',
   'orphan_commit_reattached',
   'orphan_commit_unreattachable',
@@ -969,6 +975,14 @@ export interface ActivityEvent {
   tickets?: number;
   degraded_ops?: number;
   index_status?: CodegraphSessionSummaryPayload['index_status'];
+  injected?: number;
+  skipped?: number;
+  // b1089e97: codegraph_context_injected / _skipped payload fields.
+  tier?: string;
+  terms_count?: number;
+  hits_count?: number;
+  bytes?: number;
+  build_ms?: number;
   // Ticket e9bdac75 (Workstream B): rate-limit park payload fields.
   // rate_limit_wait carries the API reset_at (epoch seconds, null when absent);
   // rate_limit_resume carries the actual parked wall-clock in minutes.
@@ -1042,7 +1056,35 @@ export interface CodegraphSessionSummaryPayload {
   tickets: number;
   degraded_ops: number;
   index_status: 'healthy' | 'degraded' | 'latched' | 'disabled';
+  /** b1089e97: per-session count of `codegraph_context_injected` emissions. */
+  injected?: number;
+  /** b1089e97: per-session count of `codegraph_context_skipped` emissions. */
+  skipped?: number;
   ts: string;
+}
+
+/** b1089e97: reasons a productive `codegraph_context_skipped` is emitted (NOT `disabled`/`degraded`). */
+export type CodegraphContextSkipReason = 'no_service' | 'non_graph_tier' | 'no_terms' | 'zero_hits';
+
+/** Payload for `codegraph_context_injected` (buildCodegraphContextSection success path). */
+export interface CodegraphContextInjectedPayload {
+  event: 'codegraph_context_injected';
+  ts: string;
+  ticket: string;
+  tier: string;
+  terms_count: number;
+  hits_count: number;
+  /** Post-cap length (bytes) of the rendered section. */
+  bytes: number;
+  /** Finite non-negative duration wrapping the build body. */
+  build_ms: number;
+}
+
+/** Payload for `codegraph_context_skipped` (productive-skip branches only). */
+export interface CodegraphContextSkippedPayload {
+  event: 'codegraph_context_skipped';
+  ts: string;
+  reason: CodegraphContextSkipReason;
 }
 
 // ---------------------------------------------------------------------------

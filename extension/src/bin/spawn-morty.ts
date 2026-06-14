@@ -25,7 +25,7 @@ import {
   type TicketComplexityTier,
 } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
-import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS, type Backend, type BackendResolutionSource, type CodegraphSettings, type LastToolErrorState, type PickleSettings, type State } from '../types/index.js';
+import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS, type ActivityLogEntry, type Backend, type BackendResolutionSource, type CodegraphContextSkipReason, type CodegraphSettings, type LastToolErrorState, type PickleSettings, type State } from '../types/index.js';
 import { CodegraphService } from '../services/codegraph-service.js';
 import { isRecord } from '../lib/is-record.js';
 import { ArchiveAbortError, getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
@@ -649,6 +649,10 @@ export interface CodegraphContextOptions {
   ticketContent: string;
   service: CodegraphService | null;
   settings: CodegraphSettings;
+  /** b1089e97: activity dir holding `state.json` (= `path.dirname(statePath)`) for best-effort telemetry. */
+  sessionDir: string;
+  /** b1089e97: ticket id stamped into `codegraph_context_injected.ticket`. */
+  ticketId: string;
 }
 
 /** Collect deduped search hits (by node id, highest score wins), ranked by score desc. */
@@ -710,25 +714,62 @@ async function buildCodegraphEntries(
 
 /**
  * Build the `## Code Graph Context` section, or `''` when absent. Absent on:
- * disabled settings, non-graph tier (trivial), null service, no derived terms,
+ * disabled settings, null service, non-graph tier (trivial), no derived terms,
  * or zero search hits. The service itself returns null on kill-switch / degraded /
  * unavailable, which collapses into the zero-hits path. Never throws.
+ *
+ * b1089e97: emits `codegraph_context_skipped` on the four productive-skip branches
+ * (`no_service` / `non_graph_tier` / `no_terms` / `zero_hits`) and
+ * `codegraph_context_injected` on success. The steady-state `disabled` branch is
+ * SUPPRESSED (no emit) to avoid per-spawn flooding while the default is OFF.
+ * Emission is best-effort: telemetry must never break the spawn.
  */
 export async function buildCodegraphContextSection(opts: CodegraphContextOptions): Promise<string> {
-  const { tier, title, ticketContent, service, settings } = opts;
-  if (!settings.enabled || !service || !tierUsesGraphContext(tier)) return '';
+  const { tier, title, ticketContent, service, settings, sessionDir, ticketId } = opts;
+  const start = Date.now();
+
+  // Best-effort telemetry sink. writeActivityEntry does NOT auto-stamp `ts`
+  // (R-WSE-2) — every emit stamps it explicitly. Guarded on a usable sessionDir
+  // so callers that omit it (e.g. unit tests) skip emission without throwing.
+  const emit = (entry: ActivityLogEntry): void => {
+    if (typeof sessionDir !== 'string' || sessionDir.length === 0) return;
+    try {
+      writeActivityEntry(path.join(sessionDir, 'state.json'), entry);
+    } catch { /* telemetry best-effort */ }
+  };
+  const emitSkipped = (reason: CodegraphContextSkipReason): void => {
+    try { service?.recordContextSkipped(); } catch { /* best-effort */ }
+    emit({ event: 'codegraph_context_skipped', ts: new Date().toISOString(), reason });
+  };
+
+  // Branch precedence (top wins): disabled → no_service → non_graph_tier → no_terms → zero_hits.
+  if (!settings.enabled) return '';                                    // disabled — SUPPRESSED, no emit
+  if (!service) { emitSkipped('no_service'); return ''; }
+  if (!tierUsesGraphContext(tier)) { emitSkipped('non_graph_tier'); return ''; }
 
   const terms = deriveCodegraphTerms(title, ticketContent);
-  if (terms.length === 0) return '';
+  if (terms.length === 0) { emitSkipped('no_terms'); return ''; }
 
   const ranked = await collectCodegraphHits(service, terms);
-  if (ranked.length === 0) return '';
+  if (ranked.length === 0) { emitSkipped('zero_hits'); return ''; }
 
   const summary = await service.buildContext({ title, description: ticketContent.slice(0, 500) });
   const entries = await buildCodegraphEntries(service, ranked, summary);
-  if (entries.length === 0) return '';
+  if (entries.length === 0) { emitSkipped('zero_hits'); return ''; }
 
-  return renderCodegraphSection(entries, settings.context_max_bytes);
+  const section = renderCodegraphSection(entries, settings.context_max_bytes);
+  try { service.recordContextInjected(); } catch { /* best-effort */ }
+  emit({
+    event: 'codegraph_context_injected',
+    ts: new Date().toISOString(),
+    ticket: ticketId,
+    tier,
+    terms_count: terms.length,
+    hits_count: ranked.length,
+    bytes: Buffer.byteLength(section, 'utf-8'),
+    build_ms: Math.max(0, Date.now() - start),
+  });
+  return section;
 }
 
 export function buildWorkerPrompt(opts: BuildWorkerPromptOptions): string {
@@ -2275,6 +2316,11 @@ async function main() {
           ticketContent: args.ticketContent,
           service: cgService,
           settings: cgSettings,
+          // Activity dir = the session root that holds state.json (the
+          // `path.dirname(statePath)` per the b1089e97 contract; in main() the
+          // state file lives at `<sessionRoot>/state.json`).
+          sessionDir: args.sessionRoot,
+          ticketId: args.ticketId,
         });
       } finally {
         cgService.close();

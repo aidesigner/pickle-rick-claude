@@ -6702,6 +6702,8 @@ async function runMuxRunnerMain() {
                 tickets: cgTicketCount,
                 degraded_ops: ctrs.degraded,
                 index_status,
+                injected: ctrs.injected,
+                skipped: ctrs.skipped,
             });
         }
         catch { /* best-effort */ }

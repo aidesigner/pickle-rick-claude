@@ -59,7 +59,7 @@ test('throwing fake: returns null + one classified error degrade', async () => {
   assert.equal(events[0].operation, 'searchNodes');
   assert.equal(events[0].reason, 'error');
   assert.equal(events[0].ts, 'TS');
-  assert.deepEqual(svc.getSessionCounters(), { ops: 1, degraded: 1, latched: 0 });
+  assert.deepEqual(svc.getSessionCounters(), { ops: 1, degraded: 1, latched: 0, injected: 0, skipped: 0 });
 });
 
 test('async-hanging fake: times out to null with one timeout degrade', async () => {
@@ -115,7 +115,7 @@ test('kill-switch off: inert, zero events, dependency never loaded', async () =>
   assert.equal(await svc.buildContext('t'), null);
   svc.close();
   assert.equal(loadCalled, false, 'off must never load the dependency');
-  assert.deepEqual(svc.getSessionCounters(), { ops: 0, degraded: 0, latched: 0 });
+  assert.deepEqual(svc.getSessionCounters(), { ops: 0, degraded: 0, latched: 0, injected: 0, skipped: 0 });
 });
 
 test('locked: classifies database-is-locked', async () => {
@@ -195,7 +195,7 @@ test('counters exact across a forced-degrade sequence', async () => {
   await svc.searchNodes('q'); // ops=1, degraded=0 (success)
   await svc.indexAll();        // ops=2, degraded=1 (timeout)
   await svc.sync();            // ops=3, degraded=2 (locked)
-  assert.deepEqual(svc.getSessionCounters(), { ops: 3, degraded: 2, latched: 0 });
+  assert.deepEqual(svc.getSessionCounters(), { ops: 3, degraded: 2, latched: 0, injected: 0, skipped: 0 });
 });
 
 test('index success emits codegraph_index_built, no degrade', async () => {
@@ -249,4 +249,16 @@ test('persistently unavailable dependency degrades once, not per call', async ()
   await svc.indexAll();
   await svc.sync();
   assert.equal(events.length, 1, 'absent dependency must emit exactly one degrade for the session');
+});
+
+// b1089e97: per-session injected/skipped counters (count only — no event emission).
+test('recordContextInjected / recordContextSkipped increment counters without emitting', () => {
+  const { svc, events } = harness(baseSettings());
+  svc.recordContextInjected();
+  svc.recordContextInjected();
+  svc.recordContextSkipped();
+  const c = svc.getSessionCounters();
+  assert.equal(c.injected, 2, 'injected counter increments');
+  assert.equal(c.skipped, 1, 'skipped counter increments');
+  assert.equal(events.length, 0, 'counter record methods must not emit events');
 });
