@@ -1004,8 +1004,8 @@ export interface ActivityEvent {
 //   orphan_commit_unreattachable    → OrphanReattachPayload (no reattach evidence)
 //   failed_flip_suppressed          → FailedFlipSuppressedPayload
 //   codegraph_session_summary       → CodegraphSessionSummaryPayload
-//   codegraph_index_built / codegraph_index_failed / codegraph_sync_completed /
-//   codegraph_degraded              → no dedicated payload (event + ts, optional telemetry)
+//   codegraph_index_built           → gate_payload.{files_indexed?, duration_ms?} (see activity-events.schema.json)
+//   codegraph_index_failed / codegraph_sync_completed / codegraph_degraded → optional telemetry only
 // `writeActivityEntry` never stamps `ts` — emitters pass it explicitly, so `ts`
 // is required wherever the payload declares it.
 // ---------------------------------------------------------------------------

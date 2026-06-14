@@ -175,8 +175,19 @@ export class CodegraphService {
   async indexAll(): Promise<unknown | null> {
     const impl = await this.beginOp();
     if (!impl) return null;
+    const t0 = Date.now();
     const result = await this.runWithTimeout('indexAll', this.settings.index_timeout_ms, () => impl.indexAll());
-    if (result.ok) this.emit({ event: 'codegraph_index_built', ts: this.now(), operation: 'indexAll' });
+    if (result.ok) {
+      const duration_ms = Date.now() - t0;
+      const v = result.value as Record<string, unknown> | null | undefined;
+      const files_indexed = typeof v?.filesIndexed === 'number' ? (v.filesIndexed as number) : undefined;
+      this.emit({
+        event: 'codegraph_index_built',
+        ts: this.now(),
+        operation: 'indexAll',
+        gate_payload: { duration_ms, ...(files_indexed !== undefined ? { files_indexed } : {}) },
+      });
+    }
     return result.ok ? result.value : null;
   }
 
