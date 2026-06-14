@@ -639,8 +639,8 @@ function parseSettingIntClamp(v, floor, ceiling) {
 }
 export function resolveCodegraphSettings(bag) {
     const settings = {
-        enabled: false,
-        index_at_setup: false,
+        enabled: true,
+        index_at_setup: true,
         staleness_max_age_minutes: 30,
         context_max_bytes: 8192,
         expose_mcp_to_workers: false,

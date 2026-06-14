@@ -791,8 +791,8 @@ function parseSettingIntClamp(v: unknown, floor: number, ceiling: number): numbe
 
 export function resolveCodegraphSettings(bag: unknown): CodegraphSettings {
   const settings: CodegraphSettings = {
-    enabled: false,
-    index_at_setup: false,
+    enabled: true,
+    index_at_setup: true,
     staleness_max_age_minutes: 30,
     context_max_bytes: 8192,
     expose_mcp_to_workers: false,

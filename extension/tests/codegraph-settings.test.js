@@ -12,8 +12,8 @@ const require = createRequire(import.meta.url);
 const { resolveCodegraphSettings } = await import('../services/pickle-utils.js');
 
 const DEFAULTS = {
-  enabled: false,
-  index_at_setup: false,
+  enabled: true,
+  index_at_setup: true,
   staleness_max_age_minutes: 30,
   context_max_bytes: 8192,
   expose_mcp_to_workers: false,
@@ -87,13 +87,13 @@ describe('resolveCodegraphSettings', () => {
   });
 
   describe('malformed values → compiled defaults', () => {
-    it('enabled="true" (string) → default false', () => {
+    it('enabled="true" (string) → default true', () => {
       const result = resolveCodegraphSettings({ codegraph: { enabled: 'true' } });
-      assert.strictEqual(result.enabled, false);
+      assert.strictEqual(result.enabled, true);
     });
-    it('index_at_setup=1 (number) → default false', () => {
+    it('index_at_setup=1 (number) → default true', () => {
       const result = resolveCodegraphSettings({ codegraph: { index_at_setup: 1 } });
-      assert.strictEqual(result.index_at_setup, false);
+      assert.strictEqual(result.index_at_setup, true);
     });
     it('expose_mcp_to_workers=null → default false', () => {
       const result = resolveCodegraphSettings({ codegraph: { expose_mcp_to_workers: null } });
