@@ -74,10 +74,18 @@ export interface CodegraphDeps {
   withFileLock?: <T>(fn: () => Promise<T>) => Promise<T>;
   /** Resolve the on-disk db path. Default: lazy `getDatabasePath(workingDir)`. */
   dbPath?: string;
+  /** Sleep helper for retry/backoff — injectable for tests to skip real delays. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const KILL_SWITCH_ENV = 'PICKLE_CODEGRAPH';
 const KILL_SWITCH_VALUE = 'off';
+
+// Bounded retry/backoff for serve --mcp startup: transient native-module or
+// index-init failures are retried at most MCP_STARTUP_MAX_RETRIES times before
+// the service degrades to codegraph_degraded.
+const MCP_STARTUP_MAX_RETRIES = 2;
+const MCP_STARTUP_BACKOFF_MS = [500, 1500] as const;
 
 function classifyError(message: string): CodegraphDegradeReason {
   const m = message.toLowerCase();
@@ -239,18 +247,29 @@ export class CodegraphService {
     if (this.killSwitch) return null;
     if (this.impl) return this.impl;
     if (this.loadFailed) return null;
-    try {
-      const loaded = this.deps.loadImpl ? await this.deps.loadImpl() : await defaultLoadImpl(this.workingDir);
-      if (!loaded) {
-        this.loadFailed = true;
-        return null;
+    for (let attempt = 0; attempt <= MCP_STARTUP_MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const backoffMs = MCP_STARTUP_BACKOFF_MS[Math.min(attempt - 1, MCP_STARTUP_BACKOFF_MS.length - 1)];
+        await this.sleepMs(backoffMs);
       }
-      this.impl = loaded;
-      return loaded;
-    } catch {
-      this.loadFailed = true;
-      return null;
+      try {
+        const loaded = this.deps.loadImpl ? await this.deps.loadImpl() : await defaultLoadImpl(this.workingDir);
+        if (loaded) {
+          this.impl = loaded;
+          return loaded;
+        }
+      } catch {
+        if (attempt < MCP_STARTUP_MAX_RETRIES) continue;
+      }
     }
+    this.loadFailed = true;
+    return null;
+  }
+
+  private async sleepMs(ms: number): Promise<void> {
+    const fn = this.deps.sleep;
+    if (fn) return fn(ms);
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**

@@ -30,7 +30,7 @@ import { buildWorkerMcpConfig } from '../../services/backend-spawn.js';
 const require = createRequire(import.meta.url);
 const EXPENSIVE = process.env.RUN_EXPENSIVE_TESTS === '1';
 const TEST_TIMEOUT_MS = 240_000;
-const HANDSHAKE_TIMEOUT_MS = 60_000;
+const HANDSHAKE_TIMEOUT_MS = 150_000;
 const INVENTORY_PATH = path.resolve(import.meta.dirname, '../../data/codegraph-api-inventory.json');
 
 // Load the library, or return a skip reason when (and only when) the per-platform
