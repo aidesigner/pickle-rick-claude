@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { extractForwardRefAnnotations } from '../services/forward-ref-annotation.js';
+import { extractForwardRefAnnotations, isForwardCreated } from '../services/forward-ref-annotation.js';
 const MANIFEST_SCHEMA_VERSION = 1;
 const TICKET_HASH_RE = /^[0-9a-f]{8}$/;
 const SHA_TOKEN_RE = /\b[0-9a-f]{7,40}\b/g;
@@ -316,8 +316,10 @@ export function extractDeclaredCreatePaths(body) {
 }
 // R-FRA-6 (88a4cdd6 E1/E2): bundle-creation index — additive whitelist of every
 // forward-created path declared (or annotated) across ALL tickets in the bundle.
-// Exact-membership suppression only: a phantom path neither declared nor
-// annotated still produces a fatal path-drift finding (teeth preserved).
+// AC-B1: suffix-symmetric suppression is decided by the shared `isForwardCreated`
+// predicate at the consumer (checkPathDrift); a phantom path that is neither a
+// suffix of nor suffixed by any declared path still produces a fatal path-drift
+// finding (teeth preserved).
 export function buildBundleCreationIndex(tickets) {
     const index = new Set();
     for (const t of tickets) {
@@ -340,8 +342,11 @@ export function checkPathDrift(t, gitFiles, creationIndex = new Set()) {
             continue;
         if (forwardCreatePaths.has(tok))
             continue;
-        // R-FRA-6 (88a4cdd6 E1/E2): bundle-wide declared/annotated forward-create.
-        if (creationIndex.has(tok))
+        // R-FRA-6 (88a4cdd6 E1/E2) + AC-B1: bundle-wide declared/annotated
+        // forward-create, matched suffix-symmetrically (a declared `extension/tests/X`
+        // suppresses a `tests/X` ref and vice versa) so this gate stays parity-aligned
+        // with check-readiness; teeth preserved for genuine phantoms.
+        if (isForwardCreated(tok, creationIndex))
             continue;
         const ctx = lineContext(t.body, tok);
         if (hasForwardRefPathAnnotation(ctx, tok))

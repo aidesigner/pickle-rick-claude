@@ -10,7 +10,7 @@ import { isRecord } from '../lib/is-record.js';
 import { formatLocalDateKey, safeErrorMessage, writeStateFile } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/recoverable-json.js';
-import { FORWARD_REF_ANNOTATION_RE } from '../services/forward-ref-annotation.js';
+import { FORWARD_REF_ANNOTATION_RE, isForwardCreated } from '../services/forward-ref-annotation.js';
 const SNAPSHOT_FILE = 'readiness_snapshot.json';
 const READINESS_MAX_RECYCLE_CYCLES = 3;
 const DEFAULT_HISTORY_LIMIT = 10;
@@ -297,8 +297,9 @@ export function extractDeclaredCreatePaths(content) {
 }
 // R-FRA-6 (88a4cdd6 E1/E2): the bundle-creation index — additive whitelist of
 // every forward-created path declared (or annotated) ANYWHERE in the bundle.
-// Suppression is exact-membership only, so a genuinely phantom path (neither
-// declared nor annotated) still produces a finding (teeth preserved).
+// AC-B1: suppression is decided by the shared suffix-symmetric `isForwardCreated`
+// predicate at the consumer (findPathFindings), so a genuinely phantom path
+// (neither a suffix of nor suffixed by any declared path) still flags (teeth).
 export function buildBundleCreationIndex(ticketContents) {
     const index = new Set();
     for (const content of ticketContents) {
@@ -923,9 +924,11 @@ function findPathFindings(ticket, repoRoot, sessionDir, cache, creationIndex = n
         refs.add(match[0]);
     return [...refs].sort()
         .filter((ref) => !annotatedTokens.has(ref))
-        // R-FRA-6 (88a4cdd6 E1/E2): a path declared forward-created ANYWHERE in the
-        // bundle is creation-OK across command/table/cross-ticket surfaces.
-        .filter((ref) => !creationIndex.has(ref))
+        // R-FRA-6 (88a4cdd6 E1/E2) + AC-B1: a path declared forward-created ANYWHERE
+        // in the bundle is creation-OK across command/table/cross-ticket surfaces.
+        // Suppression is suffix-symmetric (declared `extension/tests/X` suppresses a
+        // `tests/X` ref and vice versa), mirroring resolvePathRef's `(?:^|/)<ref>$`.
+        .filter((ref) => !isForwardCreated(ref, creationIndex))
         .filter((ref) => !allowlist.has(ref))
         .filter((ref) => !resolvePathRef(ref, repoRoot, ticket, sessionDir, cache))
         .map((ref) => ({

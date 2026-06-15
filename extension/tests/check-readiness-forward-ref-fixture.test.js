@@ -122,6 +122,127 @@ test('R-RTRC-6 RC-2: test-defined helper resolves via lifted tests/ exclusion', 
     }
 });
 
+test('AC-B1 B1-SUFFIX: declared deep `extension/tests/X` suppresses a bare `tests/X` ref', () => {
+    const sessionDir = tmpDir();
+    try {
+        // Forward-created path declared under ## Files as the DEEP form, then
+        // referenced elsewhere as the bare `tests/X` form. Exact membership would
+        // miss the bare ref; suffix-symmetric suppression must catch it.
+        writeTicket(sessionDir, 'b1suffix1', [
+            '---',
+            'id: b1suffix1',
+            'key: B1-SUFFIX',
+            'ac_ids: []',
+            '---',
+            '',
+            '# B1 suffix-symmetric (declared deep, referenced bare)',
+            '',
+            '## Files to create',
+            '',
+            '- `extension/tests/b1suffix-fixture.test.js`',
+            '',
+            '## Description',
+            '',
+            'The new test lives at `tests/b1suffix-fixture.test.js`.',
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- [ ] `node --test tests/b1suffix-fixture.test.js` exits 0.',
+            '',
+        ].join('\n'));
+        const result = runReadiness(sessionDir);
+        assert.equal(result.status, 0, `expected exit 0, got ${result.status}; stderr=${result.stderr}; stdout=${result.stdout}`);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'pass');
+        const pathFindings = out.findings.filter((f) => f.kind === 'file_path');
+        assert.equal(pathFindings.length, 0, `bare tests/X ref must be suppressed by declared deep path; got ${JSON.stringify(pathFindings)}`);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
+test('AC-B1 B1-REVERSE: declared bare `tests/X` suppresses a deep `extension/tests/X` ref', () => {
+    const sessionDir = tmpDir();
+    try {
+        // Reverse direction: declared as the BARE form, referenced as the DEEP
+        // form. The declared bare path is a suffix of the deep ref.
+        writeTicket(sessionDir, 'b1rev001', [
+            '---',
+            'id: b1rev001',
+            'key: B1-REVERSE',
+            'ac_ids: []',
+            '---',
+            '',
+            '# B1 reverse direction (declared bare, referenced deep)',
+            '',
+            '## Files to create',
+            '',
+            '- `tests/b1reverse-fixture.test.js`',
+            '',
+            '## Description',
+            '',
+            'Wired from `extension/tests/b1reverse-fixture.test.js`.',
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- [ ] `node --test extension/tests/b1reverse-fixture.test.js` exits 0.',
+            '',
+        ].join('\n'));
+        const result = runReadiness(sessionDir);
+        assert.equal(result.status, 0, `expected exit 0, got ${result.status}; stderr=${result.stderr}; stdout=${result.stdout}`);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'pass');
+        const pathFindings = out.findings.filter((f) => f.kind === 'file_path');
+        assert.equal(pathFindings.length, 0, `deep ref must be suppressed by declared bare path; got ${JSON.stringify(pathFindings)}`);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
+test('AC-B1 B1-PHANTOM: genuine phantom (no declaration, no HEAD file) still flags', () => {
+    const sessionDir = tmpDir();
+    const repoRoot = tmpDir('pickle-b1-repo-');
+    try {
+        // Empty git repo so the path cannot resolve via bases or git ls-files,
+        // and the ticket declares nothing forward-created. Teeth must fire.
+        spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repoRoot });
+        spawnSync('git', ['config', 'user.email', 'b1@example.com'], { cwd: repoRoot });
+        spawnSync('git', ['config', 'user.name', 'b1'], { cwd: repoRoot });
+        fs.writeFileSync(path.join(repoRoot, 'README.md'), '# seed\n');
+        spawnSync('git', ['add', '-A'], { cwd: repoRoot });
+        spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoRoot });
+
+        const phantom = 'extension/services/b1phantom-nonexistent.ts';
+        writeTicket(sessionDir, 'b1phan01', [
+            '---',
+            'id: b1phan01',
+            'key: B1-PHANTOM',
+            'ac_ids: []',
+            '---',
+            '',
+            '# B1 genuine phantom',
+            '',
+            '## Description',
+            '',
+            `Touches \`${phantom}\` but never declares it forward-created.`,
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- [ ] Field `kind` equals exactly `phantom`.',
+            '',
+        ].join('\n'));
+        const result = runReadiness(sessionDir, repoRoot);
+        assert.notEqual(result.status, 0, `expected non-zero exit for phantom; stdout=${result.stdout}; stderr=${result.stderr}`);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'fail');
+        const pathFindings = out.findings.filter((f) => f.kind === 'file_path' && f.detail === phantom);
+        assert.equal(pathFindings.length, 1, `genuine phantom must flag exactly once; got ${JSON.stringify(out.findings)}`);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 test('R-RTRC-6 RC-3: deep repo path resolves via git ls-files suffix-match', () => {
     const sessionDir = tmpDir();
     const repoRoot = tmpDir('pickle-rtrc-repo-');
