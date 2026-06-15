@@ -755,3 +755,98 @@ export function buildSkipFlagBudgetReport(
 
   return { since, until, total_uses: events.length, entries };
 }
+
+// ---------------------------------------------------------------------------
+// Readiness false-positive report (AC-B4) — NON-BLOCKING observability counter
+// ---------------------------------------------------------------------------
+
+/** The activity event recording a suppressed prior readiness finding (AC-B4). */
+export const READINESS_FALSE_POSITIVE_EVENT_NAME = 'readiness_false_positive_suppressed';
+
+/** A single normalized `readiness_false_positive_suppressed` event. */
+export interface ReadinessFalsePositiveEvent {
+  session: string;
+  suppressed_count: number;
+}
+
+/** Aggregated readiness false-positive counter for the dashboard window. */
+export interface ReadinessFalsePositiveReport {
+  since: string;
+  until: string;
+  total_events: number;
+  total_suppressed: number;
+}
+
+/** Normalize one activity event into a readiness false-positive event, or null. */
+export function extractReadinessFalsePositive(ev: unknown): ReadinessFalsePositiveEvent | null {
+  if (typeof ev !== 'object' || ev === null) return null;
+  const obj = ev as Record<string, unknown>;
+  if (obj.event !== READINESS_FALSE_POSITIVE_EVENT_NAME) return null;
+  const session = typeof obj.session === 'string' && obj.session ? obj.session : 'unknown';
+  const payload = typeof obj.gate_payload === 'object' && obj.gate_payload !== null
+    ? (obj.gate_payload as Record<string, unknown>)
+    : {};
+  const rawCount = payload.suppressed_count;
+  const suppressed_count = typeof rawCount === 'number' && Number.isFinite(rawCount) ? rawCount : 0;
+  return { session, suppressed_count };
+}
+
+/**
+ * Scan `<activityDir>/*.jsonl` for `readiness_false_positive_suppressed` events
+ * within the `[since, until]` date window (mirrors `scanSkipFlagEvents`).
+ */
+export function scanReadinessFalsePositiveEvents(activityDir: string, since: string, until: string): ReadinessFalsePositiveEvent[] {
+  const out: ReadinessFalsePositiveEvent[] = [];
+  let files: string[];
+  try {
+    files = fs.readdirSync(activityDir).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    return out;
+  }
+
+  for (const file of files) {
+    const filePath = path.join(activityDir, file);
+    let content: string;
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.size > MAX_ACTIVITY_FILE_BYTES) continue;
+      content = fs.readFileSync(filePath, 'utf-8');
+    } catch (err) {
+      const msg = safeErrorMessage(err);
+      process.stderr.write(`[metrics] readiness-false-positive scan skipped ${file}: ${msg}\n`);
+      continue;
+    }
+
+    for (const rawLine of content.split('\n')) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const ts = (parsed as Record<string, unknown>)?.ts;
+      if (typeof ts !== 'string') continue;
+      const dateKey = formatLocalDateKey(new Date(ts));
+      if (dateKey < since || dateKey > until) continue;
+      const ev = extractReadinessFalsePositive(parsed);
+      if (ev) out.push(ev);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Aggregate `readiness_false_positive_suppressed` events into a non-blocking
+ * counter: total events and total suppressed prior findings over the window.
+ */
+export function buildReadinessFalsePositiveReport(
+  events: ReadinessFalsePositiveEvent[],
+  since: string,
+  until: string,
+): ReadinessFalsePositiveReport {
+  const total_suppressed = events.reduce((sum, ev) => sum + ev.suppressed_count, 0);
+  return { since, until, total_events: events.length, total_suppressed };
+}

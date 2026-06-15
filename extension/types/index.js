@@ -180,6 +180,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'readiness_failed_post_correction',
     'readiness_skipped',
     'readiness_skipped_for_manifest',
+    'readiness_false_positive_suppressed',
     'archaeology_complete',
     'archaeology_skipped',
     'phase_personas_disabled_seen',

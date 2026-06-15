@@ -293,6 +293,23 @@
         }
       }
     },
+    "readiness_false_positive_suppressed": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "readiness_false_positive_suppressed" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["suppressed_count"],
+          "properties": {
+            "suppressed_count": { "type": "integer", "minimum": 1 },
+            "suppressed": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
     "ticket_audit_manual_edit": {
       "type": "object",
       "required": ["event", "ts", "gate_payload"],
@@ -1760,6 +1777,7 @@
     { "$ref": "#/definitions/ticket_audit_bypassed" },
     { "$ref": "#/definitions/ticket_audit_failed" },
     { "$ref": "#/definitions/resolver_indeterminate" },
+    { "$ref": "#/definitions/readiness_false_positive_suppressed" },
     { "$ref": "#/definitions/ticket_audit_manual_edit" },
     { "$ref": "#/definitions/smoke_gate_bypassed" },
     { "$ref": "#/definitions/ac_shape_gate_bypassed" },

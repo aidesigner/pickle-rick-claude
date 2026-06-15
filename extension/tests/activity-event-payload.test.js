@@ -298,6 +298,16 @@ const EVENT_CASES = [
     drop: 'gate_payload',
   },
   {
+    type: 'readiness_false_positive_suppressed',
+    valid: {
+      event: 'readiness_false_positive_suppressed',
+      ts: TS,
+      session: 'session-1',
+      gate_payload: { suppressed_count: 2, suppressed: ['file_path:t1:a/b.ts', 'contract:t2:Foo.bar'] },
+    },
+    drop: 'gate_payload',
+  },
+  {
     type: 'ticket_audit_manual_edit',
     valid: { event: 'ticket_audit_manual_edit', ts: TS, gate_payload: { edit_count: 2 } },
     drop: 'gate_payload',
@@ -1189,6 +1199,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'ticket_audit_bypassed',
     'ticket_audit_failed',
     'resolver_indeterminate',
+    'readiness_false_positive_suppressed',
     'ticket_audit_manual_edit',
     'smoke_gate_bypassed',
     'ac_shape_gate_bypassed',

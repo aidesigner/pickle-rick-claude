@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as path from 'path';
 import * as os from 'os';
-import { scanSessionFiles, scanGitRepos, buildReport, formatNumber, shortenSlug, scanSkipFlagEvents, buildSkipFlagBudgetReport, SKIP_FLAG_BUDGETS, } from '../services/metrics-utils.js';
+import { scanSessionFiles, scanGitRepos, buildReport, formatNumber, shortenSlug, scanSkipFlagEvents, buildSkipFlagBudgetReport, SKIP_FLAG_BUDGETS, scanReadinessFalsePositiveEvents, buildReadinessFalsePositiveReport, } from '../services/metrics-utils.js';
 import { printMinimalPanel, Style, formatLocalDateKey, getDataRoot, } from '../services/pickle-utils.js';
 import { getActivityDir } from '../services/activity-logger.js';
 import { BACKENDS } from '../types/index.js';
@@ -344,6 +344,19 @@ function printSkipFlagBudgetTable(budget) {
     ]);
     process.stdout.write('\n');
 }
+// AC-B4: NON-BLOCKING readiness false-positive counter. Pure stdout — never
+// halts, never exits non-zero; mirrors printSkipFlagBudgetTable's panel shape.
+function printReadinessFalsePositiveTable(report) {
+    printMinimalPanel('Readiness false positives', {
+        'Suppressed findings': formatNumber(report.total_suppressed),
+        'Re-runs with suppression': String(report.total_events),
+    }, report.total_suppressed > 0 ? 'YELLOW' : 'CYAN', '🔁');
+    if (report.total_events === 0) {
+        process.stdout.write('  No readiness false-positive suppressions in window.\n\n');
+        return;
+    }
+    process.stdout.write('\n');
+}
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -359,11 +372,13 @@ function main() {
     const report = buildReport(tokens, loc, since, until, grouping);
     const skipFlagEvents = scanSkipFlagEvents(getActivityDir(), since, until);
     const skipFlagBudget = buildSkipFlagBudgetReport(skipFlagEvents, SKIP_FLAG_BUDGETS, since, until);
+    const readinessFalsePositiveEvents = scanReadinessFalsePositiveEvents(getActivityDir(), since, until);
+    const readinessFalsePositive = buildReadinessFalsePositiveReport(readinessFalsePositiveEvents, since, until);
     if (args.json) {
-        console.log(JSON.stringify({ ...report, skip_flag_budget: skipFlagBudget }, null, 2));
+        console.log(JSON.stringify({ ...report, skip_flag_budget: skipFlagBudget, readiness_false_positive: readinessFalsePositive }, null, 2));
         return;
     }
-    if (report.rows.length === 0 && skipFlagBudget.total_uses === 0) {
+    if (report.rows.length === 0 && skipFlagBudget.total_uses === 0 && readinessFalsePositive.total_events === 0) {
         console.log(`No metrics data found for ${since} to ${until}.`);
         return;
     }
@@ -376,6 +391,7 @@ function main() {
         }
     }
     printSkipFlagBudgetTable(skipFlagBudget);
+    printReadinessFalsePositiveTable(readinessFalsePositive);
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'metrics.js') {
     main();

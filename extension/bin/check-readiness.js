@@ -1033,6 +1033,51 @@ function appendReadinessCycle(sessionDir, state, findings, escalated) {
     };
     writeState(sessionDir, state);
 }
+// AC-B4: max suppressed-finding signatures carried in one
+// `readiness_false_positive_suppressed` payload (keeps the event bounded).
+const READINESS_FALSE_POSITIVE_SUPPRESSED_CAP = 50;
+function findingSignature(finding) {
+    return `${finding.kind}:${finding.ticket}:${finding.detail}`;
+}
+function readPriorFindingSignatures(state) {
+    const readiness = isRecord(state.readiness) ? state.readiness : undefined;
+    const prior = readiness?.prior_finding_signatures;
+    if (!Array.isArray(prior))
+        return [];
+    return prior.filter((s) => typeof s === 'string');
+}
+// AC-B4 (observability ONLY — never throws, never affects exitCode): when a
+// blocking finding present in the PRIOR run is ABSENT in the current run, emit
+// one `readiness_false_positive_suppressed` event with the suppressed count, then
+// persist the current run's signatures for the next comparison.
+function persistFindingSignaturesAndEmit(sessionDir, state, blockingFindings) {
+    try {
+        const current = blockingFindings.map(findingSignature);
+        const currentSet = new Set(current);
+        const prior = readPriorFindingSignatures(state);
+        const suppressed = prior.filter((sig) => !currentSet.has(sig));
+        if (suppressed.length > 0) {
+            logActivity({
+                event: 'readiness_false_positive_suppressed',
+                source: 'pickle',
+                session: path.basename(sessionDir),
+                gate_payload: {
+                    suppressed_count: suppressed.length,
+                    suppressed: suppressed.slice(0, READINESS_FALSE_POSITIVE_SUPPRESSED_CAP),
+                },
+            });
+        }
+        state.readiness = {
+            ...(isRecord(state.readiness) ? state.readiness : {}),
+            cycle_history: readinessCycleHistory(state),
+            prior_finding_signatures: current,
+        };
+        writeState(sessionDir, state);
+    }
+    catch {
+        // observability only — a comparison/persist failure must never block readiness
+    }
+}
 function hashFile(file) {
     return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
@@ -1191,6 +1236,12 @@ export function runReadiness(args) {
     // excluded from the blocking set that drives `status:fail`. A gate that fails
     // because the checker ran out of time is not a gate.
     const blockingFindings = findings.filter((finding) => finding.kind !== 'performance');
+    // AC-B4: NON-BLOCKING readiness false-positive counter. Compare this run's
+    // blocking findings against the prior run's persisted signatures and emit
+    // `readiness_false_positive_suppressed` for any prior finding now absent. This
+    // is pure observability — it runs on BOTH the pass and fail paths and never
+    // alters the exit code.
+    persistFindingSignaturesAndEmit(args.sessionDir, state, blockingFindings);
     if (blockingFindings.length === 0) {
         writeSnapshot(args.sessionDir, listLinearTicketFiles(args.sessionDir), ticketsVersion);
         return { exitCode: 0, findings, delta: selected.delta, elapsed_ms: Date.now() - started };
