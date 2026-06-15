@@ -5941,6 +5941,32 @@ export async function processCompletionBranch(state: State, result: IterationOut
           return { kind: 'relaunch', relaunchCount: inactiveDecision.nextRelaunchCount, pendingTickets: inactiveDecision.pendingCount, resetStall: true };
         }
       }
+      // AC-A2 (B-DSAN2 WS-A): a clean manager exit (end_turn / max-turns) must NOT exit 0
+      // while tickets remain non-terminal. Reuse evaluateManagerRelaunch (the existing
+      // completion authority) to relaunch on a pending bundle; only an all-terminal queue
+      // may fall through to the clean exit. No new parallel guard.
+      if (inactiveExitKind !== 'codex_session_inactive') {
+        const relaunchTickets = withFreshTicketStatuses(ctx.sessionDir, collectTickets(ctx.sessionDir));
+        const decision = evaluateManagerRelaunch(postState, relaunchTickets, ctx.cbState ?? null, inactiveExitKind);
+        if (decision.reason === 'time_limit') {
+          ctx.log('Time limit reached. Exiting.');
+          finalizeTerminalState(ctx.statePath, { step: 'completed', runnerIteration: ctx.iteration, exitReason: 'limit' });
+          return { kind: 'break', reason: 'limit' };
+        }
+        if (decision.shouldRelaunch) {
+          const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
+          ctx.log(`${relaunchBackend} manager exited via ${inactiveExitKind} with ${decision.pendingCount} pending — relaunching (count ${decision.nextRelaunchCount}/${decision.cap}).`);
+          recordManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
+          return { kind: 'relaunch', relaunchCount: decision.nextRelaunchCount, pendingTickets: decision.pendingCount, resetStall: true };
+        }
+        if (decision.pendingCount > 0) {
+          // cap_exceeded / circuit_open WITH pending tickets — terminal, but NEVER exit-0.
+          recordExitReason(ctx.statePath, 'idle_stall_unrecoverable');
+          ctxDeactivate(ctx);
+          return { kind: 'break', reason: 'idle_stall_unrecoverable' };
+        }
+        // decision.pendingCount === 0 → all terminal → legitimate clean exit, fall through.
+      }
     }
     ctx.log('Session deactivated. Exiting loop.');
     return { kind: 'break', reason: 'cancelled' };
@@ -9571,6 +9597,37 @@ async function runMuxRunnerMain() {
             await sleep(1000);
             continue;
           }
+        }
+        // AC-A2 (B-DSAN2 WS-A): a clean manager exit (end_turn / max-turns) must NOT exit 0
+        // while tickets remain non-terminal. Reuse evaluateManagerRelaunch (the existing
+        // completion authority) to relaunch on a pending bundle; only an all-terminal queue
+        // may fall through to the clean exit. No new parallel guard.
+        if (inactiveExitKind !== 'codex_session_inactive') {
+          const relaunchTickets = withFreshTicketStatuses(sessionDir, collectTickets(sessionDir));
+          const decision = evaluateManagerRelaunch(postState, relaunchTickets, cbState, inactiveExitKind);
+          if (decision.reason === 'time_limit') {
+            log('Time limit reached. Exiting.');
+            finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
+            exitReason = 'limit';
+            break;
+          }
+          if (decision.shouldRelaunch) {
+            const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
+            log(`${relaunchBackend} manager exited via ${inactiveExitKind} with ${decision.pendingCount} pending — relaunching (count ${decision.nextRelaunchCount}/${decision.cap}).`);
+            recordManagerRelaunch(statePath, sessionDir, decision, iteration, log);
+            lastStateIteration = -1;
+            stallCount = 0;
+            await sleep(1000);
+            continue;
+          }
+          if (decision.pendingCount > 0) {
+            // cap_exceeded / circuit_open WITH pending tickets — terminal, but NEVER exit-0.
+            recordExitReason(statePath, 'idle_stall_unrecoverable');
+            safeDeactivate(statePath);
+            exitReason = 'idle_stall_unrecoverable';
+            break;
+          }
+          // decision.pendingCount === 0 → all terminal → legitimate clean exit, fall through.
         }
       }
       log('Session deactivated. Exiting loop.'); exitReason = 'cancelled'; break;

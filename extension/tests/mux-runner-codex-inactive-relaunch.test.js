@@ -225,16 +225,23 @@ test('codex-inactive-relaunch: no relaunch when no pending tickets', async () =>
   });
 });
 
-test('codex-inactive-relaunch: claude inactive does NOT relaunch', async () => {
+test('codex-inactive-relaunch: claude inactive WITH pending relaunches (AC-A2)', async () => {
+  // AC-A2 (ticket d3a22538): a clean claude manager exit (end_turn / max-turns)
+  // with ≥1 pending ticket must route through evaluateManagerRelaunch and relaunch
+  // rather than fall through to the clean exit-0 path.
   await withFixture({ backend: 'claude' }, async ({ state, logs, deactivateCalls, ctx }) => {
     const action = await processCompletionBranch(state, 'inactive', ctx);
 
-    assert.equal(action.kind, 'break');
-    assert.equal(action.reason, 'cancelled');
-    assert.ok(logs.includes('Session deactivated. Exiting loop.'));
+    assert.equal(action.kind, 'relaunch', `expected relaunch, got ${JSON.stringify(action)}`);
+    assert.equal(action.pendingTickets, 1);
+    assert.equal(deactivateCalls.length, 0);
     assert.ok(
-      !logs.some(line => line.includes('relaunching')),
-      `did not expect relaunch log, got:\n${logs.join('\n')}`,
+      !logs.includes('Session deactivated. Exiting loop.'),
+      `did not expect the clean-exit log, got:\n${logs.join('\n')}`,
+    );
+    assert.ok(
+      logs.some(line => line.includes('relaunching')),
+      `expected relaunching log, got:\n${logs.join('\n')}`,
     );
   });
 });
