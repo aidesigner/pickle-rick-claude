@@ -4258,6 +4258,145 @@ function haltOrRecoverCodexNoProgress(input) {
     return { kind: 'halt' };
 }
 // ---------------------------------------------------------------------------
+// AC-A4 (f8000435) — bounded terminal escape for an unreclaimable In Progress
+// ticket on the non-codex manager-relaunch path.
+//
+// AC-A1 (pipeline-runner) + AC-A2 (the evaluateManagerRelaunch gate below at the
+// two `decision.shouldRelaunch` sites) make a pickle phase with a pending ticket
+// REFUSE to complete. The inverse hazard: an In Progress ticket the manager can
+// never finish would relaunch up to CLAUDE_MANAGER_RELAUNCH_CAP (20) times — a
+// long, sterile twin-wedge — and then exit idle_stall_unrecoverable WITHOUT ever
+// forcing the stuck ticket terminal. This escape fires EARLIER: after
+// BOUNDED_ESCAPE_CAP consecutive no-progress relaunches on the same In Progress
+// ticket it forces the ticket to a terminal disposition (salvage-then-Skipped),
+// so the NEXT evaluateManagerRelaunch sees it no longer pending and the existing
+// AC-A2 gate advances/halts deterministically. The pipeline never spins to
+// max_iterations on an unreclaimable ticket.
+//
+// The cap lives in the persisted `state.recovery_attempts` ledger (R-ORSR-1,
+// schema-neutral, defaulted to [] by normalizeV5StateDefaults) — NOT a
+// process-local counter — so it survives `setup.js --resume`. No new
+// `state.flags` skip surface (subtract-before-add governance). This is the
+// GENERIC (non-codex) escape; the codex no-progress ladder
+// (haltOrRecoverCodexNoProgress) is untouched.
+// ---------------------------------------------------------------------------
+/** Ledger discriminator for bounded-escape attempts (AC-A4). */
+export const BOUNDED_ESCAPE_STRATEGY = 'bounded_terminal_escape';
+/**
+ * Consecutive no-progress relaunches on the same In Progress ticket before the
+ * escape forces it terminal. A small compiled constant (< CLAUDE_MANAGER_RELAUNCH_CAP)
+ * so the escape fires before the blunt relaunch cap and the pipeline never spins.
+ */
+export const BOUNDED_ESCAPE_CAP = 3;
+function countBoundedEscapeAttempts(ledger, ticketId) {
+    if (!Array.isArray(ledger))
+        return 0;
+    let n = 0;
+    for (const a of ledger) {
+        if (a.strategy === BOUNDED_ESCAPE_STRATEGY && a.ticket === ticketId && a.outcome === 'failed')
+            n++;
+    }
+    return n;
+}
+/**
+ * Pure decision: should the bounded escape fire for the in-flight ticket? Only an
+ * `In Progress` ticket is eligible — `Todo` never started (the manager simply has
+ * not picked it up), and `Done`/`Skipped` are already terminal. The count is read
+ * from the persisted ledger so a resumed session honors the same cap.
+ */
+export function evaluateBoundedEscape(state, sessionDir, cap = BOUNDED_ESCAPE_CAP) {
+    const ticketId = typeof state.current_ticket === 'string' && state.current_ticket.length > 0
+        ? state.current_ticket
+        : null;
+    if (!ticketId)
+        return { escape: false, ticketId: null, priorCount: 0, cap };
+    let status = '';
+    try {
+        status = (getTicketStatus(sessionDir, ticketId) ?? '').toLowerCase().replace(/["']/g, '').trim();
+    }
+    catch { /* unreadable frontmatter → not escape-eligible */ }
+    const priorCount = countBoundedEscapeAttempts(state.recovery_attempts, ticketId);
+    const escape = status === 'in progress' && priorCount >= cap;
+    return { escape, ticketId, priorCount, cap };
+}
+/**
+ * Record one no-progress relaunch attempt for the in-flight ticket into the
+ * persisted ledger. The Nth such entry is what makes `evaluateBoundedEscape`
+ * fire on the next pass — the consecutive-no-progress count IS the ledger count.
+ */
+export function recordBoundedEscapeAttempt(statePath, ticketId, iteration, log = () => { }) {
+    try {
+        sm.update(statePath, s => {
+            if (!Array.isArray(s.recovery_attempts))
+                s.recovery_attempts = [];
+            s.recovery_attempts.push({
+                strategy: BOUNDED_ESCAPE_STRATEGY,
+                outcome: 'failed',
+                reason: 'no_progress_relaunch',
+                iteration,
+                ticket: ticketId,
+            });
+        });
+    }
+    catch (err) {
+        log(`WARN: failed to record bounded-escape attempt: ${safeErrorMessage(err)}`);
+    }
+}
+/**
+ * Force the unreclaimable In Progress ticket to a terminal disposition. First
+ * salvage (archive-before-destructive preserves any uncommitted work), then flip
+ * the frontmatter to `Skipped` (terminal per PRD AC-A4 Risks row), then append a
+ * success ledger entry as the durable record. Returns true when the ticket is
+ * left terminal.
+ */
+export function executeBoundedEscape(statePath, sessionDir, workingDir, ticketId, iteration, log = () => { }) {
+    const deps = {
+        reconcile: (i) => reconcileTicketTruth(i),
+        gate: () => 'failing',
+        commitScoped: () => ({ committed: false }),
+        archive: (i) => {
+            try {
+                return archiveBeforeDestructive({
+                    cwd: i.workingDir,
+                    sessionDir: i.sessionDir,
+                    ticketDir: `${i.sessionDir}/${i.ticketId}`,
+                    reason: 'pre_reset',
+                });
+            }
+            catch {
+                return null;
+            }
+        },
+        resetTodo: () => { },
+        ffReattach: () => ({ recovered: false }),
+    };
+    try {
+        salvageTicket({ sessionDir, workingDir, ticketId, log }, deps);
+    }
+    catch (err) {
+        log(`WARN: bounded-escape salvage threw (continuing to force terminal): ${safeErrorMessage(err)}`);
+    }
+    const flipped = markTicketSkipped(sessionDir, ticketId);
+    try {
+        sm.update(statePath, s => {
+            if (!Array.isArray(s.recovery_attempts))
+                s.recovery_attempts = [];
+            s.recovery_attempts.push({
+                strategy: BOUNDED_ESCAPE_STRATEGY,
+                outcome: 'success',
+                reason: 'forced_skipped_unreclaimable_in_progress',
+                iteration,
+                ticket: ticketId,
+            });
+        });
+    }
+    catch (err) {
+        log(`WARN: failed to record bounded-escape success: ${safeErrorMessage(err)}`);
+    }
+    log(`bounded escape: ${ticketId} held In Progress across ${BOUNDED_ESCAPE_CAP} no-progress relaunches — forced terminal (Skipped) so the phase advances/halts deterministically.`);
+    return flipped;
+}
+// ---------------------------------------------------------------------------
 // R-CNAR-6 — Spark codex smoke-run gate
 // ---------------------------------------------------------------------------
 /** Codex CLI surfaces transport, auth, and rate-limit failures with these markers. */
@@ -5143,6 +5282,17 @@ export async function processCompletionBranch(state, result, ctx) {
                     return { kind: 'break', reason: 'limit' };
                 }
                 if (decision.shouldRelaunch) {
+                    // AC-A4 (f8000435): bounded terminal escape. An In Progress ticket held
+                    // across BOUNDED_ESCAPE_CAP consecutive no-progress relaunches is forced
+                    // terminal (salvage → Skipped) so the next evaluateManagerRelaunch sees it
+                    // no longer pending; never spin to max_iterations on an unreclaimable ticket.
+                    const esc = evaluateBoundedEscape(postState, ctx.sessionDir);
+                    if (esc.escape && esc.ticketId) {
+                        executeBoundedEscape(ctx.statePath, ctx.sessionDir, postState.working_dir || state.working_dir || '', esc.ticketId, ctx.iteration, ctx.log);
+                        return { kind: 'relaunch', relaunchCount: decision.nextRelaunchCount, pendingTickets: Math.max(0, decision.pendingCount - 1), resetStall: true };
+                    }
+                    if (esc.ticketId)
+                        recordBoundedEscapeAttempt(ctx.statePath, esc.ticketId, ctx.iteration, ctx.log);
                     const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
                     ctx.log(`${relaunchBackend} manager exited via ${inactiveExitKind} with ${decision.pendingCount} pending — relaunching (count ${decision.nextRelaunchCount}/${decision.cap}).`);
                     recordManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
@@ -8682,6 +8832,21 @@ async function runMuxRunnerMain() {
                         break;
                     }
                     if (decision.shouldRelaunch) {
+                        // AC-A4 (f8000435): bounded terminal escape. An In Progress ticket held
+                        // across BOUNDED_ESCAPE_CAP consecutive no-progress relaunches is forced
+                        // terminal (salvage → Skipped); the next loop's evaluateManagerRelaunch
+                        // sees it no longer pending and advances/halts deterministically — the
+                        // pipeline never spins to max_iterations on an unreclaimable ticket.
+                        const esc = evaluateBoundedEscape(postState, sessionDir);
+                        if (esc.escape && esc.ticketId) {
+                            executeBoundedEscape(statePath, sessionDir, postState.working_dir || state.working_dir || '', esc.ticketId, iteration, log);
+                            lastStateIteration = -1;
+                            stallCount = 0;
+                            await sleep(1000);
+                            continue;
+                        }
+                        if (esc.ticketId)
+                            recordBoundedEscapeAttempt(statePath, esc.ticketId, iteration, log);
                         const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
                         log(`${relaunchBackend} manager exited via ${inactiveExitKind} with ${decision.pendingCount} pending — relaunching (count ${decision.nextRelaunchCount}/${decision.cap}).`);
                         recordManagerRelaunch(statePath, sessionDir, decision, iteration, log);
