@@ -212,46 +212,58 @@ function isProtectedConfigToken(token) {
     return isProtectedFile(token) || isProtectedShellPattern(token);
 }
 /**
- * Write-aware config gate (AC-C1 / R-CPRO): returns the protected config
- * basename when `command` WRITES it, or null for read-only commands.
- *
- * The legacy matcher blocked any token matching a protected config file/glob
- * READ OR WRITE, so read-only commands (`grep -l '...' tsconfig.json`,
- * `cat .eslintrc.json`, `awk '{print}' .eslintrc.json`) were over-blocked.
- * This detector reuses the SAME redirect tokenizer (`tokenizeBashCommand`) and
- * write-command sets as `detectBashStateWriteTarget`, plus the in-place/editor
- * write class, and blocks ONLY when a write targets a protected config path.
- * Fail-closed: any write construct (redirect / tee / cp / mv / rsync / sed -i /
- * editor) over a config token blocks; a config token with no write targeting it
- * approves.
+ * Shared bash write-target walker (R-WSRC-3 / AC-C1): Pass 1 scans `>`/`>>`
+ * redirect destinations; Pass 2 scans non-flag positional args of write commands
+ * (`REDIRECT_DEST_COMMANDS` plus any `extraWriteCommands`). `probe` maps a
+ * candidate destination token to a hit (or null) and the first non-null hit wins.
+ * Single source of the redirect traversal so `detectBashStateWriteTarget` (state
+ * files) and `bashWritesProtectedConfig` (config files) cannot drift.
  */
-function bashWritesProtectedConfig(command) {
+function findBashWriteTarget(command, extraWriteCommands, probe) {
     if (!command)
         return null;
     const tokens = tokenizeBashCommand(command);
     // Pass 1: `>` / `>>` redirects — the immediate next token is the destination.
     for (let i = 0; i < tokens.length - 1; i++) {
         if (tokens[i] === '>' || tokens[i] === '>>') {
-            const dest = tokens[i + 1];
-            if (isProtectedConfigToken(dest))
-                return path.basename(dest);
+            const hit = probe(tokens[i + 1]);
+            if (hit !== null)
+                return hit;
         }
     }
     // Pass 2: write/editor commands that mutate a positional FILE arg
     // (`tee`/`cp`/`mv`/`rsync` destinations, `sed -i FILE`, `vim FILE`, ...).
     for (let i = 0; i < tokens.length; i++) {
         const cmdToken = path.basename(tokens[i]);
-        if (!REDIRECT_DEST_COMMANDS.has(cmdToken) && !CONFIG_INPLACE_WRITE_COMMANDS.has(cmdToken))
+        if (!REDIRECT_DEST_COMMANDS.has(cmdToken) && !extraWriteCommands.has(cmdToken))
             continue;
         for (let j = i + 1; j < tokens.length; j++) {
             const arg = tokens[j];
             if (arg.startsWith('-'))
                 continue;
-            if (isProtectedConfigToken(arg))
-                return path.basename(arg);
+            const hit = probe(arg);
+            if (hit !== null)
+                return hit;
         }
     }
     return null;
+}
+/**
+ * Write-aware config gate (AC-C1 / R-CPRO): returns the protected config
+ * basename when `command` WRITES it, or null for read-only commands.
+ *
+ * The legacy matcher blocked any token matching a protected config file/glob
+ * READ OR WRITE, so read-only commands (`grep -l '...' tsconfig.json`,
+ * `cat .eslintrc.json`, `awk '{print}' .eslintrc.json`) were over-blocked.
+ * Routes through the shared `findBashWriteTarget` walker (same redirect tokenizer
+ * and `REDIRECT_DEST_COMMANDS` as `detectBashStateWriteTarget`) with the extra
+ * in-place/editor write class, blocking ONLY when a write targets a protected
+ * config path. Fail-closed: any write construct (redirect / tee / cp / mv / rsync
+ * / sed -i / editor) over a config token blocks; a config token with no write
+ * targeting it approves.
+ */
+function bashWritesProtectedConfig(command) {
+    return findBashWriteTarget(command, CONFIG_INPLACE_WRITE_COMMANDS, (token) => (isProtectedConfigToken(token) ? path.basename(token) : null));
 }
 /**
  * Tokenize a bash command, splitting on whitespace and quotes. Preserves
@@ -297,6 +309,8 @@ function tokenizeBashCommand(command) {
  * class and no duplicate redirect parser.
  */
 const REDIRECT_DEST_COMMANDS = new Set(['tee', 'cp', 'mv', 'rsync']);
+/** Empty extra-command set for `findBashWriteTarget` callers with no editor/in-place class. */
+const NO_EXTRA_WRITE_COMMANDS = new Set();
 /**
  * In-place / editor write commands that mutate a FILE positional argument
  * (`sed -i FILE`, `perl -i FILE`, `vim FILE`, `nano FILE`, ...). These are NOT
@@ -310,37 +324,12 @@ const CONFIG_INPLACE_WRITE_COMMANDS = new Set(['sed', 'perl', 'vim', 'vi', 'nano
 /**
  * Detects whether `command` writes to a protected state file via output
  * redirection (`>`, `>>`, `tee`, `cp <src> <dest>`, `mv <src> <dest>`, or
- * `rsync ... <dest>`). Returns the matched path (or `null` if none).
+ * `rsync ... <dest>`). Returns the matched path (or `null` if none). Routes
+ * through the shared `findBashWriteTarget` walker (no extra editor/in-place
+ * commands) with the `detectProtectedWriteTarget` state-file probe.
  */
 function detectBashStateWriteTarget(command) {
-    if (!command)
-        return null;
-    const tokens = tokenizeBashCommand(command);
-    // Pass 1: `>` and `>>` redirects — the immediate next token is the destination.
-    for (let i = 0; i < tokens.length - 1; i++) {
-        if (tokens[i] === '>' || tokens[i] === '>>') {
-            const dest = tokens[i + 1];
-            const hit = detectProtectedWriteTarget(dest);
-            if (hit)
-                return hit;
-        }
-    }
-    // Pass 2: scan tee / cp / mv / rsync. Subsequent tokens after the command
-    // are potential destinations; we test every non-flag token for safety.
-    for (let i = 0; i < tokens.length; i++) {
-        const cmdToken = path.basename(tokens[i]);
-        if (!REDIRECT_DEST_COMMANDS.has(cmdToken))
-            continue;
-        for (let j = i + 1; j < tokens.length; j++) {
-            const arg = tokens[j];
-            if (arg.startsWith('-'))
-                continue;
-            const hit = detectProtectedWriteTarget(arg);
-            if (hit)
-                return hit;
-        }
-    }
-    return null;
+    return findBashWriteTarget(command, NO_EXTRA_WRITE_COMMANDS, detectProtectedWriteTarget);
 }
 const ALLOW_CONFIG_EDIT_FLAG = '--allow-config-edit';
 function hasAllowConfigEditFlag(args) {
