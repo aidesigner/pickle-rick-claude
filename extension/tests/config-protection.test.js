@@ -260,6 +260,61 @@ test('AC-C1 blocks Bash editor write to .eslintrc.json (teeth)', () => {
   assert.match(result.reason, /\.eslintrc\.json/);
 });
 
+// ---------------------------------------------------------------------------
+// AC-C2 read-approve / write-block matrix
+//
+// Regression-locks the AC-C1 write-aware config gate (commit 983b3de8) as an
+// explicit named unit. Read-only commands over a protected config/state path
+// MUST approve; write commands MUST block. The write cases route through two
+// gates: `state.json` / `pickle_settings.json` writes block via the STATE gate
+// (`evaluateStateWriteGate` → `detectBashStateWriteTarget`, which matches state
+// basenames), while `tsconfig.json` writes block via the CONFIG gate
+// (`bashWritesProtectedConfig`, tsconfig is in PROTECTED_PATTERNS). Both gates
+// embed the offending basename in `reason`, so the block assertions match on the
+// basename rather than gate-specific prose. The `$S/` cases use a concrete
+// data-root path (the handler does not expand shell vars).
+// ---------------------------------------------------------------------------
+
+const AC_C2_DATA_ROOT = '/data/sessions/sess-1';
+
+test('AC-C2 approves Bash grep -l over sessions/*/state.json (read)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: "grep -l 'active' sessions/*/state.json" } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('AC-C2 approves Bash ls -lt over a data-root dir (read)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: `ls -lt ${AC_C2_DATA_ROOT}/` } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('AC-C2 approves Bash stat over state.json (read)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: `stat ${AC_C2_DATA_ROOT}/state.json` } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('AC-C2 approves Bash cat tsconfig.json (read)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'cat tsconfig.json' } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('AC-C2 blocks Bash echo redirect write to state.json', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: `echo x > ${AC_C2_DATA_ROOT}/state.json` } });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /state\.json/);
+});
+
+test('AC-C2 blocks Bash cp write to pickle_settings.json', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: `cp /tmp/x ${AC_C2_DATA_ROOT}/pickle_settings.json` } });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /pickle_settings\.json/);
+});
+
+test('AC-C2 blocks Bash tee write to tsconfig.json', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'tee tsconfig.json < /dev/null' } });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /tsconfig\.json/);
+});
+
 // R-PIPE-3 / R-WSRC: explicit block for bash install.sh from worker context (no override)
 test('blocks Bash install.sh (R-WSRC)', () => {
   const result = runHandler({ toolName: 'Bash', toolInput: { command: 'bash install.sh' } });
