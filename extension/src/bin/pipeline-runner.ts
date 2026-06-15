@@ -3094,6 +3094,46 @@ function maybeStampPhaseIncompleteTickets(
 }
 
 /**
+ * AC-A1 (WS-A): ground pickle phase-success in the all-tickets-terminal state
+ * machine. A clean mux exit-0 is NOT phase success while runnable tickets remain.
+ * The earlier gates stamp more specific reasons first:
+ *   - `maybeStampPickleIncompleteRobust` — signal-teardown sentinel present.
+ *   - `maybeStampPhaseNoProgress` — 0 Done + 0 commits.
+ *   - `maybeStampPhaseIncompleteTickets` — ≥1 pending with 0 Done AND 0 commits.
+ * The R-CMWL-2 carve-out in `maybeStampPhaseIncompleteTickets` deliberately ADVANCES
+ * a within-pass *progressing* pickle (≥1 Done OR ≥1 commit) so the codex-relaunch
+ * loop can continue the phase across mux passes. That carve-out, however, must NOT
+ * leak into pipeline-PHASE advance: a clean exit-0 means the pickle SUBPROCESS gave
+ * up THIS pass, so advancing to citadel/anatomy-park on a partially-Done bundle is
+ * the B-XSPA / #113 R-XSPA-2 defect. This catch-all gate (pickle + exit 0 only)
+ * fires on the residual `pendingCount > 0` case REGARDLESS of progress, stamping the
+ * uniform `pipeline_phase_incomplete` reason via `reportPhaseIncomplete` and breaking
+ * so finalize exits PipelineRunnerExitCode.PhaseIncomplete (3) WITHOUT advancing.
+ *
+ * Pendingness uses the same `done`/`skipped`-exclusion predicate mux uses in
+ * `findPendingNonCurrentTickets` (via `collectPicklePhaseProgress.pendingCount`,
+ * read from session-dir frontmatter — pipeline-runner has no in-memory roster).
+ *
+ * No new parallel completion guard: reuses `reportPhaseIncomplete` and the existing
+ * `{action:'break', phaseIncomplete:true}` outcome. Pickle-only — R-PHC-6
+ * continue-by-default for anatomy-park/szechuan-sauce is untouched.
+ */
+function maybeStampPicklePendingTickets(
+  runtime: PipelineRuntime,
+  rawPhase: PhaseName,
+  exitCode: number,
+  log: (msg: string) => void,
+): PhaseIterationOutcome | null {
+  if (rawPhase !== 'pickle' || exitCode !== 0) return null;
+  const progress = collectPicklePhaseProgress(runtime);
+  if (progress.ticketCount === 0) return null;
+  if (progress.pendingCount === 0) return null;
+  log(`Phase ${rawPhase} exited clean (exit 0) but ${progress.pendingCount}/${progress.ticketCount} tickets remain pending (${progress.doneCount} Done) — not all-tickets-terminal, marking phase incomplete (not advancing)`);
+  reportPhaseIncomplete(runtime, rawPhase);
+  return { action: 'break', phaseIncomplete: true };
+}
+
+/**
  * R-PRH: exit reasons that a phase runner stamps for a documented clean stop
  * where the worker shipped and a human/manager must finish the handoff (closer
  * release work, manager-handoff section). pipeline-runner must preserve these
@@ -3516,6 +3556,10 @@ function finalizePhaseSuccess(
   if (noProgressBreak) return noProgressBreak;
   const incompleteBreak = maybeStampPhaseIncompleteTickets(runtime, rawPhase, exitCode, log);
   if (incompleteBreak) return incompleteBreak;
+  // AC-A1: catch-all — clean exit-0 with ≥1 pending ticket (even with partial
+  // Done/commit progress) is NOT phase success; stamp pipeline_phase_incomplete.
+  const pendingBreak = maybeStampPicklePendingTickets(runtime, rawPhase, exitCode, log);
+  if (pendingBreak) return pendingBreak;
   counters.completed++;
   writeRunningStatus(runtime, counters, null);
   if (fs.existsSync(cancelMarker)) {

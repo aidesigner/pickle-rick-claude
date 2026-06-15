@@ -79,12 +79,12 @@ function writePipeline(sessionDir, repo, phases = ['pickle']) {
   }, null, 2));
 }
 
-function writeTicket(sessionDir, id, order) {
+function writeTicket(sessionDir, id, order, status = 'Todo') {
   const ticketDir = path.join(sessionDir, id);
   fs.mkdirSync(ticketDir, { recursive: true });
   fs.writeFileSync(
     path.join(ticketDir, `linear_ticket_${id}.md`),
-    `---\nid: ${id}\ntitle: Halt test ticket ${id}\nstatus: Todo\norder: ${order}\n---\n\n# Test\n`,
+    `---\nid: ${id}\ntitle: Halt test ticket ${id}\nstatus: ${status}\norder: ${order}\n---\n\n# Test\n`,
   );
 }
 
@@ -168,6 +168,104 @@ test('pipeline-runner.halt-on-incomplete-phase', async () => {
       const content = fs.readFileSync(ticketFile, 'utf-8');
       assert.ok(content.includes('status: Todo'), `ticket ${id} must remain Todo after pipeline halt`);
     }
+  } finally {
+    __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+// AC-A1 (WS-A): a CLEAN mux exit-0 with ≥1 pending ticket AND partial progress
+// (≥1 Done + ≥1 commit since start_commit) must NOT be treated as phase success.
+// This is the R-CMWL-2 partial-progress carve-out leak: maybeStampPhaseIncompleteTickets
+// advances when doneCount>0||commitCount>0, so the catch-all maybeStampPicklePendingTickets
+// gate must stamp pipeline_phase_incomplete and finalize must exit 3 (no advance).
+test('pipeline-runner.clean-exit0-with-pending-and-progress halts incomplete', async () => {
+  const repo = tmpDir('pipeline-halt0-repo-');
+  const sessionDir = tmpDir('pipeline-halt0-session-');
+  try {
+    initRepo(repo);
+    const startCommit = git(['rev-parse', 'HEAD'], repo);
+    writeState(sessionDir, repo, { start_commit: startCommit });
+    // citadel is queued next so a false advance would be observable as phase progress.
+    writePipeline(sessionDir, repo, ['pickle', 'citadel']);
+
+    // 1 Done ticket + 1 still-Todo ticket → partial progress, ≥1 pending.
+    writeTicket(sessionDir, 'ddd44444', 1, 'Done');
+    writeTicket(sessionDir, 'eee55555', 2, 'Todo');
+
+    // Stub: mux exits 0 (clean) after landing a real commit since start_commit
+    // (so commitCount>0 defeats the maybeStampPhaseIncompleteTickets carve-out).
+    __setSpawnRunnerForTests(async () => {
+      fs.writeFileSync(path.join(repo, 'work.ts'), 'export const y = 2;\n');
+      git(['add', '.'], repo);
+      git(['commit', '-q', '-m', 'ddd44444 partial progress'], repo);
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    // finalize MUST exit 3 (PhaseIncomplete), not 0 — no advance to citadel.
+    await captureMainExit(sessionDir, 3);
+
+    const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+    assert.equal(
+      state.exit_reason,
+      'pipeline_phase_incomplete',
+      'clean exit-0 with a pending ticket must stamp pipeline_phase_incomplete',
+    );
+
+    // The pending ticket stays Todo (pipeline did not falsely complete it).
+    const pendingFile = path.join(sessionDir, 'eee55555', 'linear_ticket_eee55555.md');
+    assert.ok(
+      fs.readFileSync(pendingFile, 'utf-8').includes('status: Todo'),
+      'pending ticket must remain Todo (no false advance)',
+    );
+
+    // pipeline-status.json must not report 2/2 phases completed (no citadel advance).
+    const statusPath = path.join(sessionDir, 'pipeline-status.json');
+    if (fs.existsSync(statusPath)) {
+      const status = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+      assert.ok(
+        (status.completed_phases ?? 0) < 2,
+        'pipeline must not advance past the pickle phase on an incomplete bundle',
+      );
+    }
+  } finally {
+    __setSpawnRunnerForTests(null);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+// AC-A1 negative case: a clean mux exit-0 with ALL tickets terminal (Done/Skipped)
+// MUST advance — the catch-all gate must not introduce a false-positive halt.
+test('pipeline-runner.clean-exit0-all-terminal advances (no false halt)', async () => {
+  const repo = tmpDir('pipeline-pass0-repo-');
+  const sessionDir = tmpDir('pipeline-pass0-session-');
+  try {
+    initRepo(repo);
+    const startCommit = git(['rev-parse', 'HEAD'], repo);
+    writeState(sessionDir, repo, { start_commit: startCommit });
+    writePipeline(sessionDir, repo, ['pickle']);
+
+    writeTicket(sessionDir, 'fff66666', 1, 'Done');
+    writeTicket(sessionDir, 'ggg77777', 2, 'Skipped');
+
+    __setSpawnRunnerForTests(async () => {
+      fs.writeFileSync(path.join(repo, 'done.ts'), 'export const z = 3;\n');
+      git(['add', '.'], repo);
+      git(['commit', '-q', '-m', 'fff66666 all done'], repo);
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    // All terminal → clean success exit 0.
+    await captureMainExit(sessionDir, 0);
+
+    const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+    assert.notEqual(
+      state.exit_reason,
+      'pipeline_phase_incomplete',
+      'all-terminal clean exit-0 must NOT stamp pipeline_phase_incomplete',
+    );
   } finally {
     __setSpawnRunnerForTests(null);
     fs.rmSync(repo, { recursive: true, force: true });
