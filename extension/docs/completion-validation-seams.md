@@ -77,12 +77,12 @@ named expression, not a per-call-site copy.
 ### Seam: `config-protection read` gate — `routed-through-canonical-authority`
 The Bash config-file gate is write-aware (reads are approved) and reuses the existing state
 write-detection rather than a second tokenizer.
-- `detectTargetedConfigFile` (`extension/src/hooks/handlers/config-protection.ts:434`) — the entry
-  detector; call site `config-protection.ts:937`. Its Bash branch returns
-  `bashWritesProtectedConfig` (`config-protection.ts:443`).
-- `bashWritesProtectedConfig` (`config-protection.ts:248`) — the write-aware detector (AC-C1, commit
+- `detectTargetedConfigFile` (`extension/src/hooks/handlers/config-protection.ts:435`) — the entry
+  detector; call site `config-protection.ts:938`. Its Bash branch returns
+  `bashWritesProtectedConfig` (`config-protection.ts:444`).
+- `bashWritesProtectedConfig` (`config-protection.ts:288`) — the write-aware detector (AC-C1, commit
   `983b3de8`): returns a config basename only when a WRITE targets it, `null` for reads.
-- `detectBashStateWriteTarget` (`config-protection.ts:336`) — the canonical write-detection authority;
+- `detectBashStateWriteTarget` (`config-protection.ts:362`) — the canonical write-detection authority;
   `bashWritesProtectedConfig` reuses its shared `REDIRECT_DEST_COMMANDS` set so the two gates share one
   source of write-command truth (no duplicated parser).
 
