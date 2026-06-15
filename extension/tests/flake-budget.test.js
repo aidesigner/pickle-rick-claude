@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { checkFlakeBudgetMain } from '../bin/check-flake-budget.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../bin/check-flake-budget.js');
@@ -93,6 +94,35 @@ test('flake-budget fails when failures exceed the budget', () => {
     assert.match(run.result.stderr, /failures=2 budget=1/);
   } finally {
     run.cleanup();
+  }
+});
+
+test('flake-budget child spawn passes a maxBuffer well above the 1MB spawnSync default', async () => {
+  // Regression: the fast tier (~5000 tests at concurrency 8) emits >1MB of stdout
+  // on CI; without an explicit maxBuffer spawnSync throws ENOBUFS and the run is
+  // misreported as a harness failure (CI run 27578083942, test:fast:budget).
+  const capturedOpts = [];
+  const fakeSpawnSync = (_execPath, _args, opts) => {
+    capturedOpts.push(opts);
+    return { status: 0, stdout: 'ℹ tests 1\nok 1 - synthetic\n', stderr: '', error: null };
+  };
+
+  const code = await checkFlakeBudgetMain({
+    argv: ['--runs=2', '--fail-budget=0', '--timeout=30000'],
+    cwd: path.resolve(__dirname, '..'),
+    env: { ...process.env, PICKLE_FLAKE_BUDGET_TEST_FILE: BIN },
+    stdout: () => {},
+    stderr: () => {},
+    spawnSyncFn: fakeSpawnSync,
+  });
+
+  assert.equal(code, 0);
+  assert.ok(capturedOpts.length >= 1, 'spawnSyncFn was invoked');
+  for (const opts of capturedOpts) {
+    assert.ok(
+      typeof opts.maxBuffer === 'number' && opts.maxBuffer >= 64 * 1024 * 1024,
+      `maxBuffer must be >= 64MB to hold the fast-suite stream, got: ${opts.maxBuffer}`,
+    );
   }
 });
 

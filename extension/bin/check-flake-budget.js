@@ -4,6 +4,11 @@ import path, { basename } from 'node:path';
 const DEFAULT_RUNS = 5;
 const DEFAULT_FAIL_BUDGET = 2;
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
+// The fast tier (~5000 tests at --test-concurrency=8) emits well over spawnSync's
+// 1MB default maxBuffer on CI, which surfaces as a thrown `ENOBUFS` from the child
+// spawn and misreports as a harness failure before any test result is parsed.
+// 256MB gives the full fast-suite stream generous headroom on every supported host.
+const SPAWN_MAX_BUFFER_BYTES = 256 * 1024 * 1024;
 const USAGE = 'Usage: check-flake-budget [--runs=N] [--fail-budget=N] [--timeout=MS]';
 function parseIntegerFlag(name, value, min) {
     const parsed = Number.parseInt(value, 10);
@@ -80,6 +85,7 @@ function runIterations(parsed, opts) {
             env: childEnv,
             encoding: 'utf8',
             timeout: parsed.timeoutMs,
+            maxBuffer: SPAWN_MAX_BUFFER_BYTES,
         });
         if (result.error) {
             throw result.error;
