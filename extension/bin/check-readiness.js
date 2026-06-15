@@ -932,15 +932,27 @@ function findPathFindings(ticket, repoRoot, sessionDir, cache, creationIndex = n
     const refs = new Set();
     for (const match of content.matchAll(PATH_RE))
         refs.add(match[0]);
+    // AC-B3: a `file_path` ref has EXACTLY TWO dispositions — hard-halt or
+    // suppressed. There is deliberately no intermediate tier; ReadinessFinding
+    // carries no certainty/score field (see the interface at the top of this file).
+    // It HARD-HALTS iff it suffix-matches NEITHER a declared-forward-created path NOR
+    // a HEAD path — i.e. a true phantom. Otherwise it auto-suppresses. The predicate
+    // is the deterministic disjunction below:
+    //   suffixMatchesForwardCreatedOrHead(ref)
+    //     = isForwardCreated(ref, creationIndex)   // AC-B1: declared-forward-created
+    //                                              // suffix-symmetric set
+    //       || resolvePathRef(ref, ...)            // AC-B2 + R-RTRC-4: HEAD path set
+    //                                              // (repo-prefix strip + git
+    //                                              // ls-files `(?:^|/)<ref>$`)
+    // Keeping a ref as a finding requires it to satisfy NEITHER (a genuine phantom).
+    // The `annotatedTokens` (R-RTRC-2/7) and `allowlist` (R-RTRC-5) filters below are
+    // pre-existing, distinct suppression surfaces — NOT a third AC-B3 class.
+    const suffixMatchesForwardCreatedOrHead = (ref) => isForwardCreated(ref, creationIndex) || resolvePathRef(ref, repoRoot, ticket, sessionDir, cache);
     return [...refs].sort()
         .filter((ref) => !annotatedTokens.has(ref))
-        // R-FRA-6 (88a4cdd6 E1/E2) + AC-B1: a path declared forward-created ANYWHERE
-        // in the bundle is creation-OK across command/table/cross-ticket surfaces.
-        // Suppression is suffix-symmetric (declared `extension/tests/X` suppresses a
-        // `tests/X` ref and vice versa), mirroring resolvePathRef's `(?:^|/)<ref>$`.
-        .filter((ref) => !isForwardCreated(ref, creationIndex))
         .filter((ref) => !allowlist.has(ref))
-        .filter((ref) => !resolvePathRef(ref, repoRoot, ticket, sessionDir, cache))
+        // AC-B3 two-class predicate: hard-halt ⟺ no forward-created AND no HEAD suffix.
+        .filter((ref) => !suffixMatchesForwardCreatedOrHead(ref))
         .map((ref) => ({
         ticket: ticket.file,
         kind: 'file_path',

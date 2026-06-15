@@ -334,6 +334,106 @@ test('AC-B2 B2-NONMATCH: non-matching prefix `other-repo/X` is NOT stripped (sti
     }
 });
 
+test('AC-B3 two-class: forward-created suffix ref → suppressed (exit 0)', () => {
+    const sessionDir = tmpDir();
+    try {
+        // A path declared forward-created (deep form) under `## Files to create`,
+        // then referenced via its bare suffix elsewhere. AC-B3 class 1: a ref that
+        // suffix-matches a declared-forward-created path auto-suppresses → exit 0.
+        writeTicket(sessionDir, 'b3sup001', [
+            '---',
+            'id: b3sup001',
+            'key: B3-SUPPRESS',
+            'ac_ids: []',
+            '---',
+            '',
+            '# AC-B3 forward-created suffix suppressed',
+            '',
+            '## Files to create',
+            '',
+            '- `extension/tests/b3suppress-fixture.test.js`',
+            '',
+            '## Description',
+            '',
+            'Wired at `tests/b3suppress-fixture.test.js`.',
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- [ ] `node --test tests/b3suppress-fixture.test.js` exits 0.',
+            '',
+        ].join('\n'));
+        const result = runReadiness(sessionDir);
+        assert.equal(result.status, 0, `expected exit 0, got ${result.status}; stderr=${result.stderr}; stdout=${result.stdout}`);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'pass');
+        const pathFindings = out.findings.filter((f) => f.kind === 'file_path');
+        assert.equal(pathFindings.length, 0, `forward-created suffix ref must be suppressed; got ${JSON.stringify(pathFindings)}`);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
+test('AC-B3 two-class: genuine phantom (no forward-create, no HEAD) → hard-halt (exit 2)', () => {
+    const sessionDir = tmpDir();
+    const repoRoot = tmpDir('pickle-b3-repo-');
+    try {
+        // Empty git repo so the ref resolves via NEITHER the forward-created set
+        // (nothing declared) NOR the HEAD path set (not tracked). AC-B3 class 2: a
+        // true phantom hard-halts with exit 2 and exactly one file_path finding.
+        spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repoRoot });
+        spawnSync('git', ['config', 'user.email', 'b3@example.com'], { cwd: repoRoot });
+        spawnSync('git', ['config', 'user.name', 'b3'], { cwd: repoRoot });
+        fs.writeFileSync(path.join(repoRoot, 'README.md'), '# seed\n');
+        spawnSync('git', ['add', '-A'], { cwd: repoRoot });
+        spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoRoot });
+
+        const phantom = 'extension/services/b3phantom-nonexistent.ts';
+        writeTicket(sessionDir, 'b3phan01', [
+            '---',
+            'id: b3phan01',
+            'key: B3-PHANTOM',
+            'ac_ids: []',
+            '---',
+            '',
+            '# AC-B3 genuine phantom hard-halts',
+            '',
+            '## Description',
+            '',
+            `Touches \`${phantom}\` but never declares it forward-created.`,
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- [ ] Field `kind` equals exactly `phantom`.',
+            '',
+        ].join('\n'));
+        const result = runReadiness(sessionDir, repoRoot);
+        assert.equal(result.status, 2, `expected hard-halt exit 2 for phantom; got ${result.status}; stdout=${result.stdout}; stderr=${result.stderr}`);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'fail');
+        const pathFindings = out.findings.filter((f) => f.kind === 'file_path' && f.detail === phantom);
+        assert.equal(pathFindings.length, 1, `genuine phantom must hard-halt exactly once; got ${JSON.stringify(out.findings)}`);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('AC-B3 shape: ReadinessFinding has NO certainty/score field (no third tier)', () => {
+    // The two-class predicate forbids an intermediate tier. Assert the source
+    // ReadinessFinding interface carries no such field and the source never names
+    // one. The forbidden token is built at runtime so this assertion does not
+    // itself plant the literal in a way the AC grep (scoped to src/) would count.
+    const src = fs.readFileSync(path.resolve(REPO_ROOT, 'src/bin/check-readiness.ts'), 'utf-8');
+    const forbidden = ['conf', 'idence'].join('');
+    assert.equal(src.includes(forbidden), false, `ReadinessFinding must not gain a ${forbidden} field (AC-B3: two classes only)`);
+    // Pin the interface field set so an added field is caught structurally.
+    const ifaceMatch = src.match(/export interface ReadinessFinding\s*\{([\s\S]*?)\}/);
+    assert.ok(ifaceMatch, 'ReadinessFinding interface must exist');
+    const fieldNames = [...ifaceMatch[1].matchAll(/^\s*([A-Za-z_]\w*)\??\s*:/gm)].map((m) => m[1]).sort();
+    assert.deepEqual(fieldNames, ['analyst', 'detail', 'kind', 'message', 'ticket'],
+        `ReadinessFinding fields must stay the canonical 5 (no added tier field); got ${JSON.stringify(fieldNames)}`);
+});
+
 test('R-RTRC-6 RC-3: deep repo path resolves via git ls-files suffix-match', () => {
     const sessionDir = tmpDir();
     const repoRoot = tmpDir('pickle-rtrc-repo-');
