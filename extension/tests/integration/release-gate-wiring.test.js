@@ -63,7 +63,12 @@ test('check-wired.sh exits 0', () => {
   assert.equal(result.status, 0, `check-wired.sh failed:\n${result.stderr}`);
 });
 
-test('full gate exits 0 against HEAD', { timeout: 20 * 60 * 1000 }, () => {
+// AC-R-ITIH-4 / B-V2RG: hang-guard, NOT a perf-assertion. This test nests the
+// ENTIRE gate (fast+integration+expensive) as a subprocess; corpus growth pushed
+// the nested run to ~25min, so the prior 20-min budget timed it out deterministically.
+// Raised to 40min to stay a genuine hang-guard above legitimate nested-gate runtime.
+// Never shrunk. (The nested expensive tier is now serial-split so C0 no longer starves.)
+test('full gate exits 0 against HEAD', { timeout: 40 * 60 * 1000 }, () => {
   // Guard against infinite recursion: if this test is already running inside
   // the gate subprocess, bail out immediately.
   if (process.env.RELEASE_GATE_WIRING_ACTIVE === '1') return;
@@ -72,7 +77,7 @@ test('full gate exits 0 against HEAD', { timeout: 20 * 60 * 1000 }, () => {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: { ...process.env, RELEASE_GATE_WIRING_ACTIVE: '1', RUN_EXPENSIVE_TESTS: '1' },
-    timeout: 20 * 60 * 1000,
+    timeout: 40 * 60 * 1000,
   });
   assert.equal(
     result.status,

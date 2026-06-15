@@ -94,7 +94,12 @@ test('package test scripts delegate to tier discovery', () => {
   assert.equal(pkg.scripts['test:integration'], 'npm run test:integration:parallel && npm run test:integration:serial');
   assert.equal(pkg.scripts['test:integration:parallel'], 'node bin/test-runner.js --tier integration --manifest tests/integration/.serial-tests.json --manifest-mode exclude');
   assert.equal(pkg.scripts['test:integration:serial'], 'node bin/test-runner.js --tier integration --manifest tests/integration/.serial-tests.json --manifest-mode include --test-concurrency=1');
-  assert.equal(pkg.scripts['test:expensive'], 'node bin/test-runner.js --tier expensive');
+  // B-V2RG: expensive tier serial-split (mirrors integration) so the real-handshake
+  // soaks (codegraph C0, worker-mcp C7, release-gate-wiring full-gate, deploy soak)
+  // run at --test-concurrency=1 instead of starving each other at full concurrency.
+  assert.equal(pkg.scripts['test:expensive'], 'npm run test:expensive:parallel && npm run test:expensive:serial');
+  assert.equal(pkg.scripts['test:expensive:parallel'], 'node bin/test-runner.js --tier expensive --manifest tests/expensive/.serial-tests.json --manifest-mode exclude');
+  assert.equal(pkg.scripts['test:expensive:serial'], 'node bin/test-runner.js --tier expensive --manifest tests/expensive/.serial-tests.json --manifest-mode include --test-concurrency=1');
 });
 
 test('PSD-T9 trap-door catalog entries are present', () => {

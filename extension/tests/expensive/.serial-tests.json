@@ -1,0 +1,8 @@
+{
+  "entries": [
+    "tests/integration/codegraph-real-index.test.js",
+    "tests/integration/worker-mcp-access.test.js",
+    "tests/integration/release-gate-wiring.test.js",
+    "tests/integration/deploy-lifecycle-soak.test.js"
+  ]
+}
