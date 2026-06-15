@@ -344,6 +344,16 @@ export function extractContractReferences(rawContent) {
 function resolvePathRef(ref, repoRoot, ticket, sessionDir, cache) {
     if (path.isAbsolute(ref) && fs.existsSync(ref))
         return true;
+    // AC-B2: a ref prefixed with this repo's own basename (e.g.
+    // `pickle-rick-claude/CLAUDE.md`) cannot resolve against the repo-root-relative
+    // HEAD path (`CLAUDE.md`) via the bases or the git ls-files suffix-match below.
+    // Strip exactly ONE leading segment when it equals path.basename(repoRoot);
+    // unrelated leading segments (e.g. `other-repo/x`) are left untouched.
+    let normalizedRef = ref;
+    const repoPrefix = `${path.basename(repoRoot)}/`;
+    if (normalizedRef.startsWith(repoPrefix)) {
+        normalizedRef = normalizedRef.slice(repoPrefix.length);
+    }
     let workingDir;
     if (ticket.workingDir) {
         workingDir = path.isAbsolute(ticket.workingDir)
@@ -357,7 +367,7 @@ function resolvePathRef(ref, repoRoot, ticket, sessionDir, cache) {
         path.dirname(ticket.file),
         sessionDir,
     ].filter((base) => typeof base === 'string');
-    if (bases.some((base) => fs.existsSync(path.resolve(base, ref))))
+    if (bases.some((base) => fs.existsSync(path.resolve(base, normalizedRef))))
         return true;
     // R-RTRC-4: git ls-files suffix-match fallback. Equivalent to
     //   git ls-files | grep -E '/<ref>$|^<ref>$'
@@ -365,7 +375,7 @@ function resolvePathRef(ref, repoRoot, ticket, sessionDir, cache) {
     const tracked = cache?.trackedAllFiles ?? gitTrackedFiles(repoRoot);
     if (cache && cache.trackedAllFiles === undefined)
         cache.trackedAllFiles = tracked;
-    const escaped = ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escaped = normalizedRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const suffixRe = new RegExp(`(?:^|/)${escaped}$`);
     return tracked.some((file) => suffixRe.test(file));
 }

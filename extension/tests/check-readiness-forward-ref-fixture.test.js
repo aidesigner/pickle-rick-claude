@@ -243,6 +243,97 @@ test('AC-B1 B1-PHANTOM: genuine phantom (no declaration, no HEAD file) still fla
     }
 });
 
+test('AC-B2 B2-REPOPREFIX: `<repo-basename>/CLAUDE.md` resolves to HEAD CLAUDE.md', () => {
+    const sessionDir = tmpDir();
+    // Repo dir is literally named `pickle-rick-claude` so path.basename(repoRoot)
+    // === 'pickle-rick-claude', matching the ticket's literal B-CGH shape.
+    const repoRoot = path.join(tmpDir('pickle-b2-parent-'), 'pickle-rick-claude');
+    try {
+        fs.mkdirSync(repoRoot, { recursive: true });
+        spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repoRoot });
+        spawnSync('git', ['config', 'user.email', 'b2@example.com'], { cwd: repoRoot });
+        spawnSync('git', ['config', 'user.name', 'b2'], { cwd: repoRoot });
+        fs.writeFileSync(path.join(repoRoot, 'CLAUDE.md'), '# project rules\n');
+        spawnSync('git', ['add', '-A'], { cwd: repoRoot });
+        spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoRoot });
+
+        writeTicket(sessionDir, 'b2pre001', [
+            '---',
+            'id: b2pre001',
+            'key: B2-REPOPREFIX',
+            'ac_ids: []',
+            '---',
+            '',
+            '# B2 repo-name-prefixed ref',
+            '',
+            '## Files',
+            '',
+            // Repo-basename prefix must be stripped → resolves to HEAD CLAUDE.md.
+            '- `pickle-rick-claude/CLAUDE.md`',
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- [ ] File `CLAUDE.md` exists at HEAD.',
+            '',
+        ].join('\n'));
+        const result = runReadiness(sessionDir, repoRoot);
+        assert.equal(result.status, 0, `expected exit 0, got ${result.status}; stderr=${result.stderr}; stdout=${result.stdout}`);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'pass');
+        const pathFindings = out.findings.filter((f) => f.kind === 'file_path');
+        assert.equal(pathFindings.length, 0, `repo-prefixed ref must resolve via basename strip; got ${JSON.stringify(pathFindings)}`);
+    } finally {
+        fs.rmSync(path.dirname(repoRoot), { recursive: true, force: true });
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
+test('AC-B2 B2-NONMATCH: non-matching prefix `other-repo/X` is NOT stripped (still flags)', () => {
+    const sessionDir = tmpDir();
+    const repoRoot = path.join(tmpDir('pickle-b2-parent-'), 'pickle-rick-claude');
+    try {
+        // Same repo (basename `pickle-rick-claude`, has CLAUDE.md), but the ref's
+        // leading segment is `other-repo` — NOT the repo basename. It must not be
+        // stripped, and `other-repo/CLAUDE.md` exists nowhere → genuine phantom.
+        fs.mkdirSync(repoRoot, { recursive: true });
+        spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repoRoot });
+        spawnSync('git', ['config', 'user.email', 'b2@example.com'], { cwd: repoRoot });
+        spawnSync('git', ['config', 'user.name', 'b2'], { cwd: repoRoot });
+        fs.writeFileSync(path.join(repoRoot, 'CLAUDE.md'), '# project rules\n');
+        spawnSync('git', ['add', '-A'], { cwd: repoRoot });
+        spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoRoot });
+
+        const ref = 'other-repo/CLAUDE.md';
+        writeTicket(sessionDir, 'b2non001', [
+            '---',
+            'id: b2non001',
+            'key: B2-NONMATCH',
+            'ac_ids: []',
+            '---',
+            '',
+            '# B2 non-matching prefix stays intact',
+            '',
+            '## Description',
+            '',
+            `Touches \`${ref}\` — a foreign-repo prefix that must not be stripped.`,
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- [ ] Field `kind` equals exactly `phantom`.',
+            '',
+        ].join('\n'));
+        const result = runReadiness(sessionDir, repoRoot);
+        assert.notEqual(result.status, 0, `expected non-zero exit for non-matching prefix; stdout=${result.stdout}; stderr=${result.stderr}`);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'fail');
+        const pathFindings = out.findings.filter((f) => f.kind === 'file_path' && f.detail === ref);
+        assert.equal(pathFindings.length, 1, `non-matching prefix must NOT be stripped and must flag once; got ${JSON.stringify(out.findings)}`);
+    } finally {
+        fs.rmSync(path.dirname(repoRoot), { recursive: true, force: true });
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
 test('R-RTRC-6 RC-3: deep repo path resolves via git ls-files suffix-match', () => {
     const sessionDir = tmpDir();
     const repoRoot = tmpDir('pickle-rtrc-repo-');
