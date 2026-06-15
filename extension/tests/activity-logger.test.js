@@ -273,6 +273,9 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'crashed_ticket_files_quarantined',
         'crashed_ticket_files_quarantine_truncated',
         'pickle_incomplete',
+        // B-DSAN2 AC-B4 (e157a44e): non-blocking readiness false-positive counter
+        // surfaced on /pickle-metrics; emitted via READINESS_FALSE_POSITIVE_EVENT_NAME.
+        'readiness_false_positive_suppressed',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {

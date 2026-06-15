@@ -259,11 +259,11 @@ test('R-PIPE-2: pickle phase passes when commits landed since start_commit (no D
   }
 });
 
-test('R-PPPA / R-CMWL-2: pickle phase with N-of-M tickets Done AND progress continues normally', async () => {
-  // R-CMWL-2: when the just-finished pickle pass made ≥1 Done ticket or ≥1 commit,
-  // maybeStampPhaseIncompleteTickets returns null so the phase completes normally.
-  // The old R-PPPA behavior (stamping phase_incomplete_tickets for this case) is
-  // intentionally replaced by the R-CMWL-1 relaunch path.
+test('AC-A1 (WS-A): pickle with N-of-M Done + progress but pending halts pipeline_phase_incomplete', async () => {
+  // AC-A1/WS-A all-terminal gate: even when the pickle pass made ≥1 Done ticket or
+  // ≥1 commit, a clean exit-0 with pendingCount > 0 must stamp pipeline_phase_incomplete
+  // and NOT advance the pipeline phase. The R-CMWL-2 progress carve-out applies only to
+  // the mux codex-relaunch loop, never to pipeline-phase advance (B-XSPA / #113 R-XSPA-2).
   const repo = tmpDir('pipe-pppa-repo-');
   const sessionDir = tmpDir('pipe-pppa-session-');
   try {
@@ -285,24 +285,28 @@ test('R-PPPA / R-CMWL-2: pickle phase with N-of-M tickets Done AND progress cont
       return { exitCode: 0, stdout: '', stderr: '' };
     });
 
-    // R-CMWL-2: progress (2 Done + 1 commit) → phase_incomplete_tickets must NOT fire.
-    await captureMainExit(sessionDir, PipelineRunnerExitCode.Success);
+    // AC-A1 (WS-A) supersedes the R-CMWL-2 phase-advance carve-out for PIPELINE phase
+    // advance: a clean pickle exit-0 with pendingCount > 0 must NOT advance REGARDLESS
+    // of progress — advancing a partially-Done bundle to citadel/anatomy-park is the
+    // B-XSPA / #113 R-XSPA-2 defect. maybeStampPicklePendingTickets stamps the uniform
+    // pipeline_phase_incomplete reason and exits PhaseIncomplete (3) without advancing.
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.PhaseIncomplete);
 
     const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
     assert.equal(
       state.exit_reason,
-      'completed',
-      'R-CMWL-2: progressing pickle must exit completed, not phase_incomplete_tickets',
+      'pipeline_phase_incomplete',
+      'AC-A1: pickle exit-0 with pending must stamp pipeline_phase_incomplete regardless of progress',
     );
 
     const log = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
     assert.ok(
-      /Phase pickle completed successfully/.test(log),
-      'R-CMWL-2: progressing pickle must log "Phase pickle completed successfully"',
+      /not all-tickets-terminal, marking phase incomplete \(not advancing\)/.test(log),
+      'AC-A1: progressing-but-pending pickle must log the all-terminal-gate incomplete line',
     );
     assert.ok(
-      !/phase_incomplete_tickets/.test(log),
-      'R-CMWL-2: phase_incomplete_tickets must NOT appear in log when progress was made',
+      !/Phase pickle completed successfully/.test(log),
+      'AC-A1: a partially-Done pickle must NOT log "completed successfully"',
     );
   } finally {
     __setSpawnRunnerForTests(null);
@@ -696,9 +700,11 @@ test('R-CCR-5: closer-release plan entered on clean non-handoff successful pipel
 // R-CMWL-2: post-phase classifier — both branches
 // ---------------------------------------------------------------------------
 
-test('R-CMWL-2 branch 1: pickle with commits-only progress + pending tickets continues normally', async () => {
+test('AC-A1 (WS-A): pickle with commits-only progress + pending halts pipeline_phase_incomplete', async () => {
   // doneCount=0, commitCount>0, pendingCount>0 — progress via commit only.
-  // Before R-CMWL-2 this stamped phase_incomplete_tickets; after it must exit 0.
+  // The R-CMWL-2 carve-out advances this in the mux relaunch loop, but the AC-A1
+  // all-terminal gate (maybeStampPicklePendingTickets) overrides for PIPELINE phase
+  // advance: pendingCount > 0 on a clean exit-0 → pipeline_phase_incomplete, exit 3.
   const repo = tmpDir('pipe-cmwl2-b1-repo-');
   const sessionDir = tmpDir('pipe-cmwl2-b1-session-');
   try {
@@ -719,24 +725,24 @@ test('R-CMWL-2 branch 1: pickle with commits-only progress + pending tickets con
       return { exitCode: 0, stdout: '', stderr: '' };
     });
 
-    // R-CMWL-2: commitCount>0 constitutes progress — must NOT stamp phase_incomplete_tickets.
-    await captureMainExit(sessionDir, PipelineRunnerExitCode.Success);
+    // AC-A1: commitCount>0 progress does NOT advance the pipeline phase while pending.
+    await captureMainExit(sessionDir, PipelineRunnerExitCode.PhaseIncomplete);
 
     const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
     assert.equal(
       state.exit_reason,
-      'completed',
-      'R-CMWL-2: commits-only progress must exit completed, not phase_incomplete_tickets',
+      'pipeline_phase_incomplete',
+      'AC-A1: commits-only progress with pending must stamp pipeline_phase_incomplete',
     );
 
     const log = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
     assert.ok(
-      /Phase pickle completed successfully/.test(log),
-      'R-CMWL-2: commits-only progress must log "Phase pickle completed successfully"',
+      /not all-tickets-terminal, marking phase incomplete \(not advancing\)/.test(log),
+      'AC-A1: commits-only-but-pending pickle must log the all-terminal-gate incomplete line',
     );
     assert.ok(
-      !/phase_incomplete_tickets/.test(log),
-      'R-CMWL-2: phase_incomplete_tickets must NOT appear when commitCount > 0',
+      !/Phase pickle completed successfully/.test(log),
+      'AC-A1: a pending pickle must NOT log "completed successfully"',
     );
   } finally {
     __setSpawnRunnerForTests(null);
