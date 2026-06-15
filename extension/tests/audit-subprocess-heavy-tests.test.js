@@ -54,7 +54,11 @@ test('audit-subprocess-heavy-tests: real tests/ directory exits 0 (no new violat
   const result = spawnSync('bash', [SCRIPT], {
     cwd: path.resolve(__dirname, '../..'),
     encoding: 'utf-8',
-    timeout: 30000,
+    // AC-R-ITIH-4: hang-guard, NOT a perf-assertion. The full-corpus scan of
+    // 1200+ test files runs ~25s idle; the prior 30s floor left <5s margin and
+    // flaked under mild load even at c=1 (already serialized). Raised to keep it
+    // a genuine hang-guard well above legitimate runtime — never shrunk.
+    timeout: 90000,
   });
   assert.equal(
     result.status,
