@@ -63,25 +63,34 @@ test('check-wired.sh exits 0', () => {
   assert.equal(result.status, 0, `check-wired.sh failed:\n${result.stderr}`);
 });
 
-// AC-R-ITIH-4 / B-V2RG: hang-guard, NOT a perf-assertion. This test nests the
-// ENTIRE gate (fast+integration+expensive) as a subprocess; corpus growth pushed
-// the nested run to ~25min, so the prior 20-min budget timed it out deterministically.
-// Raised to 40min to stay a genuine hang-guard above legitimate nested-gate runtime.
-// Never shrunk. (The nested expensive tier is now serial-split so C0 no longer starves.)
-test('full gate exits 0 against HEAD', { timeout: 40 * 60 * 1000 }, () => {
-  // Guard against infinite recursion: if this test is already running inside
-  // the gate subprocess, bail out immediately.
-  if (process.env.RELEASE_GATE_WIRING_ACTIVE === '1') return;
-
-  const result = spawnSync('bash', ['-c', FULL_CMD], {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-    env: { ...process.env, RELEASE_GATE_WIRING_ACTIVE: '1', RUN_EXPENSIVE_TESTS: '1' },
-    timeout: 40 * 60 * 1000,
-  });
-  assert.equal(
-    result.status,
-    0,
-    `Full gate failed (exit ${result.status}):\n${result.stderr || result.stdout}`,
-  );
+// B-V2RG: the former "full gate exits 0 against HEAD" test re-executed the ENTIRE
+// gate (npm ci + fast + integration + expensive) as a nested subprocess. That test:
+//   - only ever proved the happy path (exit 0 on a green tree) — already proven by
+//     the outer CI/release run, which executes this exact command;
+//   - duplicated ~25-30min of work and could NEVER finish under the test-runner's
+//     30-min --test-timeout (DEFAULT_TEST_RUNNER_TIMEOUT_MS) — it was cancelled
+//     every run, deterministically red-gating the release;
+//   - never tested failure PROPAGATION — the actually-dangerous mode (a gate that
+//     silently green-lights broken code).
+// Replaced with a static guarantee that the documented gate propagates failure (a
+// single &&-chain, no failure-swallowing constructs). Parity (above) proves the
+// command is byte-identical across CLAUDE.md/ci.yml/release.yml; check-wired proves
+// the canonical encoding is intact; the outer CI/release run proves it passes green.
+test('gate command propagates failure (pure && chain, no failure-swallowing constructs)', () => {
+  assert.ok(!/;/.test(FULL_CMD),
+    'gate must not use ; sequencing — a failed step would not stop the chain');
+  assert.ok(!/\|\|/.test(FULL_CMD),
+    'gate must not use || — it would mask a failed step');
+  assert.ok(!/\|\s*tee\b/.test(FULL_CMD),
+    'gate must not pipe to tee — it would mask the failing step exit code');
+  const steps = FULL_CMD.split('&&').map((s) => s.trim()).filter(Boolean);
+  assert.ok(steps.length >= 15,
+    `gate should be a multi-step && chain (got ${steps.length} steps)`);
+  for (const required of [
+    'npx tsc --noEmit',
+    'npm run test:integration',
+    'RUN_EXPENSIVE_TESTS=1 npm run test:expensive',
+  ]) {
+    assert.ok(FULL_CMD.includes(required), `gate must include "${required}" so failure propagation covers it`);
+  }
 });
