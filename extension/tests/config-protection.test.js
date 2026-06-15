@@ -173,9 +173,11 @@ test('blocks Bash sed targeting tsconfig.json', () => {
   assert.equal(result.decision, 'block');
 });
 
-test('blocks Bash awk targeting .eslintrc.json', () => {
+// AC-C1 / R-CPRO: `awk '{print}' FILE` is read-only — the legacy gate over-blocked
+// it because it matched the protected basename READ-OR-WRITE. Now it approves.
+test('approves Bash awk reading .eslintrc.json (read-only, AC-C1)', () => {
   const result = runHandler({ toolName: 'Bash', toolInput: { command: 'awk \'{print}\' .eslintrc.json' } });
-  assert.equal(result.decision, 'block');
+  assert.equal(result.decision, 'approve');
 });
 
 test('blocks Bash echo redirect to tsconfig.json', () => {
@@ -196,6 +198,66 @@ test('blocks Bash glob targeting tsconfig*.json', () => {
 test('blocks Bash bracket glob targeting tsconfig.json', () => {
   const result = runHandler({ toolName: 'Bash', toolInput: { command: 'sed -i "s/strict/loose/" tsconfig.jso[n]' } });
   assert.equal(result.decision, 'block');
+});
+
+// ---------------------------------------------------------------------------
+// AC-C1 / R-CPRO: write-aware config gate — read-only commands over a protected
+// config path APPROVE; writes still BLOCK (teeth preserved).
+// ---------------------------------------------------------------------------
+
+test('AC-C1 approves Bash grep -l over tsconfig.json (read-only)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: "grep -l 'strict' tsconfig.json" } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('AC-C1 approves Bash cat .eslintrc.json (read-only)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'cat .eslintrc.json' } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('AC-C1 approves Bash stat tsconfig.json (read-only)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'stat tsconfig.json' } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('AC-C1 approves Bash ls eslint.config.js (read-only)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'ls eslint.config.js' } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('AC-C1 approves Bash grep -l over sessions/*/state.json glob (read-only)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: "grep -l 'active' sessions/*/state.json" } });
+  assert.equal(result.decision, 'approve');
+});
+
+test('AC-C1 blocks Bash redirect write to tsconfig.json (teeth)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'echo "{}" > tsconfig.json' } });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /tsconfig\.json/);
+});
+
+test('AC-C1 blocks Bash tee write to tsconfig.json (teeth)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'tee tsconfig.json < /dev/null' } });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /tsconfig\.json/);
+});
+
+test('AC-C1 blocks Bash cp into tsconfig.json (teeth)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'cp /tmp/foo tsconfig.json' } });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /tsconfig\.json/);
+});
+
+test('AC-C1 blocks Bash sed -i in-place write to tsconfig.json (teeth)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: "sed -i 's/a/b/' tsconfig.json" } });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /tsconfig\.json/);
+});
+
+test('AC-C1 blocks Bash editor write to .eslintrc.json (teeth)', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'vim .eslintrc.json' } });
+  assert.equal(result.decision, 'block');
+  assert.match(result.reason, /\.eslintrc\.json/);
 });
 
 // R-PIPE-3 / R-WSRC: explicit block for bash install.sh from worker context (no override)
