@@ -25,6 +25,7 @@ const GATE = [
   'bash scripts/audit-quarantine.sh',
   'bash scripts/audit-trap-door-enforcement.sh',
   'bash scripts/audit-guarded-reset.sh',
+  'bash scripts/audit-design-ground-truth.sh',
   'npm run test:fast:budget',
   'npm run test:integration',
   'RUN_EXPENSIVE_TESTS=1 npm run test:expensive',
