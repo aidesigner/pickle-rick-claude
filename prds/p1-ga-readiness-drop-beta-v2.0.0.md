@@ -165,12 +165,15 @@ run, no default-on — all deferred to v2.1.
   off. Per the project Documentation Rule, README reflects the shipped command/flag behavior. — Type:
   test (hermetic: greps source `pickle_settings.json` + CLAUDE.md + README.md; no read of the
   env-coupled `~/.claude/...` file)
-- **AC-GA-CG-3 — CGH-2 injection telemetry VERIFIED (already landed `b1089e97`).** Assert
-  `codegraph_context_injected` / `codegraph_context_skipped` present in `src/types/index.ts:769-770`,
-  `activity-events.schema.json`, AND the deployed root schema; emitted from
-  `buildCodegraphContextSection` with `sessionDir` + `ticketId`; aggregated via
-  `countCodegraphContextEvents` (`mux-runner.ts:793`). Gate fails only on regression. — Type: test
-  (verification)
+- **AC-GA-CG-3 — every CGH-2 injection-telemetry event is wired across all surfaces (verification;
+  already landed `b1089e97`).** For **every** event name in the set {`codegraph_context_injected`,
+  `codegraph_context_skipped`}, that event satisfies **all three** invariants: (i) registered in every
+  schema surface (`src/types/index.ts:769-770`, `activity-events.schema.json`, and the deployed root
+  schema), (ii) emitted from `buildCodegraphContextSection` with `sessionDir` + `ticketId`, and (iii)
+  aggregated via `countCodegraphContextEvents` (`mux-runner.ts:793`). The acceptance test is a single
+  parametrized `describe.each([['codegraph_context_injected'], ['codegraph_context_skipped']])`
+  conformance test asserting the three invariants per event; no new emission code — it fails only on
+  regression. — Type: test (verification)
 - **AC-GA-CG-4 — typecheck + lint clean.** — Type: typecheck
 
 ### WS-3 — Residual disposition (drains LAST; citation-only)
