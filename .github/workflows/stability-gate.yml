@@ -35,7 +35,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          # R-CIFB: align to the project's Node 25 target (see ci.yml note).
+          node-version: '24'
 
       - name: Install extension dependencies
         working-directory: extension

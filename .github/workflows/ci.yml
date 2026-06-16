@@ -18,7 +18,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          # R-CIFB: align CI to the project's actual target (CLAUDE.md = Node 25;
+          # dev runs 25.x). node 22's test runner is stricter about unsettled
+          # file-level promises, failing whole files ('Promise resolution is still
+          # pending') that pass on 24/25. node 24 is the current LTS-track.
+          node-version: '24'
 
       - name: Install and test
         # R-CIFB: point getExtensionRoot() at the checked-out repo (sentinel
