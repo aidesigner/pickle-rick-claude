@@ -31,10 +31,23 @@ The stability-gate run (27584934193) artifact (`test-fast-pass-1.log`) showed **
 
 This is why **local passes** (dev has the deployed extension + `claude` CLI) but **CI fails deterministically** (it has neither). It also explains the chronic redness: a swath of fast-tier tests have a hidden dependency on the deployed runtime. The earlier `guardRereadBackoffMs R-CCR-9` 10s-deadline observation is a REAL but MINOR secondary c=8 flake (1/6430 locally), not the chronic-red driver.
 
-## Fix progress
+## Fix progress (multi-cause — bigger than first scoped)
 
-- **✅ Dominant bucket (61 MODULE_NOT_FOUND) FIXED 2026-06-15:** `tests/anatomy-park-scope.test.js` + `tests/szechuan-scope.test.js` `EXTENSION_ROOT` now resolves from the REPO (`path.resolve(__dirname, '..', '..')`) so the spawned `init-microverse.js` is the repo copy (present on CI). Verified locally: 28/28 pass, no breakage. Re-running `stability-gate.yml` to measure the reduction + reveal remaining buckets.
-- **TODO:** claude-CLI-probe tests (4) — guard/skip when `claude` absent (env-gate or mark integration/expensive); microverse.json ENOENT (6) — likely resolved by the EXTENSION_ROOT fix, confirm; any residual AssertionErrors; the minor `guardRereadBackoffMs` 10s→≥30s hang-guard widen (AC-R-ITIH-4).
+The chronic CI red has THREE independent causes, not one:
+
+**Cause 1 — deployed-extension dependency (deterministic, the dominant bucket):**
+- Per-test EXTENSION_ROOT params: 4 test files passed the DEPLOYED root to `setupAnatomyPark`/`setupSzechuanSauce` → fixed to repo-root: `anatomy-park-scope.test.js` + `szechuan-scope.test.js` (7cb5c7fd), `scope-backcompat.test.js` + `pipeline-runner-design-safe.test.js` (8b04f48a).
+- **SYSTEMIC source (the persistent 46):** `getExtensionRoot()` (`src/services/pickle-utils.ts`) returns `CANONICAL_EXTENSION_ROOT = ~/.claude/pickle-rick` whenever `EXTENSION_DIR` is unset — which it is on CI (no install.sh). Many spawn sites resolve `init-microverse.js` through this, NOT the test param. **✅ FIXED b052f49a: set `EXTENSION_DIR=${{ github.workspace }}` in `ci.yml` + `stability-gate.yml`** (sentinel `extension/bin/log-watcher.js` is committed → resolves to the checked-out repo). Run command unchanged → release-gate parity intact. Verified locally: `EXTENSION_DIR=$repo getExtensionRoot() → repo root`.
+
+**Cause 2 — node:test async-cancellation (36, = the 36 "cancelled"):** error `Promise resolution is still pending but the event loop has already resolved`. CI runs **node 22.x** (matches `engines.node`); dev + CLAUDE.md target **Node 25** (where these pass). Skew/load-sensitive. NOT yet fixed — needs per-test await-hygiene OR node-version alignment investigation.
+
+**Cause 3 — AssertionErrors (39):** unbucketed; likely a mix of downstream-of-cause-1 and genuine node-22/load. Re-measure after the EXTENSION_DIR fix to see what survives.
+
+**Note:** the `claude --version probe timed out` lines are TAP `#` DIAGNOSTICS (benign fallback-to-measurement), NOT failures.
+
+## Honest scope note
+
+This is a MULTI-SESSION CI-environment-alignment effort, not a quick flake-serialize. CI has likely NEVER been green (all prior betas shipped on the LOCAL gate, which is authoritative; CI-green is hygiene, not a release gate). Drive it incrementally: EXTENSION_DIR fix (b052f49a) should collapse cause 1; then measure causes 2+3 and decide node-version alignment vs per-test fixes.
 
 ## Method
 
