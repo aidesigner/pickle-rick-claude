@@ -258,7 +258,7 @@ describe('codegraph_context_skipped: branch sweep', () => {
   const cases = [
     {
       reason: 'no_service',
-      build: (sessionDir) => ({ tier: 'medium', service: null, settings: makeSettings() }),
+      build: () => ({ tier: 'medium', service: null, settings: makeSettings() }),
     },
     {
       reason: 'non_graph_tier',
