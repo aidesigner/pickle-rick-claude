@@ -18,10 +18,13 @@ const ROWS = [
   ['claude', ['--version'], /Claude Code/,    true],
 ];
 
-// Static parity guard: codex pin must agree byte-exact across the three
-// surfaces that record it (package.json:engines.codex, .cli-pins.json:codex,
-// the test consumer above). A future bump to one without the others would
-// silently desync; this test fails closed before that can ship.
+// Static parity guard: the codex version recorded in package.json:engines.codex
+// must agree with .cli-pins.json:codex (and the test consumer above). engines.codex
+// is a `>=X.Y.Z` floor (c24b3c6b: codex is a daily-bumping 0.x CLI, so an exact pin
+// hard-killed setup on every operator auto-update); an exact `X.Y.Z` shape is also
+// accepted for back-compat. Either way the version COMPONENT must equal the
+// .cli-pins.json pin — a future bump to one without the other silently desyncs, and
+// caret/tilde/star/x ranges remain rejected. This test fails closed before drift ships.
 test('contract: codex pin is identical across package.json:engines and .cli-pins.json', () => {
   const enginesPin = PKG.engines?.codex;
   const cliPin = PINS.codex;
@@ -35,16 +38,20 @@ test('contract: codex pin is identical across package.json:engines and .cli-pins
     true,
     '.cli-pins.json:codex must be a non-empty string',
   );
-  // Reject range-prefix syntax (^, ~, >=, *, x). The pin must be exact.
+  // Accept an exact `X.Y.Z` pin OR a `>=X.Y.Z` floor (the sanctioned shape for the
+  // daily-bumping codex 0.x CLI). Caret (^), tilde (~), wildcard (*/x) remain rejected.
+  const shape = /^(>=)?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$/;
   assert.match(
     enginesPin,
-    /^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$/,
-    `package.json:engines.codex must be exact-version, got "${enginesPin}"`,
+    shape,
+    `package.json:engines.codex must be an exact version or a ">=" floor, got "${enginesPin}"`,
   );
+  // Parity is on the version component (strip an optional ">=" floor prefix).
+  const enginesVersion = enginesPin.replace(/^>=/, '');
   assert.equal(
-    enginesPin,
+    enginesVersion,
     cliPin,
-    `pin drift: package.json:engines.codex="${enginesPin}" vs .cli-pins.json:codex="${cliPin}"`,
+    `pin drift: package.json:engines.codex="${enginesPin}" (version "${enginesVersion}") vs .cli-pins.json:codex="${cliPin}"`,
   );
 });
 
