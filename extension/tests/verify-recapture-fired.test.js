@@ -22,6 +22,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CLI = path.join(REPO_ROOT, 'bin', 'verify-recapture-fired.js');
 const STABLE_ARTIFACT = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.json');
+
+// R-CIFB: hermetic base env — strip data-root/extension-root vars so a runner-set
+// EXTENSION_DIR (CI = github.workspace) cannot override the no-session test's fake
+// HOME. verify-recapture-fired.js resolves its default runtime artifact via
+// getDataRoot(), which consults EXTENSION_DIR before HOME/.local/share/pickle-rick.
+const { EXTENSION_DIR: _ed, PICKLE_DATA_ROOT: _pdr, PICKLE_DATA_DIR: _pdd, ...HERMETIC_ENV } = process.env;
 const DEAD_TMP_PID = 99_999_999;
 
 function makeSession(state) {
@@ -463,7 +469,7 @@ test('verify-recapture.no-session writes runtime artifact outside the tracked re
       cwd: REPO_ROOT,
       encoding: 'utf8',
       env: {
-        ...process.env,
+        ...HERMETIC_ENV,
         HOME: fakeHome,
       },
     });

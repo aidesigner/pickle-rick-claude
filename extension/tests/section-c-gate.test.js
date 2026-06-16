@@ -20,6 +20,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CLI = path.join(REPO_ROOT, 'bin', 'section-c-still-needed.js');
 
+// R-CIFB: hermetic base env — strip the data-root + extension-root vars so a
+// runner-set EXTENSION_DIR (CI sets it = github.workspace) cannot override the
+// fake HOME these tests rely on. getDataRoot() consults EXTENSION_DIR before
+// falling back to HOME/.local/share/pickle-rick, so an inherited EXTENSION_DIR
+// redirects the runtime artifact away from where the test reads it (ENOENT).
+// section-c-still-needed.js only needs getDataRoot, never getExtensionRoot.
+const { EXTENSION_DIR: _ed, PICKLE_DATA_ROOT: _pdr, PICKLE_DATA_DIR: _pdd, ...HERMETIC_ENV } = process.env;
+
 function makeSession(log) {
   const session = mkdtempSync(path.join(tmpdir(), 'section-c-gate-'));
   writeFileSync(path.join(session, 'tmux-runner.log'), log);
@@ -118,7 +126,7 @@ test('section-c-gate.missing-explicit-session exits zero and defaults still_need
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...HERMETIC_ENV,
       HOME: fakeHome,
     },
   });
@@ -154,7 +162,7 @@ test('section-c-gate.default-session-selection follows newest watcher log activi
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...HERMETIC_ENV,
       HOME: fakeHome,
     },
   });
@@ -192,7 +200,7 @@ test('section-c-gate.default-session-selection prefers sessions with watcher log
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...HERMETIC_ENV,
       HOME: fakeHome,
     },
   });
@@ -221,7 +229,7 @@ test('section-c-gate.default-session-selection honors PICKLE_DATA_ROOT override 
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...HERMETIC_ENV,
       PICKLE_DATA_ROOT: fakeDataRoot,
     },
   });
@@ -263,7 +271,7 @@ test('section-c-gate.default-session-selection skips unreadable watcher logs and
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...HERMETIC_ENV,
       HOME: fakeHome,
     },
   });
@@ -303,7 +311,7 @@ test('section-c-gate.default-session-selection ignores directory-shaped watcher 
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...HERMETIC_ENV,
       HOME: fakeHome,
     },
   });
@@ -331,7 +339,7 @@ test('section-c-gate.default-session-selection fails open when the runtime sessi
       cwd: REPO_ROOT,
       encoding: 'utf8',
       env: {
-        ...process.env,
+        ...HERMETIC_ENV,
         HOME: fakeHome,
       },
     });
@@ -353,7 +361,7 @@ test('section-c-gate.no-session writes runtime artifact outside the tracked repo
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...HERMETIC_ENV,
       HOME: fakeHome,
     },
   });
@@ -377,7 +385,7 @@ test('section-c-gate.missing-explicit-session falls back to the runtime artifact
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...HERMETIC_ENV,
       HOME: fakeHome,
     },
   });
@@ -409,7 +417,7 @@ test('section-c-gate.unreadable-explicit-session falls back to the runtime artif
       cwd: REPO_ROOT,
       encoding: 'utf8',
       env: {
-        ...process.env,
+        ...HERMETIC_ENV,
         HOME: fakeHome,
       },
     });
@@ -439,7 +447,7 @@ test('section-c-gate.file-explicit-session falls back to the runtime artifact in
       cwd: REPO_ROOT,
       encoding: 'utf8',
       env: {
-        ...process.env,
+        ...HERMETIC_ENV,
         HOME: fakeHome,
       },
     });
