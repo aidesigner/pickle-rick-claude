@@ -268,3 +268,21 @@ capability second, be ambitious). Corrections folded:
 Composes the existing R-WPEX bundle (`p1-bug-fix-bundle-r-wpex-worker-silent-death.md`); defers
 capability to `p2-codegraph-default-on-capability-v2.1.md`. No remaining operator decision blocks
 refinement — the codegraph posture is resolved (opt-in at GA) by the release principle.
+
+### 6.1 Deferred recovery-class disposition (GA exit criterion 3 / AC-GA-POL-1)
+
+The three recovery classes dropped from the GA `composes:` list are dispositioned in the open: all
+RESOLVED v1.102.0 (B-ORSR), each with its `prds/MASTER_PLAN.md` row and a HEAD-reachable resolving SHA.
+GA carries no silent design residue. (MASTER_PLAN rows referenced in this bundle as **158/178/179**;
+the resolved R-code rows are actually at lines 162/182/183 of the current `prds/MASTER_PLAN.md`.)
+
+- **#101 R-ONPD** — MASTER_PLAN row 162 (actual line 162) — RESOLVED v1.102.0 (B-ORSR): R-ORSR-3
+  oversized taxonomy `plan_converged_uncommitted` (`3baf038b`) + R-ORSR-5 refiner decomposition-quality
+  flag (`337c5157`). Both HEAD-reachable.
+- **#102 R-PDUP** — MASTER_PLAN row 178 (actual line 182) — RESOLVED v1.102.0 (B-ORSR): R-ORSR-4
+  phantom split-original auto-close with explicit `completion_commit` (`c119b78c`). HEAD-reachable.
+- **#103 R-SFRS** — MASTER_PLAN row 179 (actual line 183) — RESOLVED v1.102.0 (B-ORSR): R-ORSR-6
+  no-self-disown guard + interface-change consumer sweep (`091f47a2`). HEAD-reachable.
+
+Summary line (single-grep): `R-ONPD` / `R-PDUP` / `R-SFRS` all RESOLVED v1.102.0 (B-ORSR), MASTER_PLAN
+rows 158/178/179, SHAs `3baf038b` `337c5157` `c119b78c` `091f47a2` — all ancestors of GA HEAD.
