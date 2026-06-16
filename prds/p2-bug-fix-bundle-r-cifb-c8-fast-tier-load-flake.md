@@ -39,9 +39,15 @@ The chronic CI red has THREE independent causes, not one:
 - Per-test EXTENSION_ROOT params: 4 test files passed the DEPLOYED root to `setupAnatomyPark`/`setupSzechuanSauce` → fixed to repo-root: `anatomy-park-scope.test.js` + `szechuan-scope.test.js` (7cb5c7fd), `scope-backcompat.test.js` + `pipeline-runner-design-safe.test.js` (8b04f48a).
 - **SYSTEMIC source (the persistent 46):** `getExtensionRoot()` (`src/services/pickle-utils.ts`) returns `CANONICAL_EXTENSION_ROOT = ~/.claude/pickle-rick` whenever `EXTENSION_DIR` is unset — which it is on CI (no install.sh). Many spawn sites resolve `init-microverse.js` through this, NOT the test param. **✅ FIXED b052f49a: set `EXTENSION_DIR=${{ github.workspace }}` in `ci.yml` + `stability-gate.yml`** (sentinel `extension/bin/log-watcher.js` is committed → resolves to the checked-out repo). Run command unchanged → release-gate parity intact. Verified locally: `EXTENSION_DIR=$repo getExtensionRoot() → repo root`.
 
-**Cause 2 — node:test async-cancellation (36, = the 36 "cancelled"):** error `Promise resolution is still pending but the event loop has already resolved`. CI runs **node 22.x** (matches `engines.node`); dev + CLAUDE.md target **Node 25** (where these pass). Skew/load-sensitive. NOT yet fixed — needs per-test await-hygiene OR node-version alignment investigation.
+**✅ Cause 1 CONFIRMED FIXED (re-measure 27588277475):** init-microverse MODULE_NOT_FOUND **46 → 0**; zero deployed-path resolutions remain. The EXTENSION_DIR=workspace fix + the 4 per-test repo-root fixes fully closed the deployed-extension dependency.
 
-**Cause 3 — AssertionErrors (39):** unbucketed; likely a mix of downstream-of-cause-1 and genuine node-22/load. Re-measure after the EXTENSION_DIR fix to see what survives.
+Surviving = 37 fail + 36 cancelled, three heterogeneous clusters (each its own fix, no silver bullet):
+
+**Cause 2 — node:test async-cancellation (36 'Promise resolution still pending' = the 36 cancelled):** e.g. `writeWithWatchdog: surfaces sink error` (ERR_TEST_FAILURE). CI node 22.x vs dev/CLAUDE.md Node 25 (pass locally). Node-version-skew OR load. Fix candidates: node-version alignment (CLAUDE.md authoritative = Node 25; reversible experiment) OR per-test await-hygiene OR serialize per R-TFP. NOT a silver bullet — only ~36 of the survivors.
+
+**Cause 3a — section-c-gate ENOENT cluster (~10 tests):** `ENOENT … /tmp/section-c-home-XXXX/.local/share/pickle-rick/bundle/section-c-still-needed.json` — the test's fake-HOME bundle dir isn't created before the runtime writes the artifact. Shared root cause across the cluster — likely one fix (mkdir -p the bundle dir, or the runtime should create it). Investigate `tests/*section-c*` + the bundle-write path.
+
+**Cause 3b — runGate AssertionError cluster (~10 tests, `tests/services/convergence-gate-workspaces.test.js`):** `AssertionError: expected 'green'` — the convergence-gate runs REAL npm/tsc/lint against fixture packages; behaves differently on CI (tooling/fixture env). Investigate whether the fixtures need setup or the test should mock the command layer.
 
 **Note:** the `claude --version probe timed out` lines are TAP `#` DIAGNOSTICS (benign fallback-to-measurement), NOT failures.
 
