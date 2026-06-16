@@ -119,6 +119,30 @@ crash), in which case re-entry is the only safety net.
    *avoids adding* a pipeline-runner re-entry state-field + an auto-resume wrapper path — net-zero new
    machinery for the common case.
 
+## Diagnosis seed (babysitter forensics 2026-06-16, B-GA session 3c1831d7)
+
+Pre-work for AC-PPXR-2's `ppxr-rootcause.md` — confirmed against the live B-GA logs:
+
+- **"Phase pickle hit iteration cap" is a MISLEADING label, NOT a real cap hit.** It is printed
+  unconditionally by `reportPhaseIncomplete` (`pipeline-runner.ts:2968`) on every incomplete exit
+  (its own comment: "alongside any per-phase `iteration_cap_exhausted` already recorded by
+  mux-runner"). `max_iterations=500` was never approached (iters reached 3/8/16). The real exit reason
+  is whatever mux-runner stamped — i.e. the Layer-A suppressor. **Side-fix candidate:** make this log
+  reflect the actual `state.exit_reason` instead of the hardcoded "hit iteration cap" string (it sent
+  the original triage down a false path).
+- **The cut-off signature is confirmed by the iteration logs.** Within a run, most manager turns end
+  CLEANLY (`tmux_iteration_{4,15,16}.log` carry a `result` event, `num_turns` 14/17/87) and the loop
+  continues; the run dies on a turn that is **cut off** — `tmux_iteration_{1,2}.log` have **0 `result`
+  events**, last event `system/task_started` / `user` (mid-tool-result). This matches Layer A: a
+  cut-off manager turn → `outcome` defined, no clean result → `isGenuineCrashOrSpawnFailure` suppresses
+  the relaunch → mux exits 0 with pending tickets. AC-PPXR-2 must still extract `outcome.exitCode` /
+  `outcome.timedOut` / resolved `result` per cut-off run (the three-field branch selector), but the
+  qualitative pattern (clean turns interleaved with suppressed cut-offs) is established.
+- No `activity-*.jsonl` and no `signal_received` / `exit_reason=signal:*` were present in the session —
+  so the cut-off is NOT a recorded external SIGTERM; it is an in-iteration manager-turn termination
+  with no `result` event. AC-PPXR-2's diagnosis should confirm whether it is max-turns-without-result
+  vs an idle-stall watchdog (`executeTimeoutHalt`) firing.
+
 ## Refinement corrections (what the 3-cycle team found vs the original PRD)
 
 - Original AC-PPXR-2 said edit `detectManagerMaxTurnsExit` — **forbidden** (R-ICDM-1). Real locus:
