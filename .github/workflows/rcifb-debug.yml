@@ -22,6 +22,19 @@ jobs:
       - name: Install extension dependencies
         working-directory: extension
         run: npm ci
+      - name: Linux environment probe (R-CIFB root-cause facts)
+        working-directory: extension
+        shell: bash
+        run: |
+          echo "=== pid_max ===" && cat /proc/sys/kernel/pid_max || true
+          echo "=== isProcessAlive(pid) behavior on Linux ==="
+          node -e "for(const p of [99999999,2147483647,4194305,1000000,1]){try{process.kill(p,0);console.log(p,'ALIVE')}catch(e){console.log(p,'DEAD',e.code)}}"
+          echo "=== os.tmpdir + realpath ==="
+          node -e "const os=require('os'),fs=require('fs');const t=fs.mkdtempSync(os.tmpdir()+'/probe-');console.log('tmpdir:',os.tmpdir());console.log('mkdtemp:',t);console.log('realpath:',fs.realpathSync(t));console.log('symlink-diff:', t!==fs.realpathSync(t));"
+          echo "=== which npm/tsc/eslint (runGate fixture commands) ==="
+          which npm tsc eslint 2>&1 || true
+          node --version
+
       - name: Run failing files individually
         working-directory: extension
         shell: bash
