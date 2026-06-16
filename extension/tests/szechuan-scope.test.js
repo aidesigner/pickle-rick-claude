@@ -11,7 +11,11 @@ import { setupSzechuanSauce } from '../bin/pipeline-runner.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_PATH = path.resolve(__dirname, '..', 'bin', 'init-microverse.js');
 const SZECHUAN_MD = path.resolve(__dirname, '../../.claude/commands/szechuan-sauce.md');
-const EXTENSION_ROOT = path.join(os.homedir(), '.claude/pickle-rick');
+// R-CIFB: resolve the extension root from the REPO (not the deployed
+// ~/.claude/pickle-rick), so setupSzechuanSauce spawns extension/bin/init-microverse.js
+// from the repo. CI never runs install.sh, so the deployed path is absent there
+// (was the dominant chronic-CI-red failure: init-microverse.js MODULE_NOT_FOUND).
+const EXTENSION_ROOT = path.resolve(__dirname, '..', '..');
 const CHECK_SCOPE_DIFF = path.resolve(__dirname, '..', 'bin', 'check-scope-diff.js');
 
 function makeTempDir() {

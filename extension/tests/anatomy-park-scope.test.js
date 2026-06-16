@@ -11,7 +11,11 @@ import { finalizeGateMain } from '../bin/finalize-gate.js';
 import { filterBySubsystem } from '../services/scope-resolver.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EXTENSION_ROOT = path.join(os.homedir(), '.claude/pickle-rick');
+// R-CIFB: resolve the extension root from the REPO (not the deployed
+// ~/.claude/pickle-rick), so setupAnatomyPark spawns extension/bin/init-microverse.js
+// from the repo. CI never runs install.sh, so the deployed path is absent there
+// (was the dominant chronic-CI-red failure: init-microverse.js MODULE_NOT_FOUND).
+const EXTENSION_ROOT = path.resolve(__dirname, '..', '..');
 const ANATOMY_PARK_MD = path.resolve(__dirname, '../../.claude/commands/anatomy-park.md');
 const CHECK_SCOPE_DIFF = path.resolve(__dirname, '..', 'bin', 'check-scope-diff.js');
 

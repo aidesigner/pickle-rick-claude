@@ -18,26 +18,27 @@ It is NOT a deterministic break:
 - A single isolated `test:fast` pass at c=8 on a fast 8-core Mac is CLEAN (6427/6430, 0 fail).
 - Under the full release gate's concurrent load (or on weaker CI runners), individual timing/subprocess-sensitive tests get **starved** past their internal deadlines and fail timeout-shaped.
 
-## Root cause (confirmed)
+## Root cause (REVISED 2026-06-15 after CI-log analysis — the c=8-flake theory was WRONG)
 
-The flaky tests are **subprocess-spawn-timing** and **load-dependent-timeout** class (per the existing R-TFP / R-TSPF taxonomy in `extension/CLAUDE.md`). Worked example — `guardRereadBackoffMs: R-CCR-9 NaN and negative env values fall back to 500ms default` in `tests/mux-runner.test.js`:
-- Spawns a `node -e` writer subprocess, then waits for its ready-marker with a **10_000ms deadline** (`tests/mux-runner.test.js:2374`).
-- Under c=8 oversubscription the child process can't be scheduled + signal ready within 10s → throws `writer subprocess never signaled ready` (observed duration 10063ms; passes in 1687ms in isolation).
-- The 10s deadline also **violates the AC-R-ITIH-4 hygiene principle** that a subprocess hang-guard should be **≥30s**, not a tight perf-assertion.
+The stability-gate run (27584934193) artifact (`test-fast-pass-1.log`) showed **48 fail + 36 cancelled in a single CI run** — far too many for a load flake, and many are pure-logic tests. The actual error breakdown is **deterministic CI-environment-gap failures, NOT c=8 starvation**:
 
-node:test concurrency is **per-file**, so a single flaky test cannot be serialized in place — its whole file (or the test) must move to the serial surface, OR its sub-second hang-guards must be widened to the ≥30s floor.
-
-## Candidate flaky set (from CI history + gate-2)
-
-| Test | File | Class |
+| Bucket | Count | Cause |
 |---|---|---|
-| `guardRereadBackoffMs R-CCR-9 NaN/negative → 500ms default` | `tests/mux-runner.test.js` | subprocess-spawn-timing (10s ready-deadline) |
-| `FR-B10 fixture manager sleeps 95% of worker_timeout budget` | (locate) | load-dependent-timeout |
-| `verify-recapture recovers orphan tmp state … latest anatomy window` | (locate) | subprocess/load |
-| `R-PSSS-2 szechuan-sauce proceeds when scope has ≥1 code file` | `tests/szechuan-scope.test.js` (locate) | subprocess/load |
-| `szechuan scope injection` | (locate) | subprocess/load |
+| `Cannot find module '~/.claude/pickle-rick/extension/bin/init-microverse.js'` (MODULE_NOT_FOUND) | **61** | DOMINANT. `tests/anatomy-park-scope.test.js` + `tests/szechuan-scope.test.js` hardcoded `EXTENSION_ROOT = path.join(os.homedir(), '.claude/pickle-rick')` (the **deployed** root) and passed it to `setupAnatomyPark`/`setupSzechuanSauce`, which spawn `<root>/extension/bin/init-microverse.js`. The deployed root exists on a dev machine (install.sh run) but **CI never runs install.sh** → absent → MODULE_NOT_FOUND. |
+| `claude --version exceeded probe timeout` | 4 | Tests probe for the `claude` CLI binary, absent on CI runners. |
+| `ENOENT … microverse.json` | 6 | anatomy-park scope fixtures, same family as the init-microverse failures. |
+| AssertionErrors | a few | downstream of the above (subprocess failed → assertion on its output fails). |
 
-AC-1 of this bundle is to **enumerate the COMPLETE set** via `gh workflow run stability-gate.yml -f run_count=30` and grep the uploaded logs for every `✖`/`not ok` across runs — do not assume this list is exhaustive.
+This is why **local passes** (dev has the deployed extension + `claude` CLI) but **CI fails deterministically** (it has neither). It also explains the chronic redness: a swath of fast-tier tests have a hidden dependency on the deployed runtime. The earlier `guardRereadBackoffMs R-CCR-9` 10s-deadline observation is a REAL but MINOR secondary c=8 flake (1/6430 locally), not the chronic-red driver.
+
+## Fix progress
+
+- **✅ Dominant bucket (61 MODULE_NOT_FOUND) FIXED 2026-06-15:** `tests/anatomy-park-scope.test.js` + `tests/szechuan-scope.test.js` `EXTENSION_ROOT` now resolves from the REPO (`path.resolve(__dirname, '..', '..')`) so the spawned `init-microverse.js` is the repo copy (present on CI). Verified locally: 28/28 pass, no breakage. Re-running `stability-gate.yml` to measure the reduction + reveal remaining buckets.
+- **TODO:** claude-CLI-probe tests (4) — guard/skip when `claude` absent (env-gate or mark integration/expensive); microverse.json ENOENT (6) — likely resolved by the EXTENSION_ROOT fix, confirm; any residual AssertionErrors; the minor `guardRereadBackoffMs` 10s→≥30s hang-guard widen (AC-R-ITIH-4).
+
+## Method
+
+`gh workflow run stability-gate.yml -f run_count=N` runs `npm run test:fast` (full output, not the budget loop's swallowed output) and uploads per-run logs as `stability-gate-logs`. The CI runner reproduces the env-gap (no deployed extension, no `claude` CLI) that a dev machine masks — it is the authoritative oracle. Iterate: fix a bucket → re-run → read remaining failures → repeat until 0, then a clean 30-run validation.
 
 ## Acceptance criteria
 
