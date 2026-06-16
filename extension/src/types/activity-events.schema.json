@@ -1759,6 +1759,23 @@
         "event": { "type": "string", "const": "pickle_incomplete" },
         "ts": { "type": "string" }
       }
+    },
+    "large_tier_routed": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "large_tier_routed" },
+        "ts": { "type": "string" },
+        "ticket": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["sanctioned_path", "reason"],
+          "properties": {
+            "sanctioned_path": { "type": "string", "const": "interactive_pickle_tmux" },
+            "reason": { "type": "string" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -1876,6 +1893,7 @@
     { "$ref": "#/definitions/ticket_ladder_exhausted" },
     { "$ref": "#/definitions/crashed_ticket_files_quarantined" },
     { "$ref": "#/definitions/crashed_ticket_files_quarantine_truncated" },
-    { "$ref": "#/definitions/pickle_incomplete" }
+    { "$ref": "#/definitions/pickle_incomplete" },
+    { "$ref": "#/definitions/large_tier_routed" }
   ]
 }

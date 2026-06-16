@@ -337,6 +337,10 @@ export const VALID_ACTIVITY_EVENTS = [
     // indeterminate signal (the checker couldn't finish), NOT a ticket defect. Emitted by
     // check-readiness.ts:runReadiness; the gate still exits 0 (non-blocking).
     'resolver_indeterminate',
+    // AC-GA-REC-2 (de345802): a complexity_tier:large ticket was routed to the
+    // sanctioned autonomous path (interactive /pickle-tmux) instead of a raw
+    // foreground spawn-morty that the 600s Bash-tool ceiling would SIGKILL.
+    'large_tier_routed',
 ];
 /** Recoverable reasons a ticket can be flipped to Failed by the auto-skip guard (R-WSWA-3). */
 export const FAILURE_REASONS = ['oversized_no_progress'];

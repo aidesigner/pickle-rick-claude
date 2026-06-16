@@ -982,6 +982,17 @@ const EVENT_CASES = [
     },
     drop: 'ts',
   },
+  {
+    // AC-GA-REC-2 (de345802): large-tier ticket routed to the sanctioned path.
+    type: 'large_tier_routed',
+    valid: {
+      event: 'large_tier_routed',
+      ts: TS,
+      ticket: 'abc12345',
+      gate_payload: { sanctioned_path: 'interactive_pickle_tmux', reason: '600s Bash-tool ceiling' },
+    },
+    drop: 'gate_payload',
+  },
 ];
 
 // B-RRH ed840487 (data-flow audit): the C3 signal-teardown arm returns a new
@@ -1299,6 +1310,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'rate_limited_without_reset_at',
     'ticket_ladder_exhausted',
     'pickle_incomplete',
+    'large_tier_routed',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

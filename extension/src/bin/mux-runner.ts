@@ -2938,6 +2938,45 @@ export function isParkExhausted(cumulativeParkedMs: number, maxParkMinutes: numb
   return cumulativeParkedMs > maxParkMinutes * 60 * 1000;
 }
 
+export interface LargeTierRoutingDisposition {
+  /** The sanctioned autonomous path a large-tier ticket is routed to. */
+  sanctionedPath: 'interactive_pickle_tmux';
+  ticketId: string;
+  sessionDir: string;
+}
+
+/**
+ * Route a complexity_tier:large ticket to a sanctioned autonomous path.
+ *
+ * The 600s Bash-tool ceiling SIGKILLs a foreground spawn-morty at 600s under a
+ * headless manager (MASTER_PLAN finding #108, session 2026-06-13-2bd4740a):
+ * the non-detached worker child dies → buffered stdout lost → 0-byte log.
+ * Large-tier tickets MUST NOT take the raw foreground spawn-morty path. This
+ * seam emits a large_tier_routed activity event and returns the sanctioned
+ * disposition so the manager loop can bypass runIteration for this tier.
+ * It NEVER spawns a subprocess and NEVER calls runIteration.
+ * Ticket 28d95d77 delegates its large-tier clean-tree re-execution branch here.
+ */
+export function routeLargeTierTicket(
+  ticketId: string,
+  sessionDir: string,
+  statePath: string,
+): LargeTierRoutingDisposition {
+  // Mirrors the worker_partial_lifecycle_exit emitter: writeActivityEntry does
+  // NOT auto-stamp ts, so pass it explicitly (R-WSE-2 / R-PDD-oneOf schema).
+  writeActivityEntry(statePath, {
+    event: 'large_tier_routed',
+    ts: new Date().toISOString(),
+    ticket: ticketId,
+    gate_payload: {
+      sanctioned_path: 'interactive_pickle_tmux',
+      reason:
+        '600s Bash-tool ceiling: foreground spawn-morty is SIGKILLed at 600s under headless manager — route large-tier to /pickle-tmux (persistent-REPL manager surviving turn-end)',
+    },
+  });
+  return { sanctionedPath: 'interactive_pickle_tmux', ticketId, sessionDir };
+}
+
 // eslint-disable-next-line -- legacy iteration loop retained behavior-preserving for global bin acceptance
 export async function runIteration(
   sessionDir: string,
@@ -8778,14 +8817,31 @@ async function runMuxRunnerMain() {
       ? resolveCreditEarlyPhases(sessionDir, apTicketId, apPriorSpawnCount, resolveWmwEarlyPhaseK())
       : false;
     const apBeforeCount = apTicketId ? countWorkerArtifacts(path.join(sessionDir, apTicketId), { creditEarlyPhases: apCreditEarlyPhases }) : 0;
-    const outcome = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel).catch(
-      (err: unknown): Awaited<ReturnType<typeof runIteration>> => {
-        const msg = err instanceof Error ? err.message : String(err);
-        log(`runIteration threw (treating as spawn error): ${msg}`);
-        process.stderr.write(`[mux-runner] runIteration threw: ${msg}\n`);
-        return { completion: 'error', timedOut: false, exitCode: null, wallSeconds: 0 } as Awaited<ReturnType<typeof runIteration>>;
-      }
-    );
+    // AC-GA-REC-2 (de345802): a complexity_tier:large ticket cannot make
+    // committable progress under headless-mux — the 600s Bash-tool ceiling
+    // SIGKILLs a foreground spawn-morty at 600s (MASTER_PLAN #108). Route it
+    // through routeLargeTierTicket (emits large_tier_routed, no subprocess, no
+    // runIteration) instead of the raw foreground spawn path. Small/medium tiers
+    // take the byte-identical `await runIteration(...)` branch below.
+    // DEVIATION from plan: completion 'inactive' with exitCode:0 (NOT null) so
+    // detectManagerInactiveExit is false → the loop's `inactive` branch
+    // falls straight through to the clean `Session deactivated. Exiting loop.`
+    // break (exit_reason='cancelled'). exitCode:null would trip the
+    // manager-relaunch path, re-spawning the manager — defeating the route.
+    const outcome: Awaited<ReturnType<typeof runIteration>> =
+      state.current_ticket_tier === 'large'
+        ? (() => {
+            routeLargeTierTicket(apTicketId ?? '', sessionDir, statePath);
+            return { completion: 'inactive' as const, timedOut: false, exitCode: 0, wallSeconds: 0 };
+          })()
+        : await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel).catch(
+            (err: unknown): Awaited<ReturnType<typeof runIteration>> => {
+              const msg = err instanceof Error ? err.message : String(err);
+              log(`runIteration threw (treating as spawn error): ${msg}`);
+              process.stderr.write(`[mux-runner] runIteration threw: ${msg}\n`);
+              return { completion: 'error', timedOut: false, exitCode: null, wallSeconds: 0 } as Awaited<ReturnType<typeof runIteration>>;
+            }
+          );
     const result = outcome.completion;
 
     // R-MWIS-3: worker-exit path. A silent/0-byte worker exit may leave a
