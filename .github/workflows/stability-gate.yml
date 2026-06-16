@@ -32,6 +32,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
+          # R-CIFB: full history (match ci.yml) — git-history-dependent tests
+          # (e.g. runGate scope=changed since=HEAD~1) fail on the default shallow
+          # depth-1 checkout, an artifact of this gate, not a real ci.yml failure.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
