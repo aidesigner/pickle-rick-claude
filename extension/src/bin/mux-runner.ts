@@ -19,6 +19,7 @@ import {
   evaluateManagerRelaunch,
   recordManagerRelaunch,
   type ManagerRelaunchExitKind,
+  type ManagerRelaunchDecision,
 } from '../services/manager-relaunch.js';
 import { getHeadBranch, updateTicketFrontmatter, isWorkingTreeDirty, listWorkingTreeDirtyPaths, archiveBeforeDestructive, ArchiveAbortError, isCodegraphArtifact, type ArchiveContext, type ArchiveResult } from '../services/git-utils.js';
 import { runRecoveryLadder, parsePlanPhases, executePhaseLoop, isConvergedPlanEligible, type PlanPhase, type RecoveryDeps, type RecoveryEvidence, type RecoveryOutcome, type ReExecutionSeam } from '../services/recovery-controller.js';
@@ -2756,6 +2757,35 @@ function readLastResultEventFromLog(logFile: string): Record<string, unknown> | 
     if (ev.type === 'result') return ev;
   }
   return null;
+}
+
+/**
+ * R-PPXR AC-PPXR-2: distinguishes a manager turn CUT OFF mid-tool-result (relaunchable) from a genuine
+ * spawn failure (fatal). A cut-off turn started working — the iteration log carries at least one JSON
+ * stream event (e.g. `system`/`task_started`/`user`) — but produced NO terminal `result` event. A spawn
+ * failure (`proc.on('error')`, e.g. ENOENT) leaves the iteration log empty/unreadable, so this returns
+ * false and the suppressor stays fatal. Confirmed against the B-GA cut-off logs in
+ * tests/fixtures/ppxr-rootcause.md (cut-off iterations had stream events, 0 `result` events).
+ */
+function managerTurnStartedWithoutResult(logFile: string): boolean {
+  let content: string;
+  try {
+    content = fs.readFileSync(logFile, 'utf-8');
+  } catch {
+    return false;
+  }
+  let sawStreamEvent = false;
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || !line.startsWith('{')) continue;
+    let parsed: unknown;
+    try { parsed = JSON.parse(line); } catch { continue; }
+    if (!parsed || typeof parsed !== 'object') continue;
+    const ev = parsed as Record<string, unknown>;
+    if (ev.type === 'result') return false; // a terminal result means it was NOT cut off
+    sawStreamEvent = true;
+  }
+  return sawStreamEvent;
 }
 
 export function detectManagerMaxTurnsExit(managerResult: IterationOutcome, logFile: string, maxTurns: number | null): boolean {
@@ -6225,6 +6255,47 @@ function checkAndUpdateCodexManagerNoProgress(
   return { halt, consecutiveCount };
 }
 
+/**
+ * Single suppressor predicate consulted by both manager-relaunch guards (R-PPXR AC-PPXR-2; was
+ * duplicated character-for-character at two sites). Returns `true` to SUPPRESS the relaunch (a genuinely
+ * fatal subprocess crash / spawn failure that tears down) and `false` to ALLOW the existing
+ * `evaluateManagerRelaunch` chain to relaunch.
+ *
+ * Fatal (return `true`): a deterministic non-zero exit code; a null-exit SPAWN FAILURE (empty iteration
+ * log — the manager never started); OR a null-exit cut-off with nothing left to recover (no pending
+ * tickets OR the relaunch cap already reached).
+ * Retryable (return `false`): a manager turn cut off mid-tool-result — `other_error`, `outcome` defined,
+ * `exitCode === null`, NOT timed out, the iteration log shows the turn STARTED (stream events) but
+ * produced no `result` event — while pending tickets remain AND the relaunch count is below
+ * `Defaults.CLAUDE_MANAGER_RELAUNCH_CAP` (decision.nextRelaunchCount <= decision.cap; nextRelaunchCount
+ * is prior+1, so this holds exactly when prior < cap). No `signal_received` / external-SIGTERM marker is
+ * present on the cut-off signature (confirmed in tests/fixtures/ppxr-rootcause.md), so a deterministic
+ * non-zero exit code is the only fatal exit-code shape, and an empty log is the spawn-failure tell that
+ * keeps a missing-binary ENOENT terminal rather than relaunch-looping on the same failure.
+ */
+export function isGenuineCrashOrSpawnFailure(
+  decision: ManagerRelaunchDecision,
+  outcome: IterationOutcome | undefined,
+  iterLogFile?: string,
+): boolean {
+  if (decision.exitKind !== 'other_error' || outcome === undefined || outcome.timedOut === true) {
+    return false;
+  }
+  // Deterministic non-zero exit code: explicit crash — always fatal.
+  if (typeof outcome.exitCode === 'number' && outcome.exitCode !== 0) {
+    return true;
+  }
+  // Null exit code: either a manager turn cut off mid-tool-result (the turn started — relaunchable) or a
+  // spawn failure (the manager never started — fatal). Only relax when the iteration log proves the turn
+  // started but produced no terminal `result`, AND there is pending work below the relaunch cap.
+  if (outcome.exitCode === null) {
+    const cutOffMidTurn = iterLogFile !== undefined && managerTurnStartedWithoutResult(iterLogFile);
+    const retryable = cutOffMidTurn && decision.pendingCount > 0 && decision.nextRelaunchCount <= decision.cap;
+    return !retryable;
+  }
+  return false;
+}
+
 // eslint-disable-next-line complexity, max-lines-per-function -- HT-1 reviewed: legacy completion branch retained behavior-preserving; R-CHTS-CODEX adds recovery-seam branches; pre-existing violation, refactor deferred to a focused PR.
 export async function processCompletionBranch(state: State, result: IterationOutcome['completion'], ctx: LoopContext): Promise<LoopAction> {
   if (result === 'task_completed') return processTaskCompleted(state, ctx);
@@ -6362,22 +6433,10 @@ export async function processCompletionBranch(state: State, result: IterationOut
       return { kind: 'break', reason: 'limit' };
     }
     // Genuine subprocess crash or spawn failure tears down rather than
-    // relaunches: the worker process crashed for a deterministic reason and
-    // relaunching would burn the cap on the same crash. We only relaunch when
-    // the exitKind is a recognized recoverable signal (codex_4h_hang_guard,
-    // claude_max_turns) OR there is no outcome at all (generic error, no
-    // diagnostic info — likely the manager-level error path that should retry).
-    const isGenuineCrashOrSpawnFailure =
-      decision.exitKind === 'other_error' &&
-      ctx.outcome !== undefined &&
-      ctx.outcome.timedOut !== true &&
-      (
-        // Non-zero exit code: explicit crash.
-        (typeof ctx.outcome.exitCode === 'number' && ctx.outcome.exitCode !== 0) ||
-        // Null exit code without timeout: spawn failure or proc.on('error').
-        ctx.outcome.exitCode === null
-      );
-    if (decision.shouldRelaunch && !isGenuineCrashOrSpawnFailure) {
+    // relaunches (see isGenuineCrashOrSpawnFailure): a deterministic crash, or a
+    // null-exit cut-off with nothing left to recover, stays fatal. A cut-off
+    // mid-tool-result with pending tickets below cap is retryable and relaunches.
+    if (decision.shouldRelaunch && !isGenuineCrashOrSpawnFailure(decision, ctx.outcome, ctx.iterLogFile || path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`))) {
       const noProgress = checkAndUpdateCodexManagerNoProgress(ctx.statePath, decision.pendingCount, ctx.log);
       if (noProgress.halt) {
         // AC-2 fail-safe: a missing working_dir on this git-mutating recovery
@@ -10049,15 +10108,7 @@ async function runMuxRunnerMain() {
         exitReason = 'limit';
         break;
       }
-      const isGenuineCrashOrSpawnFailure =
-        relaunchDecision.exitKind === 'other_error' &&
-        outcome !== undefined &&
-        outcome.timedOut !== true &&
-        (
-          (typeof outcome.exitCode === 'number' && outcome.exitCode !== 0) ||
-          outcome.exitCode === null
-        );
-      if (relaunchDecision.shouldRelaunch && !isGenuineCrashOrSpawnFailure) {
+      if (relaunchDecision.shouldRelaunch && !isGenuineCrashOrSpawnFailure(relaunchDecision, outcome, iterLogFile)) {
         const noProgress = checkAndUpdateCodexManagerNoProgress(statePath, relaunchDecision.pendingCount, log);
         if (noProgress.halt) {
           // AC-2 fail-safe: missing working_dir must halt this git-mutating

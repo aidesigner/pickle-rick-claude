@@ -12,8 +12,22 @@ import {
   evaluateCodexManagerRelaunch,
   recordCodexManagerRelaunch,
 } from '../services/codex-manager-relaunch.js';
+import { isGenuineCrashOrSpawnFailure } from '../bin/mux-runner.js';
 import { StateManager } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
+
+function relaunchDecision(overrides = {}) {
+  return {
+    shouldRelaunch: true,
+    pendingCount: 1,
+    nextRelaunchCount: 1,
+    reason: 'eligible',
+    cap: Defaults.CLAUDE_MANAGER_RELAUNCH_CAP,
+    backend: 'claude',
+    exitKind: 'other_error',
+    ...overrides,
+  };
+}
 
 const pendingTickets = [
   { id: 'done', status: 'Done', title: '', order: 1, type: null, working_dir: null, completed_at: null, skipped_at: null },
@@ -235,6 +249,35 @@ test('StateManager migrates codex_manager_relaunch_count to manager_relaunch_cou
     assert.equal(state.codex_manager_relaunch_count, undefined);
     assert.equal(persisted.manager_relaunch_count, 6);
     assert.equal('codex_manager_relaunch_count' in persisted, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// R-PPXR AC-PPXR-2: a deterministic non-zero exitCode is a genuine crash — the suppressor returns true
+// and the relaunch stays vetoed (fatal teardown), even with pending tickets below cap. No log needed:
+// the non-zero exit-code arm fires before any log inspection.
+test('isGenuineCrashOrSpawnFailure: deterministic non-zero exitCode is fatal (predicate true / suppressed)', () => {
+  const decision = relaunchDecision({ pendingCount: 1, nextRelaunchCount: 1 });
+  const outcome = { completion: 'error', exitCode: 1, timedOut: false, wallSeconds: 2 };
+  assert.equal(isGenuineCrashOrSpawnFailure(decision, outcome, undefined), true);
+});
+
+// R-PPXR AC-PPXR-2: a null-exit cut-off (started-but-no-result log) with NO pending work, or AT cap,
+// stays fatal — there is nothing left to recover, so the suppressor returns true.
+test('isGenuineCrashOrSpawnFailure: null-exit cut-off stays fatal when no pending work or at cap', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-ppxr-fatal-'));
+  try {
+    const cutOffLog = path.join(dir, 'iter.log');
+    fs.writeFileSync(cutOffLog, '{"type":"system"}\n{"type":"user"}\n');
+    const noPending = relaunchDecision({ pendingCount: 0, nextRelaunchCount: 1 });
+    const atCap = relaunchDecision({
+      pendingCount: 1,
+      nextRelaunchCount: Defaults.CLAUDE_MANAGER_RELAUNCH_CAP + 1,
+    });
+    const cutOff = { completion: 'error', exitCode: null, timedOut: false, wallSeconds: 5 };
+    assert.equal(isGenuineCrashOrSpawnFailure(noPending, cutOff, cutOffLog), true);
+    assert.equal(isGenuineCrashOrSpawnFailure(atCap, cutOff, cutOffLog), true);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

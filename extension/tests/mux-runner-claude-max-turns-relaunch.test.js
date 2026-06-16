@@ -6,9 +6,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
+  isGenuineCrashOrSpawnFailure,
   processCompletionBranch,
   processIterationOutcome,
 } from '../bin/mux-runner.js';
+import { Defaults } from '../types/index.js';
 
 function makeTmpDir(prefix = 'pickle-claude-max-turns-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -102,6 +104,44 @@ async function withFixture(overrides, run) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+// R-PPXR AC-PPXR-2: a manager turn cut off mid-tool-result (other_error, exitCode null, not timedOut,
+// the iteration log shows the turn STARTED but has no `result` event) with pending tickets below cap is
+// RETRYABLE — the suppressor returns false so the existing evaluateManagerRelaunch chain may relaunch.
+// A null-exit SPAWN FAILURE (empty/unreadable log — the manager never started) stays fatal.
+test('claude-max-turns-relaunch: signal-kill cut-off with pending tickets below cap is retryable (predicate false / relaunch allowed)', () => {
+  const dir = makeTmpDir();
+  try {
+    const decision = {
+      shouldRelaunch: true,
+      pendingCount: 1,
+      nextRelaunchCount: 1,
+      reason: 'eligible',
+      cap: Defaults.CLAUDE_MANAGER_RELAUNCH_CAP,
+      backend: 'claude',
+      exitKind: 'other_error',
+    };
+    const cutOffOutcome = { completion: 'error', exitCode: null, timedOut: false, wallSeconds: 33 * 60 };
+
+    // Cut-off mid-tool-result: stream events present, NO `result` event → retryable.
+    const cutOffLog = path.join(dir, 'tmux_iteration_cutoff.log');
+    fs.writeFileSync(cutOffLog, [
+      '{"type":"system","subtype":"init"}',
+      '{"type":"user"}',
+    ].join('\n') + '\n');
+    assert.equal(isGenuineCrashOrSpawnFailure(decision, cutOffOutcome, cutOffLog), false);
+
+    // Spawn failure: empty iteration log (manager never started) → stays fatal.
+    const emptyLog = path.join(dir, 'tmux_iteration_empty.log');
+    fs.writeFileSync(emptyLog, '');
+    assert.equal(isGenuineCrashOrSpawnFailure(decision, cutOffOutcome, emptyLog), true);
+
+    // Missing log path → stays fatal (cannot prove the turn started).
+    assert.equal(isGenuineCrashOrSpawnFailure(decision, cutOffOutcome, path.join(dir, 'nope.log')), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('claude-max-turns-relaunch: claude max-turns exit relaunches instead of tearing down', async () => {
   await withFixture({
