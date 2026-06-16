@@ -41,6 +41,20 @@ written** (the text is a misnomer), so the handful of blocking `warning`s are in
 lines of noise. Operators (and the babysitter) cannot see what actually blocks without calling
 `auditSession` directly.
 
+### C4 — `parseMappedRequirements` mis-parses a YAML block-list `mapped_requirements` (NEW, 2026-06-16)
+`parseMappedRequirements` (`audit-ticket-bundle.ts:104`) reads only the text on the SAME line as
+`mapped_requirements:`. When a ticket author writes the field as a YAML block-list —
+`mapped_requirements:\n  - AC-PPXR-2` (valid YAML, what a careful author naturally produces) — the
+same-line value is empty and the parser either captures nothing OR (with a different read path)
+captures the list-item line `"- AC-PPXR-2"` WITH the `- ` prefix. Either way the C3 title check then
+compares against a malformed token (`"- AC-PPXR-2"` vs the title's `"[AC-PPXR-2]"`) and emits a
+spurious `warning cross-doc-naming` on a correctly-authored ticket. Hit live on the R-PPXR build
+(2026-06-16, session f97c8720): all 3 tickets false-flagged until `mapped_requirements` was hand-
+normalized to the inline scalar form. **Fix:** `parseMappedRequirements` MUST accept BOTH the inline
+scalar (`mapped_requirements: AC-X` / `[AC-X, AC-Y]`) AND the YAML block-list (`\n  - AC-X`) forms,
+stripping the `- ` list-item prefix. — Type: test. (Compounds C3 — even after C3 is demoted to advisory,
+the parser should still read both forms correctly so downstream consumers get the real requirement set.)
+
 ### C3 — `cross-doc-naming` (WARNING) requires the ticket TITLE to contain the literal AC id
 `checkCrossDocNaming` (`:494-505`) emits `warning cross-doc-naming` when a ticket's `title` does not
 `.includes()` one of its `mapped_requirements` ids. A descriptive title ("Recover the clean-tree
@@ -67,6 +81,7 @@ and not others), so the same defect blocks one ticket and silently passes its si
   not a launch-blocking correctness property; the `mapped_requirements` frontmatter field already
   carries the linkage machine-readably. Subtract the guard rather than add an escape hatch (W5b
   subtract-before-add). — Type: test
+- **AC-ATBG-5 — `parseMappedRequirements` accepts YAML block-list form.** Parse both inline scalar and `\n  - AC-X` block-list (strip `- ` prefix); a block-list `mapped_requirements` yields the same requirement set as the inline form. Regression fixture: a ticket with block-list mapped_requirements + AC-id-in-title exits 0. — Type: test
 - **AC-ATBG-4 — typecheck + lint + compiled-mirror parity.** Source change recompiled to
   `extension/bin/audit-ticket-bundle.js` in the same commit. — Type: typecheck
 
