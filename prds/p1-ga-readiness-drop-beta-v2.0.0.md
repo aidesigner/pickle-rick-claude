@@ -276,7 +276,7 @@ RESOLVED v1.102.0 (B-ORSR), each with its `prds/MASTER_PLAN.md` row and a HEAD-r
 GA carries no silent design residue. (MASTER_PLAN rows referenced in this bundle as **158/178/179**;
 the resolved R-code rows are actually at lines 162/182/183 of the current `prds/MASTER_PLAN.md`.)
 
-- **#101 R-ONPD** — MASTER_PLAN row 162 (actual line 162) — RESOLVED v1.102.0 (B-ORSR): R-ORSR-3
+- **#101 R-ONPD** — MASTER_PLAN row 158 (actual line 162) — RESOLVED v1.102.0 (B-ORSR): R-ORSR-3
   oversized taxonomy `plan_converged_uncommitted` (`3baf038b`) + R-ORSR-5 refiner decomposition-quality
   flag (`337c5157`). Both HEAD-reachable.
 - **#102 R-PDUP** — MASTER_PLAN row 178 (actual line 182) — RESOLVED v1.102.0 (B-ORSR): R-ORSR-4
