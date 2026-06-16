@@ -24,6 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUN_COUNT: ${{ inputs.run_count || '10' }}
+      # R-CIFB: point getExtensionRoot() at the checked-out repo (sentinel
+      # extension/bin/log-watcher.js is committed) instead of the deployed
+      # ~/.claude/pickle-rick, which CI never creates (no install.sh).
+      EXTENSION_DIR: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
         with:
