@@ -382,18 +382,26 @@ export function checkPathDrift(t: ParsedTicket, gitFiles: Set<string>, creationI
   const findings: Finding[] = [];
   const seen = new Set<string>();
   const forwardCreatePaths = extractForwardCreatePaths(t.body);
+  // Pre-convert for suffix-match (R-RTRC-4 parity); built once, not per token.
+  const gitFilesArr = Array.from(gitFiles);
   for (const tok of extractBacktickedPaths(t.body)) {
     if (seen.has(tok)) continue;
     seen.add(tok);
-    if (gitFiles.has(tok)) continue;
-    if (forwardCreatePaths.has(tok)) continue;
+    if (tok.endsWith('/')) continue; // bare directory — git ls-files lists files not dirs
+    if (tok.includes('*')) continue; // glob — no literal * path exists
+    // Strip trailing :<line>[,<line>][-<line>] suffix (mirrors R-RTRC-4).
+    const stripped = tok.replace(/:\d[\d,-]*$/, '');
+    const escapedStripped = stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const suffixRe = new RegExp(`(?:^|/)${escapedStripped}$`);
+    if (gitFiles.has(stripped) || gitFilesArr.some((f) => suffixRe.test(f))) continue;
+    if (forwardCreatePaths.has(stripped)) continue;
     // R-FRA-6 (88a4cdd6 E1/E2) + AC-B1: bundle-wide declared/annotated
     // forward-create, matched suffix-symmetrically (a declared `extension/tests/X`
     // suppresses a `tests/X` ref and vice versa) so this gate stays parity-aligned
     // with check-readiness; teeth preserved for genuine phantoms.
-    if (isForwardCreated(tok, creationIndex)) continue;
+    if (isForwardCreated(stripped, creationIndex)) continue;
     const ctx = lineContext(t.body, tok);
-    if (hasForwardRefPathAnnotation(ctx, tok)) continue;
+    if (hasForwardRefPathAnnotation(ctx, tok) || hasForwardRefPathAnnotation(ctx, stripped)) continue;
     findings.push({
       ticket_id: t.id,
       ticket_path: t.relPath,
