@@ -283,6 +283,27 @@ export interface ExecutePhaseLoopResult {
   failedIndex: number | null;
 }
 
+/**
+ * DI seam for the clean-tree implement pass (AC-GA-REC-1). The adapter receives the
+ * RAW plan_*.md path (never the parsed PlanPhase[], which is verify-only and carries
+ * nothing implementable) and returns whether an implement pass produced a diff.
+ * Large-tier tickets route through routeLargeTierTicket (the de345802 seam) — the
+ * `largeTierRouted` flag signals this to the caller so no raw foreground spawn is
+ * attempted. Timeout is surfaced as `{ ok: false, timedOut: true }` so the ladder
+ * escalates to recovery_exhausted.
+ */
+export interface ReExecutionSeam {
+  /** Spawn an implement pass against the raw plan markdown. */
+  spawnImplementPass: (opts: {
+    planPath: string;
+    ticketId: string;
+    complexityTier: string;
+    sessionDir: string;
+    workingDir: string;
+    statePath: string;
+  }) => { ok: boolean; largeTierRouted?: boolean; timedOut?: boolean };
+}
+
 /** Adapters for `executePhaseLoop` — every side-effect is injected (DI), like RecoveryDeps. */
 export interface ExecutePhaseLoopDeps {
   phases: PlanPhase[];

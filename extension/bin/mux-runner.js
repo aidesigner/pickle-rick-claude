@@ -4110,17 +4110,99 @@ const CONVERGED_PLAN_VERIFY_TIMEOUT_MS = 600_000;
 /** R-ORSR-3 per-Phase git add/commit budget (ms). */
 const CONVERGED_PLAN_GIT_TIMEOUT_MS = 30_000;
 /**
- * R-ORSR-3 execute-converged-plan executor — the runtime adapter behind the
- * `RecoveryDeps.executeConvergedPlan` seam. Reads the approved plan from the ticket dir,
- * parses its authored Phases, and runs each Phase's verify command as one atomic commit
- * via `executePhaseLoop`. Partial failure (phase k fails) commits phases `0..k-1` and
- * returns `{ ok:false }` so the ladder records the failed attempt and falls through —
- * the ticket is never marked Done. A clean tree (the `planConvergedUncommitted` case)
- * has nothing to commit, so the per-Phase `git commit` fails and the rung honestly
- * reports `ok:false`; that is the documented down-scope, not a bug.
+ * AC-GA-REC-3 idempotency guard. Returns `{ ok: true }` (no-op) when a prior successful
+ * execute-converged-plan entry exists in the recovery_attempts ledger AND the ticket
+ * frontmatter carries completion_commit. State/ledger-keyed, NEVER diff-content-keyed —
+ * an LLM implement pass produces a different diff each time, so a content-match key never
+ * fires. Returns null to fall through to (re-)execution.
  */
-function executeConvergedPlanAdapter(input) {
+function convergedPlanIdempotentNoOp(input) {
+    try {
+        const s = input._testHooks?.readStateForIdempotency
+            ? input._testHooks.readStateForIdempotency()
+            : readRecoverableJsonObject(input.statePath);
+        const ledger = Array.isArray(s?.recovery_attempts) ? s.recovery_attempts : [];
+        const priorSuccess = ledger.some((a) => a.strategy === 'execute-converged-plan' && a.outcome === 'success');
+        if (!priorSuccess)
+            return null;
+        const ticketContent = fs.readFileSync(ticketFilePath(input.sessionDir, input.ticketId), 'utf-8');
+        const completionCommit = readFrontmatterField(ticketContent, 'completion_commit');
+        if (completionCommit && completionCommit.trim().length > 0) {
+            input.log(`recovery: execute-converged-plan idempotent no-op for ${input.ticketId} (prior success + completion_commit set)`);
+            return { ok: true };
+        }
+    }
+    catch { /* best-effort idempotency guard; fall through to re-execute */ }
+    return null;
+}
+/**
+ * AC-GA-REC-1 clean-tree converged case: re-execute the approved plan against the RAW
+ * plan_*.md path. The parsed PlanPhase[] carries only verify commands (structurally
+ * nothing to implement) — this hands the seam the markdown path, NEVER the phases.
+ * Returns an early-return result, or `'fallthrough'` when a diff landed and the caller
+ * should run the existing verify-and-commit phase loop.
+ */
+function executeCleanTreeReExecution(input) {
+    let planFile;
+    try {
+        planFile = fs.readdirSync(input.ticketDir).filter(f => /^plan_.*\.md$/.test(f)).sort().pop();
+    }
+    catch {
+        return { ok: false };
+    }
+    if (!planFile)
+        return { ok: false };
+    let complexityTier = 'medium';
+    try {
+        const ticketContent = fs.readFileSync(ticketFilePath(input.sessionDir, input.ticketId), 'utf-8');
+        complexityTier = readFrontmatterField(ticketContent, 'complexity_tier') ?? 'medium';
+    }
+    catch { /* default to medium on read error */ }
+    const spawnResult = input.seam.spawnImplementPass({
+        planPath: path.join(input.ticketDir, planFile),
+        ticketId: input.ticketId,
+        complexityTier,
+        sessionDir: input.sessionDir,
+        workingDir: input.workingDir,
+        statePath: input.statePath,
+    });
+    if (spawnResult.largeTierRouted) {
+        // AC-GA-REC-6: routeLargeTierTicket was invoked inside the seam; disposition logged.
+        input.log(`recovery: execute-converged-plan large-tier routed ${input.ticketId} via de345802 seam`);
+        return { ok: true };
+    }
+    if (spawnResult.timedOut) {
+        // AC-GA-REC-5: implementer timeout escalates to recovery_exhausted (never silent-loop).
+        input.log(`recovery: execute-converged-plan implement pass timed out for ${input.ticketId} — escalating to recovery_exhausted`);
+        return { ok: false };
+    }
+    if (!spawnResult.ok) {
+        input.log(`recovery: execute-converged-plan implement pass returned not-ok for ${input.ticketId}`);
+        return { ok: false };
+    }
+    const postDiff = input._testHooks?.isPostImplementDirty
+        ? input._testHooks.isPostImplementDirty()
+        : isWorkingTreeDirty(input.workingDir);
+    if (!postDiff) {
+        // AC-GA-REC-4: zero diff (plan already fully realized) → reconcile to terminal,
+        // do NOT loop. The reconcile call routes the disposition through ground truth.
+        input.log(`recovery: execute-converged-plan zero-diff for ${input.ticketId} — reconciling to terminal via reconcileTicketTruth`);
+        reconcileTicketTruth({ sessionDir: input.sessionDir, workingDir: input.workingDir });
+        return { ok: false };
+    }
+    // Diff present — fall through to the existing executePhaseLoop verify-and-commit path.
+    return 'fallthrough';
+}
+export function executeConvergedPlanAdapter(input) {
     const ticketDir = path.join(input.sessionDir, input.ticketId);
+    const idempotent = convergedPlanIdempotentNoOp(input);
+    if (idempotent)
+        return idempotent;
+    if (input.reExecutionSeam) {
+        const reExec = executeCleanTreeReExecution({ ...input, seam: input.reExecutionSeam, ticketDir });
+        if (reExec !== 'fallthrough')
+            return reExec;
+    }
     let phases;
     try {
         const planFile = fs.readdirSync(ticketDir)
@@ -4204,7 +4286,47 @@ export function attemptRecoveryBeforeTerminal(input) {
             sessionDir: input.sessionDir,
             ticketId: input.ticketId,
             workingDir: input.workingDir,
+            statePath: input.statePath,
             log: input.log,
+            // AC-GA-REC-1 production re-execution seam. Large-tier tickets route through
+            // routeLargeTierTicket (NEVER a raw foreground spawn-morty — the 600s Bash
+            // ceiling SIGKILLs it); small/medium spawn an implement pass directly.
+            reExecutionSeam: {
+                spawnImplementPass: (opts) => {
+                    if (opts.complexityTier === 'large') {
+                        routeLargeTierTicket(opts.ticketId, opts.sessionDir, opts.statePath);
+                        return { ok: true, largeTierRouted: true };
+                    }
+                    // Small/medium: spawn an implement pass via buildManagerInvocation, handing
+                    // the worker the raw plan path as task context. Bounded to
+                    // CONVERGED_PLAN_VERIFY_TIMEOUT_MS per subsystem invariant #3 (finite spawn timeout).
+                    try {
+                        const { backend } = resolveBackendFromStateFileWithSource(opts.statePath);
+                        const invocation = buildManagerInvocation(backend, {
+                            prompt: `Re-execute the approved plan to produce the missing edits. Read the raw plan at ${opts.planPath} and implement its steps for ticket ${opts.ticketId}.`,
+                            addDirs: [opts.workingDir, opts.sessionDir],
+                            noSessionPersistence: true,
+                        });
+                        const r = spawnSync(invocation.cmd, invocation.args, {
+                            cwd: opts.workingDir,
+                            env: { ...process.env, ...backendEnvOverrides(backend), ...(invocation.env ?? {}), PICKLE_STATE_FILE: opts.statePath },
+                            encoding: 'utf-8',
+                            timeout: CONVERGED_PLAN_VERIFY_TIMEOUT_MS,
+                        });
+                        if (r.error && r.error.code === 'ETIMEDOUT') {
+                            return { ok: false, timedOut: true };
+                        }
+                        return { ok: r.status === 0 };
+                    }
+                    catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        if (msg.includes('ETIMEDOUT') || msg.includes('timed out')) {
+                            return { ok: false, timedOut: true };
+                        }
+                        return { ok: false };
+                    }
+                },
+            },
         }),
         appendAttempt: (attempt) => {
             try {
