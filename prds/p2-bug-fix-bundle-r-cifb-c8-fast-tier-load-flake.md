@@ -51,6 +51,25 @@ Surviving = 37 fail + 36 cancelled, three heterogeneous clusters (each its own f
 
 **Note:** the `claude --version probe timed out` lines are TAP `#` DIAGNOSTICS (benign fallback-to-measurement), NOT failures.
 
+## STATUS 2026-06-16: structural causes SOLVED (84→25), remaining tail = env-specific hygiene
+
+Four confirmed systematic fixes took CI from 84 failures to ~25 (70% reduction):
+1. ✅ Deployed-extension dep (init-microverse 46→0): 4 test repo-root fixes + `EXTENSION_DIR=github.workspace` in workflows.
+2. ✅ ENOENT data-root (section-c-gate/verify-recapture): hermetic-env strip of `EXTENSION_DIR`/`PICKLE_DATA_ROOT`/`PICKLE_DATA_DIR` (the EXTENSION_DIR side effect on `getDataRoot`).
+3. ✅ node:test async-cancel (36→0): CI node 22→24 (node 22's runner over-strict on file-level unsettled promises; relaxed 23+).
+4. ✅ stability-gate full-history checkout (`fetch-depth:0`, align ci.yml) — correct alignment, though it did NOT fix the runGate cluster (that was a wrong hypothesis).
+
+### Remaining ~25 (de-prioritized hygiene tail — CI-green is NOT a release gate)
+
+Two sub-classes, established by running each file under CI-sim (`EXTENSION_DIR=$repo TZ=UTC node --test`):
+
+- **Reproducible locally (fix when convenient):** `addToJar` ×2 (`jar-utils.test.js`) — `withTimezone('America/Chicago')` just sets `process.env.TZ`, but Node caches the zone so under a UTC ambient the override doesn't take effect inside `mock.timers` → local-day computation stays UTC. Fix = make `withTimezone` force a real TZ re-read or restructure the date injection (fiddly Node-internals, not 1-line).
+- **CI-ONLY (node-24/Linux-specific, do NOT reproduce on macOS/node25 even under CI-sim):** `getSessionPath` (12/12 pass locally), `runGate` ×9 (`convergence-gate-workspaces` — gate runs real npm/tsc on fixtures, returns 'red' on CI), `verify-recapture recovers-orphan-tmp`, `showStatus`, `mux-runner orphan-tmp`, `check-readiness`, `install-agent-overlay`, `guard-logging`, `purge-update-cache`, `check-update`, `FR-B10` (subprocess killed exit 1 = load/timeout). These need a Linux/node-24 repro environment OR methodical per-test CI-log forensics (expected-vs-actual extraction). **Name-based hypothesis guessing FAILED here twice (fetch-depth, pid-EINVAL both wrong) — do NOT guess; extract the real error block or get a repro env.**
+
+### Recommendation
+
+The high-value structural work is done and shipped. The remaining ~25 is a fiddly, environment-specific, hygiene-only residual best tackled in a dedicated session with a Linux/node-24 repro env (or accepted as known CI-red since CI-green is not a release gate). Do not let it consume every babysitter tick — pivot to higher-value drain (verify-first-close stale P2 rows) and return to this methodically.
+
 ## Honest scope note
 
 This is a MULTI-SESSION CI-environment-alignment effort, not a quick flake-serialize. CI has likely NEVER been green (all prior betas shipped on the LOCAL gate, which is authoritative; CI-green is hygiene, not a release gate). Drive it incrementally: EXTENSION_DIR fix (b052f49a) should collapse cause 1; then measure causes 2+3 and decide node-version alignment vs per-test fixes.
