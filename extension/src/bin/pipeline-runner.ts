@@ -2965,7 +2965,18 @@ function reportPhaseIncomplete(runtime: PipelineRuntime, phase: PhaseName): void
     .filter(t => (t.status || '').toLowerCase() !== 'done')
     .sort((a, b) => (a.order || 0) - (b.order || 0));
   const total = tickets.length;
-  runtime.log(`Phase ${phase} hit iteration cap; ${unfinished.length}/${total} tickets remain unfinished.`);
+  let priorExitReason: string | null = null;
+  try {
+    const reason = sm.read(runtime.statePath).exit_reason;
+    priorExitReason = typeof reason === 'string' ? reason : null;
+  } catch { /* best-effort: fall back to the iteration-cap phrasing below */ }
+  // The genuine iteration-cap-exhausted exit (mux-runner R-ICP-1, exit code 3) still reads
+  // "hit iteration cap"; any other cause (e.g. the Layer-A suppressor relaunch class) carries
+  // the real exit_reason instead of the historically misleading hardcoded string.
+  const cause = priorExitReason === null || priorExitReason === 'iteration_cap_exhausted'
+    ? 'hit iteration cap'
+    : `exited (exit_reason=${priorExitReason})`;
+  runtime.log(`Phase ${phase} ${cause}; ${unfinished.length}/${total} tickets remain unfinished.`);
   if (unfinished.length > 0) {
     runtime.log('Unfinished tickets:');
     const printable = unfinished.slice(0, UNFINISHED_TICKETS_PRINT_CAP);
