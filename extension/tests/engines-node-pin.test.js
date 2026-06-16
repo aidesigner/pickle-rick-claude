@@ -29,10 +29,12 @@ test('package node engine matches release workflow setup-node version', () => {
   assert.equal(packageJson.engines.node, releaseNodeVersion);
 });
 
-test('codex engine is exact pinned', () => {
+test('codex engine is a >= floor (not an exact pin)', () => {
   const packageJson = readPackageJson();
 
-  assert.match(packageJson.engines.codex, /^\d+\.\d+\.\d+$/);
+  // c24b3c6b: codex engines pin is a >= floor, not an exact match — newer
+  // codex CLIs satisfy the floor; an exact pin would reject every upgrade.
+  assert.match(packageJson.engines.codex, /^>=\d+\.\d+\.\d+$/);
 });
 
 test('_audit.c8 documents the pinned coverage dependency', () => {

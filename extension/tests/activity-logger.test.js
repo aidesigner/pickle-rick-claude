@@ -276,6 +276,9 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // B-DSAN2 AC-B4 (e157a44e): non-blocking readiness false-positive counter
         // surfaced on /pickle-metrics; emitted via READINESS_FALSE_POSITIVE_EVENT_NAME.
         'readiness_false_positive_suppressed',
+        // large-tier routing: routeLargeTierTicket (mux-runner.ts) emits this
+        // when a large-tier ticket is routed through the sanctioned seam.
+        'large_tier_routed',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
