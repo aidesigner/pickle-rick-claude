@@ -76,6 +76,14 @@ Combined with "don't reproduce on macOS/node25 even under CI-sim", the remaining
 
 **FULLY DEFERRED.** The remaining 23 CI-only failures are accepted as known CI-red (CI-green is hygiene, never a release gate). Resume only with a real repro env or an instrumentation pass, in a dedicated session.
 
+### 2026-06-16 repro investigation — node-version RULED OUT, root class = LINUX-specific
+
+Ran the failing files on **node v24.13.1 (macOS, via nvm)** with `EXTENSION_DIR` set (CI-match): get-session 12/12, convergence-gate-workspaces 14/14, status 25/25, check-update 72/72 — **ALL PASS**. So the remaining ~23 are **NOT node-version-specific** (they pass on node24 AND node25 on macOS); they are **Linux-specific** — almost certainly Linux vs macOS differences in filesystem/path/pid/tmp/`os.tmpdir` semantics (e.g. `/tmp` symlink resolution, pid namespace, dead-pid detection, real-command behavior on Linux fixtures). They also pass at c=8 locally, so it's the OS, not concurrency.
+
+A Linux repro (`node:24` Docker container) was attempted but **Docker Hub image pulls hang/throttle in this environment** (node:24 and node:24-slim both stuck >30–60 min, empty progress, killed). So the Linux repro is NOT obtainable here without working Docker network or a pre-pulled node:24 image.
+
+**Precise hand-off for a future fixer:** get a Linux/node24 env (Docker `node:24` with working network, a Linux CI debug shell, or a Linux dev box), run each failing file individually (`EXTENSION_DIR=<repo> node --test tests/<f>.test.js`), read the real AssertionError expected-vs-actual, and fix the Linux-specific assumption (likely `os.tmpdir()`/`/tmp` realpath, pid-liveness, or fixture-command behavior). The failing set (from CI run 27595573592): get-session, services/convergence-gate-workspaces (runGate ×9), verify-recapture-fired (recovers-orphan-tmp), status (showStatus), check-update, check-readiness, install-agent-overlay, guard-logging, purge-update-cache, mux-runner (quality-gate-skip + orphan-tmp), FR-B10.
+
 ### Recommendation
 
 The high-value structural work is done and shipped. The remaining ~25 is a fiddly, environment-specific, hygiene-only residual best tackled in a dedicated session with a Linux/node-24 repro env (or accepted as known CI-red since CI-green is not a release gate). Do not let it consume every babysitter tick — pivot to higher-value drain (verify-first-close stale P2 rows) and return to this methodically.
