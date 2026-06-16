@@ -1,0 +1,56 @@
+name: R-CIFB Debug (Linux per-file diagnosis)
+
+# Diagnostic-only workflow for R-CIFB #115: runs the known CI-only-failing test
+# files INDIVIDUALLY on the CI Linux/node24 runner with EXTENSION_DIR set, so
+# each failure's error block is clean (no c=8 interleaving). NOT a gate — never
+# blocks merges. Remove once R-CIFB is closed.
+on:
+  workflow_dispatch:
+
+jobs:
+  rcifb-debug:
+    runs-on: ubuntu-latest
+    env:
+      EXTENSION_DIR: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install extension dependencies
+        working-directory: extension
+        run: npm ci
+      - name: Run failing files individually
+        working-directory: extension
+        shell: bash
+        run: |
+          mkdir -p ../rcifb-debug-logs
+          files=(
+            tests/get-session.test.js
+            tests/services/convergence-gate-workspaces.test.js
+            tests/verify-recapture-fired.test.js
+            tests/status.test.js
+            tests/check-update.test.js
+            tests/check-readiness.test.js
+            tests/mux-runner.test.js
+            tests/install-agent-overlay.test.js
+            tests/mux-runner-guard-logging.test.js
+            tests/bin/test-runner-tier-discovery.test.js
+            tests/timeout-happy-path.test.js
+          )
+          for f in "${files[@]}"; do
+            safe=$(echo "$f" | tr '/' '_')
+            log="../rcifb-debug-logs/${safe}.log"
+            echo "=== $f ===" | tee "$log"
+            node --test "$f" > "$log" 2>&1 || true
+            # surface just the failures + summary inline for quick scan
+            grep -E '^✖|^# fail|^# pass|^# tests|AssertionError|expected:|actual:|code:|Error:|ENOENT|EEXIST' "$log" | head -40 | sed "s|^|[$f] |" || true
+          done
+      - name: Upload per-file logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcifb-debug-logs
+          path: rcifb-debug-logs/
