@@ -69,6 +69,26 @@ test('codex backend records compatible codex --version output', () => {
   }
 });
 
+test('codex backend accepts a codex --version above the engines floor', () => {
+  // Regression: the engines.codex pin was an exact match, so a codex CLI that auto-updated
+  // past the pinned version hard-failed setup. The >= floor must accept newer versions.
+  const dataRoot = makeTempRoot('pickle-codex-smoke-data-');
+  const shimDir = makeTempRoot('pickle-codex-smoke-bin-');
+  const aboveFloorLine = codexVersionLine('0.999.0');
+  makeCodexShim(shimDir, `echo "${aboveFloorLine}"`);
+
+  try {
+    const output = runSetup(['--tmux', '--backend', 'codex', '--task', 'codex above floor'], setupEnv(dataRoot, shimDir));
+    const state = readState(parseSessionRoot(output));
+
+    assert.equal(state.backend, 'codex');
+    assert.equal(state.codex_version_seen, aboveFloorLine);
+  } finally {
+    fs.rmSync(dataRoot, { recursive: true, force: true });
+    fs.rmSync(shimDir, { recursive: true, force: true });
+  }
+});
+
 test('codex backend rejects incompatible codex --version output', () => {
   const dataRoot = makeTempRoot('pickle-codex-smoke-data-');
   const shimDir = makeTempRoot('pickle-codex-smoke-bin-');

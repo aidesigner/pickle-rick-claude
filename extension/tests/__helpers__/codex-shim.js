@@ -14,15 +14,17 @@ function readEnginesCodexRange() {
     return range.trim();
 }
 
-// Mirrors the caret/exact range shapes that setup.ts:codexVersionSatisfiesRange
+// Mirrors the floor/caret/exact range shapes that setup.ts:codexVersionSatisfiesRange
 // supports. Returns the lower bound, which by definition satisfies the range.
 export function compatibleCodexVersion() {
     const range = readEnginesCodexRange();
+    const floor = range.match(/^>=\s*(\d+\.\d+\.\d+)$/);
+    if (floor) return floor[1];
     const caret = range.match(/^\^(\d+\.\d+\.\d+)$/);
     if (caret) return caret[1];
     const exact = range.match(/^(\d+\.\d+\.\d+)$/);
     if (exact) return exact[1];
-    throw new Error(`codex shim cannot derive a satisfying version from engines.codex="${range}" — supported shapes: ^X.Y.Z, X.Y.Z`);
+    throw new Error(`codex shim cannot derive a satisfying version from engines.codex="${range}" — supported shapes: >=X.Y.Z, ^X.Y.Z, X.Y.Z`);
 }
 
 // A version reliably below every non-degenerate lower bound, used to assert

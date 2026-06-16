@@ -431,6 +431,17 @@ export function codexVersionSatisfiesRange(versionOutput, range) {
     const actual = parseCodexVersion(versionOutput);
     if (!actual)
         return false;
+    // Minimum-floor range (">=X.Y.Z"): any codex at or above the floor is accepted. codex ships 0.x
+    // with frequent minor bumps (the CLI can auto-update daily), so an exact pin — or even a caret
+    // range, which for a 0.x version locks the minor — breaks setup the moment codex advances. A floor
+    // enforces the minimum required capability without coupling setup to the newest release.
+    const floor = range.match(/^>=\s*(\d+\.\d+\.\d+)$/);
+    if (floor) {
+        const minimum = parseCodexVersion(floor[1]);
+        if (!minimum)
+            return false;
+        return compareVersion(actual, minimum) >= 0;
+    }
     const caret = range.match(/^\^(\d+\.\d+\.\d+)$/);
     if (!caret)
         return actual.version === range;
