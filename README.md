@@ -467,7 +467,7 @@ Auto-discovers subsystems, rotates through them round-robin, three-phase protoco
 
 > *"Workers don't grep blind anymore, Morty — they get a map."*
 
-**Beta release.** Code Graph is opt-in and ships disabled by default. It indexes the repo into a symbol graph (backed by `@colbymchenry/codegraph`, a per-platform native bundle that may be absent — the service fails open and never crashes a session when it can't load). Claude-family workers get a `codegraph serve --mcp` MCP server so they can query callers/impact-radius/symbols instead of grepping. The upstream project claims **~58% fewer tool calls** per task — treat this as an **UNVALIDATED upstream claim**; we have not independently measured it.
+**Beta release.** Code Graph is opt-in and ships disabled by default. It indexes the repo into a symbol graph (backed by `@colbymchenry/codegraph`, a per-platform native bundle that may be absent — the service fails open and never crashes a session when it can't load). There are two independent lanes, both off by default: the injected-context lane (`buildCodegraphContextSection`) keys on `codegraph.enabled` and is live only for opted-in sessions — dormant by default; the interactive MCP lane (`codegraph serve --mcp`, which lets Claude-family workers query callers/impact-radius/symbols instead of grepping) is gated OFF unless `expose_mcp_to_workers === true`. The upstream project claims **~58% fewer tool calls** per task — treat this as an **UNVALIDATED upstream claim**; we have not independently measured it.
 
 **Settings** — add a `codegraph:` block to `extension/pickle_settings.json` (resolved by `resolveCodegraphSettings`; an absent/partial/malformed block falls back per field):
 
