@@ -23,10 +23,33 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
 const SCHEMA_PATH = path.join(ROOT, 'src/types/activity-events.schema.json');
+// Second committed schema copy: a $ref STUB, NOT a literal definition surface.
+const ROOT_SCHEMA_PATH = path.join(ROOT, 'activity-events.schema.json');
 const TYPES_PATH = path.join(ROOT, 'src/types/index.ts');
 const SPAWN_MORTY_PATH = path.join(ROOT, 'src/bin/spawn-morty.ts');
+const MUX_RUNNER_PATH = path.join(ROOT, 'src/bin/mux-runner.ts');
 
 const EVENTS = ['codegraph_context_injected', 'codegraph_context_skipped'];
+
+// Brace-depth body extractor: returns the source text between the matching `{`/`}`
+// of the function body for the declaration matched by `declRe`. `declRe` MUST end at
+// the body's opening `{` (the helper scans from there), so signatures whose return
+// type itself contains braces — e.g. `): { injected: number; skipped: number } {` —
+// must include that return type in the pattern. Bounds every emission/aggregation
+// assertion to the target function body, never the whole file.
+function extractFunctionBody(src, declRe) {
+  const m = src.match(declRe);
+  if (!m) return null;
+  const startIdx = m.index + m[0].length;
+  let depth = 1;
+  let endIdx = startIdx;
+  for (; endIdx < src.length && depth > 0; endIdx++) {
+    const ch = src[endIdx];
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+  }
+  return src.slice(startIdx, endIdx);
+}
 
 describe('codegraph context events: schema conformance', () => {
   it('schema defines both events with required ts', () => {
@@ -79,17 +102,8 @@ describe('codegraph context events: schema conformance', () => {
 
   it('buildCodegraphContextSection stamps ts explicitly on both emits', () => {
     const src = readFileSync(SPAWN_MORTY_PATH, 'utf8');
-    const fnStart = src.match(/export async function buildCodegraphContextSection\b[^{]*\{/);
-    assert.ok(fnStart, 'must find buildCodegraphContextSection declaration');
-    const startIdx = fnStart.index + fnStart[0].length;
-    let depth = 1;
-    let endIdx = startIdx;
-    for (; endIdx < src.length && depth > 0; endIdx++) {
-      const ch = src[endIdx];
-      if (ch === '{') depth++;
-      else if (ch === '}') depth--;
-    }
-    const body = src.slice(startIdx, endIdx);
+    const body = extractFunctionBody(src, /export async function buildCodegraphContextSection\b[^{]*\{/);
+    assert.ok(body, 'must find buildCodegraphContextSection declaration');
     assert.match(body, /event:\s*['"]codegraph_context_injected['"]/, 'must emit injected');
     assert.match(body, /event:\s*['"]codegraph_context_skipped['"]/, 'must emit skipped');
     const tsCount = (body.match(/ts:\s*new Date\(\)\.toISOString\(\)/g) || []).length;
@@ -128,6 +142,69 @@ describe('codegraph context events: schema conformance', () => {
     }
   });
 });
+
+// ── Parametrized: all THREE invariants asserted PER EVENT (AC-GA-CG-3) ──
+//
+// node:test has no `describe.each`, so this `for` loop over the two events IS the
+// `describe.each([['codegraph_context_injected'], ['codegraph_context_skipped']])`
+// the AC calls for: one describe block per event, one `it` per invariant.
+for (const [ev] of [['codegraph_context_injected'], ['codegraph_context_skipped']]) {
+  describe(ev, () => {
+    it('invariant 1: registered in index.ts + both committed schema files', () => {
+      const types = readFileSync(TYPES_PATH, 'utf8');
+      assert.ok(
+        new RegExp(`['"]${ev}['"]`).test(types),
+        `src/types/index.ts (VALID_ACTIVITY_EVENTS) must register ${ev}`,
+      );
+
+      // Real schema (src/types/...): defines the event + references it from oneOf.
+      const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8'));
+      assert.ok(schema.definitions?.[ev], `real schema must define ${ev}`);
+      assert.ok(
+        schema.oneOf.some((entry) => entry.$ref === `#/definitions/${ev}`),
+        `real schema oneOf must reference ${ev}`,
+      );
+
+      // Second committed copy (repo-root extension/activity-events.schema.json) is a
+      // 112-byte $ref STUB — it does NOT inline the definitions. The per-file invariant
+      // is that its $ref is wired to the real schema that DOES define both events,
+      // closing the "doubly fragile" gap (broken $ref OR dropped def).
+      const stub = JSON.parse(readFileSync(ROOT_SCHEMA_PATH, 'utf8'));
+      assert.equal(
+        stub.$ref,
+        './src/types/activity-events.schema.json',
+        'root committed schema copy must $ref the real schema (which defines both events)',
+      );
+    });
+
+    it('invariant 2: emitted from buildCodegraphContextSection with sessionDir+ticketId', () => {
+      const body = extractFunctionBody(
+        readFileSync(SPAWN_MORTY_PATH, 'utf8'),
+        /export async function buildCodegraphContextSection\b[^{]*\{/,
+      );
+      assert.ok(body, 'must find buildCodegraphContextSection declaration');
+      assert.match(body, new RegExp(`event:\\s*['"]${ev}['"]`), `must emit ${ev}`);
+      // The producer threads both sessionDir (emit guard) and ticketId (injected payload).
+      assert.match(body, /\bsessionDir\b/, 'producer must reference sessionDir');
+      assert.match(body, /\bticketId\b/, 'producer must reference ticketId');
+    });
+
+    it('invariant 3: aggregated via countCodegraphContextEvents', () => {
+      const body = extractFunctionBody(
+        readFileSync(MUX_RUNNER_PATH, 'utf8'),
+        // Return type `{ injected: number; skipped: number }` contains braces, so the
+        // pattern must consume them and anchor on the body `{` that follows.
+        /export function countCodegraphContextEvents\([\s\S]*?\}\s*\{/,
+      );
+      assert.ok(body, 'must find countCodegraphContextEvents declaration');
+      assert.match(
+        body,
+        new RegExp(`entry\\?\\.event === ['"]${ev}['"]`),
+        `countCodegraphContextEvents must aggregate ${ev}`,
+      );
+    });
+  });
+}
 
 // ── Behavioral: real producer emits via writeActivityEntry into state.json ──
 
