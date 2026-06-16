@@ -304,6 +304,8 @@ export function detectCrossDocNamingDrift(
     : [];
   const drifts: Array<{ ticketPath: string; docFile: string; docPath: string }> = [];
   const seen = new Set<string>();
+  // AC-ATBG-2: cap to one finding per ticketPath — first doc-pair wins
+  const seenTicketPaths = new Set<string>();
   for (const mdFile of mdFiles) {
     const content = readFileOrNull(path.join(workingDir, mdFile));
     if (content === null) continue;
@@ -316,6 +318,8 @@ export function detectCrossDocNamingDrift(
         const key = `${ticketPath}|${mdFile}|${docPath}`;
         if (seen.has(key)) continue;
         seen.add(key);
+        if (seenTicketPaths.has(ticketPath)) continue;
+        seenTicketPaths.add(ticketPath);
         drifts.push({ ticketPath, docFile: mdFile, docPath });
       }
     }
@@ -763,15 +767,21 @@ function parseArgs(argv: string[]): { sessionDir: string | null; manifestPath: s
   return { sessionDir, manifestPath, help };
 }
 
-function printSummary(manifest: AuditManifest): void {
+function printSummary(manifest: AuditManifest, manifestPath: string): void {
   process.stdout.write(
     `[audit-ticket-bundle] tickets=${manifest.ticket_count} findings=${manifest.findings.length} exit=${manifest.exit_code}\n`,
   );
-  for (const f of manifest.findings.slice(0, 50)) {
+  const blocking = manifest.findings.filter((f) => f.severity === 'fatal' || f.severity === 'warning');
+  const info = manifest.findings.filter((f) => f.severity === 'info');
+  // AC-ATBG-2: always print every blocking finding first regardless of info volume
+  for (const f of blocking) {
     process.stdout.write(`  ${f.severity.padEnd(7)} ${f.defect_class.padEnd(24)} ${f.ticket_id} — ${f.evidence}\n`);
   }
-  if (manifest.findings.length > 50) {
-    process.stdout.write(`  ... (${manifest.findings.length - 50} more findings; see manifest)\n`);
+  for (const f of info.slice(0, 50)) {
+    process.stdout.write(`  ${f.severity.padEnd(7)} ${f.defect_class.padEnd(24)} ${f.ticket_id} — ${f.evidence}\n`);
+  }
+  if (info.length > 50) {
+    process.stdout.write(`  ... (${info.length - 50} more info findings; see ${manifestPath})\n`);
   }
 }
 
@@ -791,7 +801,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'audit-ticket-bundle.j
     const manifest = auditSession(sessionDir, scriptDir);
     const target = manifestPath ?? path.join(path.resolve(sessionDir), 'audit-ticket-bundle.json');
     writeManifest(manifest, target);
-    printSummary(manifest);
+    printSummary(manifest, target);
     process.exit(manifest.exit_code);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
