@@ -66,6 +66,16 @@ Two sub-classes, established by running each file under CI-sim (`EXTENSION_DIR=$
 - **✅ FIXED `addToJar` ×2 (`jar-utils.test.js`) 2026-06-16:** RE-DIAGNOSED — NOT TZ-cache (prior guess wrong); same getDataRoot-redirect class as cluster-3a. CI sets `EXTENSION_DIR=workspace`; `getDataRoot()` consults it before HOME, so addToJar wrote under the repo while the test asserted `os.homedir()`. Fix: assert against `getDataRoot()` (locally identical when EXTENSION_DIR unset) + gitignore `jar/` (in-process test writes a stray there under EXTENSION_DIR). Verified 11/11 WITH EXTENSION_DIR set. (Third R-CIFB sub-issue I initially mis-named — reinforces: confirm the repro mechanism, don't guess from the test name.)
 - **CI-ONLY (node-24/Linux-specific, do NOT reproduce on macOS/node25 even under CI-sim):** `getSessionPath` (12/12 pass locally), `runGate` ×9 (`convergence-gate-workspaces` — gate runs real npm/tsc on fixtures, returns 'red' on CI), `verify-recapture recovers-orphan-tmp`, `showStatus`, `mux-runner orphan-tmp`, `check-readiness`, `install-agent-overlay`, `guard-logging`, `purge-update-cache`, `check-update`, `FR-B10` (subprocess killed exit 1 = load/timeout). These need a Linux/node-24 repro environment OR methodical per-test CI-log forensics (expected-vs-actual extraction). **Name-based hypothesis guessing FAILED here twice (fetch-depth, pid-EINVAL both wrong) — do NOT guess; extract the real error block or get a repro env.**
 
+### 2026-06-16: CI-only tail (23) is NOT log-diagnosable — FULLY DEFERRED
+
+After fixing addToJar (confirmed on CI run 27595573592: addToJar 0, total ~23 distinct), I attempted to diagnose the biggest remaining cluster (runGate ×9, `convergence-gate-workspaces`) from the CI logs. Two blockers make the CI-only tail undiagnosable from logs alone:
+1. At `--test-concurrency=8` the per-test stdout is heavily INTERLEAVED across files, so a failing test's error block is buried in unrelated output.
+2. The actual failures only show `'red' !== 'green'` — the convergence gate's INTERNAL failure reasons (which check/command went red, why) are NOT printed by the test, so the log doesn't reveal the root cause.
+
+Combined with "don't reproduce on macOS/node25 even under CI-sim", the remaining 23 require EITHER (a) a Linux/node24 repro environment (Docker `node:24` + run the fast tier), OR (b) a dedicated session that temporarily INSTRUMENTS the failing tests (e.g. print `result.failures` / the orphan-tmp expected-vs-actual) and re-runs stability-gate to capture the real reasons. This is NOT babysitter tick-work and MUST NOT be guessed at (3 name-based guesses already failed: fetch-depth, pid-EINVAL, addToJar-TZ).
+
+**FULLY DEFERRED.** The remaining 23 CI-only failures are accepted as known CI-red (CI-green is hygiene, never a release gate). Resume only with a real repro env or an instrumentation pass, in a dedicated session.
+
 ### Recommendation
 
 The high-value structural work is done and shipped. The remaining ~25 is a fiddly, environment-specific, hygiene-only residual best tackled in a dedicated session with a Linux/node-24 repro env (or accepted as known CI-red since CI-green is not a release gate). Do not let it consume every babysitter tick — pivot to higher-value drain (verify-first-close stale P2 rows) and return to this methodically.
