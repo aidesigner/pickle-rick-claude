@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { addToJar } from '../services/jar-utils.js';
-import { formatLocalDateKey } from '../services/pickle-utils.js';
+import { formatLocalDateKey, getDataRoot } from '../services/pickle-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const JAR_UTILS_BIN = path.resolve(__dirname, '../services/jar-utils.js');
@@ -307,7 +307,10 @@ test('addToJar: result path is nested under jar/<date>/<sessionId>', () => {
         const resultPath = addToJar(dir);
         const today = formatLocalDateKey(new Date());
         const sessionId = path.basename(dir);
-        const jarRoot = path.join(os.homedir(), '.local/share/pickle-rick/jar');
+        // R-CIFB: assert against getDataRoot() (what addToJar uses) not a hardcoded
+        // ~/.local/share — CI sets EXTENSION_DIR=workspace, which getDataRoot()
+        // consults before HOME, so the artifact lands under the repo, not HOME.
+        const jarRoot = path.join(getDataRoot(), 'jar');
 
         assert.equal(resultPath, path.join(jarRoot, today, sessionId));
 
@@ -343,7 +346,10 @@ test('addToJar: result path uses local day, not UTC day', () => {
         });
 
         const sessionId = path.basename(dir);
-        const jarRoot = path.join(os.homedir(), '.local/share/pickle-rick/jar');
+        // R-CIFB: assert against getDataRoot() (what addToJar uses) not a hardcoded
+        // ~/.local/share — CI sets EXTENSION_DIR=workspace, which getDataRoot()
+        // consults before HOME, so the artifact lands under the repo, not HOME.
+        const jarRoot = path.join(getDataRoot(), 'jar');
         assert.equal(resultPath, path.join(jarRoot, '2026-04-28', sessionId));
         assert.notEqual(resultPath, path.join(jarRoot, '2026-04-29', sessionId));
 
