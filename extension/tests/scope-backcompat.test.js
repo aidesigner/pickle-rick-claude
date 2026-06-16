@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { setupAnatomyPark } from '../bin/pipeline-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EXTENSION_ROOT = path.join(os.homedir(), '.claude/pickle-rick');
+// R-CIFB: repo root (not deployed ~/.claude/pickle-rick) so setupAnatomyPark
+// spawns the repo's extension/bin/init-microverse.js — CI never runs install.sh.
+const EXTENSION_ROOT = path.resolve(__dirname, '..', '..');
 const CLI_PATH = path.resolve(__dirname, '..', 'bin', 'init-microverse.js');
 const FIXTURES_DIR = path.resolve(__dirname, 'fixtures');
 

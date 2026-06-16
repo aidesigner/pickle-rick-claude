@@ -5,12 +5,17 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   parseDiffForVisualStat,
   resolveDesignSafe,
   setupAnatomyPark,
   setupSzechuanSauce,
 } from '../bin/pipeline-runner.js';
+
+// R-CIFB: repo root (not deployed ~/.claude/pickle-rick) so setup*/init-microverse
+// spawns resolve the repo's extension/bin — CI never runs install.sh.
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -219,7 +224,7 @@ test('AC-PIAP-B2-1: setupAnatomyPark with designSafe=true writes design_safe:tru
   const target = tmpDir('ds-ap-target-');
   makeAnatomyTarget(target);
   const sessionDir = makeSessionDir(repo);
-  const extensionRoot = path.join(os.homedir(), '.claude/pickle-rick');
+  const extensionRoot = REPO_ROOT;
 
   const result = setupAnatomyPark(sessionDir, target, 3, extensionRoot, () => {}, undefined, true);
 
@@ -239,7 +244,7 @@ test('AC-PIAP-B2-1: setupAnatomyPark with designSafe=false (--no-design-safe) wr
   const target = tmpDir('ds-ap-false-target-');
   makeAnatomyTarget(target);
   const sessionDir = makeSessionDir(repo);
-  const extensionRoot = path.join(os.homedir(), '.claude/pickle-rick');
+  const extensionRoot = REPO_ROOT;
 
   const result = setupAnatomyPark(sessionDir, target, 3, extensionRoot, () => {}, undefined, false);
 
@@ -302,7 +307,7 @@ test('setupSzechuanSauce with designSafe=true writes design_safe:true to microve
   // szechuan-sauce does not require subsystems; just needs writable dirs
   fs.mkdirSync(target, { recursive: true });
   const sessionDir = makeSessionDir(repo);
-  const extensionRoot = path.join(os.homedir(), '.claude/pickle-rick');
+  const extensionRoot = REPO_ROOT;
 
   const result = setupSzechuanSauce(
     sessionDir, target, 3, extensionRoot,
