@@ -50,11 +50,26 @@ function frontmatterValue(frontmatter, key) {
 }
 function parseMappedRequirements(frontmatter) {
     const raw = frontmatterValue(frontmatter, 'mapped_requirements');
-    const inner = raw.replace(/^\[|\]$/g, '');
-    return inner
-        .split(',')
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+    if (raw.length > 0) {
+        const inner = raw.replace(/^\[|\]$/g, '');
+        return inner
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+    }
+    // YAML block-list form: mapped_requirements:\n  - AC-X\n  - AC-Y
+    const lines = frontmatter.split('\n');
+    const keyIdx = lines.findIndex((l) => /^mapped_requirements:\s*$/.test(l));
+    if (keyIdx === -1)
+        return [];
+    const items = [];
+    for (let i = keyIdx + 1; i < lines.length; i++) {
+        const m = /^\s+-\s+(.+)$/.exec(lines[i]);
+        if (!m)
+            break;
+        items.push(m[1].trim());
+    }
+    return items;
 }
 function extractSection(body, heading) {
     const lines = body.split('\n');
@@ -468,9 +483,9 @@ function checkCrossDocNaming(t) {
             ticket_id: t.id,
             ticket_path: t.relPath,
             defect_class: 'cross-doc-naming',
-            severity: 'warning',
+            severity: 'info',
             evidence: `title \`${t.title}\` mentions none of mapped_requirements ${JSON.stringify(t.mappedRequirements)}`,
-            remediation_hint: 'reflect the requirement ID in the title for cross-doc traceability',
+            remediation_hint: 'optionally reflect the requirement ID in the title for cross-doc traceability',
         });
     }
     return findings;
