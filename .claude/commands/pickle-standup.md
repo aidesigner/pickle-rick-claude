@@ -80,6 +80,17 @@ A ticket with at least one match → goes in **Y:**. A ticket with no match but 
 
 Tickets matched via merged PRs keep current behavior (no parenthetical needed unless drift). Tickets matched only via an open PR get the `(in flight, PR #NNN)` suffix so the team knows the work is shipped-to-PR but not yet merged.
 
+**R-SSWM-1 / R-SSWM-2 — Ship-basis classification (merge ≠ deploy).** Y: membership requires an **in-window merge or commit event** — match (1) branch, (2) merged-PR-in-window, (3) open-PR-in-window, or (4) commit-subject above. A Linear `completedAt` / `In Prod` / `Deployed-to-Int` status **alone** is NOT sufficient for Y:: a prod deploy flips `completedAt` when it carries *already-merged* code to production, often days after the PR merged. Classify each candidate's strongest in-window evidence as a `ship_basis`:
+
+| `ship_basis` | Evidence | Y: disposition |
+|:--|:--|:--|
+| `merged_in_window` | merged PR in the `merged:>=START` set | Y: (canonical) |
+| `commit_in_window` | commit in the `--since=START` scan | Y: |
+| `open_pr` | in-window open PR | Y: with `(in flight, PR #NNN)` |
+| `deploy_only` | in-window `completedAt` **and** no merge/commit match | **dropped from Y: by default** |
+
+A `deploy_only` ticket (its only in-window signal is a status flip) is **dropped from Y: by default**. If the operator explicitly wants it, list it under a distinct **`Reached production this window (built earlier)`** heading — never interleaved with merged-this-window lines. (Worked example: a single 2026-06-12 deploy stamped LOA-701/731/992/993 with same-day `completedAt` but none had an in-window merge — all four are `deploy_only`, absent from Y:.)
+
 Anything in helper output that doesn't map to a Linear ticket → drop, unless the user asked for raw output.
 
 ### Step 5: Format
@@ -108,7 +119,7 @@ T:
    - microverse iteration/rollback events
    - meeseeks pass summaries
    - any session with 0m duration whose name starts with `pickle-`, `gate-`, `anatomy-`, `szechuan-`, `meeseeks-`, or `microverse-`
-5. **Y:** = tickets with shipped activity in the window (commits/PRs/sessions matched). Use the Linear `state` to disambiguate done vs. in-flight.
+5. **Y:** = tickets with an **in-window merge or commit event** (commits/PRs/sessions matched per Step 4). Use the Linear `state` to disambiguate done vs. in-flight — but a Linear `completedAt` status flip **alone** is NOT sufficient for Y: (see Step 4 ship-basis: a `deploy_only` ticket is dropped). Status disambiguates; it never *qualifies* a ticket for Y:.
 6. **T:** = concrete next tickets (Todo / In Progress, assigned to user, recently updated). 3-6 items max — pick the ones most likely to be worked next.
 7. Drift signal: if a ticket's code clearly shipped but the Linear status is still Todo/In Progress, mention it in the Y: line ("LOA-656 — UI Unit Details + Income Approach cards shipped (Linear still Todo)") so the user can update Linear.
 8. **Translate jargon before writing.** If a PR title is jargon (matches `/szechuan|anatomy-park|trap door|microverse|plumbus|meeseeks|pickle|morty|council of ricks/i`, is shorter than 25 chars, or is a bare kebab-slug), run `gh pr view <N> --json title,body` and rewrite in user-impact language.
@@ -130,6 +141,7 @@ T:
     Drift signal: LOA-### / LOA-### — In Progress in Linear but shipped on PR #NNN; flip when ready.
     ```
     One footer line per open PR with drift. This is distinct from Rule 7 (which handles merged-but-not-closed drift inline on the Y: line). Skip the footer entirely when no open PR has Linear drift.
+14. **R-SSWM-3 — read the ticket description before describing.** Before composing a Y:/T: product-voice line, **read the ticket description** (not the title alone) via `mcp__plugin_linear_linear__get_issue` and write the line from the ticket *body*. Titles routinely mislead: they are short, jargon-laden, or describe the trigger rather than the work. Counter-example (observed 2026-06-12): **LOA-731** is titled "Test YAML from database in production" but its description is a *production shadow-audit equivalence harness* — writing the Y: line from the title alone produced the wrong "rules load from the DB" description. If the description and title disagree, the description wins.
 
 ### Example
 

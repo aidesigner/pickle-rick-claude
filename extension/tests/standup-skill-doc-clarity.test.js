@@ -4,6 +4,9 @@
  * R-PSU-2 / AC-PSU-02 — open-PR query change.
  * R-PSU-3 / AC-PSU-03 — Step 2.5 commit-level LOA-### scan.
  * R-PSU-4 / AC-PSU-04 — repo auto-discovery snippet.
+ * R-SSWM-1 — Y: requires an in-window merge/commit event; `completedAt` alone insufficient.
+ * R-SSWM-2 — `deploy_only` bucket: default-drop + separate "built earlier" heading.
+ * R-SSWM-3 — read the ticket description before describing + LOA-731 counter-example.
  *
  * Doc-only lint tests against `.claude/commands/pickle-standup.md`.
  */
@@ -61,4 +64,42 @@ test('AC-PSU-04: skill replaces hardcoded repo list with auto-discovery loop', (
     content.includes('pickle-rick-claude'),
     'discovery must explicitly skip pickle-rick-claude',
   );
+});
+
+test('R-SSWM-1: Y: ties to a merge/commit event; completedAt named as insufficient', () => {
+  const content = fs.readFileSync(SKILL, 'utf-8');
+  assert.ok(
+    content.includes('in-window merge or commit event'),
+    'skill must tie Y: membership to an in-window merge or commit event',
+  );
+  assert.ok(
+    content.includes('is NOT sufficient for Y:'),
+    'skill must name a Linear status flip (completedAt/In Prod) as NOT sufficient for Y:',
+  );
+  assert.ok(
+    /completedAt/.test(content),
+    'skill must reference completedAt in the negative (status alone is not a ship signal)',
+  );
+});
+
+test('R-SSWM-2: deploy_only bucket — default-drop + separate "built earlier" heading', () => {
+  const content = fs.readFileSync(SKILL, 'utf-8');
+  assert.ok(content.includes('deploy_only'), 'skill must document the deploy_only ship_basis class');
+  assert.ok(
+    content.includes('dropped from Y: by default'),
+    'deploy_only must be dropped from Y: by default',
+  );
+  assert.ok(
+    content.includes('Reached production this window (built earlier)'),
+    'deploy_only opt-in must go under a distinct "built earlier" heading',
+  );
+});
+
+test('R-SSWM-3: read the ticket description before describing + LOA-731 counter-example', () => {
+  const content = fs.readFileSync(SKILL, 'utf-8');
+  assert.ok(
+    content.includes('read the ticket description') || content.includes('read the ticket **description**'),
+    'skill must instruct reading the ticket description (not the title alone)',
+  );
+  assert.ok(content.includes('LOA-731'), 'skill must carry the LOA-731-class counter-example');
 });
