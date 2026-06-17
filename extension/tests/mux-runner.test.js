@@ -4914,3 +4914,46 @@ test('classifyCapCheckReadError: non-Error thrown values default to exit_error',
         fs.rmSync(session.dataRoot, { recursive: true, force: true });
     }
 });
+
+// AC-R-WPEXA-9 — exit-drain fallback resolver: strict positive-int env override
+// with default-on-invalid (no floor clamp beyond > 0). The 30000ms default is
+// the foreground small/medium worker exit-drain window; the large-tier detached
+// path short-circuits runIteration and never reaches it.
+import {
+    EXIT_DRAIN_FALLBACK_ENV_VAR,
+    resolveExitDrainFallbackMs,
+} from '../bin/mux-runner.js';
+
+test('AC-R-WPEXA-9: env var name is PICKLE_EXIT_DRAIN_FALLBACK_MS', () => {
+    assert.equal(EXIT_DRAIN_FALLBACK_ENV_VAR, 'PICKLE_EXIT_DRAIN_FALLBACK_MS');
+});
+
+test('AC-R-WPEXA-9: absent env -> 30000 default', () => {
+    assert.equal(resolveExitDrainFallbackMs({}), 30000);
+});
+
+test('AC-R-WPEXA-9: strict positive-int override is honored', () => {
+    assert.equal(
+        resolveExitDrainFallbackMs({ [EXIT_DRAIN_FALLBACK_ENV_VAR]: '500' }),
+        500,
+    );
+    assert.equal(
+        resolveExitDrainFallbackMs({ [EXIT_DRAIN_FALLBACK_ENV_VAR]: '120000' }),
+        120000,
+    );
+});
+
+test('AC-R-WPEXA-9: invalid / zero / negative / fractional / non-numeric -> 30000', () => {
+    const cases = ['0', '-1', '-250', '3.5', 'abc', '', '   ', '12px', 'NaN', 'Infinity'];
+    for (const raw of cases) {
+        assert.equal(
+            resolveExitDrainFallbackMs({ [EXIT_DRAIN_FALLBACK_ENV_VAR]: raw }),
+            30000,
+            `raw=${JSON.stringify(raw)} must fall back to 30000`,
+        );
+    }
+});
+
+test('AC-R-WPEXA-9: blank/whitespace env value falls back (does not parse to 0)', () => {
+    assert.equal(resolveExitDrainFallbackMs({ [EXIT_DRAIN_FALLBACK_ENV_VAR]: ' ' }), 30000);
+});

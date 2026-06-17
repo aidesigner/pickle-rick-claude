@@ -229,13 +229,35 @@ const TASK_NOTES_MAX_CHARS = 2000;
 const MANAGER_TURN_HEARTBEAT_POLL_MS = 20_000;
 const HEARTBEAT_ARTIFACT_PREFIXES = ['research_', 'plan_', 'conformance_'] as const;
 
-// R-MWIS-1: bounded stdio-drain window after the child's 'exit' event. Node's
-// 'close' event (the legacy completion signal) is gated on stdio-pipe closure,
-// which can lag indefinitely on a silent 0-byte worker exit (render-lag or an
-// inherited fd) and hang the mux loop at 0% CPU. 'exit' is the PRIMARY signal;
-// after it fires we give the pipes this brief window to flush any imminent
-// 'close' (avoids truncating buffered worker output) before finalizing.
-const EXIT_DRAIN_FALLBACK_MS = 250;
+// R-MWIS-1 / AC-R-WPEXA-9: bounded stdio-drain window after the child's 'exit'
+// event. Node's 'close' event (the PRIMARY completion signal) is gated on
+// stdio-pipe closure, which can lag indefinitely on a silent 0-byte worker exit
+// (render-lag or an inherited fd) and hang the mux loop at 0% CPU. After 'exit'
+// fires we give the pipes this window to flush any imminent 'close' (avoids
+// truncating buffered worker output) before finalizing. The healthy path
+// finalizes via 'close' (which fires promptly), so this window only bounds the
+// genuinely silent exit; 250ms was too short and truncated healthy
+// small/medium worker output on the foreground exit path. Tunable per-machine
+// via PICKLE_EXIT_DRAIN_FALLBACK_MS (strict positive integer); invalid / absent
+// / non-positive falls back to this 30_000 ms default.
+const EXIT_DRAIN_FALLBACK_MS = 30_000;
+export const EXIT_DRAIN_FALLBACK_ENV_VAR = 'PICKLE_EXIT_DRAIN_FALLBACK_MS';
+
+// Resolve the exit-drain fallback window. Env override wins when it parses as a
+// strict positive integer; everything else (absent / blank / non-numeric /
+// zero / negative / fractional) falls back to EXIT_DRAIN_FALLBACK_MS. Mirrors
+// resolveWorkerTestGateTimeoutMs in services/pickle-utils.ts, minus the floor
+// clamp (here the contract is default-on-invalid with no minimum beyond > 0).
+export function resolveExitDrainFallbackMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[EXIT_DRAIN_FALLBACK_ENV_VAR];
+  if (typeof raw === 'string' && raw.trim().length > 0) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return EXIT_DRAIN_FALLBACK_MS;
+}
 
 export function maybeEmitManagerTurnProgress(opts: {
   sessionDir: string;
@@ -3258,6 +3280,11 @@ export async function runIteration(
   // by the stop-hook (tmux-runner spawns managers, not workers).
   delete env['PICKLE_ROLE'];
 
+  // AC-R-WPEXA-9: bounded 'exit'-drain fallback window for this iteration,
+  // tunable via PICKLE_EXIT_DRAIN_FALLBACK_MS (resolved from the worker env,
+  // which folds in runtimeOverrides.envOverrides).
+  const exitDrainFallbackMs = resolveExitDrainFallbackMs(env);
+
   // Use a raw file descriptor with synchronous writes so every chunk hits
   // the disk immediately. Node's WriteStream buffers up to 16KB internally,
   // which starves log-watcher (it polls file size via statSync).
@@ -3528,7 +3555,7 @@ export async function runIteration(
       const drainTimer = setTimeout(() => {
         if (settled) return;
         finalizeOnChildEnd(code ?? null);
-      }, EXIT_DRAIN_FALLBACK_MS);
+      }, exitDrainFallbackMs);
       drainTimer.unref();
     });
 
