@@ -70,6 +70,24 @@ jobs:
             # surface just the failures + summary inline for quick scan
             grep -E '^✖|^# fail|^# pass|^# tests|AssertionError|expected:|actual:|code:|Error:|ENOENT|EEXIST' "$log" | head -40 | sed "s|^|[$f] |" || true
           done
+      - name: Identify c=8 fast-tier flaky tests (residual-3)
+        working-directory: extension
+        shell: bash
+        # The check-flake-budget tool reports FAIL_BUDGET_EXCEEDED only in aggregate
+        # (per-test names swallowed by design). Reproduce the c=8 Linux load-flakes
+        # directly: run the full fast tier at --test-concurrency=8 twice and capture
+        # the per-test ✖ lines so the flaky set can be serialized per R-TFP.
+        run: |
+          mkdir -p ../rcifb-debug-logs
+          for run in 1 2; do
+            log="../rcifb-debug-logs/c8-fast-run${run}.log"
+            echo "=== c=8 fast tier run ${run} ===" | tee "$log"
+            node bin/test-runner.js --tier fast --test-concurrency=8 >> "$log" 2>&1 || true
+            echo "--- run ${run} failing tests (file-level + case-level) ---"
+            grep -E '^✖|^ +✖' "$log" | sed "s|^|[c8-run${run}] |" || echo "[c8-run${run}] (no ✖ captured)"
+          done
+          echo "=== UNION of c=8 failing tests across both runs (R-TFP serialization candidates) ==="
+          grep -hE '^✖|^ +✖' ../rcifb-debug-logs/c8-fast-run*.log | sort -u || true
       - name: Upload per-file logs
         if: always()
         uses: actions/upload-artifact@v4
