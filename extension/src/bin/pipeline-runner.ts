@@ -2271,6 +2271,37 @@ export async function executeCitadelPhase(runtime: PipelineRuntime): Promise<{ e
   const reportPath = path.join(runtime.sessionDir, 'citadel_report.json');
   const { cap, remediatorTimeoutMs } = citadelRemediationDeps.loadSettings();
   const threshold = remediationSeverityThreshold(runtime.config.citadel_strict);
+
+  // T40 bypass + kill-switch: the mechanical floor is additive over the threshold set, so
+  // collapsing it reverts toRemediate to the legacy Critical-only/threshold-only behavior.
+  // Bypass reuses the UNIFIED skip surface (no new per-gate flag — W5b); kill-switch is the
+  // dedicated env var, gated on the literal lowercase 'off' (PICKLE_CODEGRAPH precedent).
+  const skipReason =
+    typeof state.flags?.skip_quality_gates_reason === 'string' && state.flags.skip_quality_gates_reason.trim()
+      ? state.flags.skip_quality_gates_reason.trim()
+      : null;
+  const mechanicalKilled = process.env.PICKLE_CITADEL_MECHANICAL === 'off';
+  const mechanicalEnabled = !skipReason && !mechanicalKilled;
+  if (skipReason) {
+    // Emit ONCE per phase invocation (not per cycle). Kill-switch reverts silently.
+    try {
+      sm.update(runtime.statePath, s => {
+        const activity = Array.isArray(s.activity) ? s.activity : [];
+        s.activity = [
+          ...activity,
+          {
+            event: 'gate_skipped',
+            ts: new Date().toISOString(),
+            source: 'citadel-mechanical',
+            gate_payload: { reason: 'skip_quality_gates', detail: skipReason },
+          },
+        ];
+      });
+    } catch (err) {
+      runtime.log(`citadel: gate_skipped activity write failed: ${safeErrorMessage(err)}`);
+    }
+  }
+
   // Outer accumulator tracks what was actually ATTEMPTED (the union), so the cap-exhausted
   // log below reflects the full set fed to the remediator, not just the threshold subset.
   let toRemediate: CitadelFinding[] = [];
@@ -2289,7 +2320,7 @@ export async function executeCitadelPhase(runtime: PipelineRuntime): Promise<{ e
     const remediable = result.findings.filter(f => findingMeetsThreshold(f, threshold));
     // ADDITIVE floor: mechanical (deterministically-fixable, sub-threshold) findings join the
     // remediator set without weakening the Critical/High threshold filter above.
-    const mechanical = result.findings.filter(isMechanicalCitadelFinding);
+    const mechanical = mechanicalEnabled ? result.findings.filter(isMechanicalCitadelFinding) : [];
     const seen = new Set(remediable.map(f => f.id));
     toRemediate = [...remediable, ...mechanical.filter(f => !seen.has(f.id))];
     runtime.log(`citadel: cycle ${cycle + 1}/${cap} — wrote ${reportPath} with ${result.findings.length} finding(s), ${remediable.length} remediable (>= ${threshold}), ${mechanical.length} mechanical, ${toRemediate.length} total`);

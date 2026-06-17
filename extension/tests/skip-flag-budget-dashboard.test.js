@@ -222,3 +222,37 @@ test('metrics --json emits skip_flag_budget from the activity dir', () => {
     assert.equal(entry.uses, 2);
     fs.rmSync(dataRoot, { recursive: true, force: true });
 });
+
+// --- B-CSOR T40: citadel-mechanical recurrence budget --------------------
+
+test('SKIP_FLAG_BUDGETS: citadel-mechanical::skip_quality_gates resolves to 3', () => {
+    assert.equal(SKIP_FLAG_BUDGETS['citadel-mechanical::skip_quality_gates'], 3);
+    // tighter than the default so routine operator bypasses surface as a smell sooner
+    assert.ok(SKIP_FLAG_BUDGETS['citadel-mechanical::skip_quality_gates'] < DEFAULT_SKIP_FLAG_BUDGET);
+});
+
+test('buildSkipFlagBudgetReport: citadel-mechanical bypass flagged over its budget of 3', () => {
+    const events = [];
+    for (let i = 0; i < 4; i++) {
+        events.push({ event: 'gate_skipped', source: 'citadel-mechanical', reason: 'skip_quality_gates' });
+    }
+    const report = buildSkipFlagBudgetReport(events, SKIP_FLAG_BUDGETS, '2026-06-01', '2026-06-16');
+    const entry = report.entries.find((e) => e.source === 'citadel-mechanical' && e.reason === 'skip_quality_gates');
+    assert.ok(entry, 'expected a citadel-mechanical entry');
+    assert.equal(entry.uses, 4);
+    assert.equal(entry.budget, 3);
+    assert.equal(entry.over_budget, true);
+    assert.equal(entry.removal_candidate, true);
+});
+
+test('buildSkipFlagBudgetReport: citadel-mechanical bypass at budget (3) is NOT flagged', () => {
+    const events = [];
+    for (let i = 0; i < 3; i++) {
+        events.push({ event: 'gate_skipped', source: 'citadel-mechanical', reason: 'skip_quality_gates' });
+    }
+    const report = buildSkipFlagBudgetReport(events, SKIP_FLAG_BUDGETS, '2026-06-01', '2026-06-16');
+    const entry = report.entries.find((e) => e.source === 'citadel-mechanical' && e.reason === 'skip_quality_gates');
+    assert.equal(entry.uses, 3);
+    assert.equal(entry.over_budget, false);
+    assert.equal(entry.removal_candidate, false);
+});
