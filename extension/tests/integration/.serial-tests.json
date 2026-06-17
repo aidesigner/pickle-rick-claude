@@ -1,5 +1,6 @@
 {
   "entries": [
+    "tests/timeout-happy-path.test.js",
     "tests/integration/pntr-teams-tmux.test.js",
     "tests/integration/pntr-pickle-deprecated.test.js",
     "tests/integration/spawn-morty-backend-resolution.test.js",

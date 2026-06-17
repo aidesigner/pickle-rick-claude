@@ -1,4 +1,9 @@
-// @tier: fast
+// @tier: integration
+// B-CITAIL T6 (R-TFP): the FR-B10 fixture spawns a fake-claude that sleeps ~95% of
+// its worker_timeout budget; under c=8 fast-tier load the subprocess is starved and
+// killed before writing its artifact (Linux CI flake). Promoted to integration +
+// serialized (tests/integration/.serial-tests.json) so it runs at
+// --test-concurrency=1 with the full budget. Class: load-dependent-timeout.
 /**
  * FR-B10 regression: fixture manager sleeps beyond worker_timeout_seconds,
  * writes an artifact, and completes without SIGTERM.
