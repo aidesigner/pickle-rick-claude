@@ -19,6 +19,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Enable corepack (pnpm/yarn on PATH)
+        # R-CIFB / WS-C: convergence-gate runGate detects pnpm-workspace fixtures as
+        # 'pnpm' and runs `pnpm test`. setup-node@v4 ships npm/npx but NOT pnpm, so
+        # the gate's detectMissingTools(['pnpm']) short-circuits red. corepack puts
+        # pnpm on PATH for the sibling pnpm-path tests (e.g.
+        # convergence-gate-flake-allowlist.test.js). The in-scope
+        # convergence-gate-workspaces fixture was made pnpm-independent (npm
+        # workspaces) by ticket b6e2185a; this step is additive insurance.
+        run: corepack enable
       - name: Install extension dependencies
         working-directory: extension
         run: npm ci

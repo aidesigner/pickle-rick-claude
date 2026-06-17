@@ -49,6 +49,7 @@
     "tests/auto-resume-stop-conditions.test.js": "load-dependent-timeout",
     "tests/microverse.test.js": "subprocess-spawn-timing",
     "tests/audit-subprocess-heavy-tests.test.js": "load-dependent-timeout",
-    "tests/audit-test-isolation.test.js": "load-dependent-timeout"
+    "tests/audit-test-isolation.test.js": "load-dependent-timeout",
+    "tests/bin/test-runner-tier-discovery.test.js": "subprocess-timeout-coupling"
   }
 }

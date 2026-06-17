@@ -1,4 +1,9 @@
-// @tier: fast
+// @tier: integration
+// SERIAL: subprocess-timeout-coupling — the wedged-child timeout test (:257)
+// spawns a real `node --test` child with a fixed 5000ms runner timeout; under
+// `test:fast` --test-concurrency=8 the child can be SIGKILLed before it registers
+// as a running test, starving the `/cancelled 1|tests 1/` stdout assertion (R-TFP).
+// Serialized via tests/integration/.serial-tests.json (runs at --test-concurrency=1).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
