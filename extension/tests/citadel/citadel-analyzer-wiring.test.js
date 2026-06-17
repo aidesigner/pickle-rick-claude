@@ -22,6 +22,10 @@ const FILENAME_EXCLUDED = new Set([
   // R-HRP-2 adapter (CitadelFinding[] -> GateResult) for the remediation feed —
   // consumed by the gate/remediator path, not an analyzer wired into audit-runner.
   'citadel-findings-to-gate-result.ts',
+  // B-CSOR read-only finding classifier (isMechanicalCitadelFinding) — consumed by
+  // pipeline-runner's executeCitadelPhase to lower the remediation floor for the
+  // mechanical subset, not an analyzer wired into audit-runner.
+  'mechanical-finding-classifier.ts',
 ]);
 
 function isFilenameExcluded(basename) {
