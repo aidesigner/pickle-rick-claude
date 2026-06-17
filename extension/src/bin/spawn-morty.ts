@@ -29,7 +29,7 @@ import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, BACKENDS, type
 import { CodegraphService } from '../services/codegraph-service.js';
 import { isRecord } from '../lib/is-record.js';
 import { ArchiveAbortError, getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
-import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile, sessionStampEnv, shouldIsolateSessionGroup } from '../services/backend-spawn.js';
+import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile, sessionStampEnv, shouldIsolateSessionGroup, shouldForceDetachForLargeTier } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { autoFillCompletionCommit } from './auto-fill-completion-commit.js';
@@ -2065,8 +2065,12 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
   // R-CSI / W2.R1: detach so the worker subtree leads its own process group;
   // killProcessTree's existing `process.kill(-pid, sig)` then reaps exactly this
   // session's group and cannot reach a concurrent session's healthy workers.
-  // PICKLE_RECOVERY_CONSOLIDATION=off reverts to the per-seam (non-detached) path.
-  const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: ['inherit', 'pipe', 'pipe'], detached: shouldIsolateSessionGroup() });
+  // PICKLE_RECOVERY_CONSOLIDATION=off reverts to the per-seam (non-detached) path,
+  // EXCEPT for the detached large-tier lifecycle worker: mux-runner sets
+  // PICKLE_LARGE_TIER_DETACHED_WORKER=1 so `shouldForceDetachForLargeTier` forces
+  // detach ON regardless of the recovery-consolidation kill-switch — else `=off`
+  // un-detaches the worker and breaks the orchestrator session-group reap (#108).
+  const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: ['inherit', 'pipe', 'pipe'], detached: shouldIsolateSessionGroup() || shouldForceDetachForLargeTier() });
   proc.stdout?.pipe(sessionLog, { end: false });
   proc.stderr?.pipe(sessionLog, { end: false });
   attachCompletionCommitAckListener(proc, ticketId, path.join(sessionRoot, 'state.json'));

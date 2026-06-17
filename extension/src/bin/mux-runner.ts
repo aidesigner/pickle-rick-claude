@@ -9,7 +9,7 @@ import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRES
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerConfig, type CircuitBreakerState } from '../services/circuit-breaker.js';
-import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides, sessionStampEnv } from '../services/backend-spawn.js';
+import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides, sessionStampEnv, LARGE_TIER_DETACH_FORCE_ENV } from '../services/backend-spawn.js';
 import { resolveCodexModel } from './spawn-morty.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream, CODEX_DELIMITER_RE } from '../services/classifier-utils.js';
@@ -7330,6 +7330,162 @@ export function routeDeadDetachedWorkerDisposition(input: {
   }
 }
 
+// ─── T6 (AC-R-WPEXA-5 timeout/reap + AC-R-WPEXA-16 identity validation) ───
+
+/** `ps lstart` truncates to whole seconds; tolerate that skew when comparing start-time to spawn epoch. */
+const DETACHED_WORKER_IDENTITY_SKEW_MS = 2_000;
+
+/**
+ * Read a process's wall-clock START TIME (epoch ms) via `ps -p <pid> -o lstart=`.
+ * Portable on macOS (BSD) and Linux (GNU); the value is parsed with `Date.parse`.
+ * Returns null on a dead/absent pid, any ps error, or an unparseable value. The
+ * `ps` reader is injectable so identity-gate tests never shell out. Every spawn
+ * carries a finite timeout (trap-door convention).
+ */
+export function readProcessStartEpochMs(
+  pid: number,
+  reader: (pid: number) => string | null = defaultLstartReader,
+): number | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  const raw = reader(pid);
+  if (!raw) return null;
+  const parsed = Date.parse(raw.trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function defaultLstartReader(pid: number): string | null {
+  try {
+    const r = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf-8', timeout: 5_000 });
+    if (r.status !== 0 || typeof r.stdout !== 'string') return null;
+    return r.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * AC-R-WPEXA-16 PID-reuse guard: validate that the process at `workerPid` is OUR
+ * detached worker and not a recycled PID now owned by a stranger. The process
+ * start-time MUST be at/after `spawnedAtEpoch` (within a whole-second skew). A
+ * start-time strictly before the spawn means the PID was reused (a stranger
+ * started before our worker would have); an unreadable start-time fails CLOSED so
+ * an unverifiable PID is NEVER killed. This gate protects BOTH the re-attach (live
+ * poll) and the reap. `startTimeReader` is injectable for tests.
+ */
+export function validateDetachedWorkerIdentity(input: {
+  workerPid: number;
+  spawnedAtEpoch: number;
+  startTimeReader?: (pid: number) => number | null;
+}): { ok: boolean; reason: string; startEpochMs: number | null } {
+  const read = input.startTimeReader ?? ((pid: number) => readProcessStartEpochMs(pid));
+  const startEpochMs = read(input.workerPid);
+  if (startEpochMs === null) {
+    return { ok: false, reason: 'start_time_unreadable', startEpochMs: null };
+  }
+  if (startEpochMs < input.spawnedAtEpoch - DETACHED_WORKER_IDENTITY_SKEW_MS) {
+    return { ok: false, reason: 'pid_reuse_start_before_spawn', startEpochMs };
+  }
+  return { ok: true, reason: 'identity_validated', startEpochMs };
+}
+
+export interface ReapTimedOutDetachedWorkerInput {
+  sessionDir: string;
+  statePath: string;
+  extensionRoot: string;
+  workingDir: string;
+  ticketId: string;
+  workerPid: number;
+  spawnedAtEpoch: number;
+  workerTimeoutSeconds: number;
+  elapsedSeconds: number;
+  iteration: number;
+  flags: Record<string, unknown> | null;
+  log: (msg: string) => void;
+  progress: { spawnCount: number; zeroProgressCount: number };
+  /** Test seams: inject the kill, the start-time reader, and the dead-disposition routing. */
+  deps?: {
+    killFn?: (groupPid: number, signal: NodeJS.Signals) => void;
+    startTimeReader?: (pid: number) => number | null;
+    disposeFn?: (input: Parameters<typeof routeDeadDetachedWorkerDisposition>[0]) => { action: 'continue' | 'break'; exitReason?: ExitReason };
+  };
+}
+
+/**
+ * T6 (AC-R-WPEXA-5): a LIVE detached worker that has exceeded its per-ticket
+ * `worker_timeout_seconds` (measured from `spawned_at_epoch`, NOT a manager turn)
+ * is reaped by the orchestrator as a backstop to spawn-morty's in-process reaper.
+ *
+ * Identity-first, fail-closed: `validateDetachedWorkerIdentity` runs BEFORE any
+ * kill. On identity failure (PID reuse / unreadable start-time) the negative-pid
+ * group kill is NOT issued — a stranger may now own the recorded PID — but the
+ * arm is still cleared and recovery still routed (the original worker is gone).
+ *
+ * On a validated identity: a synchronous best-effort session-group reap
+ * (`process.kill(-worker_pid, 'SIGTERM')` then `'SIGKILL'`, each in try/catch;
+ * ESRCH = already dead = fine), then `large_tier_worker_reaped` is emitted, then
+ * the now-dead worker is disposed via `routeDeadDetachedWorkerDisposition` so
+ * salvage + recovery + arm-clear run EXACTLY ONCE through the single oracle (NO new
+ * completion authority is introduced here — completion lives in salvageTicket/deps).
+ * Reuse-over-duplication: reap-then-dispose collapses the reaped worker onto the
+ * existing dead-worker disposition path rather than re-implementing it.
+ */
+export function reapTimedOutDetachedWorker(
+  input: ReapTimedOutDetachedWorkerInput,
+): { action: 'continue' | 'break'; exitReason?: ExitReason } {
+  const { sessionDir, statePath, extensionRoot, workingDir, ticketId, workerPid, iteration, flags, log, progress } = input;
+  const killFn = input.deps?.killFn ?? ((groupPid: number, signal: NodeJS.Signals) => { process.kill(groupPid, signal); });
+  const disposeFn = input.deps?.disposeFn ?? ((di) => routeDeadDetachedWorkerDisposition(di));
+
+  const identity = validateDetachedWorkerIdentity({
+    workerPid,
+    spawnedAtEpoch: input.spawnedAtEpoch,
+    startTimeReader: input.deps?.startTimeReader,
+  });
+
+  const emitReaped = (outcome: string): void => {
+    try {
+      writeActivityEntry(statePath, {
+        event: 'large_tier_worker_reaped',
+        ts: new Date().toISOString(),
+        ticket: ticketId,
+        gate_payload: {
+          worker_pid: workerPid,
+          ticket_id: ticketId,
+          outcome,
+          spawned_at_epoch: input.spawnedAtEpoch,
+          elapsed_seconds: input.elapsedSeconds,
+          worker_timeout_seconds: input.workerTimeoutSeconds,
+        },
+      });
+    } catch { /* best-effort observability */ }
+  };
+
+  if (!identity.ok) {
+    // PID reuse / unverifiable → do NOT kill (fail closed). Still clear the arm
+    // and route recovery: the original worker is gone, a stranger may own the PID.
+    log(`[large-tier] detached worker pid=${workerPid} timed out but identity FAILED (${identity.reason}) — refusing reap, disposing as dead`);
+    emitReaped(`identity_failed_no_kill:${identity.reason}`);
+    return disposeFn({
+      sessionDir, statePath, extensionRoot, workingDir, ticketId, iteration, flags, log,
+      progress: { spawnCount: progress.spawnCount, zeroProgressCount: progress.zeroProgressCount },
+    });
+  }
+
+  // Validated identity → session-group reap of the NEGATIVE pid (group leader).
+  // Synchronous best-effort: SIGTERM then SIGKILL back-to-back; ESRCH = already gone.
+  log(`[large-tier] detached worker pid=${workerPid} exceeded ${input.workerTimeoutSeconds}s (elapsed ${input.elapsedSeconds}s) — session-group reaping`);
+  try { killFn(-workerPid, 'SIGTERM'); } catch { /* ESRCH/already dead — fine */ }
+  try { killFn(-workerPid, 'SIGKILL'); } catch { /* ESRCH/already dead — fine */ }
+  emitReaped('reaped');
+
+  // The worker is now dead → dispose once through the dead-worker oracle path
+  // (salvage + recovery + arm-clear). No duplicated completion authority.
+  return disposeFn({
+    sessionDir, statePath, extensionRoot, workingDir, ticketId, iteration, flags, log,
+    progress: { spawnCount: progress.spawnCount, zeroProgressCount: progress.zeroProgressCount },
+  });
+}
+
 // ─── Ticket 90574654: silent-death sub-classification + salvage-first recovery ───
 
 /** Silent-death sub-classes (90574654). `log_empty` → `worker_silent_death`; `log_truncated` → existing `worker_partial_lifecycle_exit`. */
@@ -9308,6 +9464,10 @@ async function runMuxRunnerMain() {
         ...sessionStampEnv(path.basename(sessionDir), state.working_dir || process.cwd()),
         PICKLE_STATE_FILE: statePath,
         PYTHONUNBUFFERED: '1',
+        // AC-R-WPEXA-16: force spawn-morty to `detached:true` regardless of the
+        // PICKLE_RECOVERY_CONSOLIDATION kill-switch so the worker leads its own
+        // process group and the orchestrator session-group reap can reach it.
+        [LARGE_TIER_DETACH_FORCE_ENV]: '1',
       };
       delete workerEnv['CLAUDECODE'];
       // Do NOT set PICKLE_ROLE here; spawn-morty sets it for its own child subprocess.
@@ -9406,6 +9566,52 @@ async function runMuxRunnerMain() {
         });
         if (disp.action === 'break') {
           if (disp.exitReason) exitReason = disp.exitReason;
+          break;
+        }
+        lastStateIteration = -1;
+        stallCount = 0;
+        // eslint-disable-next-line no-useless-assignment -- progress marker read by the watchdog on the next loop iteration after continue
+        lastProgressEpoch = muxNow();
+        continue;
+      }
+
+      // T6 (AC-R-WPEXA-5): poll-side timeout backstop. The detached worker is no
+      // longer bounded by a manager Bash turn, so its timeout is measured from
+      // state.detached_worker.spawned_at_epoch (ms) against the per-ticket worker
+      // budget (same fallback as the spawn branch). A LIVE worker past the budget
+      // is identity-validated then session-group reaped, then disposed-as-dead.
+      const dwRawTimeout = Number(state.worker_timeout_seconds);
+      const dwTimeoutSec = Number.isFinite(dwRawTimeout) && dwRawTimeout > 0 ? dwRawTimeout : Defaults.WORKER_TIMEOUT_SECONDS;
+      const dwElapsedSec = (Date.now() - dw.spawned_at_epoch) / 1000;
+      if (dwElapsedSec >= dwTimeoutSec) {
+        // AC-2 fail-safe: a git-mutating disposition MUST have an explicit working_dir.
+        if (!state.working_dir) {
+          recordExitReason(statePath, 'state_working_dir_missing');
+          safeDeactivate(statePath);
+          exitReason = 'state_working_dir_missing';
+          break;
+        }
+        const reapProgress = state.worker_artifact_progress?.[detachedTicketId];
+        const reapDisp = reapTimedOutDetachedWorker({
+          sessionDir,
+          statePath,
+          extensionRoot,
+          workingDir: state.working_dir,
+          ticketId: detachedTicketId,
+          workerPid: dw.worker_pid,
+          spawnedAtEpoch: dw.spawned_at_epoch,
+          workerTimeoutSeconds: dwTimeoutSec,
+          elapsedSeconds: Math.floor(dwElapsedSec),
+          iteration,
+          flags: (state.flags as Record<string, unknown> | undefined) ?? null,
+          log,
+          progress: {
+            spawnCount: reapProgress?.spawn_count ?? 0,
+            zeroProgressCount: reapProgress?.zero_progress_count ?? 0,
+          },
+        });
+        if (reapDisp.action === 'break') {
+          if (reapDisp.exitReason) exitReason = reapDisp.exitReason;
           break;
         }
         lastStateIteration = -1;

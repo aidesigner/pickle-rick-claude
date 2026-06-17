@@ -778,9 +778,26 @@ export function backendEnvOverrides(backend: Backend): NodeJS.ProcessEnv {
 // (no detach → kills fall back to the direct child as before this fix landed). Only
 // the literal lowercase string 'off' disables; any other value / absent keeps the
 // consolidated session-group isolation active.
+//
+// Precedence (the two flags are ORTHOGONAL kill-switches):
+//   - PICKLE_RECOVERY_CONSOLIDATION (this switch) gates the GENERAL session-group
+//     isolation for every worker spawn (`shouldIsolateSessionGroup`).
+//   - PICKLE_LARGE_TIER_DETACHED_WORKER=1 (the large-tier-detached lifecycle marker,
+//     `shouldForceDetachForLargeTier`) FORCES `detached:true` for a detached large-tier
+//     worker even when PICKLE_RECOVERY_CONSOLIDATION=off would otherwise un-detach it.
+//     Without the force, `=off` un-detaches the worker, breaks the orchestrator
+//     session-group reap (`process.kill(-pid)`), and re-opens #108. The large-tier
+//     lifecycle therefore overrides the recovery-consolidation kill-switch.
 // ---------------------------------------------------------------------------
 
 export const SESSION_ISOLATION_KILL_SWITCH = 'PICKLE_RECOVERY_CONSOLIDATION';
+
+/**
+ * Env marker set by mux-runner's detached large-tier spawn (`workerEnv`) so the
+ * spawn-morty child forces `detached:true` regardless of the
+ * `PICKLE_RECOVERY_CONSOLIDATION` kill-switch. See the precedence note above.
+ */
+export const LARGE_TIER_DETACH_FORCE_ENV = 'PICKLE_LARGE_TIER_DETACHED_WORKER';
 
 /**
  * Env stamp identifying the owning session for every spawned subprocess.
@@ -805,6 +822,20 @@ export function shouldIsolateSessionGroup(env: NodeJS.ProcessEnv = process.env):
   if (process.platform === 'win32') return false;
   if (env[SESSION_ISOLATION_KILL_SWITCH] === 'off') return false;
   return true;
+}
+
+/**
+ * Whether a spawned worker MUST lead its own process group because it is the
+ * detached large-tier lifecycle worker (mux-runner sets
+ * `PICKLE_LARGE_TIER_DETACHED_WORKER=1` in its detached `workerEnv`). This force
+ * OVERRIDES the `PICKLE_RECOVERY_CONSOLIDATION=off` kill-switch: a detached
+ * large-tier worker is always group-isolated so the orchestrator's session-group
+ * reap (`process.kill(-pid)`) can reap the whole subtree. False on win32 (no
+ * process groups). `env` defaults to `process.env` and is injectable for testing.
+ */
+export function shouldForceDetachForLargeTier(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (process.platform === 'win32') return false;
+  return env[LARGE_TIER_DETACH_FORCE_ENV] === '1';
 }
 
 export function loadBackendFromSession(sessionDir: string): Backend {
