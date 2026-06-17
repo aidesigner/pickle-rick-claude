@@ -51,6 +51,23 @@ jobs:
           echo "T4REPRO cache BEFORE exists=$([ -f "$fix/home/.claude/pickle-rick/update-check.json" ] && echo yes || echo no)"
           env -u EXTENSION_DIR -u EXTENSION_DIR_TEST HOME="$fix/home" TMPDIR="$fix/tmp" node ../bin/purge-update-cache.js 2>&1 | sed 's/^/T4REPRO purge: /' | head
           echo "T4REPRO cache AFTER exists=$([ -f "$fix/home/.claude/pickle-rick/update-check.json" ] && echo yes || echo no)"
+          echo "=== T4 EXACT test-pattern repro (node mkdtempSync + spawnSync minimal env, prints purge stderr) ==="
+          node -e '
+          const {mkdtempSync,mkdirSync,writeFileSync,existsSync}=require("fs");
+          const os=require("os"); const path=require("path"); const {spawnSync}=require("child_process");
+          const dir=mkdtempSync(path.join(os.tmpdir(),"t4-exact-"));
+          const homeDir=path.join(dir,"home");
+          const cachePath=path.join(homeDir,".claude","pickle-rick","update-check.json");
+          mkdirSync(path.dirname(cachePath),{recursive:true}); writeFileSync(cachePath,"{}");
+          console.log("T4EXACT os.tmpdir()=",os.tmpdir());
+          console.log("T4EXACT homeDir=",homeDir);
+          console.log("T4EXACT before=",existsSync(cachePath));
+          const env={PATH:process.env.PATH,HOME:homeDir,TMPDIR:path.join(dir,"tmp"),PICKLE_PURGE_VAR_FOLDERS_ROOT:path.join(dir,"vf")};
+          const r=spawnSync("node",[path.resolve(process.cwd(),"../bin/purge-update-cache.js")],{encoding:"utf8",env});
+          console.log("T4EXACT status=",r.status);
+          console.log("T4EXACT stderr=",(r.stderr||"").trim());
+          console.log("T4EXACT after=",existsSync(cachePath));
+          '
 
       - name: Run failing files individually
         working-directory: extension
