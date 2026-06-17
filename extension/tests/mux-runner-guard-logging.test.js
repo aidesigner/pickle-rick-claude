@@ -32,6 +32,12 @@ function buildSession(tmpRoot) {
     const extDir = path.join(tmpRoot, 'ext');
     const templatesDir = path.join(extDir, 'templates');
     fs.mkdirSync(templatesDir, { recursive: true });
+    // B-CITAIL T5: sentinel so getExtensionRoot() ACCEPTS extDir instead of
+    // falling back to the canonical deployed root (~/.claude/pickle-rick), which
+    // exists on a dev box but is ABSENT on CI (no install.sh) — there the fallback
+    // resolves the template/recovery path against a missing root and the
+    // false-EPIC_COMPLETED recovery log is never emitted.
+    fs.writeFileSync(path.join(extDir, '.pickle-install-root'), '');
 
     // Minimal pickle_settings.json with CB disabled so the recovery loop
     // isn't short-circuited by a CB trip before persistent_hallucination

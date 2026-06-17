@@ -254,6 +254,20 @@ function runMuxRunnerWithDataRoot(sessionDir, dataRoot, stubBinDir) {
     // quality-gate-skip tests SKIP readiness + ticket-audit gates, so the real
     // gate binaries are unused.
     const sandboxedExtensionDir = makeSandboxedExtensionDir();
+    // B-CITAIL T3: make the sandbox a self-contained extension root so
+    // getExtensionRoot() ACCEPTS it instead of falling back to the canonical
+    // deployed root (~/.claude/pickle-rick) — which exists on a dev box but is
+    // ABSENT on CI (no install.sh), where the fallback then resolves the manager
+    // template against a missing root and the quality-gate-skip assertions fail.
+    // Mirrors the populate-sandbox pattern used by the orphan-tmp test below:
+    // the `.pickle-install-root` sentinel + a minimal manager-prompt template.
+    fs.writeFileSync(path.join(sandboxedExtensionDir, '.pickle-install-root'), '');
+    const sandboxTemplatesDir = path.join(sandboxedExtensionDir, 'templates');
+    fs.mkdirSync(sandboxTemplatesDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(sandboxTemplatesDir, '_pickle-manager-prompt.md'),
+        '# Pickle\n\nResume: $ARGUMENTS\n',
+    );
     const env = {
         ...process.env,
         EXTENSION_DIR: sandboxedExtensionDir,
