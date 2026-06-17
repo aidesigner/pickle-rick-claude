@@ -54,15 +54,21 @@ function makeFixture() {
 }
 
 function runPurge(fixture, args = []) {
-  return spawnSync('node', [PURGE_SCRIPT, ...args], {
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      HOME: fixture.homeDir,
-      TMPDIR: fixture.tmpRoot,
-      PICKLE_PURGE_VAR_FOLDERS_ROOT: fixture.varFoldersRoot,
-    },
-  });
+  const env = {
+    ...process.env,
+    HOME: fixture.homeDir,
+    TMPDIR: fixture.tmpRoot,
+    PICKLE_PURGE_VAR_FOLDERS_ROOT: fixture.varFoldersRoot,
+  };
+  // B-CITAIL T4: these tests exercise the DEFAULT (HOME-based) runtime root. CI
+  // sets EXTENSION_DIR=github.workspace job-level, which leaks through process.env
+  // and re-roots resolution onto the workspace (so the fixture-HOME cache is never
+  // the purge target → spurious failures on Linux CI; passes on a dev box where
+  // EXTENSION_DIR is unset). The EXTENSION_DIR-honoring tests below set it
+  // explicitly via their own spawn, so stripping it here is safe + correct.
+  delete env.EXTENSION_DIR;
+  delete env.EXTENSION_DIR_TEST;
+  return spawnSync('node', [PURGE_SCRIPT, ...args], { encoding: 'utf8', env });
 }
 
 describe('purge-update-cache.js', () => {

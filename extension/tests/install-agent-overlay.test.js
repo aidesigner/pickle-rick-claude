@@ -68,8 +68,16 @@ function writeSourceAndLegacy(scriptDir, homeDir, filename, sourceContent, legac
   const legacyPath = path.join(homeDir, '.claude', 'agents', filename);
   writeFileSync(sourcePath, sourceContent);
   writeFileSync(legacyPath, legacyContent);
-  const sourceStat = statSync(sourcePath);
-  utimesSync(legacyPath, sourceStat.atime, sourceStat.mtime);
+  // B-CITAIL T2: force BOTH files to an identical whole-second mtime. The fixture's
+  // `same_size_and_mtime` compares `stat -c '%Y'` (whole seconds) on Linux; copying
+  // source's sub-second mtime onto legacy (the old `utimesSync(legacyPath, …source
+  // mtime)`) left a rounding gap that made the two whole-second values differ on
+  // Linux CI (→ spurious "legacy conflict" instead of "migrated"), while passing on
+  // macOS/APFS. A fixed integer-second mtime on both eliminates mtime as a variable;
+  // the modified-override test still diverges via its size difference.
+  const fixedMtime = new Date(1767225600000); // 2026-01-01T00:00:00Z (whole second)
+  utimesSync(sourcePath, fixedMtime, fixedMtime);
+  utimesSync(legacyPath, fixedMtime, fixedMtime);
   return { sourcePath, legacyPath };
 }
 
