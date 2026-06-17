@@ -24,6 +24,12 @@ jobs:
           # pending') that pass on 24/25. node 24 is the current LTS-track.
           node-version: '24'
 
+      - name: Enable corepack (pnpm/yarn on PATH)
+        # R-CIFB residual: convergence-gate fixtures carrying a pnpm-workspace
+        # marker make detectProjectType=pnpm; corepack puts pnpm on PATH so the
+        # gate's detectMissingTools(['pnpm']) does not short-circuit red on Linux CI.
+        run: corepack enable
+
       - name: Install and test
         # R-CIFB: point getExtensionRoot() at the checked-out repo (sentinel
         # extension/bin/log-watcher.js is committed) instead of the deployed

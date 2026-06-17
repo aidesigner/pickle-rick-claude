@@ -42,6 +42,11 @@ jobs:
           # R-CIFB: align to the project's Node 25 target (see ci.yml note).
           node-version: '24'
 
+      - name: Enable corepack (pnpm/yarn on PATH)
+        # R-CIFB residual: pnpm-workspace fixtures make detectProjectType=pnpm;
+        # corepack puts pnpm on PATH so convergence-gate tests do not flake red.
+        run: corepack enable
+
       - name: Install extension dependencies
         working-directory: extension
         run: npm ci
