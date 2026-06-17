@@ -171,6 +171,14 @@ export interface State {
    * relaunch does not spawn-burn into the wall. Absent/null when not parked.
    */
   rate_limit_park?: RateLimitPark | null;
+  /**
+   * Ticket 2ea48072 (AC-R-WPEXA-6, schema-neutral additive): persisted detached-worker
+   * arm. Written when a large-tier worker is spawned detached; cleared on worker exit or
+   * reap. Absent/null when no detached worker is live. At-most-one (single object | null,
+   * never an array) — enforced by the type and the invariant test.
+   * Defaulted to null via normalizeV5StateDefaults with NO LATEST_SCHEMA_VERSION bump.
+   */
+  detached_worker?: DetachedWorker | null;
 }
 
 /** Persisted rate-limit park arm (ticket e9bdac75). */
@@ -183,6 +191,18 @@ export interface RateLimitPark {
   cumulative_parked_ms: number;
   /** Consecutive rate-limit waits in this episode (carries the counter across relaunch). */
   consecutive_waits: number;
+}
+
+/** Persisted detached-worker arm (ticket 2ea48072, AC-R-WPEXA-6). */
+export interface DetachedWorker {
+  /** PID of the detached claude -p worker process. */
+  worker_pid: number;
+  /** Ticket being processed by this worker. */
+  ticket_id: string;
+  /** Epoch-ms when the worker was spawned. */
+  spawned_at_epoch: number;
+  /** Absolute path to the worker session log file. */
+  worker_log_path: string;
 }
 
 /** Per-entry shape for the recovery controller attempt ledger (R-ORSR-1). */
