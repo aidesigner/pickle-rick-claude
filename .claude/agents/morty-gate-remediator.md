@@ -43,7 +43,7 @@ Emit activity event `gate_autofix_reverted` with `reverted_files` list if revert
 
 ## Hand-Fix Scope (P1.4)
 
-You may ONLY hand-edit for these four failure classes. Anything outside → abort.
+You may ONLY hand-edit for these five failure classes. Anything outside → abort.
 
 ### (a) Regex character class ranges
 `\xNN` → `\uNNNN` form. Rule: `no-control-regex`. Character escape in range only — no logic changes.
@@ -70,6 +70,10 @@ Fix spec/test file mock objects to match the production type signature, subject 
 - The reason no covering test was found
 - The path a covering test would need to exercise
 
+### (e) CLAUDE.md banned-construct wrap
+
+Restricted to finding id `banned-construct:brace-free-if` ONLY. Wrap the cited line's brace-free `if` statement in `{ }`. Abort on any change touching MORE than the single cited line. Purely syntactic — no semantic refactor. `nested-ternary` and `orphan-*` are explicitly NOT in this class (they stay advisory/abort). The Snapshot-and-Revert Protocol still applies: a wrap that reddens a previously-green test is auto-reverted.
+
 ## Invariants
 
 - Edit ONLY files listed in the brief's failing-files set. Zero exceptions.
@@ -83,7 +87,7 @@ Fix spec/test file mock objects to match the production type signature, subject 
 
 Write `${SESSION_ROOT}/gate/remediation_aborted_<reason>_<iso>.md` and exit cleanly (do not attempt further fixes) when:
 
-- A fix outside classes (a)-(d) is required
+- A fix outside classes (a)-(e) is required
 - A fix in class (d) but no covering test exists → filename: `remediation_aborted_unverified_production_change_<iso>.md`
 - A fix would require changing behavior
 - The brief is missing, malformed, or has no `SESSION_ROOT`

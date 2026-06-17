@@ -61,6 +61,22 @@ test('morty-gate-remediator: P1.4(d) spec-mock alignment clause present', () => 
   );
 });
 
+test('morty-gate-remediator: P1.4(e) brace-free-if wrap clause present', () => {
+  assert.ok(body.includes('(e)'), 'clause (e) must be present');
+  assert.ok(body.includes('brace-free'), 'clause (e) must reference brace-free');
+  assert.ok(
+    body.includes('banned-construct:brace-free-if'),
+    'clause (e) must restrict to finding id banned-construct:brace-free-if',
+  );
+});
+
+test('morty-gate-remediator: five-class wording is consistent (a)-(e)', () => {
+  assert.ok(body.includes('five failure classes'), 'hand-fix scope must say five failure classes');
+  assert.ok(body.includes('(a)-(e)'), 'abort trigger must reference classes (a)-(e)');
+  assert.ok(!body.includes('four failure classes'), 'stale "four failure classes" wording must be gone');
+  assert.ok(!body.includes('(a)-(d)'), 'stale "(a)-(d)" abort wording must be gone');
+});
+
 test('morty-gate-remediator: TS2741 error code present (production-coverage proxy)', () => {
   assert.ok(body.includes('TS2741'), 'TS2741 must appear in the prompt body');
 });

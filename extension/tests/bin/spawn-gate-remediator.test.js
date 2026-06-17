@@ -357,6 +357,12 @@ describe('spawn-gate-remediator', () => {
     assert.ok(content.includes('Fix ONLY the failures'), 'Hard rule missing');
     assert.ok(content.includes('Abort Grammar'), 'Abort grammar missing');
 
+    // Section 4: hand-fix class (e) brace-free-if wrap (B-CSOR T30)
+    assert.ok(content.includes('five failure classes'), 'brief must say five failure classes');
+    assert.ok(content.includes('(e)'), 'brief must carry hand-fix class (e)');
+    assert.ok(content.includes('banned-construct:brace-free-if'), 'class (e) must restrict to brace-free-if id');
+    assert.ok(content.includes('(a)-(e)'), 'abort grammar must reference classes (a)-(e)');
+
     fs.rmSync(tmpDir, { recursive: true });
   });
 

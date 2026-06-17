@@ -116,18 +116,19 @@ function buildBriefContent(opts: {
 
 **Fix ONLY the failures listed in Section 1. Do not edit any other lines. Do not change behavior.**
 
-You may ONLY hand-edit for these four failure classes. Anything outside → abort immediately.
+You may ONLY hand-edit for these five failure classes. Anything outside → abort immediately.
 
 - **(a)** Regex character class ranges: \`\\xNN\` → \`\\uNNNN\`. Rule: \`no-control-regex\`. Character escape in range only — no logic changes.
 - **(b)** async-generator require-await: \`async function*\` without \`await\` → wrap with typed \`AsyncIterable\` helper per trap-door section (see Section 3). No new behavior.
 - **(c)** Unnecessary type assertions: Remove \`as Type\` where TypeScript already infers (\`no-unnecessary-type-assertion\`). Removal only.
 - **(d)** Spec-file type-only mock alignment: Fix only for \`TS2741\`, \`TS2345\`, \`TS2352\`, \`TS2739\` where change is purely additive AND a production covering test exists.
+- **(e)** CLAUDE.md banned-construct wrap: Restricted to finding id \`banned-construct:brace-free-if\` ONLY. Wrap the cited line's brace-free \`if\` statement in \`{ }\`. Abort on any change touching MORE than the single cited line. Purely syntactic — no semantic refactor. \`nested-ternary\` and \`orphan-*\` are NOT in this class. Snapshot-and-revert still applies: a wrap that reddens a previously-green test is auto-reverted.
 
 ### Abort Grammar
 
 Write \`\${SESSION_ROOT}/gate/remediation_aborted_<reason>_<iso>.md\` and exit cleanly when:
 
-- A fix outside classes (a)-(d) is required
+- A fix outside classes (a)-(e) is required
 - Class (d) fix but no covering test exists → filename: \`remediation_aborted_unverified_production_change_<iso>.md\`
 - A fix would require changing behavior
 - The brief is missing, malformed, or has no SESSION_ROOT
