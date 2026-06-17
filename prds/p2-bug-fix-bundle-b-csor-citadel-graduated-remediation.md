@@ -198,9 +198,11 @@ The mechanical bypass uses ONLY `state.flags.skip_quality_gates_reason`. ENFORCE
 
 ---
 
-## 7. Open decisions for the operator (could not resolve from code)
+## 7. Open decisions — RESOLVED (babysitter, 2026-06-16; encoded defaults per `feedback_babysitter_resolve_decisions_autonomously`)
 
-1. **Kill-switch naming (AC-10):** new dedicated `PICKLE_CITADEL_MECHANICAL=off`, OR fold into the existing `PICKLE_RECOVERY_CONSOLIDATION=off` family? Recommendation: dedicated env var (cleaner blast-radius, matches `PICKLE_CODEGRAPH`/`PLUMBUS_GENERATIVE_AUDIT` precedent), but operator owns the env-var-proliferation tradeoff.
-2. **Recurrence budget value (AC-6):** PRD proposes `3`. If routine creation-heavy bundles legitimately trip many brace-free-`if`s pre-fix, `3` may be too tight on the SKIP side (note: the budget is on the *skip flag*, not the *finding count*, so 3 should be ample — skipping mechanical remediation should be rare). Operator confirms.
-3. **`nested-ternary` mechanical promotion:** deferred as non-deterministic. If the operator wants it, it needs a separate PRD defining a canonical extraction form (named-intermediate-variable vs if/else) — too opinionated to ship silently.
-4. **Strict-mode interaction:** in `--strict` (threshold `High`), mechanical Medium findings are still below the floor, so the union still adds them. Confirm that's desired (it is, by the design intent: mechanical findings get fixed regardless of strict). No code ambiguity, just confirming intent.
+The drain authority adopts the PRD's own recommendations for all four; none blocked launch:
+
+1. **Kill-switch naming (AC-10): RESOLVED → dedicated `PICKLE_CITADEL_MECHANICAL=off`.** Matches the `PICKLE_CODEGRAPH` / `PLUMBUS_GENERATIVE_AUDIT` precedent; cleaner blast-radius than folding into `PICKLE_RECOVERY_CONSOLIDATION`. Document it in the root `CLAUDE.md` Environment Variables table (only the literal lowercase `off` disables).
+2. **Recurrence budget value (AC-6): RESOLVED → `3`.** The budget is on the skip-flag use rate, not the finding count, so 3 is ample (skipping mechanical remediation should be rare).
+3. **`nested-ternary` mechanical promotion: RESOLVED → DEFERRED (out of scope).** Non-deterministic (>1 valid extraction shape). Stays advisory; a separate PRD would define a canonical form.
+4. **Strict-mode interaction: RESOLVED → mechanical findings are added regardless of strict/non-strict.** By design intent: a mechanical Medium finding gets fixed in both modes (the union is purely additive below whatever the threshold is).
