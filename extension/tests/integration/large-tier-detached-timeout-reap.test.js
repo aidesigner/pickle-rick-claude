@@ -172,6 +172,46 @@ test('AC-R-WPEXA-16 identity gate: unreadable start-time → reap REFUSED (no ki
   }
 });
 
+test('AC-R-WPEXA-5: valid identity but killFn THROWS (ESRCH/already-dead) → reap is best-effort, still emits reaped + disposes once', () => {
+  const ticketId = 'reapabc04';
+  const spawnedAt = Date.now() - 5000 * 1000;
+  const { tmp, statePath, sessionDir } = makeSession(ticketId, spawnedAt);
+  let killAttempts = 0;
+  let disposeCalls = 0;
+  try {
+    const disp = reapTimedOutDetachedWorker({
+      sessionDir, statePath, extensionRoot: tmp, workingDir: tmp, ticketId,
+      workerPid: WORKER_PID, spawnedAtEpoch: spawnedAt,
+      workerTimeoutSeconds: 4800, elapsedSeconds: 5000,
+      iteration: 0, flags: null, log: () => {},
+      progress: { spawnCount: 1, zeroProgressCount: 0 },
+      deps: {
+        // identity OK, but the worker already exited → both group kills ESRCH.
+        startTimeReader: () => spawnedAt + 1000,
+        killFn: () => { killAttempts += 1; throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' }); },
+        disposeFn: (di) => {
+          disposeCalls += 1;
+          sm.update(di.statePath, s => { s.detached_worker = null; s.current_ticket = null; });
+          return { action: 'continue' };
+        },
+      },
+    });
+
+    // The throwing kill must NOT propagate — ESRCH-already-dead is the expected happy case.
+    assert.equal(disp.action, 'continue');
+    assert.equal(killAttempts, 2, 'both SIGTERM and SIGKILL attempted despite the first throwing (each is try/caught)');
+    assert.equal(disposeCalls, 1, 'reap-then-dispose still routes the dispose after the kills throw');
+
+    const state = readState(statePath);
+    const reaped = state.activity.filter(e => e.event === 'large_tier_worker_reaped');
+    assert.equal(reaped.length, 1, 'large_tier_worker_reaped still emitted');
+    assert.equal(reaped[0].gate_payload.outcome, 'reaped', 'a validated-identity reap is "reaped" even when the kill ESRCHs');
+    assert.equal(state.detached_worker, null, 'arm cleared by dispose');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('validateDetachedWorkerIdentity: start-time at/after spawn (within skew) is valid; strictly before is reuse', () => {
   const spawnedAt = 1_000_000_000_000;
   assert.equal(validateDetachedWorkerIdentity({ workerPid: 1, spawnedAtEpoch: spawnedAt, startTimeReader: () => spawnedAt }).ok, true);

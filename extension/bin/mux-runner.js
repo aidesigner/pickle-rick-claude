@@ -6301,6 +6301,50 @@ export function recordWorkerArtifactProgress(statePath, sessionDir, ticketId, be
     };
 }
 /**
+ * Shared `advanced`/`exhausted` recovery-outcome ritual for the two POLL-path
+ * detached-worker disposition helpers (the WEDGE path and the DEAD-clean path).
+ * Both feed a `routeRecoveryBeforeTerminal` verdict through the IDENTICAL recovered/
+ * exhausted handling — reset zero-progress + clear the arm on `advanced`; ladder-
+ * advance-or-exit (with handoff artifact + recovery_exhausted + deactivate + map
+ * cleanup) on `exhausted` — diverging ONLY in two interpolated strings. Returns
+ * `{ handled:false }` for the `fall_through` arm so each caller applies its own
+ * divergent fall-through (the wedge path flips Failed; the dead-clean path re-attempts).
+ * The caller passes its local arm-clearer so this stays a pure outcome-applier.
+ */
+function applyDetachedRecoveryOutcome(input) {
+    const { recovery, sessionDir, statePath, ticketId, iteration, log, clearArm, entityLabel, handoffReason } = input;
+    if (recovery.kind === 'advanced') {
+        log(`recovery: ${recovery.strategy} advanced ${entityLabel} ${ticketId} before terminal disposition — continuing.`);
+        try {
+            sm.update(statePath, s => {
+                const entry = s.worker_artifact_progress?.[ticketId];
+                if (entry)
+                    entry.zero_progress_count = 0;
+            });
+        }
+        catch { /* best-effort */ }
+        clearArm();
+        return { handled: true, result: { action: 'continue' } };
+    }
+    if (recovery.kind === 'exhausted') {
+        const ladderAction = advanceOrExitOnLadderExhaustion({
+            sessionDir, statePath, ticketId, reason: `recovery_exhausted: ${recovery.reason}`, log,
+        });
+        clearArm();
+        if (ladderAction === 'advance') {
+            log(`ticket_ladder_exhausted: ${entityLabel} ${ticketId} (${recovery.reason}) — advancing to next runnable ticket at iteration ${iteration}.`);
+            return { handled: true, result: { action: 'continue' } };
+        }
+        log(`recovery_exhausted: ladder exhausted for ${entityLabel} ${ticketId} (${recovery.reason}) and no runnable ticket remains — exiting at iteration ${iteration}.`);
+        writeRecoveryHandoffArtifact(sessionDir, ticketId, `${handoffReason}: ${recovery.reason}`, log);
+        recordExitReason(statePath, 'recovery_exhausted');
+        safeDeactivate(statePath);
+        removeRunnerSessionMapEntry(statePath, log);
+        return { handled: true, result: { action: 'break', exitReason: 'recovery_exhausted' } };
+    }
+    return { handled: false, fallThroughReason: recovery.reason };
+}
+/**
  * c6f44d6f (AC-R-WPEXA-5): terminal no-progress disposition for a WEDGED detached
  * worker discovered on the POLL path. The non-detached R-WSWA-3 block (~:9220) reads
  * loop-local `apProgressResult` and owns its break/continue inline against the spawn
@@ -6325,35 +6369,12 @@ export function routeDetachedWorkerTerminalNoProgress(input) {
     const recovery = routeRecoveryBeforeTerminal({
         sessionDir, statePath, extensionRoot, workingDir, ticketId, iteration, flags, log, mode: 'worker',
     });
-    if (recovery.kind === 'advanced') {
-        log(`recovery: ${recovery.strategy} advanced detached ${ticketId} before wmw-auto-skip Failed flip — continuing.`);
-        try {
-            sm.update(statePath, s => {
-                const entry = s.worker_artifact_progress?.[ticketId];
-                if (entry)
-                    entry.zero_progress_count = 0;
-            });
-        }
-        catch { /* best-effort */ }
-        clearDetachedWorker();
-        return { action: 'continue' };
-    }
-    if (recovery.kind === 'exhausted') {
-        const ladderAction = advanceOrExitOnLadderExhaustion({
-            sessionDir, statePath, ticketId, reason: `recovery_exhausted: ${recovery.reason}`, log,
-        });
-        clearDetachedWorker();
-        if (ladderAction === 'advance') {
-            log(`ticket_ladder_exhausted: detached ${ticketId} (${recovery.reason}) — advancing to next runnable ticket at iteration ${iteration}.`);
-            return { action: 'continue' };
-        }
-        log(`recovery_exhausted: ladder exhausted for detached ${ticketId} (${recovery.reason}) and no runnable ticket remains — exiting at iteration ${iteration}.`);
-        writeRecoveryHandoffArtifact(sessionDir, ticketId, `wmw_oversized: ${recovery.reason}`, log);
-        recordExitReason(statePath, 'recovery_exhausted');
-        safeDeactivate(statePath);
-        removeRunnerSessionMapEntry(statePath, log);
-        return { action: 'break', exitReason: 'recovery_exhausted' };
-    }
+    const recovered = applyDetachedRecoveryOutcome({
+        recovery, sessionDir, statePath, ticketId, iteration, log,
+        clearArm: clearDetachedWorker, entityLabel: 'detached', handoffReason: 'wmw_oversized',
+    });
+    if (recovered.handled)
+        return recovered.result;
     // fall_through → terminal Failed/oversized_no_progress flip (mirrors :9347-9375).
     const skipK = resolveWmwSkipK();
     const skipMsg = `[wmw-auto-skip] detached ${ticketId}: ${progress.zeroProgressCount}/${skipK} consecutive zero-progress polls — flipping to Failed/oversized_no_progress`;
@@ -6447,38 +6468,15 @@ export function routeDeadDetachedWorkerDisposition(input) {
         const recovery = routeRecoveryBeforeTerminal({
             sessionDir, statePath, extensionRoot, workingDir, ticketId, iteration, flags, log, mode: 'worker',
         });
-        if (recovery.kind === 'advanced') {
-            log(`recovery: ${recovery.strategy} advanced dead detached ${ticketId} before terminal disposition — continuing.`);
-            try {
-                sm.update(statePath, s => {
-                    const entry = s.worker_artifact_progress?.[ticketId];
-                    if (entry)
-                        entry.zero_progress_count = 0;
-                });
-            }
-            catch { /* best-effort */ }
-            clearDetachedWorker();
-            return { action: 'continue' };
-        }
-        if (recovery.kind === 'exhausted') {
-            const ladderAction = advanceOrExitOnLadderExhaustion({
-                sessionDir, statePath, ticketId, reason: `recovery_exhausted: ${recovery.reason}`, log,
-            });
-            clearDetachedWorker();
-            if (ladderAction === 'advance') {
-                log(`ticket_ladder_exhausted: dead detached ${ticketId} (${recovery.reason}) — advancing to next runnable ticket at iteration ${iteration}.`);
-                return { action: 'continue' };
-            }
-            log(`recovery_exhausted: ladder exhausted for dead detached ${ticketId} (${recovery.reason}) and no runnable ticket remains — exiting at iteration ${iteration}.`);
-            writeRecoveryHandoffArtifact(sessionDir, ticketId, `dead_detached: ${recovery.reason}`, log);
-            recordExitReason(statePath, 'recovery_exhausted');
-            safeDeactivate(statePath);
-            removeRunnerSessionMapEntry(statePath, log);
-            return { action: 'break', exitReason: 'recovery_exhausted' };
-        }
+        const recovered = applyDetachedRecoveryOutcome({
+            recovery, sessionDir, statePath, ticketId, iteration, log,
+            clearArm: clearDetachedWorker, entityLabel: 'dead detached', handoffReason: 'dead_detached',
+        });
+        if (recovered.handled)
+            return recovered.result;
         // fall_through → recovery off/unavailable. Clear the arm + continue so the
         // dead-clean ticket re-attempts on the next loop (no auto-Fail here).
-        log(`recovery fall_through for dead detached ${ticketId} (${recovery.reason}) — clearing arm, re-attempting.`);
+        log(`recovery fall_through for dead detached ${ticketId} (${recovered.fallThroughReason}) — clearing arm, re-attempting.`);
         clearDetachedWorker();
         return { action: 'continue' };
     };
