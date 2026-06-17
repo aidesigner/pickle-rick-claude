@@ -287,10 +287,12 @@ export interface ExecutePhaseLoopResult {
  * DI seam for the clean-tree implement pass (AC-GA-REC-1). The adapter receives the
  * RAW plan_*.md path (never the parsed PlanPhase[], which is verify-only and carries
  * nothing implementable) and returns whether an implement pass produced a diff.
- * Large-tier tickets route through routeLargeTierTicket (the de345802 seam) — the
- * `largeTierRouted` flag signals this to the caller so no raw foreground spawn is
- * attempted. Timeout is surfaced as `{ ok: false, timedOut: true }` so the ladder
- * escalates to recovery_exhausted.
+ * Large-tier tickets (AC-R-WPEXA-14) spawn a detached worker by default — the
+ * `detachedSpawned` flag signals this so the caller YIELDS to the poll re-attach
+ * rather than treating it as completion. Only when `PICKLE_LARGE_TIER_DETACHED=off`
+ * do they route through routeLargeTierTicket (the de345802 legacy punt), signalled by
+ * `largeTierRouted`. Either way no raw foreground spawn is attempted. Timeout is
+ * surfaced as `{ ok: false, timedOut: true }` so the ladder escalates to recovery_exhausted.
  */
 export interface ReExecutionSeam {
   /** Spawn an implement pass against the raw plan markdown. */
@@ -301,7 +303,7 @@ export interface ReExecutionSeam {
     sessionDir: string;
     workingDir: string;
     statePath: string;
-  }) => { ok: boolean; largeTierRouted?: boolean; timedOut?: boolean };
+  }) => { ok: boolean; largeTierRouted?: boolean; detachedSpawned?: boolean; timedOut?: boolean };
 }
 
 /** Adapters for `executePhaseLoop` — every side-effect is injected (DI), like RecoveryDeps. */

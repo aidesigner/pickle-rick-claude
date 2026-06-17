@@ -2634,6 +2634,79 @@ export function routeLargeTierTicket(ticketId, sessionDir, statePath) {
     });
     return { sanctionedPath: 'interactive_pickle_tmux', ticketId, sessionDir };
 }
+/**
+ * Spawn a large-tier spawn-morty worker DETACHED + unref'd (T3 detached lifecycle),
+ * shared by the main-loop seam and the recovery re-execution seam (AC-R-WPEXA-2c/14).
+ *
+ * The worker leads its own process group (`detached:true`, `LARGE_TIER_DETACH_FORCE_ENV`)
+ * so its log survives past the 600s Bash-tool ceiling (R-WPEX #108 autonomy gap), and
+ * the orchestrator — NEVER the worker (R-WSRC) — persists `state.detached_worker` and
+ * emits `large_tier_worker_spawned`. Returns `{ spawned:false }` when `spawn` yields no
+ * pid (binary missing / permissions) so each caller owns its own fallback control flow.
+ * It does NOT `continue`/`return` — callers decide (main loop continues; recovery seam
+ * yields to the poll re-attach).
+ */
+export function spawnDetachedLargeTierWorker(input) {
+    const { sessionDir, statePath, ticketId, workingDir, extensionRoot, backend, workerTimeoutSec, originalPrompt, log } = input;
+    const spawnArgs = [
+        path.join(extensionRoot, 'extension', 'bin', 'spawn-morty.js'),
+        originalPrompt || '',
+        '--ticket-id', ticketId,
+        '--ticket-path', path.join(sessionDir, ticketId),
+        '--ticket-file', path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`),
+        '--timeout', String(workerTimeoutSec),
+        '--backend', backend,
+    ];
+    const workerEnv = {
+        ...process.env,
+        ...backendEnvOverrides(backend),
+        ...sessionStampEnv(path.basename(sessionDir), workingDir),
+        PICKLE_STATE_FILE: statePath,
+        PYTHONUNBUFFERED: '1',
+        // AC-R-WPEXA-16: force spawn-morty to `detached:true` regardless of the
+        // PICKLE_RECOVERY_CONSOLIDATION kill-switch so the worker leads its own
+        // process group and the orchestrator session-group reap can reach it.
+        [LARGE_TIER_DETACH_FORCE_ENV]: '1',
+    };
+    delete workerEnv['CLAUDECODE'];
+    // Do NOT set PICKLE_ROLE here; spawn-morty sets it for its own child subprocess.
+    const proc = spawn(process.execPath, spawnArgs, {
+        cwd: workingDir,
+        env: workerEnv,
+        stdio: 'ignore', // mux-runner holds NO pipe to the log; spawn-morty owns it
+        detached: true, // spawn-morty leads its own process group
+    });
+    proc.unref(); // release event-loop reference; mux-runner does not wait
+    if (!proc.pid) {
+        log('[large-tier] detached spawn-morty failed (no pid) — falling back to routeLargeTierTicket');
+        return { spawned: false };
+    }
+    const detachedWorkerPid = proc.pid;
+    const actualLogPath = path.join(sessionDir, ticketId, `worker_session_${detachedWorkerPid}.log`);
+    const spawnedAtEpoch = Date.now();
+    // Orchestrator owns state.json (R-WSRC). Workers are forbidden from writing it.
+    sm.update(statePath, s => {
+        s.detached_worker = {
+            worker_pid: detachedWorkerPid,
+            ticket_id: ticketId,
+            spawned_at_epoch: spawnedAtEpoch,
+            worker_log_path: actualLogPath,
+        };
+    });
+    // ts must be explicit — writeActivityEntry does NOT auto-stamp it.
+    writeActivityEntry(statePath, {
+        event: 'large_tier_worker_spawned',
+        ts: new Date().toISOString(),
+        ticket: ticketId,
+        gate_payload: {
+            worker_pid: detachedWorkerPid,
+            ticket_id: ticketId,
+            spawned_at_epoch: spawnedAtEpoch,
+        },
+    });
+    log(`[large-tier] detached spawn-morty pid=${detachedWorkerPid}, log=${actualLogPath}`);
+    return { spawned: true, pid: detachedWorkerPid, logPath: actualLogPath };
+}
 // eslint-disable-next-line -- legacy iteration loop retained behavior-preserving for global bin acceptance
 export async function runIteration(sessionDir, iterationNum, extensionRoot, qualityPassModel, runtimeOverrides = {}) {
     const statePath = path.join(sessionDir, 'state.json');
@@ -4203,8 +4276,16 @@ function executeCleanTreeReExecution(input) {
         workingDir: input.workingDir,
         statePath: input.statePath,
     });
+    if (spawnResult.detachedSpawned) {
+        // AC-R-WPEXA-14: the seam spawned a DETACHED large-tier worker; state.detached_worker
+        // is populated and large_tier_worker_spawned emitted. Yield control — the next mux
+        // poll re-attaches and drives the worker to terminal (NOT a foreground punt, NOT a
+        // verify-only phase loop). Same control-yield as the main-loop detached `continue`.
+        input.log(`recovery: execute-converged-plan large-tier detached worker spawned for ${input.ticketId} — yielding to poll re-attach`);
+        return { ok: true };
+    }
     if (spawnResult.largeTierRouted) {
-        // AC-GA-REC-6: routeLargeTierTicket was invoked inside the seam; disposition logged.
+        // AC-GA-REC-6: routeLargeTierTicket was invoked inside the seam (kill-switch off); disposition logged.
         input.log(`recovery: execute-converged-plan large-tier routed ${input.ticketId} via de345802 seam`);
         return { ok: true };
     }
@@ -4325,12 +4406,35 @@ export function attemptRecoveryBeforeTerminal(input) {
             workingDir: input.workingDir,
             statePath: input.statePath,
             log: input.log,
-            // AC-GA-REC-1 production re-execution seam. Large-tier tickets route through
-            // routeLargeTierTicket (NEVER a raw foreground spawn-morty — the 600s Bash
-            // ceiling SIGKILLs it); small/medium spawn an implement pass directly.
+            // AC-GA-REC-1 production re-execution seam. Large-tier tickets spawn a DETACHED
+            // worker by default (AC-R-WPEXA-14) so the recovery branch no longer punts to
+            // interactive tmux — the worker survives the 600s Bash ceiling and the next mux
+            // poll re-attaches. Only PICKLE_LARGE_TIER_DETACHED=off keeps the legacy
+            // routeLargeTierTicket punt. Small/medium spawn an implement pass directly.
             reExecutionSeam: {
                 spawnImplementPass: (opts) => {
                     if (opts.complexityTier === 'large') {
+                        if (process.env.PICKLE_LARGE_TIER_DETACHED !== 'off') {
+                            const st = sm.read(opts.statePath);
+                            const rawTimeout = Number(st.worker_timeout_seconds);
+                            const workerTimeoutSec = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : Defaults.WORKER_TIMEOUT_SECONDS;
+                            const spawnRes = spawnDetachedLargeTierWorker({
+                                sessionDir: opts.sessionDir,
+                                statePath: opts.statePath,
+                                ticketId: opts.ticketId,
+                                workingDir: opts.workingDir,
+                                extensionRoot: input.extensionRoot,
+                                backend: resolveBackend(st),
+                                workerTimeoutSec,
+                                originalPrompt: st.original_prompt || '',
+                                log: input.log,
+                            });
+                            if (spawnRes.spawned) {
+                                return { ok: true, detachedSpawned: true };
+                            }
+                            // No-pid fallback: degrade to the legacy interactive punt so the ticket
+                            // is not silently dropped (helper already logged the failure).
+                        }
                         routeLargeTierTicket(opts.ticketId, opts.sessionDir, opts.statePath);
                         return { ok: true, largeTierRouted: true };
                     }
@@ -8428,66 +8532,20 @@ async function runMuxRunnerMain() {
             !state.detached_worker) {
             const raw = Number(state.worker_timeout_seconds);
             const workerTimeoutSec = Number.isFinite(raw) && raw > 0 ? raw : Defaults.WORKER_TIMEOUT_SECONDS;
-            const backend = resolveBackend(state);
-            const spawnArgs = [
-                path.join(extensionRoot, 'extension', 'bin', 'spawn-morty.js'),
-                state.original_prompt || '',
-                '--ticket-id', apTicketId,
-                '--ticket-path', path.join(sessionDir, apTicketId),
-                '--ticket-file', path.join(sessionDir, apTicketId, `linear_ticket_${apTicketId}.md`),
-                '--timeout', String(workerTimeoutSec),
-                '--backend', backend,
-            ];
-            const workerEnv = {
-                ...process.env,
-                ...backendEnvOverrides(backend),
-                ...sessionStampEnv(path.basename(sessionDir), state.working_dir || process.cwd()),
-                PICKLE_STATE_FILE: statePath,
-                PYTHONUNBUFFERED: '1',
-                // AC-R-WPEXA-16: force spawn-morty to `detached:true` regardless of the
-                // PICKLE_RECOVERY_CONSOLIDATION kill-switch so the worker leads its own
-                // process group and the orchestrator session-group reap can reach it.
-                [LARGE_TIER_DETACH_FORCE_ENV]: '1',
-            };
-            delete workerEnv['CLAUDECODE'];
-            // Do NOT set PICKLE_ROLE here; spawn-morty sets it for its own child subprocess.
-            const proc = spawn(process.execPath, spawnArgs, {
-                cwd: state.working_dir || process.cwd(),
-                env: workerEnv,
-                stdio: 'ignore', // mux-runner holds NO pipe to the log; spawn-morty owns it
-                detached: true, // spawn-morty leads its own process group
+            const spawnRes = spawnDetachedLargeTierWorker({
+                sessionDir,
+                statePath,
+                ticketId: apTicketId,
+                workingDir: state.working_dir || process.cwd(),
+                extensionRoot,
+                backend: resolveBackend(state),
+                workerTimeoutSec,
+                originalPrompt: state.original_prompt || '',
+                log,
             });
-            proc.unref(); // release event-loop reference; mux-runner does not wait
-            if (!proc.pid) {
-                // Spawn failed synchronously (binary not found / permissions). Fall through
-                // to the existing routeLargeTierTicket fallback below (kill-switch-off path).
-                log('[large-tier] detached spawn-morty failed (no pid) — falling back to routeLargeTierTicket');
-            }
-            else {
-                const detachedWorkerPid = proc.pid;
-                const actualLogPath = path.join(sessionDir, apTicketId, `worker_session_${detachedWorkerPid}.log`);
-                const spawnedAtEpoch = Date.now();
-                // Orchestrator owns state.json (R-WSRC). Workers are forbidden from writing it.
-                sm.update(statePath, s => {
-                    s.detached_worker = {
-                        worker_pid: detachedWorkerPid,
-                        ticket_id: apTicketId,
-                        spawned_at_epoch: spawnedAtEpoch,
-                        worker_log_path: actualLogPath,
-                    };
-                });
-                // ts must be explicit — writeActivityEntry does NOT auto-stamp it.
-                writeActivityEntry(statePath, {
-                    event: 'large_tier_worker_spawned',
-                    ts: new Date().toISOString(),
-                    ticket: apTicketId,
-                    gate_payload: {
-                        worker_pid: detachedWorkerPid,
-                        ticket_id: apTicketId,
-                        spawned_at_epoch: spawnedAtEpoch,
-                    },
-                });
-                log(`[large-tier] detached spawn-morty pid=${detachedWorkerPid}, log=${actualLogPath}`);
+            // Spawn failed synchronously (no pid). Fall through to the routeLargeTierTicket
+            // fallback below (kill-switch-off path); the helper already logged the reason.
+            if (spawnRes.spawned) {
                 // Reset stall trackers and mark forward progress. Mirrors the cpu-liveness
                 // recovery continue at ~line 8993. Do NOT clear current_ticket — the ticket
                 // remains active and in progress under the detached worker.

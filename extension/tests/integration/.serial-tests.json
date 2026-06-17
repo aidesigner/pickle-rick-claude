@@ -52,6 +52,7 @@
     "tests/audit-subprocess-heavy-tests.test.js",
     "tests/audit-test-isolation.test.js",
     "tests/bin/test-runner-tier-discovery.test.js",
-    "tests/integration/large-tier-detached-spawn.test.js"
+    "tests/integration/large-tier-detached-spawn.test.js",
+    "tests/integration/large-tier-recovery-reexec-detached.test.js"
   ]
 }
