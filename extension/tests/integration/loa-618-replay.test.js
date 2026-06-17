@@ -53,7 +53,13 @@ test('LOA-618 replay: tarball extracts to expected file list', async () => {
   await fsPromises.mkdir(tmp, { recursive: true });
   try {
     const { stdout } = await execFileAsync('tar', ['-tzf', TARBALL]);
-    const entries = stdout.split('\n').filter(Boolean).sort();
+    // B-CITAIL follow-up: compare FILE entries only. BSD tar (macOS, where this
+    // fixture + expected list were authored) and GNU tar (Linux CI) list the bare
+    // DIRECTORY entries (trailing '/') differently — a cross-platform tooling diff,
+    // same class as the stat -f/-c install.sh bug. The file set is the test's real
+    // contract; directory entries are tar-implementation noise.
+    const isFile = (e) => !e.endsWith('/');
+    const entries = stdout.split('\n').filter(Boolean).filter(isFile).sort();
     const expected = [
       'loa-618-replay/',
       'loa-618-replay/package.json',
@@ -74,8 +80,8 @@ test('LOA-618 replay: tarball extracts to expected file list', async () => {
       'loa-618-replay/packages/api/test/portal-appraisal.service.spec.ts',
       'loa-618-replay/packages/api/test/processor.spec.ts',
       'loa-618-replay/packages/api/test/type-asserts.ts',
-    ].sort();
-    assert.deepEqual(entries, expected, 'tarball must contain exactly the expected entries');
+    ].filter(isFile).sort();
+    assert.deepEqual(entries, expected, 'tarball must contain exactly the expected files');
   } finally {
     await fsPromises.rm(tmp, { recursive: true, force: true });
   }

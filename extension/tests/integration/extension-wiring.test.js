@@ -47,7 +47,17 @@ const DEPLOYED_PATHS = [
   path.join(os.homedir(), '.claude/agents/morty-gate-remediator.md'),
 ];
 
-test('deploy smoke: gate bins and data exist after bash install.sh', () => {
+// B-CITAIL follow-up: these deploy-smoke tests validate an AMBIENT real deploy
+// (~/.claude/pickle-rick from `bash install.sh`). Their precondition is "install.sh
+// has been run" — true on a dev box, FALSE on CI (which never runs install.sh), so
+// on CI they should SKIP (precondition unmet), not fail. The self-contained install
+// validation lives in install-sh-e2e / install-script tests (which install to a tmp
+// prefix and pass on CI). Skip when no deploy is present.
+const DEPLOY_SMOKE_SKIP = fs.existsSync(DEPLOYED_ROOT)
+  ? false
+  : 'no ambient install.sh deploy (e.g. CI) — deploy-smoke validates a real deploy; install-sh-e2e covers install.sh self-containedly';
+
+test('deploy smoke: gate bins and data exist after bash install.sh', { skip: DEPLOY_SMOKE_SKIP }, () => {
   const missing = DEPLOYED_PATHS.filter(p => !fs.existsSync(p));
   assert.deepEqual(
     missing,
@@ -56,7 +66,7 @@ test('deploy smoke: gate bins and data exist after bash install.sh', () => {
   );
 });
 
-test('deploy smoke: convergence_gate block present in deployed pickle_settings.json', () => {
+test('deploy smoke: convergence_gate block present in deployed pickle_settings.json', { skip: DEPLOY_SMOKE_SKIP }, () => {
   const settingsPath = path.join(DEPLOYED_ROOT, 'pickle_settings.json');
   assert.ok(fs.existsSync(settingsPath), `${settingsPath} does not exist`);
   const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
@@ -66,7 +76,7 @@ test('deploy smoke: convergence_gate block present in deployed pickle_settings.j
   );
 });
 
-test('deploy smoke: finalize-gate.js invoked in szechuan-sauce.md and anatomy-park.md', () => {
+test('deploy smoke: finalize-gate.js invoked in szechuan-sauce.md and anatomy-park.md', { skip: DEPLOY_SMOKE_SKIP }, () => {
   const commandsDir = path.join(os.homedir(), '.claude/commands');
   for (const cmd of ['szechuan-sauce.md', 'anatomy-park.md']) {
     const cmdPath = path.join(commandsDir, cmd);
