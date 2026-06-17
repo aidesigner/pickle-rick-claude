@@ -46,6 +46,11 @@ jobs:
           echo "=== T4 probe: does os.homedir() respect a HOME override on Linux? ==="
           probe_home="$(mktemp -d)"
           env -u EXTENSION_DIR -u EXTENSION_DIR_TEST HOME="$probe_home" node -e "const os=require('os');const {getExtensionRoot}=require('./services/pickle-utils.js');console.log('env.HOME=',process.env.HOME);console.log('os.homedir()=',os.homedir());console.log('os.userInfo().homedir=',os.userInfo().homedir);console.log('getExtensionRoot()=',getExtensionRoot());console.log('respects_HOME=', os.homedir()===process.env.HOME)"
+          echo "=== T4 direct repro: real purge with a fixture HOME (mirrors the failing test) ==="
+          fix="$(mktemp -d)"; mkdir -p "$fix/home/.claude/pickle-rick"; echo '{}' > "$fix/home/.claude/pickle-rick/update-check.json"
+          echo "T4REPRO cache BEFORE exists=$([ -f "$fix/home/.claude/pickle-rick/update-check.json" ] && echo yes || echo no)"
+          env -u EXTENSION_DIR -u EXTENSION_DIR_TEST HOME="$fix/home" TMPDIR="$fix/tmp" node ../bin/purge-update-cache.js 2>&1 | sed 's/^/T4REPRO purge: /' | head
+          echo "T4REPRO cache AFTER exists=$([ -f "$fix/home/.claude/pickle-rick/update-check.json" ] && echo yes || echo no)"
 
       - name: Run failing files individually
         working-directory: extension
