@@ -293,7 +293,9 @@ test('runner times out wedged child test process instead of hanging indefinitely
       `expected timeout failure, got status=${result.status}\nstdout=${result.stdout}\nstderr=${result.stderr}`,
     );
     assert.match(result.stderr, /ETIMEDOUT|timed out/i);
-    assert.match(result.stdout, /cancelled 1|tests 1/i);
+    // node 22/macOS report the wedged child as `cancelled 1`/`tests 1`; node 24 on
+    // Linux CI reports `Interrupted while running:` (B-CITAIL T1 — additive accept).
+    assert.match(result.stdout, /cancelled 1|tests 1|Interrupted while running/i);
     // Ceiling = RUNNER_TIMEOUT_MS + generous spawn/teardown slack, still far
     // below the 60s fixture sleep so a real indefinite hang is still caught.
     assert.ok(Date.now() - startedAt < RUNNER_TIMEOUT_MS + 25_000, 'timeout should fail fast');
