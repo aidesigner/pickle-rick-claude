@@ -341,6 +341,12 @@ export const VALID_ACTIVITY_EVENTS = [
     // sanctioned autonomous path (interactive /pickle-tmux) instead of a raw
     // foreground spawn-morty that the 600s Bash-tool ceiling would SIGKILL.
     'large_tier_routed',
+    // AC-R-WPEXA-EVENTS (d2a211ea): detached large-tier worker lifecycle events
+    // consumed by T3–T6. Emitters pass ts explicitly (writeActivityEntry does not
+    // auto-stamp). Gate payload reflects the DetachedWorker state arm.
+    'large_tier_worker_spawned',
+    'large_tier_worker_poll',
+    'large_tier_worker_reaped',
 ];
 /** Recoverable reasons a ticket can be flipped to Failed by the auto-skip guard (R-WSWA-3). */
 export const FAILURE_REASONS = ['oversized_no_progress'];

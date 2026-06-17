@@ -993,6 +993,39 @@ const EVENT_CASES = [
     },
     drop: 'gate_payload',
   },
+  {
+    // AC-R-WPEXA-EVENTS (d2a211ea): detached large-tier worker spawned.
+    type: 'large_tier_worker_spawned',
+    valid: {
+      event: 'large_tier_worker_spawned',
+      ts: TS,
+      ticket: 'abc12345',
+      gate_payload: { worker_pid: 9999, ticket_id: 'abc12345', spawned_at_epoch: 1718600000 },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    // AC-R-WPEXA-EVENTS (d2a211ea): detached large-tier worker polled.
+    type: 'large_tier_worker_poll',
+    valid: {
+      event: 'large_tier_worker_poll',
+      ts: TS,
+      ticket: 'abc12345',
+      gate_payload: { worker_pid: 9999, ticket_id: 'abc12345' },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    // AC-R-WPEXA-EVENTS (d2a211ea): detached large-tier worker reaped.
+    type: 'large_tier_worker_reaped',
+    valid: {
+      event: 'large_tier_worker_reaped',
+      ts: TS,
+      ticket: 'abc12345',
+      gate_payload: { worker_pid: 9999, ticket_id: 'abc12345', outcome: 'success' },
+    },
+    drop: 'gate_payload',
+  },
 ];
 
 // B-RRH ed840487 (data-flow audit): the C3 signal-teardown arm returns a new
@@ -1311,6 +1344,10 @@ test('activity-event-payload: schema defines all registered event type definitio
     'ticket_ladder_exhausted',
     'pickle_incomplete',
     'large_tier_routed',
+    // AC-R-WPEXA-EVENTS (d2a211ea): detached large-tier worker lifecycle events.
+    'large_tier_worker_spawned',
+    'large_tier_worker_poll',
+    'large_tier_worker_reaped',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.
@@ -1407,3 +1444,51 @@ test('activity-event-payload: worker_mcp_config_resolved registered in VALID_ACT
     'worker_mcp_config_resolved must be present in VALID_ACTIVITY_EVENTS',
   );
 });
+
+// AC-R-WPEXA-EVENTS (d2a211ea): parametrized 7-surface check for the three
+// detached large-tier worker lifecycle events. Surfaces verified per iteration:
+//   1. VALID_ACTIVITY_EVENTS (compiled types/index.js — also covers surface 7)
+//   2. ActivityEventType union (TypeScript — inferred from surface 1 const array)
+//   3. schema.definitions entry
+//   4. schema.oneOf $ref
+//   5. EVENT_CASES row (this file)
+//   6. ACTIVITY_EVENT_SCHEMA_SECTION in spawn-refinement-team.ts
+//   7. compiled types/index.js mirror (same import as surface 1)
+const DETACHED_WORKER_EVENTS = [
+  'large_tier_worker_spawned',
+  'large_tier_worker_poll',
+  'large_tier_worker_reaped',
+];
+const SPAWN_REFINEMENT_TEAM_SRC = readFileSync(
+  path.resolve(__dirname, '../src/bin/spawn-refinement-team.ts'),
+  'utf8',
+);
+for (const eventName of DETACHED_WORKER_EVENTS) {
+  test(`AC-R-WPEXA-EVENTS: ${eventName} registered at all 7 R-PDD-oneOf touchpoints`, () => {
+    // Surface 1 + 7: VALID_ACTIVITY_EVENTS in compiled types/index.js
+    assert.ok(
+      VALID_ACTIVITY_EVENTS.includes(eventName),
+      `surface 1/7: ${eventName} missing from VALID_ACTIVITY_EVENTS`,
+    );
+    // Surface 3: definitions entry in activity-events.schema.json
+    assert.ok(
+      eventName in schema.definitions,
+      `surface 3: ${eventName} missing from schema.definitions`,
+    );
+    // Surface 4: oneOf $ref in activity-events.schema.json
+    assert.ok(
+      schema.oneOf.some((r) => r.$ref === `#/definitions/${eventName}`),
+      `surface 4: ${eventName} missing from schema.oneOf`,
+    );
+    // Surface 5: EVENT_CASES row in this test file
+    assert.ok(
+      EVENT_CASES.some((c) => c.type === eventName),
+      `surface 5: ${eventName} missing from EVENT_CASES`,
+    );
+    // Surface 6: ACTIVITY_EVENT_SCHEMA_SECTION in spawn-refinement-team.ts
+    assert.ok(
+      SPAWN_REFINEMENT_TEAM_SRC.includes(eventName),
+      `surface 6: ${eventName} missing from ACTIVITY_EVENT_SCHEMA_SECTION in spawn-refinement-team.ts`,
+    );
+  });
+}

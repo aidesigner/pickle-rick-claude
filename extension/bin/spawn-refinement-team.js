@@ -173,6 +173,10 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`ac_shape_gate_bypassed\` | \`gate_payload.reason\` | spawn-refinement-team AC-shape gate bypass path |
 | \`refinement_over_collapse_detected\` | \`gate_payload.composed_count\`, \`gate_payload.ticket_count\`, \`gate_payload.sources_with_atomic_section\` | spawn-refinement-team post-decomp bundle-of-bundles over-collapse guard |
 
+| \`large_tier_worker_spawned\` | \`ticket\`, \`gate_payload.worker_pid\`, \`gate_payload.ticket_id\`, \`gate_payload.spawned_at_epoch\` | spawn-morty large-tier detached-worker T3 spawn path (AC-R-WPEXA-EVENTS) (forward-created) |
+| \`large_tier_worker_poll\` | \`ticket\`, \`gate_payload.worker_pid\`, \`gate_payload.ticket_id\` | mux-runner large-tier detached-worker T4/T5 poll path (AC-R-WPEXA-EVENTS) (forward-created) |
+| \`large_tier_worker_reaped\` | \`ticket\`, \`gate_payload.worker_pid\`, \`gate_payload.ticket_id\`, \`gate_payload.outcome\` | mux-runner large-tier detached-worker T6 reap path (AC-R-WPEXA-EVENTS) (forward-created) |
+
 When writing ACs that assert event emission, include the full event name and required payload fields. Do NOT invent event names — use only the names listed here or already present in \`extension/src/types/index.ts:VALID_ACTIVITY_EVENTS\`.`;
 export const PATH_VERIFICATION_PROMPT_SECTION = `## Path Verification & Forward-reference hygiene
 

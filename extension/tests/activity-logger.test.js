@@ -279,6 +279,11 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // large-tier routing: routeLargeTierTicket (mux-runner.ts) emits this
         // when a large-tier ticket is routed through the sanctioned seam.
         'large_tier_routed',
+        // AC-R-WPEXA-EVENTS (d2a211ea): detached large-tier worker lifecycle events
+        // consumed by T3–T6 (spawn / poll / reap).
+        'large_tier_worker_spawned',
+        'large_tier_worker_poll',
+        'large_tier_worker_reaped',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
