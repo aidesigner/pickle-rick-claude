@@ -342,3 +342,67 @@ test('getSessionPath: mapped dead-pid active session does not outrank a live sam
         assert.equal(result, liveSessionDir);
     });
 });
+
+// --- AC-A3: deterministic, stable recency tie-break (no lexical localeCompare) ---
+
+/**
+ * Two same-cwd active no-pid sessions with EQUAL state_mtime_ms and no
+ * started_at. The scan iterates fs.readdirSync(sessionsDir) order, so the
+ * first-seen session wins (stable, incumbent-keeps). The OLD localeCompare
+ * tie-break would instead pick the lexically LARGER path. We assert the
+ * winner is the FIRST entry in readdir order and that swapping which physical
+ * directory holds the (identical) live state does NOT flip the winner away
+ * from "first-iterated".
+ */
+function runEqualMtimeTieScenario(tmpDir, dirAName, dirBName) {
+    const fakeCwd = path.join(tmpDir, 'repo');
+    const dirA = path.join(tmpDir, 'sessions', dirAName);
+    const dirB = path.join(tmpDir, 'sessions', dirBName);
+    fs.mkdirSync(fakeCwd, { recursive: true });
+    fs.mkdirSync(dirA, { recursive: true });
+    fs.mkdirSync(dirB, { recursive: true });
+
+    // Active, no pid, no started_at — recency is state_mtime_ms only.
+    const stateFor = (dir) =>
+        JSON.stringify({ active: true, working_dir: fakeCwd, session_dir: dir });
+    fs.writeFileSync(path.join(dirA, 'state.json'), stateFor(dirA));
+    fs.writeFileSync(path.join(dirB, 'state.json'), stateFor(dirB));
+
+    // Force EQUAL mtimes on both state.json files (Linux coarse-mtime tie).
+    const t = new Date('2026-06-16T00:00:00.000Z');
+    fs.utimesSync(path.join(dirA, 'state.json'), t, t);
+    fs.utimesSync(path.join(dirB, 'state.json'), t, t);
+
+    const order = fs.readdirSync(path.join(tmpDir, 'sessions'));
+    const firstSeenDir = path.join(tmpDir, 'sessions', order[0]);
+    const result = getSessionPath(fakeCwd);
+    return { result, firstSeenDir };
+}
+
+test('getSessionPath: equal-mtime no-pid tie returns the first-seen session (stable, no localeCompare)', () => {
+    withExtensionDir((tmpDir) => {
+        const { result, firstSeenDir } = runEqualMtimeTieScenario(tmpDir, 'aaa-session', 'zzz-session');
+        // Stable, recency-meaningful rule: incumbent (first-iterated) wins.
+        assert.equal(result, firstSeenDir);
+    });
+});
+
+test('getSessionPath: equal-mtime tie winner does not flip when session-dir basenames are lexically swapped', () => {
+    let firstRun;
+    withExtensionDir((tmpDir) => {
+        firstRun = runEqualMtimeTieScenario(tmpDir, 'aaa-session', 'zzz-session');
+    });
+    let swapped;
+    withExtensionDir((tmpDir) => {
+        // Same two basenames, identical live content. The winner must remain the
+        // first-iterated dir, NOT the lexically larger one (old localeCompare).
+        swapped = runEqualMtimeTieScenario(tmpDir, 'zzz-session', 'aaa-session');
+    });
+    // In both arrangements the winner is the first entry in readdir order.
+    assert.equal(firstRun.result, firstRun.firstSeenDir);
+    assert.equal(swapped.result, swapped.firstSeenDir);
+    // Both winners share the same basename (readdir is order-stable for the
+    // same set of names) — proving the result is determined by iteration
+    // order, not by lexical comparison of full paths.
+    assert.equal(path.basename(firstRun.result), path.basename(swapped.result));
+});

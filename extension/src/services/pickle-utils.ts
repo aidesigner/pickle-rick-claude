@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { StringDecoder } from 'string_decoder';
 import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent, type PickleSettings, type Backend, type HardeningSettings, type CodegraphSettings, type RateLimitSettings } from '../types/index.js';
-import { StateManager } from './state-manager.js';
+import { StateManager, isProcessAlive } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
 import { readEvidence } from './ticket-completion-evidence.js';
@@ -1606,12 +1606,14 @@ interface SessionLookupState {
   active?: unknown;
   working_dir?: unknown;
   started_at?: unknown;
+  pid?: unknown;
   state_mtime_ms?: number;
 }
 
 interface SessionLookupCandidate {
   sessionPath: string;
   recencyMs: number;
+  hasStartedAt: boolean;
 }
 
 const MAX_FUTURE_RECENCY_DRIFT_MS = 5 * 60 * 1000;
@@ -1627,11 +1629,17 @@ function readSessionLookupState(sessionPath: string): SessionLookupState | null 
       active: recovered.active,
       working_dir: recovered.working_dir,
       started_at: recovered.started_at,
+      pid: recovered.pid,
       state_mtime_ms: stateMtimeMs,
     };
   } catch {
     return null;
   }
+}
+
+function hasParseableStartedAt(state: SessionLookupState): boolean {
+  return typeof state.started_at === 'string'
+    && Number.isFinite(new Date(state.started_at).getTime());
 }
 
 function getSessionRecencyMs(state: SessionLookupState): number {
@@ -1645,6 +1653,12 @@ function getSessionRecencyMs(state: SessionLookupState): number {
   return state.state_mtime_ms ?? 0;
 }
 
+/** True when state has a finite-integer pid whose process is provably dead. */
+function isDeadPidState(state: SessionLookupState): boolean {
+  const pidNum = typeof state.pid === 'number' ? state.pid : Number(state.pid);
+  return Number.isInteger(pidNum) && !isProcessAlive(pidNum);
+}
+
 function preferNewerSession(
   best: SessionLookupCandidate | null,
   candidate: SessionLookupCandidate,
@@ -1653,7 +1667,13 @@ function preferNewerSession(
   if (candidate.recencyMs !== best.recencyMs) {
     return candidate.recencyMs > best.recencyMs ? candidate : best;
   }
-  return candidate.sessionPath.localeCompare(best.sessionPath) > 0 ? candidate : best;
+  // Recency tie: a stamped started_at is stronger evidence than coarse mtime.
+  if (candidate.hasStartedAt !== best.hasStartedAt) {
+    return candidate.hasStartedAt ? candidate : best;
+  }
+  // Both/neither stamped and recency still ties: keep the incumbent (stable,
+  // first-seen-wins on iteration order). No lexical path tie-break.
+  return best;
 }
 
 function selectScannedSessionPath(
@@ -1671,8 +1691,12 @@ function selectScannedSessionPath(
     const candidate = {
       sessionPath,
       recencyMs: getSessionRecencyMs(state),
+      hasStartedAt: hasParseableStartedAt(state),
     };
-    if (state.active === true) {
+    // A dead-pid (finite pid && !isProcessAlive) active session is demoted out
+    // of activeMatch — a no-pid / non-finite-pid active session stays a live
+    // candidate because we cannot prove it dead.
+    if (state.active === true && !isDeadPidState(state)) {
       activeMatch = preferNewerSession(activeMatch, candidate);
       continue;
     }
