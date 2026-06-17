@@ -81,8 +81,15 @@ describe('purge-update-cache.js', () => {
       assert.equal(existsSync(fixture.cachePath), false);
       assert.equal(existsSync(fixture.tarballDir), false);
       assert.equal(existsSync(fixture.extractDir), false);
-      assert.equal(existsSync(fixture.darwinTarballDir), false);
-      assert.equal(existsSync(fixture.darwinExtractDir), false);
+      // B-CITAIL T4: var-folders cleanup is macOS-only by design
+      // (`if (process.platform === 'darwin')` at purge-update-cache.js:102 —
+      // /var/folders is a macOS concept). On Linux the darwin fixtures are
+      // legitimately NOT purged, so these assertions are darwin-gated. (Verified
+      // via Linux CI probe: cache + tmp-root removed, darwin dir untouched.)
+      if (process.platform === 'darwin') {
+        assert.equal(existsSync(fixture.darwinTarballDir), false);
+        assert.equal(existsSync(fixture.darwinExtractDir), false);
+      }
 
       const lines = readFileSync(fixture.auditPath, 'utf8').trim().split('\n');
       assert.equal(lines.length, 1);
@@ -91,8 +98,10 @@ describe('purge-update-cache.js', () => {
       assert.ok(audit.removed_paths.includes(fixture.cachePath));
       assert.ok(audit.removed_paths.includes(fixture.tarballDir));
       assert.ok(audit.removed_paths.includes(fixture.extractDir));
-      assert.ok(audit.removed_paths.includes(fixture.darwinTarballDir));
-      assert.ok(audit.removed_paths.includes(fixture.darwinExtractDir));
+      if (process.platform === 'darwin') {
+        assert.ok(audit.removed_paths.includes(fixture.darwinTarballDir));
+        assert.ok(audit.removed_paths.includes(fixture.darwinExtractDir));
+      }
       assert.equal(typeof audit.ts, 'string');
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
