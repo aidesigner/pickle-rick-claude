@@ -43,6 +43,9 @@ jobs:
           echo "=== which npm/tsc/eslint (runGate fixture commands) ==="
           which npm tsc eslint 2>&1 || true
           node --version
+          echo "=== T4 probe: does os.homedir() respect a HOME override on Linux? ==="
+          probe_home="$(mktemp -d)"
+          env -u EXTENSION_DIR -u EXTENSION_DIR_TEST HOME="$probe_home" node -e "const os=require('os');const {getExtensionRoot}=require('./services/pickle-utils.js');console.log('env.HOME=',process.env.HOME);console.log('os.homedir()=',os.homedir());console.log('os.userInfo().homedir=',os.userInfo().homedir);console.log('getExtensionRoot()=',getExtensionRoot());console.log('respects_HOME=', os.homedir()===process.env.HOME)"
 
       - name: Run failing files individually
         working-directory: extension
