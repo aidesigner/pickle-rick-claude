@@ -68,6 +68,23 @@ jobs:
           console.log("T4EXACT stderr=",(r.stderr||"").trim());
           console.log("T4EXACT after=",existsSync(cachePath));
           '
+          echo "=== T4 FULL-scenario repro (cache + tmp-roots + darwin dirs, like test 69) ==="
+          node -e '
+          const {mkdtempSync,mkdirSync,writeFileSync,existsSync}=require("fs");
+          const os=require("os"); const path=require("path"); const {spawnSync}=require("child_process");
+          const dir=mkdtempSync(path.join(os.tmpdir(),"t4-full-"));
+          const homeDir=path.join(dir,"home"); const tmpRoot=path.join(dir,"tmp"); const vf=path.join(dir,"vf");
+          const cachePath=path.join(homeDir,".claude","pickle-rick","update-check.json");
+          const tarballDir=path.join(tmpRoot,"pickle-update-fixture");
+          const darwinDir=path.join(vf,"zz","12345","T","pickle-update-darwin-fixture");
+          mkdirSync(path.dirname(cachePath),{recursive:true}); writeFileSync(cachePath,"{}");
+          mkdirSync(tarballDir,{recursive:true}); mkdirSync(darwinDir,{recursive:true});
+          const env={PATH:process.env.PATH,HOME:homeDir,TMPDIR:tmpRoot,PICKLE_PURGE_VAR_FOLDERS_ROOT:vf};
+          const r=spawnSync("node",[path.resolve(process.cwd(),"../bin/purge-update-cache.js")],{encoding:"utf8",env});
+          console.log("T4FULL os.tmpdir-in-test-proc=",os.tmpdir());
+          console.log("T4FULL status=",r.status,"stderr=",(r.stderr||"").trim().replace(/\n/g," | "));
+          console.log("T4FULL cache_after=",existsSync(cachePath),"tarball_after=",existsSync(tarballDir),"darwin_after=",existsSync(darwinDir));
+          '
 
       - name: Run failing files individually
         working-directory: extension
