@@ -59,6 +59,7 @@ import {
   type ScopeJson,
 } from '../services/scope-resolver.js';
 import { runCitadelAudit } from '../services/citadel/audit-runner.js';
+import { isMechanicalCitadelFinding } from '../services/citadel/mechanical-finding-classifier.js';
 import type { CitadelFinding, CitadelJsonReport, CitadelSeverity } from '../services/citadel/reporter.js';
 import { citadelFindingsToGateResult } from '../services/citadel/citadel-findings-to-gate-result.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
@@ -2270,7 +2271,9 @@ export async function executeCitadelPhase(runtime: PipelineRuntime): Promise<{ e
   const reportPath = path.join(runtime.sessionDir, 'citadel_report.json');
   const { cap, remediatorTimeoutMs } = citadelRemediationDeps.loadSettings();
   const threshold = remediationSeverityThreshold(runtime.config.citadel_strict);
-  let remediable: CitadelFinding[] = [];
+  // Outer accumulator tracks what was actually ATTEMPTED (the union), so the cap-exhausted
+  // log below reflects the full set fed to the remediator, not just the threshold subset.
+  let toRemediate: CitadelFinding[] = [];
 
   // Bounded detect→remediate loop (mirrors finalize-gate's cycle structure). The phase ALWAYS
   // returns success; the pipeline continues to anatomy-park regardless of remediation outcome.
@@ -2283,17 +2286,22 @@ export async function executeCitadelPhase(runtime: PipelineRuntime): Promise<{ e
       reportPath,
       strict: runtime.config.citadel_strict,
     });
-    remediable = result.findings.filter(f => findingMeetsThreshold(f, threshold));
-    runtime.log(`citadel: cycle ${cycle + 1}/${cap} — wrote ${reportPath} with ${result.findings.length} finding(s), ${remediable.length} remediable (>= ${threshold})`);
-    if (remediable.length === 0) {
+    const remediable = result.findings.filter(f => findingMeetsThreshold(f, threshold));
+    // ADDITIVE floor: mechanical (deterministically-fixable, sub-threshold) findings join the
+    // remediator set without weakening the Critical/High threshold filter above.
+    const mechanical = result.findings.filter(isMechanicalCitadelFinding);
+    const seen = new Set(remediable.map(f => f.id));
+    toRemediate = [...remediable, ...mechanical.filter(f => !seen.has(f.id))];
+    runtime.log(`citadel: cycle ${cycle + 1}/${cap} — wrote ${reportPath} with ${result.findings.length} finding(s), ${remediable.length} remediable (>= ${threshold}), ${mechanical.length} mechanical, ${toRemediate.length} total`);
+    if (toRemediate.length === 0) {
       runtime.log('citadel: no remediable findings — phase complete, continuing pipeline');
       return { exitCode: 0 };
     }
-    await remediateCitadelFindings(runtime, remediable, remediatorTimeoutMs, cycle);
+    await remediateCitadelFindings(runtime, toRemediate, remediatorTimeoutMs, cycle);
   }
 
   // Cap exhausted with findings still open: surface async + continue (never halt).
-  logCitadelFindingsUnremediated(runtime, remediable, cap);
+  logCitadelFindingsUnremediated(runtime, toRemediate, cap);
   return { exitCode: 0 };
 }
 
