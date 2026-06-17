@@ -26,10 +26,10 @@ SCRIPT_DIR="${scriptDir}"
 AGENTS_DIR="$HOME/.claude/agents"
 MANAGED_AGENTS_DIR="$AGENTS_DIR/.pickle-managed"
 file_size() {
-  stat -f '%z' "$1" 2>/dev/null || stat -c '%s' "$1"
+  stat -c '%s' "$1" 2>/dev/null || stat -f '%z' "$1"
 }
 file_mtime() {
-  stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1"
+  stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1"
 }
 same_size_and_mtime() {
   [ "$(file_size "$1")" = "$(file_size "$2")" ] && [ "$(file_mtime "$1")" = "$(file_mtime "$2")" ]
@@ -68,16 +68,12 @@ function writeSourceAndLegacy(scriptDir, homeDir, filename, sourceContent, legac
   const legacyPath = path.join(homeDir, '.claude', 'agents', filename);
   writeFileSync(sourcePath, sourceContent);
   writeFileSync(legacyPath, legacyContent);
-  // B-CITAIL T2: force BOTH files to an identical whole-second mtime. The fixture's
-  // `same_size_and_mtime` compares `stat -c '%Y'` (whole seconds) on Linux; copying
-  // source's sub-second mtime onto legacy (the old `utimesSync(legacyPath, …source
-  // mtime)`) left a rounding gap that made the two whole-second values differ on
-  // Linux CI (→ spurious "legacy conflict" instead of "migrated"), while passing on
-  // macOS/APFS. A fixed integer-second mtime on both eliminates mtime as a variable;
-  // the modified-override test still diverges via its size difference.
-  const fixedMtime = new Date(1767225600000); // 2026-01-01T00:00:00Z (whole second)
-  utimesSync(sourcePath, fixedMtime, fixedMtime);
-  utimesSync(legacyPath, fixedMtime, fixedMtime);
+  // Match legacy's mtime to source so an unmodified canonical agent is detected as
+  // "matching" (→ migrated). The actual Linux bug was the stat-helper order, not
+  // mtime granularity — see the GNU-`-c`-first reorder in file_size/file_mtime above
+  // (and the same fix in install.sh).
+  const sourceStat = statSync(sourcePath);
+  utimesSync(legacyPath, sourceStat.atime, sourceStat.mtime);
   return { sourcePath, legacyPath };
 }
 

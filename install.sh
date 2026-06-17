@@ -524,7 +524,12 @@ fi
 echo "OK chmod"
 
 # --- POST-INSTALL MODE VERIFICATION (R-ICM-3) ---
-_get_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
+# B-CITAIL: GNU stat (`-c`) FIRST. On Linux `stat -f` is --file-system mode (not
+# BSD's format flag): `stat -f '%Lp' file` stat-fs's the valid operand to stdout
+# (filename-tainted) AND exits non-zero, so the `|| stat -c` fallback CONCATENATES
+# tainted output. GNU `-c` succeeds cleanly on Linux; on macOS it fails cleanly
+# (illegal option, stderr-only) → BSD `-f` fallback. Order matters on both.
+_get_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
 _mode_fail=0
 _act_mode="$(_get_mode "$EXTENSION_ROOT/activity")"
 if [ "$_act_mode" != "700" ]; then
@@ -563,11 +568,15 @@ fi
 # No --delete: preserve locally-added managed agents from newer/experimental installs.
 AGENTS_DIR="$HOME/.claude/agents"
 MANAGED_AGENTS_DIR="$AGENTS_DIR/.pickle-managed"
+# B-CITAIL: GNU stat (`-c`) FIRST — see _get_mode note. The reversed order made
+# `same_size_and_mtime` always FALSE on Linux (filename-tainted `stat -f` stdout),
+# so unmodified canonical agents were wrongly preserved-as-conflict instead of
+# migrated to .pickle-managed on Linux installs.
 file_size() {
-  stat -f '%z' "$1" 2>/dev/null || stat -c '%s' "$1"
+  stat -c '%s' "$1" 2>/dev/null || stat -f '%z' "$1"
 }
 file_mtime() {
-  stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1"
+  stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1"
 }
 same_size_and_mtime() {
   [ "$(file_size "$1")" = "$(file_size "$2")" ] && [ "$(file_mtime "$1")" = "$(file_mtime "$2")" ]

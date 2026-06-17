@@ -61,6 +61,7 @@ jobs:
             tests/mux-runner-guard-logging.test.js
             tests/bin/test-runner-tier-discovery.test.js
             tests/timeout-happy-path.test.js
+            tests/purge-update-cache.test.js
           )
           for f in "${files[@]}"; do
             safe=$(echo "$f" | tr '/' '_')
