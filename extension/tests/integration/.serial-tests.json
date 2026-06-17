@@ -53,6 +53,7 @@
     "tests/audit-test-isolation.test.js",
     "tests/bin/test-runner-tier-discovery.test.js",
     "tests/integration/large-tier-detached-spawn.test.js",
-    "tests/integration/large-tier-recovery-reexec-detached.test.js"
+    "tests/integration/large-tier-recovery-reexec-detached.test.js",
+    "tests/integration/large-tier-detached-reap-subtree.test.js"
   ]
 }

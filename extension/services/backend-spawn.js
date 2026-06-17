@@ -671,21 +671,27 @@ export function backendEnvOverrides(backend) {
 // the literal lowercase string 'off' disables; any other value / absent keeps the
 // consolidated session-group isolation active.
 //
-// Precedence (the two flags are ORTHOGONAL kill-switches):
+// Precedence (the two flags are ORTHOGONAL):
 //   - PICKLE_RECOVERY_CONSOLIDATION (this switch) gates the GENERAL session-group
 //     isolation for every worker spawn (`shouldIsolateSessionGroup`).
 //   - PICKLE_LARGE_TIER_DETACHED_WORKER=1 (the large-tier-detached lifecycle marker,
-//     `shouldForceDetachForLargeTier`) FORCES `detached:true` for a detached large-tier
-//     worker even when PICKLE_RECOVERY_CONSOLIDATION=off would otherwise un-detach it.
-//     Without the force, `=off` un-detaches the worker, breaks the orchestrator
-//     session-group reap (`process.kill(-pid)`), and re-opens #108. The large-tier
-//     lifecycle therefore overrides the recovery-consolidation kill-switch.
+//     `shouldForceDetachForLargeTier`) identifies the worker spawned by mux-runner's
+//     DETACHED large-tier seam. H2 fix (aee2767b): this worker must INHERIT spawn-morty's
+//     (already session-scoped) process group — the consumer in spawn-morty.ts spawns it
+//     `detached:false` so the orchestrator's single `process.kill(-spawn_morty_pid)` group
+//     kill (mux-runner.ts:reapTimedOutDetachedWorker, where worker_pid IS spawn-morty's pid)
+//     reaps the WHOLE subtree. If the worker led its own group it would ESCAPE that group
+//     and survive the reap (orphaned), defeating the timeout backstop and re-opening #108.
+//     The marker therefore OVERRIDES `shouldIsolateSessionGroup()` toward NON-detach for
+//     the large-tier grandchild only; every other worker is unaffected.
 // ---------------------------------------------------------------------------
 export const SESSION_ISOLATION_KILL_SWITCH = 'PICKLE_RECOVERY_CONSOLIDATION';
 /**
- * Env marker set by mux-runner's detached large-tier spawn (`workerEnv`) so the
- * spawn-morty child forces `detached:true` regardless of the
- * `PICKLE_RECOVERY_CONSOLIDATION` kill-switch. See the precedence note above.
+ * Env marker set by mux-runner's detached large-tier spawn (`workerEnv`). The
+ * spawn-morty consumer uses it to keep the large-tier grandchild in spawn-morty's
+ * session-scoped process group (`detached:false`) so the orchestrator's
+ * `process.kill(-spawn_morty_pid)` group reap reaches the whole subtree. See the
+ * precedence note above.
  */
 export const LARGE_TIER_DETACH_FORCE_ENV = 'PICKLE_LARGE_TIER_DETACHED_WORKER';
 /**
@@ -716,13 +722,14 @@ export function shouldIsolateSessionGroup(env = process.env) {
     return true;
 }
 /**
- * Whether a spawned worker MUST lead its own process group because it is the
- * detached large-tier lifecycle worker (mux-runner sets
- * `PICKLE_LARGE_TIER_DETACHED_WORKER=1` in its detached `workerEnv`). This force
- * OVERRIDES the `PICKLE_RECOVERY_CONSOLIDATION=off` kill-switch: a detached
- * large-tier worker is always group-isolated so the orchestrator's session-group
- * reap (`process.kill(-pid)`) can reap the whole subtree. False on win32 (no
- * process groups). `env` defaults to `process.env` and is injectable for testing.
+ * Whether the spawned worker is the DETACHED large-tier lifecycle worker
+ * (mux-runner sets `PICKLE_LARGE_TIER_DETACHED_WORKER=1` in its detached
+ * `workerEnv`). H2 fix (aee2767b): the spawn-morty consumer uses this to keep that
+ * worker in spawn-morty's OWN session-scoped process group (`detached:false`) — NOT
+ * to lead its own — so the orchestrator's `process.kill(-spawn_morty_pid)` group reap
+ * reaches the whole subtree (the timeout backstop). The name is retained as the
+ * large-tier-detached discriminator. False on win32 (no process groups). `env`
+ * defaults to `process.env` and is injectable for testing.
  */
 export function shouldForceDetachForLargeTier(env = process.env) {
     if (process.platform === 'win32')

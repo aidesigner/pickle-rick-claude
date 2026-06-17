@@ -201,7 +201,12 @@ export interface DetachedWorker {
   ticket_id: string;
   /** Epoch-ms when the worker was spawned. */
   spawned_at_epoch: number;
-  /** Absolute path to the worker session log file. */
+  /**
+   * Absolute path to the worker session log file. Observability/forensic breadcrumb
+   * written by the orchestrator at spawn; intentionally NOT read by the poll/reap/resume
+   * control flow (the watchers discover logs by directory scan, not from this arm). Kept
+   * as a recorded artifact path, not a consumed field.
+   */
   worker_log_path: string;
 }
 

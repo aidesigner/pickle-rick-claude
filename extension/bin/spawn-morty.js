@@ -1779,12 +1779,25 @@ export async function runWorkerProcess(ctx) {
     // R-CSI / W2.R1: detach so the worker subtree leads its own process group;
     // killProcessTree's existing `process.kill(-pid, sig)` then reaps exactly this
     // session's group and cannot reach a concurrent session's healthy workers.
-    // PICKLE_RECOVERY_CONSOLIDATION=off reverts to the per-seam (non-detached) path,
-    // EXCEPT for the detached large-tier lifecycle worker: mux-runner sets
-    // PICKLE_LARGE_TIER_DETACHED_WORKER=1 so `shouldForceDetachForLargeTier` forces
-    // detach ON regardless of the recovery-consolidation kill-switch — else `=off`
-    // un-detaches the worker and breaks the orchestrator session-group reap (#108).
-    const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: ['inherit', 'pipe', 'pipe'], detached: shouldIsolateSessionGroup() || shouldForceDetachForLargeTier() });
+    // PICKLE_RECOVERY_CONSOLIDATION=off reverts to the per-seam (non-detached) path.
+    //
+    // H2 DATA-FLOW FIX (aee2767b): the DETACHED large-tier lifecycle worker is the
+    // EXCEPTION — it must INHERIT spawn-morty's (already session-scoped) process group,
+    // NOT lead its own. mux-runner spawns THIS spawn-morty process `detached:true`, so
+    // spawn-morty is itself the session group leader and `state.detached_worker.worker_pid`
+    // is spawn-morty's pid. The orchestrator timeout-reap does `process.kill(-worker_pid)`
+    // (mux-runner.ts:reapTimedOutDetachedWorker) — a group kill of spawn-morty's group.
+    // If this claude grandchild led its OWN group (the prior `detached:true` here) it would
+    // ESCAPE spawn-morty's group, so `-worker_pid` would kill only the spawn-morty wrapper
+    // and ORPHAN the runaway worker (empirically: grandchild survives the reap) — defeating
+    // the timeout backstop and letting salvage mutate git while the worker still runs.
+    // Keeping the grandchild in spawn-morty's group makes the single `-worker_pid` group
+    // kill reap the WHOLE subtree. spawn-morty's own timeout reap still works: with the
+    // grandchild non-detached, `killProcessTree(proc)` falls back to the single-proc
+    // `proc.kill()` (spawn-morty.ts:killProcessTree). Cross-session isolation is preserved
+    // because spawn-morty's group is itself session-scoped.
+    const detachWorker = shouldForceDetachForLargeTier() ? false : shouldIsolateSessionGroup();
+    const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: ['inherit', 'pipe', 'pipe'], detached: detachWorker });
     proc.stdout?.pipe(sessionLog, { end: false });
     proc.stderr?.pipe(sessionLog, { end: false });
     attachCompletionCommitAckListener(proc, ticketId, path.join(sessionRoot, 'state.json'));
