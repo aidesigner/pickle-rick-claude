@@ -933,6 +933,11 @@ export function writePipelineStatus(sessionDir, status, details = {}) {
     if (details.phase_skips && Object.keys(details.phase_skips).length > 0) {
         payload.phase_skips = details.phase_skips;
     }
+    // B-CSOR T50: additive advisory count — assigned only when a numeric value is supplied
+    // so clean runs and older consumers see no spurious key.
+    if (typeof details.citadel_advisory_findings === 'number') {
+        payload.citadel_advisory_findings = details.citadel_advisory_findings;
+    }
     const statusPath = path.join(sessionDir, 'pipeline-status.json');
     const tmpPath = `${statusPath}.tmp.${process.pid}`;
     fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2));
@@ -1710,6 +1715,47 @@ function logCitadelFindingsUnremediated(runtime, findings, cap) {
         runtime.log(`citadel_findings_unremediated activity write failed: ${safeErrorMessage(err)}`);
     }
 }
+// B-CSOR T50: surface the residual ADVISORY subset — findings that are sub-threshold AND
+// non-mechanical (the by-design-never-remediated orphan-*/nested-ternary class). This is a
+// SEPARATE signal from logCitadelFindingsUnremediated (which carries the still-open remediable
+// union on cap-exhaust). Both reuse the citadel_findings_unremediated event name but answer
+// different questions: cap-exhausted-open vs by-design-advisory. Best-effort: never throws.
+function surfaceCitadelAdvisory(runtime, advisory) {
+    if (advisory.length > 0) {
+        try {
+            sm.update(runtime.statePath, state => {
+                const activity = Array.isArray(state.activity) ? state.activity : [];
+                state.activity = [
+                    ...activity,
+                    {
+                        event: 'citadel_findings_unremediated',
+                        ts: new Date().toISOString(),
+                        cycles: 0,
+                        findings_remaining: advisory.length,
+                        finding_ids: advisory.slice(0, 50).map(f => f.id),
+                    },
+                ];
+            });
+        }
+        catch (err) {
+            runtime.log(`citadel advisory activity write failed: ${safeErrorMessage(err)}`);
+        }
+    }
+    // Merge-write the advisory count into pipeline-status.json additively, preserving existing keys.
+    try {
+        const statusPath = path.join(runtime.sessionDir, 'pipeline-status.json');
+        const existing = readRecoverableJsonObject(statusPath);
+        const status = existing?.status ?? 'running';
+        const phaseSkips = existing?.phase_skips;
+        writePipelineStatus(runtime.sessionDir, status, {
+            phase_skips: phaseSkips,
+            citadel_advisory_findings: advisory.length,
+        });
+    }
+    catch (err) {
+        runtime.log(`citadel advisory pipeline-status write failed: ${safeErrorMessage(err)}`);
+    }
+}
 // Sync FS isolated in a non-async helper (mirrors finalize-gate) so the async remediation flow
 // stays free of blocking-fs lint warnings.
 function writeCitadelGateResultFile(sessionDir, findings) {
@@ -1843,6 +1889,9 @@ export async function executeCitadelPhase(runtime) {
     // Outer accumulator tracks what was actually ATTEMPTED (the union), so the cap-exhausted
     // log below reflects the full set fed to the remediator, not just the threshold subset.
     let toRemediate = [];
+    // B-CSOR T50: latest cycle's by-design-advisory subset (sub-threshold AND non-mechanical),
+    // surfaced once on phase exit so the cap-exhausted path reflects the final audit.
+    let lastAdvisory = [];
     // Bounded detect→remediate loop (mirrors finalize-gate's cycle structure). The phase ALWAYS
     // returns success; the pipeline continues to anatomy-park regardless of remediation outcome.
     for (let cycle = 0; cycle < cap; cycle++) {
@@ -1860,15 +1909,21 @@ export async function executeCitadelPhase(runtime) {
         const mechanical = mechanicalEnabled ? result.findings.filter(isMechanicalCitadelFinding) : [];
         const seen = new Set(remediable.map(f => f.id));
         toRemediate = [...remediable, ...mechanical.filter(f => !seen.has(f.id))];
-        runtime.log(`citadel: cycle ${cycle + 1}/${cap} — wrote ${reportPath} with ${result.findings.length} finding(s), ${remediable.length} remediable (>= ${threshold}), ${mechanical.length} mechanical, ${toRemediate.length} total`);
+        // ADVISORY subset: sub-threshold AND non-mechanical (orphan-*/nested-ternary). Computed from
+        // the SAME result, via isMechanicalCitadelFinding directly (independent of T40's enabled flag)
+        // because the advisory class is stable regardless of the mechanical kill-switch.
+        lastAdvisory = result.findings.filter(f => !findingMeetsThreshold(f, threshold) && !isMechanicalCitadelFinding(f));
+        runtime.log(`citadel: cycle ${cycle + 1}/${cap} — wrote ${reportPath} with ${result.findings.length} finding(s), ${remediable.length} remediable (>= ${threshold}), ${mechanical.length} mechanical, ${toRemediate.length} total, ${lastAdvisory.length} advisory`);
         if (toRemediate.length === 0) {
             runtime.log('citadel: no remediable findings — phase complete, continuing pipeline');
+            surfaceCitadelAdvisory(runtime, lastAdvisory);
             return { exitCode: 0 };
         }
         await remediateCitadelFindings(runtime, toRemediate, remediatorTimeoutMs, cycle);
     }
     // Cap exhausted with findings still open: surface async + continue (never halt).
     logCitadelFindingsUnremediated(runtime, toRemediate, cap);
+    surfaceCitadelAdvisory(runtime, lastAdvisory);
     return { exitCode: 0 };
 }
 function shouldSkipAnatomyPhaseWithWarning(phase, result, runtime) {
