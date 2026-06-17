@@ -9026,17 +9026,103 @@ async function runMuxRunnerMain() {
       ? resolveCreditEarlyPhases(sessionDir, apTicketId, apPriorSpawnCount, resolveWmwEarlyPhaseK())
       : false;
     const apBeforeCount = apTicketId ? countWorkerArtifacts(path.join(sessionDir, apTicketId), { creditEarlyPhases: apCreditEarlyPhases }) : 0;
-    // AC-GA-REC-2 (de345802): a complexity_tier:large ticket cannot make
-    // committable progress under headless-mux — the 600s Bash-tool ceiling
-    // SIGKILLs a foreground spawn-morty at 600s (MASTER_PLAN #108). Route it
-    // through routeLargeTierTicket (emits large_tier_routed, no subprocess, no
-    // runIteration) instead of the raw foreground spawn path. Small/medium tiers
-    // take the byte-identical `await runIteration(...)` branch below.
-    // DEVIATION from plan: completion 'inactive' with exitCode:0 (NOT null) so
-    // detectManagerInactiveExit is false → the loop's `inactive` branch
-    // falls straight through to the clean `Session deactivated. Exiting loop.`
-    // break (exit_reason='cancelled'). exitCode:null would trip the
-    // manager-relaunch path, re-spawning the manager — defeating the route.
+    // [LARGE-TIER DETACHED SEAM — T3/Reading B (ticket 7f1f69a1)]
+    // When enabled, the orchestrator spawns spawn-morty detached + unref'd so the
+    // worker log survives past the 600s Bash-tool ceiling (R-WPEX #108 autonomy gap).
+    // Kill-switch: PICKLE_LARGE_TIER_DETACHED=off falls back to routeLargeTierTicket.
+    // T4 (poll-reattach when state.detached_worker is already set) and T5 (disposition
+    // mapping) branches are out of scope here — this is the NO-ARM branch only.
+    const largeTierDetachedEnabled = process.env.PICKLE_LARGE_TIER_DETACHED !== 'off';
+
+    if (state.current_ticket_tier === 'large' && largeTierDetachedEnabled && apTicketId &&
+        !state.detached_worker) {
+      const raw = Number(state.worker_timeout_seconds);
+      const workerTimeoutSec = Number.isFinite(raw) && raw > 0 ? raw : Defaults.WORKER_TIMEOUT_SECONDS;
+      const backend = resolveBackend(state);
+      const spawnArgs = [
+        path.join(extensionRoot, 'extension', 'bin', 'spawn-morty.js'),
+        state.original_prompt || '',
+        '--ticket-id', apTicketId,
+        '--ticket-path', path.join(sessionDir, apTicketId),
+        '--ticket-file', path.join(sessionDir, apTicketId, `linear_ticket_${apTicketId}.md`),
+        '--timeout', String(workerTimeoutSec),
+        '--backend', backend,
+      ];
+      const workerEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        ...backendEnvOverrides(backend),
+        ...sessionStampEnv(path.basename(sessionDir), state.working_dir || process.cwd()),
+        PICKLE_STATE_FILE: statePath,
+        PYTHONUNBUFFERED: '1',
+      };
+      delete workerEnv['CLAUDECODE'];
+      // Do NOT set PICKLE_ROLE here; spawn-morty sets it for its own child subprocess.
+
+      const proc = spawn(process.execPath, spawnArgs, {
+        cwd: state.working_dir || process.cwd(),
+        env: workerEnv,
+        stdio: 'ignore',   // mux-runner holds NO pipe to the log; spawn-morty owns it
+        detached: true,    // spawn-morty leads its own process group
+      });
+      proc.unref();        // release event-loop reference; mux-runner does not wait
+
+      if (!proc.pid) {
+        // Spawn failed synchronously (binary not found / permissions). Fall through
+        // to the existing routeLargeTierTicket fallback below (kill-switch-off path).
+        log('[large-tier] detached spawn-morty failed (no pid) — falling back to routeLargeTierTicket');
+      } else {
+        const detachedWorkerPid = proc.pid;
+        const actualLogPath = path.join(sessionDir, apTicketId, `worker_session_${detachedWorkerPid}.log`);
+        const spawnedAtEpoch = Date.now();
+
+        // Orchestrator owns state.json (R-WSRC). Workers are forbidden from writing it.
+        sm.update(statePath, s => {
+          s.detached_worker = {
+            worker_pid: detachedWorkerPid,
+            ticket_id: apTicketId,
+            spawned_at_epoch: spawnedAtEpoch,
+            worker_log_path: actualLogPath,
+          };
+        });
+
+        // ts must be explicit — writeActivityEntry does NOT auto-stamp it.
+        writeActivityEntry(statePath, {
+          event: 'large_tier_worker_spawned',
+          ts: new Date().toISOString(),
+          ticket: apTicketId,
+          gate_payload: {
+            worker_pid: detachedWorkerPid,
+            ticket_id: apTicketId,
+            spawned_at_epoch: spawnedAtEpoch,
+          },
+        });
+
+        log(`[large-tier] detached spawn-morty pid=${detachedWorkerPid}, log=${actualLogPath}`);
+
+        // Reset stall trackers and mark forward progress. Mirrors the cpu-liveness
+        // recovery continue at ~line 8993. Do NOT clear current_ticket — the ticket
+        // remains active and in progress under the detached worker.
+        lastStateIteration = -1;
+        stallCount = 0;
+        // eslint-disable-next-line no-useless-assignment -- progress marker read by the watchdog on the next loop iteration after continue
+        lastProgressEpoch = muxNow();
+        continue; // bypass outcome assignment, result branches, CB recording, deactivate break
+      }
+    }
+
+    // T4-STUB: detached_worker arm is present (arm set on the previous pass);
+    // T4 poll-reattach is not yet implemented. Loop-and-wait so the ternary
+    // below does NOT fire routeLargeTierTicket → completion:'inactive' →
+    // deactivate-break while the detached worker is still running.
+    // Natural termination: the stall watchdog exits after 2 iterations without
+    // a state.iteration advance (see stall-detection block above).
+    if (state.current_ticket_tier === 'large' && largeTierDetachedEnabled && apTicketId &&
+        state.detached_worker) {
+      log('[large-tier] detached_worker arm present — T4 poll-reattach not yet implemented; waiting');
+      continue; // do not invoke routeLargeTierTicket on iterations after the spawn
+    }
+
+    // Kill-switch off, non-large tier, or detached spawn failed: original path.
     const outcome: Awaited<ReturnType<typeof runIteration>> =
       state.current_ticket_tier === 'large'
         ? (() => {
