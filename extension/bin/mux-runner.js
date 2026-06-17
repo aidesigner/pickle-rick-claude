@@ -6239,6 +6239,166 @@ export function routeDetachedWorkerTerminalNoProgress(input) {
     updateMuxLifecycleState(statePath, { currentTicket: null });
     return { action: 'continue' };
 }
+/**
+ * T5 (AC-R-WPEXA-15 + AC-R-WPEXA-11(c)): DEAD detached-worker disposition for the
+ * POLL path. The sibling of `routeDetachedWorkerTerminalNoProgress` (the WEDGE /
+ * alive-but-no-progress precedent above). When the detached worker process is no
+ * longer alive, the poll invokes the SINGLE `salvageTicket` oracle with production
+ * deps (a REAL gate via `runBetweenTicketFastTests`, the commit-scoped Done flip via
+ * `commitGatePassingDeliverableOnExitPath`, archive-before-destructive, and a Todo
+ * reset) and maps ALL SIX salvageTicket dispositions to exactly one deterministic
+ * poll action. NO new completion authority is added here — completion happens ONLY
+ * inside `salvageTicket` / its deps (enforced by
+ * `completion-authority-single-source.test.js` + `audit-design-ground-truth.sh`).
+ *
+ *   salvageTicket outcome              → poll action
+ *   ─────────────────────────────────────────────────────────────────────────────
+ *   committed-done                     → clear arm, advance (currentTicket=null), continue
+ *   no-op / already_terminal           → worker self-completed (Reading B): clear arm,
+ *                                        advance, do NOT re-gate, continue
+ *   ff-reattached                      → clear arm, advance, continue
+ *   no-op / clean_tree                 → dead-without-completion → routeRecoveryBeforeTerminal
+ *   archived-todo                      → bounded re-attempt: salvage already reset the
+ *                                        ticket to Todo + archived the diff; clear the arm
+ *                                        and continue so it re-spawns next loop (NOT a
+ *                                        commit, NOT a terminal park)
+ *   error                              → NO destructive action → routeRecoveryBeforeTerminal
+ *
+ * The recovery routing for clean_tree + error mirrors the wedge helper:
+ *   advanced     → reset zero_progress_count, clear arm, continue
+ *   exhausted    → advanceOrExitOnLadderExhaustion (advance→clear arm+continue, else
+ *                  writeRecoveryHandoffArtifact + recordExitReason('recovery_exhausted') +
+ *                  safeDeactivate + removeRunnerSessionMapEntry + break)
+ *   fall_through → recovery off/unavailable for a DEAD-clean ticket: clear arm + continue
+ *                  so the ticket re-attempts (do NOT auto-Fail — that is the WEDGE path's
+ *                  job, not the dead-clean path)
+ *
+ * It ALWAYS clears `state.detached_worker` on every terminal/recovered/re-attempt
+ * outcome (orchestrator owns state per R-WSRC) so the poll arm stops matching the
+ * just-disposed ticket and the single-spawn invariant holds. The optional `deps`
+ * override is the interface-as-test-surface seam: the disposition matrix test injects
+ * deterministic dispositions through it WITHOUT a real git repo or `test:fast` spin;
+ * production passes nothing and gets the wired deps below.
+ */
+export function routeDeadDetachedWorkerDisposition(input) {
+    const { sessionDir, statePath, extensionRoot, workingDir, ticketId, iteration, flags, log } = input;
+    const clearDetachedWorker = () => {
+        try {
+            sm.update(statePath, s => { s.detached_worker = null; });
+        }
+        catch (err) {
+            log(`[large-tier] clear detached_worker failed (ignored): ${safeErrorMessage(err)}`);
+        }
+    };
+    // Dead-without-completion (clean_tree / error) routes through the W4a choke point,
+    // mirroring routeDetachedWorkerTerminalNoProgress's outcome handling — except the
+    // fall_through arm clears the arm and continues (re-attempt) rather than flipping
+    // Failed (the dead-clean ticket has no wedge evidence to escalate).
+    const applyRecoveryOutcome = () => {
+        const recovery = routeRecoveryBeforeTerminal({
+            sessionDir, statePath, extensionRoot, workingDir, ticketId, iteration, flags, log, mode: 'worker',
+        });
+        if (recovery.kind === 'advanced') {
+            log(`recovery: ${recovery.strategy} advanced dead detached ${ticketId} before terminal disposition — continuing.`);
+            try {
+                sm.update(statePath, s => {
+                    const entry = s.worker_artifact_progress?.[ticketId];
+                    if (entry)
+                        entry.zero_progress_count = 0;
+                });
+            }
+            catch { /* best-effort */ }
+            clearDetachedWorker();
+            return { action: 'continue' };
+        }
+        if (recovery.kind === 'exhausted') {
+            const ladderAction = advanceOrExitOnLadderExhaustion({
+                sessionDir, statePath, ticketId, reason: `recovery_exhausted: ${recovery.reason}`, log,
+            });
+            clearDetachedWorker();
+            if (ladderAction === 'advance') {
+                log(`ticket_ladder_exhausted: dead detached ${ticketId} (${recovery.reason}) — advancing to next runnable ticket at iteration ${iteration}.`);
+                return { action: 'continue' };
+            }
+            log(`recovery_exhausted: ladder exhausted for dead detached ${ticketId} (${recovery.reason}) and no runnable ticket remains — exiting at iteration ${iteration}.`);
+            writeRecoveryHandoffArtifact(sessionDir, ticketId, `dead_detached: ${recovery.reason}`, log);
+            recordExitReason(statePath, 'recovery_exhausted');
+            safeDeactivate(statePath);
+            removeRunnerSessionMapEntry(statePath, log);
+            return { action: 'break', exitReason: 'recovery_exhausted' };
+        }
+        // fall_through → recovery off/unavailable. Clear the arm + continue so the
+        // dead-clean ticket re-attempts on the next loop (no auto-Fail here).
+        log(`recovery fall_through for dead detached ${ticketId} (${recovery.reason}) — clearing arm, re-attempting.`);
+        clearDetachedWorker();
+        return { action: 'continue' };
+    };
+    // Production salvage deps: a REAL gate verdict (so committed-done is reachable when
+    // the dead worker left a gate-PASSING dirty tree, per AC-R-WPEXA-15), the commit-
+    // scoped Done flip seam, archive-before-destructive, and a Todo reset. ffReattach is
+    // inert in production (parity with routeExitPathSalvage); the disposition test injects
+    // it via the `deps` override.
+    const extensionDir = path.join(workingDir, 'extension');
+    const productionDeps = {
+        reconcile: (i) => reconcileTicketTruth(i),
+        gate: () => {
+            if (!fs.existsSync(extensionDir))
+                return 'failing';
+            try {
+                return runBetweenTicketFastTests(extensionDir, extensionRoot).ok ? 'passing' : 'failing';
+            }
+            catch {
+                return 'errored';
+            }
+        },
+        commitScoped: () => {
+            const r = commitGatePassingDeliverableOnExitPath({
+                sessionDir, statePath, workingDir, ticketId, extensionRoot, flags, log,
+            });
+            return { committed: r.committed, sha: r.sha };
+        },
+        archive: (i) => {
+            try {
+                return archiveBeforeDestructive({
+                    cwd: i.workingDir, sessionDir: i.sessionDir, ticketDir: `${i.sessionDir}/${i.ticketId}`, reason: 'pre_reset',
+                });
+            }
+            catch {
+                return null;
+            }
+        },
+        resetTodo: (i) => {
+            updateTicketFrontmatter(i.ticketId, i.sessionDir, { status: 'Todo', completion_commit: null });
+        },
+        ffReattach: () => ({ recovered: false }),
+    };
+    const outcome = salvageTicket({ sessionDir, workingDir, ticketId, log }, input.deps ?? productionDeps);
+    switch (outcome.disposition) {
+        case 'committed-done':
+        case 'ff-reattached':
+            clearDetachedWorker();
+            updateMuxLifecycleState(statePath, { currentTicket: null });
+            return { action: 'continue' };
+        case 'no-op':
+            if (outcome.reason === 'already_terminal') {
+                // Worker self-completed (Reading B): the model-driven path owns the Done flip.
+                clearDetachedWorker();
+                updateMuxLifecycleState(statePath, { currentTicket: null });
+                return { action: 'continue' };
+            }
+            // clean_tree → dead-without-completion → choke point.
+            return applyRecoveryOutcome();
+        case 'archived-todo':
+            // Bounded re-attempt under the SAME per-ticket budget: salvage already reset the
+            // ticket to Todo + archived the diff. Clear the arm so it re-spawns next loop.
+            clearDetachedWorker();
+            return { action: 'continue' };
+        case 'error':
+        default:
+            // NO destructive action — route through the choke point after the per-ticket budget.
+            return applyRecoveryOutcome();
+    }
+}
 /** Worker terminal completion signal (promise-tokens.ts WORKER_DONE). */
 const WORKER_TERMINAL_PROMISE_RE = /<promise>\s*I AM DONE\s*<\/promise>/;
 const SILENT_DEATH_GIT_TIMEOUT_MS = 10_000;
@@ -8221,9 +8381,42 @@ async function runMuxRunnerMain() {
             const dw = state.detached_worker;
             const detachedTicketId = dw.ticket_id;
             if (!isProcessAlive(dw.worker_pid)) {
-                // T5 owns: dead detached worker disposition (completion/recovery mapping).
-                // Preserve the current safe behavior — wait, do not re-spawn or dispose here.
-                log(`[large-tier] detached worker pid=${dw.worker_pid} not alive — T5 owns disposition; waiting`);
+                // T5 (AC-R-WPEXA-15 + AC-R-WPEXA-11(c)): dead detached worker → invoke the
+                // single salvageTicket oracle and map all six dispositions deterministically;
+                // dead-without-completion routes through routeRecoveryBeforeTerminal.
+                log(`[large-tier] detached worker pid=${dw.worker_pid} not alive — disposing via salvageTicket`);
+                // AC-2 fail-safe: missing working_dir must halt the git-mutating disposition,
+                // never fall back to process.cwd() (the real repo).
+                if (!state.working_dir) {
+                    recordExitReason(statePath, 'state_working_dir_missing');
+                    safeDeactivate(statePath);
+                    exitReason = 'state_working_dir_missing';
+                    break;
+                }
+                const deadProgress = state.worker_artifact_progress?.[detachedTicketId];
+                const disp = routeDeadDetachedWorkerDisposition({
+                    sessionDir,
+                    statePath,
+                    extensionRoot,
+                    workingDir: state.working_dir,
+                    ticketId: detachedTicketId,
+                    iteration,
+                    flags: state.flags ?? null,
+                    log,
+                    progress: {
+                        spawnCount: deadProgress?.spawn_count ?? 0,
+                        zeroProgressCount: deadProgress?.zero_progress_count ?? 0,
+                    },
+                });
+                if (disp.action === 'break') {
+                    if (disp.exitReason)
+                        exitReason = disp.exitReason;
+                    break;
+                }
+                lastStateIteration = -1;
+                stallCount = 0;
+                // eslint-disable-next-line no-useless-assignment -- progress marker read by the watchdog on the next loop iteration after continue
+                lastProgressEpoch = muxNow();
                 continue;
             }
             // AC-R-WPEXA-5: re-point artifact progress at the DETACHED worker's ticket dir.
