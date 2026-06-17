@@ -7076,6 +7076,96 @@ export function recordWorkerArtifactProgress(
   };
 }
 
+/**
+ * c6f44d6f (AC-R-WPEXA-5): terminal no-progress disposition for a WEDGED detached
+ * worker discovered on the POLL path. The non-detached R-WSWA-3 block (~:9220) reads
+ * loop-local `apProgressResult` and owns its break/continue inline against the spawn
+ * site, so the poll branch (which `continue`s BEFORE the spawn/charge site) cannot
+ * fall through into it without re-firing the spawn. This is the locality-preserving
+ * mirror: route the no-progress trigger through the SAME `routeRecoveryBeforeTerminal`
+ * choke point, then flip Failed/`oversized_no_progress` on `fall_through`. It ALWAYS
+ * clears `state.detached_worker` on any terminal/recovered outcome (orchestrator owns
+ * state per R-WSRC) so the poll arm stops matching the just-disposed ticket.
+ * Returns the loop action the caller applies; the caller owns stall-tracker resets.
+ */
+export function routeDetachedWorkerTerminalNoProgress(input: {
+  sessionDir: string;
+  statePath: string;
+  extensionRoot: string;
+  workingDir: string;
+  ticketId: string;
+  iteration: number;
+  flags: Record<string, unknown> | null;
+  log: (msg: string) => void;
+  progress: { spawnCount: number; zeroProgressCount: number };
+}): { action: 'continue' | 'break'; exitReason?: ExitReason } {
+  const { sessionDir, statePath, extensionRoot, workingDir, ticketId, iteration, flags, log, progress } = input;
+  const clearDetachedWorker = (): void => {
+    try { sm.update(statePath, s => { s.detached_worker = null; }); }
+    catch (err) { log(`[large-tier] clear detached_worker failed (ignored): ${safeErrorMessage(err)}`); }
+  };
+
+  const recovery = routeRecoveryBeforeTerminal({
+    sessionDir, statePath, extensionRoot, workingDir, ticketId, iteration, flags, log, mode: 'worker',
+  });
+  if (recovery.kind === 'advanced') {
+    log(`recovery: ${recovery.strategy} advanced detached ${ticketId} before wmw-auto-skip Failed flip — continuing.`);
+    try {
+      sm.update(statePath, s => {
+        const entry = s.worker_artifact_progress?.[ticketId];
+        if (entry) entry.zero_progress_count = 0;
+      });
+    } catch { /* best-effort */ }
+    clearDetachedWorker();
+    return { action: 'continue' };
+  }
+  if (recovery.kind === 'exhausted') {
+    const ladderAction = advanceOrExitOnLadderExhaustion({
+      sessionDir, statePath, ticketId, reason: `recovery_exhausted: ${recovery.reason}`, log,
+    });
+    clearDetachedWorker();
+    if (ladderAction === 'advance') {
+      log(`ticket_ladder_exhausted: detached ${ticketId} (${recovery.reason}) — advancing to next runnable ticket at iteration ${iteration}.`);
+      return { action: 'continue' };
+    }
+    log(`recovery_exhausted: ladder exhausted for detached ${ticketId} (${recovery.reason}) and no runnable ticket remains — exiting at iteration ${iteration}.`);
+    writeRecoveryHandoffArtifact(sessionDir, ticketId, `wmw_oversized: ${recovery.reason}`, log);
+    recordExitReason(statePath, 'recovery_exhausted');
+    safeDeactivate(statePath);
+    removeRunnerSessionMapEntry(statePath, log);
+    return { action: 'break', exitReason: 'recovery_exhausted' };
+  }
+
+  // fall_through → terminal Failed/oversized_no_progress flip (mirrors :9347-9375).
+  const skipK = resolveWmwSkipK();
+  const skipMsg = `[wmw-auto-skip] detached ${ticketId}: ${progress.zeroProgressCount}/${skipK} consecutive zero-progress polls — flipping to Failed/oversized_no_progress`;
+  log(skipMsg);
+  process.stderr.write(`${skipMsg}\n`);
+  try {
+    updateTicketFrontmatter(ticketId, sessionDir, { status: 'Failed', completion_commit: null });
+    const tfPath = ticketFilePath(sessionDir, ticketId);
+    const tfRaw = fs.readFileSync(tfPath, 'utf-8');
+    const tfUpdated = upsertFrontmatterField(tfRaw, 'failed_reason', 'oversized_no_progress');
+    if (tfUpdated) fs.writeFileSync(tfPath, tfUpdated);
+  } catch (err) { log(`[wmw-auto-skip] detached frontmatter flip failed (ignored): ${safeErrorMessage(err)}`); }
+  try {
+    writeActivityEntry(statePath, {
+      event: 'worker_auto_skip_oversized',
+      ts: new Date().toISOString(),
+      ticket: ticketId,
+      gate_payload: {
+        spawn_count: progress.spawnCount,
+        zero_progress_count: progress.zeroProgressCount,
+        skip_k: skipK,
+        failure_reason: 'oversized_no_progress',
+      },
+    });
+  } catch { /* best-effort */ }
+  clearDetachedWorker();
+  updateMuxLifecycleState(statePath, { currentTicket: null });
+  return { action: 'continue' };
+}
+
 // ─── Ticket 90574654: silent-death sub-classification + salvage-first recovery ───
 
 /** Silent-death sub-classes (90574654). `log_empty` → `worker_silent_death`; `log_truncated` → existing `worker_partial_lifecycle_exit`. */
@@ -9110,16 +9200,98 @@ async function runMuxRunnerMain() {
       }
     }
 
-    // T4-STUB: detached_worker arm is present (arm set on the previous pass);
-    // T4 poll-reattach is not yet implemented. Loop-and-wait so the ternary
-    // below does NOT fire routeLargeTierTicket → completion:'inactive' →
-    // deactivate-break while the detached worker is still running.
-    // Natural termination: the stall watchdog exits after 2 iterations without
-    // a state.iteration advance (see stall-detection block above).
+    // [LARGE-TIER DETACHED POLL — c6f44d6f (AC-R-WPEXA-11(b) + AC-R-WPEXA-5)]
+    // A live detached_worker for the CURRENT ticket is POLLED, never re-spawned:
+    // liveness + re-pointed artifact progress + large_tier_worker_poll, then yield.
+    // INVARIANT: this continue fires BEFORE the spawn branch above can re-fire (it is
+    // guarded by !state.detached_worker) and BEFORE any routeLargeTierTicket/next-ticket
+    // advance, so there is exactly ONE spawn-morty invocation per detached ticket.
+    // A mismatched arm (ticket_id !== apTicketId) does NOT match here → falls through.
     if (state.current_ticket_tier === 'large' && largeTierDetachedEnabled && apTicketId &&
-        state.detached_worker) {
-      log('[large-tier] detached_worker arm present — T4 poll-reattach not yet implemented; waiting');
-      continue; // do not invoke routeLargeTierTicket on iterations after the spawn
+        state.detached_worker && state.detached_worker.ticket_id === apTicketId) {
+      const dw = state.detached_worker;
+      const detachedTicketId = dw.ticket_id;
+
+      if (!isProcessAlive(dw.worker_pid)) {
+        // T5 owns: dead detached worker disposition (completion/recovery mapping).
+        // Preserve the current safe behavior — wait, do not re-spawn or dispose here.
+        log(`[large-tier] detached worker pid=${dw.worker_pid} not alive — T5 owns disposition; waiting`);
+        continue;
+      }
+
+      // AC-R-WPEXA-5: re-point artifact progress at the DETACHED worker's ticket dir.
+      // The bug: apBeforeCount (computed at loop top against apTicketId) equals the
+      // CURRENT count, so it would recompute a degenerate zero delta every poll. Pass
+      // the PREVIOUS poll's stored count instead, so afterCount (current real count)
+      // minus the prior count = artifacts produced since the last poll.
+      const detachedPriorSpawnCount = state.worker_artifact_progress?.[detachedTicketId]?.spawn_count || 0;
+      const detachedCreditEarlyPhases = resolveCreditEarlyPhases(
+        sessionDir, detachedTicketId, detachedPriorSpawnCount, resolveWmwEarlyPhaseK(),
+      );
+      const detachedBeforeCount = state.worker_artifact_progress?.[detachedTicketId]?.last_artifact_count ?? 0;
+      let pollProgress: { spawnCount: number; lastArtifactCount: number; zeroProgressCount: number; fired: boolean; doneGuard: boolean; incrementSuppressed: boolean } | null = null;
+      try {
+        pollProgress = recordWorkerArtifactProgress(statePath, sessionDir, detachedTicketId, detachedBeforeCount, {
+          iteration,
+          log,
+          workingDir: state.working_dir || process.cwd(),
+          sourceSignatureFn: (wd) => computeScopedSourceTreeSignature(wd, path.join(sessionDir, 'scope.json')),
+          creditEarlyPhases: detachedCreditEarlyPhases,
+        });
+      } catch { /* best-effort observability — never block the poll on progress tracking */ }
+
+      // ts must be explicit — writeActivityEntry does NOT auto-stamp it.
+      try {
+        writeActivityEntry(statePath, {
+          event: 'large_tier_worker_poll',
+          ts: new Date().toISOString(),
+          ticket: detachedTicketId,
+          gate_payload: {
+            worker_pid: dw.worker_pid,
+            ticket_id: detachedTicketId,
+          },
+        });
+      } catch { /* best-effort */ }
+
+      // AC-R-WPEXA-5: a wedged (alive-but-no-progress) detached worker still trips
+      // PICKLE_WMW_SKIP_K via the SAME terminal disposition the non-detached path uses.
+      // No double-charge: the wedge path reuses the pollProgress already recorded above.
+      if (pollProgress && pollProgress.zeroProgressCount >= resolveWmwSkipK()) {
+        if (!state.working_dir) {
+          recordExitReason(statePath, 'state_working_dir_missing');
+          safeDeactivate(statePath);
+          exitReason = 'state_working_dir_missing';
+          break;
+        }
+        const disp = routeDetachedWorkerTerminalNoProgress({
+          sessionDir,
+          statePath,
+          extensionRoot,
+          workingDir: state.working_dir,
+          ticketId: detachedTicketId,
+          iteration,
+          flags: (state.flags as Record<string, unknown> | undefined) ?? null,
+          log,
+          progress: { spawnCount: pollProgress.spawnCount, zeroProgressCount: pollProgress.zeroProgressCount },
+        });
+        if (disp.action === 'break') {
+          if (disp.exitReason) exitReason = disp.exitReason;
+          break;
+        }
+        lastStateIteration = -1;
+        stallCount = 0;
+        // eslint-disable-next-line no-useless-assignment -- progress marker read by the watchdog on the next loop iteration after continue
+        lastProgressEpoch = muxNow();
+        continue;
+      }
+
+      // Alive + not wedged: yield without re-spawn. Reset stall trackers the same way
+      // the T3 spawn branch does so the watchdog does not false-trip on the wait.
+      lastStateIteration = -1;
+      stallCount = 0;
+      // eslint-disable-next-line no-useless-assignment -- progress marker read by the watchdog on the next loop iteration after continue
+      lastProgressEpoch = muxNow();
+      continue;
     }
 
     // Kill-switch off, non-large tier, or detached spawn failed: original path.
