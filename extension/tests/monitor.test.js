@@ -773,9 +773,16 @@ test('writeWithWatchdog: rejects with backpressure error when sink never drains'
     assert.ok(err, 'writeWithWatchdog must reject when sink never drains');
     assert.ok(/watchdog/i.test(err.message), `expected watchdog error, got: ${err.message}`);
     assert.ok(/wedged|backpressure|drain/i.test(err.message), `expected pane wedge hint, got: ${err.message}`);
+    // Lower bound proves the watchdog did not fire prematurely. The upper bound
+    // was a load-fragile stopwatch: under the 10× c=8 stability-gate the event
+    // loop starves and the 200ms timer fires late (>700ms), a false failure that
+    // is NOT the test's contract — "doesn't hang forever" is already guaranteed by
+    // this async test completing within node:test's own timeout. (B-CITAIL
+    // follow-up; R-TSPF "deterministic barrier, not a stopwatch".) `grace` retained
+    // for the diagnostic message only.
     assert.ok(
-        elapsed >= watchdogMs && elapsed <= watchdogMs + grace,
-        `should reject within ${watchdogMs}+${grace}ms, took ${elapsed}ms`,
+        elapsed >= watchdogMs,
+        `watchdog must wait at least ${watchdogMs}ms before rejecting (grace=${grace}ms), took ${elapsed}ms`,
     );
 });
 
