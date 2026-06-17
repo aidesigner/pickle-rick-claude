@@ -2635,6 +2635,26 @@ export function routeLargeTierTicket(ticketId, sessionDir, statePath) {
     return { sanctionedPath: 'interactive_pickle_tmux', ticketId, sessionDir };
 }
 /**
+ * Kill-switch resolver for the large-tier DETACHED-worker lifecycle.
+ *
+ * `PICKLE_LARGE_TIER_DETACHED=off` (ONLY the literal lowercase string `off`)
+ * reverts BOTH large-tier seams — the main-loop spawn/poll branch in
+ * runMuxRunnerMain AND the recovery re-execution seam — to the verbatim
+ * `routeLargeTierTicket` interactive disposition. Any other value (incl.
+ * `OFF`, `0`, `false`, `1`, empty string) or an absent var keeps the detached
+ * lifecycle enabled. Mirrors the `PICKLE_CODEGRAPH=off` /
+ * `shouldIsolateSessionGroup` (`PICKLE_RECOVERY_CONSOLIDATION=off`) precedent:
+ * only the literal lowercase `off` disables.
+ *
+ * The env var IS the documented escape hatch (subtract-before-add governance,
+ * extension/CLAUDE.md W5b) — there is deliberately NO `state.flags.skip_*_reason`
+ * field for this; `audit-skip-flag-unification.sh` forbids a new non-unified one.
+ * `env` defaults to `process.env` and is injectable for testing.
+ */
+export function largeTierDetachedEnabled(env = process.env) {
+    return env.PICKLE_LARGE_TIER_DETACHED !== 'off';
+}
+/**
  * Spawn a large-tier spawn-morty worker DETACHED + unref'd (T3 detached lifecycle),
  * shared by the main-loop seam and the recovery re-execution seam (AC-R-WPEXA-2c/14).
  *
@@ -4414,7 +4434,7 @@ export function attemptRecoveryBeforeTerminal(input) {
             reExecutionSeam: {
                 spawnImplementPass: (opts) => {
                     if (opts.complexityTier === 'large') {
-                        if (process.env.PICKLE_LARGE_TIER_DETACHED !== 'off') {
+                        if (largeTierDetachedEnabled()) {
                             const st = sm.read(opts.statePath);
                             const rawTimeout = Number(st.worker_timeout_seconds);
                             const workerTimeoutSec = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : Defaults.WORKER_TIMEOUT_SECONDS;
@@ -8527,8 +8547,8 @@ async function runMuxRunnerMain() {
         // Kill-switch: PICKLE_LARGE_TIER_DETACHED=off falls back to routeLargeTierTicket.
         // T4 (poll-reattach when state.detached_worker is already set) and T5 (disposition
         // mapping) branches are out of scope here — this is the NO-ARM branch only.
-        const largeTierDetachedEnabled = process.env.PICKLE_LARGE_TIER_DETACHED !== 'off';
-        if (state.current_ticket_tier === 'large' && largeTierDetachedEnabled && apTicketId &&
+        const detachedEnabled = largeTierDetachedEnabled();
+        if (state.current_ticket_tier === 'large' && detachedEnabled && apTicketId &&
             !state.detached_worker) {
             const raw = Number(state.worker_timeout_seconds);
             const workerTimeoutSec = Number.isFinite(raw) && raw > 0 ? raw : Defaults.WORKER_TIMEOUT_SECONDS;
@@ -8563,7 +8583,7 @@ async function runMuxRunnerMain() {
         // guarded by !state.detached_worker) and BEFORE any routeLargeTierTicket/next-ticket
         // advance, so there is exactly ONE spawn-morty invocation per detached ticket.
         // A mismatched arm (ticket_id !== apTicketId) does NOT match here → falls through.
-        if (state.current_ticket_tier === 'large' && largeTierDetachedEnabled && apTicketId &&
+        if (state.current_ticket_tier === 'large' && detachedEnabled && apTicketId &&
             state.detached_worker && state.detached_worker.ticket_id === apTicketId) {
             const dw = state.detached_worker;
             const detachedTicketId = dw.ticket_id;

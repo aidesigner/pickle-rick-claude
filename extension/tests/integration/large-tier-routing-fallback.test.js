@@ -18,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const { routeLargeTierTicket } = await import('../../bin/mux-runner.js');
+const { routeLargeTierTicket, largeTierDetachedEnabled } = await import('../../bin/mux-runner.js');
 
 function makeSession(tier) {
   const tmp = mkdtempSync(path.join(tmpdir(), 'pickle-ltrf-'));
@@ -112,6 +112,80 @@ test('no 600s SIGKILL: zero silent-death/subprocess-error events and no worker_s
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('AC-R-WPEXA-7: largeTierDetachedEnabled disables ONLY on literal lowercase "off"', () => {
+  // Detached lifecycle ON by default and for every non-`off` value.
+  assert.equal(largeTierDetachedEnabled({}), true, 'absent → detached lifecycle enabled');
+  assert.equal(largeTierDetachedEnabled({ PICKLE_LARGE_TIER_DETACHED: '' }), true, 'empty → enabled');
+  for (const v of ['OFF', 'Off', '0', 'false', '1', 'on', 'yes']) {
+    assert.equal(
+      largeTierDetachedEnabled({ PICKLE_LARGE_TIER_DETACHED: v }),
+      true,
+      `value "${v}" must NOT disable (only literal lowercase off disables)`,
+    );
+  }
+  // ONLY the literal lowercase `off` reverts to the legacy interactive disposition.
+  assert.equal(largeTierDetachedEnabled({ PICKLE_LARGE_TIER_DETACHED: 'off' }), false, '"off" disables');
+});
+
+test('AC-R-WPEXA-7: kill-switch off → verbatim routeLargeTierTicket interactive disposition, no detached arm', () => {
+  const { tmp, sessionDir, statePath } = makeSession('large');
+  const prev = process.env.PICKLE_LARGE_TIER_DETACHED;
+  process.env.PICKLE_LARGE_TIER_DETACHED = 'off';
+  try {
+    // With the kill-switch off, both seams fall through to routeLargeTierTicket.
+    assert.equal(largeTierDetachedEnabled(), false, 'kill-switch off resolves to detached-disabled');
+
+    const ticketId = 'ticket-killswitch';
+    const disposition = routeLargeTierTicket(ticketId, sessionDir, statePath);
+
+    // VERBATIM legacy disposition (unchanged shape).
+    assert.equal(disposition.sanctionedPath, 'interactive_pickle_tmux');
+    assert.equal(disposition.ticketId, ticketId);
+
+    const activity = readActivity(statePath);
+    // Exactly one large_tier_routed (the legacy interactive punt) and NO detached events.
+    assert.equal(
+      activity.filter((e) => e.event === 'large_tier_routed').length,
+      1,
+      'off path emits the legacy large_tier_routed event',
+    );
+    assert.equal(
+      activity.filter((e) => e.event === 'large_tier_worker_spawned').length,
+      0,
+      'off path must NOT spawn a detached worker',
+    );
+    // The detached arm is never populated on the off path.
+    const state = JSON.parse(readFileSync(statePath, 'utf-8'));
+    assert.ok(!state.detached_worker, 'off path must not populate state.detached_worker');
+  } finally {
+    if (prev === undefined) delete process.env.PICKLE_LARGE_TIER_DETACHED;
+    else process.env.PICKLE_LARGE_TIER_DETACHED = prev;
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('AC-R-WPEXA-7: no new skip_*_reason flag added to StateFlags (env var is the escape hatch)', () => {
+  // Subtract-before-add governance: the kill-switch is an env var, NOT a new
+  // per-gate skip flag. audit-skip-flag-unification.sh enforces this at gate time;
+  // this is the in-suite trip-wire. The only sanctioned skip_*_reason fields are
+  // the documented survivors.
+  const typesSrc = readFileSync(path.resolve(__dirname, '../../../extension/src/types/index.ts'), 'utf-8');
+  const flagsStart = typesSrc.indexOf('export interface StateFlags');
+  assert.ok(flagsStart >= 0, 'StateFlags interface must exist');
+  const flagsEnd = typesSrc.indexOf('\n}', flagsStart);
+  const flagsBlock = typesSrc.slice(flagsStart, flagsEnd);
+  const skipFields = [...flagsBlock.matchAll(/^\s*(skip_\w*_reason)\??:/gm)].map((m) => m[1]);
+  const allowed = new Set(['skip_quality_gates_reason', 'skip_readiness_reason', 'skip_ticket_audit_reason']);
+  for (const f of skipFields) {
+    assert.ok(allowed.has(f), `unexpected skip_*_reason flag "${f}" — env var is the only large-tier hatch`);
+  }
+  // No large-tier-specific skip flag.
+  assert.ok(
+    !/skip_large_tier_\w*_reason/.test(flagsBlock),
+    'no skip_large_tier_*_reason flag may exist',
+  );
 });
 
 test('small/medium tiers are unchanged — the routing seam is gated on tier === large', () => {

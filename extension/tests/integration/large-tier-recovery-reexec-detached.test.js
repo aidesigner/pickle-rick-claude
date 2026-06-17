@@ -156,20 +156,26 @@ test('AC-R-WPEXA-2c: spawn-morty.ts applyHeuristicBackendRouting is NOT a routeL
 
 test('AC-R-WPEXA-2c: no large-tier path silently punts when PICKLE_LARGE_TIER_DETACHED != off', () => {
   const src = readFileSync(MUX_SRC, 'utf-8');
-  // The recovery seam guards the legacy punt behind the kill-switch: the detached
-  // spawn is attempted UNLESS the kill-switch is off.
+  // T8 (0e301e4e) centralized the literal-`off` check into the exported resolver
+  // largeTierDetachedEnabled(env). BOTH seams now drive that single source of
+  // truth instead of inlining `process.env.PICKLE_LARGE_TIER_DETACHED !== 'off'`.
   assert.ok(
-    /opts\.complexityTier === 'large'[\s\S]{0,400}PICKLE_LARGE_TIER_DETACHED !== 'off'[\s\S]{0,400}spawnDetachedLargeTierWorker\(/.test(src),
+    /export function largeTierDetachedEnabled\([\s\S]{0,200}PICKLE_LARGE_TIER_DETACHED !== 'off'/.test(src),
+    'the kill-switch resolver largeTierDetachedEnabled is the single literal-off source of truth',
+  );
+  // The recovery seam guards the legacy punt behind the kill-switch resolver: the
+  // detached spawn is attempted UNLESS the kill-switch is off.
+  assert.ok(
+    /opts\.complexityTier === 'large'[\s\S]{0,400}largeTierDetachedEnabled\(\)[\s\S]{0,400}spawnDetachedLargeTierWorker\(/.test(src),
     'recovery seam must call spawnDetachedLargeTierWorker when the kill-switch is not off',
   );
-  // The main-loop seam computes largeTierDetachedEnabled from the same kill-switch and
-  // drives the shared helper.
+  // The main-loop seam reads the same resolver and drives the shared helper.
   assert.ok(
-    /largeTierDetachedEnabled = process\.env\.PICKLE_LARGE_TIER_DETACHED !== 'off'/.test(src),
-    'main-loop seam reads the PICKLE_LARGE_TIER_DETACHED kill-switch',
+    /detachedEnabled = largeTierDetachedEnabled\(\)/.test(src),
+    'main-loop seam reads the PICKLE_LARGE_TIER_DETACHED kill-switch via the resolver',
   );
   assert.ok(
-    /largeTierDetachedEnabled && apTicketId &&[\s\S]{0,80}!state\.detached_worker\)[\s\S]{0,400}spawnDetachedLargeTierWorker\(/.test(src),
+    /detachedEnabled && apTicketId &&[\s\S]{0,80}!state\.detached_worker\)[\s\S]{0,400}spawnDetachedLargeTierWorker\(/.test(src),
     'main-loop seam drives the shared spawnDetachedLargeTierWorker helper',
   );
 });
