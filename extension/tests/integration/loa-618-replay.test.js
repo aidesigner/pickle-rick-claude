@@ -53,12 +53,14 @@ test('LOA-618 replay: tarball extracts to expected file list', async () => {
   await fsPromises.mkdir(tmp, { recursive: true });
   try {
     const { stdout } = await execFileAsync('tar', ['-tzf', TARBALL]);
-    // B-CITAIL follow-up: compare FILE entries only. BSD tar (macOS, where this
-    // fixture + expected list were authored) and GNU tar (Linux CI) list the bare
-    // DIRECTORY entries (trailing '/') differently — a cross-platform tooling diff,
-    // same class as the stat -f/-c install.sh bug. The file set is the test's real
-    // contract; directory entries are tar-implementation noise.
-    const isFile = (e) => !e.endsWith('/');
+    // B-CITAIL follow-up: compare REAL FILE entries only. Two cross-platform tar
+    // listing diffs (same class as the stat -f/-c install.sh bug): (1) bare
+    // DIRECTORY entries (trailing '/') are listed differently by BSD tar (macOS,
+    // where this fixture + list were authored) vs GNU tar (Linux CI); (2) the
+    // fixture was tarred on macOS, embedding `._*` AppleDouble resource-fork
+    // companions that BSD `tar -tzf` hides but GNU `tar -tzf` lists verbatim. Both
+    // are tar-implementation noise; the real-file set is the test's contract.
+    const isFile = (e) => !e.endsWith('/') && !e.split('/').pop().startsWith('._');
     const entries = stdout.split('\n').filter(Boolean).filter(isFile).sort();
     const expected = [
       'loa-618-replay/',
