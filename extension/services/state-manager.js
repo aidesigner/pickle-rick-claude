@@ -467,17 +467,22 @@ function migrateLegacySkipQualityGatesFlags(state) {
 function isStateSnapshotNewer(currentState, currentMtimeMs, candidateState, candidateMtimeMs) {
     const currentIteration = readFiniteIteration(currentState);
     const candidateIteration = readFiniteIteration(candidateState);
+    // Iteration-first precedence: a higher-iteration snapshot wins regardless of mtime.
     if (candidateIteration !== null && currentIteration !== null) {
         if (candidateIteration !== currentIteration) {
             return candidateIteration > currentIteration;
         }
-        return candidateMtimeMs > currentMtimeMs;
+        // R-CIFB-B: equal iteration → mtime tie-break with candidate (tmp) winning ties
+        // (`>=`). An orphan .tmp.<pid> is written after its base, so on a coarse-mtime
+        // FS tie it is the more-recent intent. Consistent with recoverable-json parseDeadTmp.
+        return candidateMtimeMs >= currentMtimeMs;
     }
     if (candidateIteration !== null)
         return true;
     if (currentIteration !== null)
         return false;
-    return candidateMtimeMs > currentMtimeMs;
+    // R-CIFB-B: both iterations absent → mtime tie-break, candidate (tmp) wins ties (`>=`).
+    return candidateMtimeMs >= currentMtimeMs;
 }
 function isRecoverableStateSnapshotCandidate(value, maxSupportedSchemaVersion) {
     if (!isRecord(value))

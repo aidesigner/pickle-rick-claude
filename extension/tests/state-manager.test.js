@@ -652,6 +652,60 @@ test('StateManager.read: leaves tmp file from live process alone', () => {
   });
 });
 
+test('StateManager.read: promotes equal-mtime same-iteration orphan tmp (R-CIFB-B tie-to-candidate)', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({ iteration: 5, active: true, current_ticket: 'T-BASE' }));
+
+    const tmpFile = `${sp}.tmp.99999999`;
+    fs.writeFileSync(tmpFile, JSON.stringify(makeState({
+      iteration: 5,
+      active: false,
+      current_ticket: 'T-RECOVERED',
+    }), null, 2));
+    // IDENTICAL forced mtime — the Linux coarse-mtime tie the fix must promote.
+    const t = new Date(1_700_000_000_000);
+    fs.utimesSync(sp, t, t);
+    fs.utimesSync(tmpFile, t, t);
+
+    const result = sm.read(sp);
+
+    assert.equal(result.iteration, 5);
+    assert.equal(result.current_ticket, 'T-RECOVERED', 'equal-mtime tmp should win the tie');
+    assert.equal(fs.existsSync(tmpFile), false, 'promoted tmp should be consumed');
+
+    const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(onDisk.current_ticket, 'T-RECOVERED');
+  });
+});
+
+test('StateManager.read: does NOT promote equal-mtime tmp from a live writer (shouldSkipLiveTmp preserved)', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({ iteration: 5, current_ticket: 'T-BASE' }));
+
+    // Live PID (this process) — the live-writer guard must skip it even on an mtime tie.
+    const tmpFile = `${sp}.tmp.${process.pid}`;
+    fs.writeFileSync(tmpFile, JSON.stringify(makeState({
+      iteration: 5,
+      current_ticket: 'T-LIVE',
+    }), null, 2));
+    // Stamp the tmp at/after process start (now) so shouldSkipLiveTmp treats it as in-flight,
+    // and stamp the base at the same instant to force the mtime tie.
+    const t = new Date();
+    fs.utimesSync(sp, t, t);
+    fs.utimesSync(tmpFile, t, t);
+
+    const result = sm.read(sp);
+
+    assert.equal(result.current_ticket, 'T-BASE', 'live-writer tmp must not be promoted on a tie');
+    assert.equal(fs.existsSync(tmpFile), true, 'live tmp must remain untouched');
+    fs.unlinkSync(tmpFile);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // read — recovery: stale active flag
 // ---------------------------------------------------------------------------

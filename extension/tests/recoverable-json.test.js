@@ -152,6 +152,53 @@ test('readRecoverableJsonObject deletes invalid dead tmp files without replacing
   });
 });
 
+test('readRecoverableJsonObject promotes an equal-mtime dead tmp (R-CIFB-B tie-to-tmp)', () => {
+  withTempDir((dir) => {
+    const target = path.join(dir, 'cache.json');
+    const tmp = `${target}.tmp.${DEAD_PID}`;
+    writeJson(target, { source: 'base' });
+    writeJson(tmp, { source: 'tie-tmp' });
+    // IDENTICAL forced mtime — the Linux coarse-mtime tie the fix must promote.
+    setMtime(target, BASE_TIME);
+    setMtime(tmp, BASE_TIME);
+
+    const recovered = readRecoverableJsonObject(target);
+
+    assert.deepEqual(recovered, { source: 'tie-tmp' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(target, 'utf8')), { source: 'tie-tmp' });
+    assert.equal(fs.existsSync(tmp), false);
+  });
+});
+
+test('readRecoverableJsonObject resolves equal-mtime competing tmps first-seen-wins (R-CIFB-B pinned ordering)', () => {
+  withTempDir((dir) => {
+    const target = path.join(dir, 'cache.json');
+    // Two dead tmps with IDENTICAL mtime. Winner-selection keeps strict `>`, so the
+    // FIRST tmp entry the readdir scan reaches wins (and is never replaced on a tie).
+    const tmpA = `${target}.tmp.${DEAD_PID - 1}`;
+    const tmpB = `${target}.tmp.${DEAD_PID}`;
+    writeJson(target, { source: 'base' });
+    writeJson(tmpA, { source: `pid-${DEAD_PID - 1}` });
+    writeJson(tmpB, { source: `pid-${DEAD_PID}` });
+    setMtime(target, BASE_TIME);
+    setMtime(tmpA, BASE_TIME + 1_000);
+    setMtime(tmpB, BASE_TIME + 1_000);
+
+    // Derive the pinned (first-seen) winner from the same scan order the impl uses.
+    const baseName = path.basename(target);
+    const tmpPrefix = baseName + '.tmp.';
+    const firstSeen = fs
+      .readdirSync(dir)
+      .filter((e) => e.startsWith(tmpPrefix))[0];
+    const expected = { source: `pid-${firstSeen.slice(tmpPrefix.length)}` };
+
+    const recovered = readRecoverableJsonObject(target);
+
+    assert.deepEqual(recovered, expected, 'first-seen tmp must win the equal-mtime tie');
+    assert.deepEqual(JSON.parse(fs.readFileSync(target, 'utf8')), expected);
+  });
+});
+
 test('readRecoverableJsonObject promotes the highest-mtime tmp from multiple competing dead writers', () => {
   withTempDir((dir) => {
     const target = path.join(dir, 'cache.json');

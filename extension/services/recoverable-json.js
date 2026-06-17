@@ -91,7 +91,11 @@ function parseDeadTmp(tmpPath, baseMtimeMs) {
     catch {
         return null;
     }
-    if (mtimeMs <= baseMtimeMs) {
+    // R-CIFB-B: an orphan .tmp.<pid> is written AFTER its base, so on a coarse-mtime
+    // FS tie (Linux) the tmp is the more-recent intent and MUST win — discard only a
+    // STRICTLY-older tmp (`<`, not `<=`). The equal-mtime tmp is kept here and decided
+    // by the winner-selection tie-break in readRecoverableJsonObject.
+    if (mtimeMs < baseMtimeMs) {
         try {
             fs.unlinkSync(tmpPath);
         }
@@ -126,6 +130,10 @@ export function readRecoverableJsonObject(filePath) {
         if (shouldSkipLiveTmp(tmpPid, tmpPath))
             continue;
         const candidate = parseDeadTmp(tmpPath, baseMtimeMs);
+        // R-CIFB-B PINNED ORDERING: among multiple competing dead tmps, strict `>` means
+        // the winner is replaced ONLY by a strictly-newer mtime, so equal-mtime tmps are
+        // resolved first-seen-wins (readdir iteration order). This is deterministic and
+        // documented — do NOT relax to `>=` (that would make last-seen win on a tie).
         if (candidate && (!winner || candidate.mtimeMs > winner.mtimeMs)) {
             winner = { tmpPath, ...candidate };
         }

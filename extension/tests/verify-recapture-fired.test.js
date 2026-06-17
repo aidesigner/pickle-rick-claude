@@ -352,6 +352,34 @@ test('verify-recapture.recovers corrupt-base orphan tmp state even when the tmp 
   }
 });
 
+test('verify-recapture.promotes an equal-mtime dead orphan tmp over a readable base (R-CIFB-B tie-to-tmp)', () => {
+  const session = realpathSync(mkdtempSync(path.join(tmpdir(), 'verify-recapture-equal-mtime-')));
+  const statePath = path.join(session, 'state.json');
+  const orphanPath = `${statePath}.tmp.${DEAD_TMP_PID}`;
+  // Readable base — same iteration as the tmp, but NO recapture event → would FAIL alone.
+  writeFileSync(statePath, `${JSON.stringify(recoverableState([]), null, 2)}\n`);
+  // Dead-pid orphan tmp — same iteration, carries the recapture event → would PASS.
+  writeFileSync(orphanPath, `${JSON.stringify(recoverableState([
+    {
+      ts: '2026-05-02T11:15:00.000Z',
+      event: 'baseline_recapture_attempted',
+      iteration: 7,
+    },
+  ]), null, 2)}\n`);
+  // IDENTICAL forced mtime — the Linux coarse-mtime tie the fix must promote.
+  utimesSync(statePath, new Date(1_000), new Date(1_000));
+  utimesSync(orphanPath, new Date(1_000), new Date(1_000));
+  try {
+    const result = runVerifier(session);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.runtimeArtifact.pass, true, 'equal-mtime tmp must be promoted, yielding a pass');
+    assert.equal(result.runtimeArtifact.failure_reason, null);
+    assert.equal(existsSync(orphanPath), false, 'promoted equal-mtime tmp should be consumed');
+  } finally {
+    rmSync(session, { recursive: true, force: true });
+  }
+});
+
 test('verify-recapture.recovers orphan tmp state when state.json is missing entirely', () => {
   const session = realpathSync(mkdtempSync(path.join(tmpdir(), 'verify-recapture-missing-base-')));
   const statePath = path.join(session, 'state.json');
