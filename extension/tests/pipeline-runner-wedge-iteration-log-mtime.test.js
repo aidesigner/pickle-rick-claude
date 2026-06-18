@@ -105,6 +105,33 @@ describe('child-mux wedge detector keys on iteration-log mtime (AC-R-RESH-4)', (
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  test('(a-max) multiple iteration-logs -> keys off the MAX (freshest) mtime, not first/last', () => {
+    // Two logs: tmux_iteration_1.log is stale (> threshold), tmux_iteration_3.log is fresh.
+    // resolveChildMuxLivenessMtime takes the MAX across all logs, so liveness is fresh -> no kill.
+    // A "first-log" or "last-readdir-entry" implementation would wrongly key off the stale log.
+    const dir = tmpDir();
+    const now = Date.now();
+    const statePath = path.join(dir, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify({ active: true }));
+    setMtime(statePath, now - (STALL_SECONDS + 600) * 1000); // state.json also stale
+
+    const stale = path.join(dir, 'tmux_iteration_1.log');
+    fs.writeFileSync(stale, '{}');
+    setMtime(stale, now - (STALL_SECONDS + 300) * 1000); // 2100s stale, > threshold
+
+    const fresh = path.join(dir, 'tmux_iteration_3.log');
+    fs.writeFileSync(fresh, '{}');
+    setMtime(fresh, now - 5 * 1000); // 5s fresh
+
+    const { child, events } = runTick(dir, now);
+
+    assert.equal(child.killed, false, 'MAX mtime is fresh -> must not kill');
+    assert.equal(child.signal, null);
+    assert.equal(events.length, 0, 'no wedge event when the freshest log is fresh');
+
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   test('(c) no iteration-log -> falls back to state.json mtime', () => {
     const dir = tmpDir();
     const now = Date.now();
