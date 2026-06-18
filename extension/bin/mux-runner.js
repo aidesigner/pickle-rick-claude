@@ -1606,7 +1606,7 @@ export function repopulateNoProgressCapFromFrontmatter(statePath, state, log, se
  *   1. sm.update  — sets completion_promise (JSON) + appends activity entry
  *   2. finalizeTerminalState — sets active=false, step='completed', exit_reason='completed'
  */
-export function applyAllTicketsDoneCompletion(statePath, sessionDir, iteration, log) {
+export function applyAllTicketsDoneCompletion(statePath, sessionDir, iteration, log, workingDir = '') {
     let dirEntries;
     try {
         dirEntries = fs.readdirSync(sessionDir, { withFileTypes: true });
@@ -1642,8 +1642,19 @@ export function applyAllTicketsDoneCompletion(statePath, sessionDir, iteration, 
         }
         statuses.push(normalizeTicketStatus(parsed.status || ''));
     }
-    if (!statuses.every(s => s === 'done'))
+    if (!statuses.every(s => s === 'done' || s === 'skipped'))
         return false;
+    // False-completion guard: re-scan via reconcileTicketTruth before committing to finalize.
+    const truth = reconcileTicketTruth({ sessionDir, workingDir });
+    const nonTerminal = Object.entries(truth.ticketStatuses)
+        .filter(([, st]) => {
+        const n = normalizeTicketStatus(st);
+        return n !== 'done' && n !== 'skipped';
+    });
+    if (nonTerminal.length > 0) {
+        log(`false-completion guard: ${nonTerminal.length} non-terminal ticket(s) detected — refusing all-done finalize`);
+        return false;
+    }
     const ts = new Date().toISOString();
     sm.update(statePath, s => {
         s.completion_promise = JSON.stringify({ kind: PromiseTokens.EPIC_COMPLETED, reason: 'all-tickets-done', ts });
@@ -5838,6 +5849,23 @@ function processTaskCompleted(state, ctx) {
             ctx.updateState(s => Object.assign(s, ctx.transitionToMeeseeks ? ctx.transitionToMeeseeks(s) : transitionToMeeseeks(s, ctx.extensionRoot)));
         return { kind: 'continue', resetStall: true };
     }
+    // False-completion guard: re-scan ticket frontmatter via reconcileTicketTruth before
+    // finalizing EPIC as completed. Guards against stale evaluateEpicCompletion reads.
+    {
+        const workingDir4Guard = curState.working_dir || state.working_dir || '';
+        const guardTruth = reconcileTicketTruth({ sessionDir: ctx.sessionDir, workingDir: workingDir4Guard });
+        const guardNonTerminal = Object.entries(guardTruth.ticketStatuses)
+            .filter(([, st]) => {
+            const n = normalizeTicketStatus(st);
+            return n !== 'done' && n !== 'skipped';
+        });
+        if (guardNonTerminal.length > 0) {
+            ctx.log(`false-completion guard: ${guardNonTerminal.length} non-terminal ticket(s) detected — refusing EPIC finalize, routing recovery`);
+            const handoffSummary = buildIterationHandoffSummary(state, ctx.sessionDir, ctx.iteration + 1);
+            (ctx.writeHandoff || writeHandoffAtomic)(ctx.sessionDir, handoffSummary, process.pid, ctx.log);
+            return { kind: 'continue', resetStall: true };
+        }
+    }
     ctx.log('Task completed. Exiting loop.');
     ctxFinalize(ctx, 'success');
     return { kind: 'break', reason: 'success' };
@@ -8071,7 +8099,7 @@ async function runMuxRunnerMain() {
         catch (err) {
             log(`orphan manager reaper failed (ignored): ${safeErrorMessage(err)}`);
         }
-        if (templateName !== 'meeseeks.md' && applyAllTicketsDoneCompletion(statePath, sessionDir, iteration, log)) {
+        if (templateName !== 'meeseeks.md' && applyAllTicketsDoneCompletion(statePath, sessionDir, iteration, log, state.working_dir || '')) {
             exitReason = 'success';
             break;
         }
