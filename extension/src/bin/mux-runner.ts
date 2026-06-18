@@ -1838,10 +1838,17 @@ export function repopulateNoProgressCapFromFrontmatter(
  * and reduces to `GraduationCounts`. The mux seam has no commit count in hand at
  * the finalize site, so `commitCount` is 0 — graduation then keys on the
  * Done/Skipped roster alone (a fully-Done bundle has `pendingCount === 0`).
- * Fail-closed: an empty roster where tickets were expected returns `null` so the
- * authority refuses; a genuinely never-decomposed session (0 tickets) returns a
- * 0-count snapshot that `graduationDecision` graduates via its `ticketCount <= 0`
- * carve-out.
+ *
+ * `reconcileTicketTruth` is by-design best-effort (every probe try/catch'd to a
+ * conservative default), so an empty / unreadable roster reduces to a 0-count
+ * snapshot, which `graduationDecision` GRADUATES via its `ticketCount <= 0`
+ * never-decomposed carve-out. That carve-out is safe at THIS seam only because
+ * every caller is gated upstream: `applyAllTicketsDoneCompletion` returns false
+ * on a 0-ticket roster BEFORE reaching this finalize, and the EPIC_COMPLETED
+ * paths fire only after the bundle's tickets are established as terminal. The
+ * primary fail-closed line is the pipeline seam (`pipelineBundleScan` returns
+ * `null` on a throwing reader); this adapter returns counts, never `null`, and is
+ * pinned by `completion-scan-adapter-edge.test.js`.
  */
 function muxBundleScan(sessionDir: string, workingDir: string): GraduationCounts | null {
   const truth = reconcileTicketTruth({ sessionDir, workingDir });
