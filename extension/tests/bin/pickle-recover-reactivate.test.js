@@ -91,6 +91,33 @@ describe('pickle-recover --reactivate (AC-R-RESH-3)', () => {
     );
   });
 
+  it('(b2) live session (active:true) refuses without writing: a running pipeline owns the state', () => {
+    const { deps, rec } = makeDeps({
+      state: { ...TERMINAL_STATE, active: true, step: 'research', exit_reason: null },
+    });
+    const result = runRecover({ subcommand: 'reactivate', ticketArg: null, plan: false }, '/repo', deps);
+
+    assert.notEqual(result.code, 0, 'refusal on a live session exits non-zero');
+    assert.equal(result.transition, null, 'no transition on a live session');
+    assert.equal(rec.stateWrites.length, 0, 'no state write clobbers the live pipeline');
+    assert.equal(rec.events.length, 0, 'no event on refusal');
+    assert.ok(
+      rec.logs.some((m) => /still active|active:true/i.test(m)),
+      'refusal message names the active-session cause',
+    );
+  });
+
+  it('(b3) --reactivate --plan on a live session still previews without writing', () => {
+    const { deps, rec } = makeDeps({
+      state: { ...TERMINAL_STATE, active: true, step: 'research', exit_reason: null },
+    });
+    const result = runRecover({ subcommand: 'reactivate', ticketArg: null, plan: true }, '/repo', deps);
+
+    assert.equal(result.code, 0, '--plan never refuses, even on a live session');
+    assert.equal(rec.stateWrites.length, 0, '--plan performs no write');
+    assert.equal(rec.events.length, 0, '--plan emits no event');
+  });
+
   it('(c) --reactivate --plan is a dry-run: prints the intended transition, writes nothing', () => {
     const { deps, rec } = makeDeps();
     const result = runRecover({ subcommand: 'reactivate', ticketArg: null, plan: true }, '/repo', deps);

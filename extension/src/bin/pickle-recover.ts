@@ -121,17 +121,13 @@ export function parseArgs(argv: string[]): ParsedRecoverArgs {
       case '--plan':
         plan = true;
         break;
+      // No-argument subcommands share one body: the flag minus its `--` prefix
+      // is exactly the RecoverSubcommand value (see the RecoverSubcommand union).
       case '--resume-from-todo':
-        if (subcommand) throw new RecoverArgError('only one subcommand may be given');
-        subcommand = 'resume-from-todo';
-        break;
       case '--reattach-orphan':
-        if (subcommand) throw new RecoverArgError('only one subcommand may be given');
-        subcommand = 'reattach-orphan';
-        break;
       case '--reactivate':
         if (subcommand) throw new RecoverArgError('only one subcommand may be given');
-        subcommand = 'reactivate';
+        subcommand = arg.slice(2) as RecoverSubcommand;
         break;
       case '--salvage':
       case '--reset-ticket': {
@@ -219,6 +215,12 @@ function resolveAndGate(args: ParsedRecoverArgs, cwd: string, deps: RecoverDeps)
   const exitReason = state.exit_reason ?? null;
   // `reactivate` un-terminalizes a session driven to {active:false, step:'completed'} — its target
   // is a COMPLETED session, never `recovery_exhausted`, so it is exempt from the entry-state gate.
+  // But it MUST refuse a still-live session: flipping {active,step,current_ticket} under a running
+  // mux-runner clobbers its in-flight state mid-iteration. --plan stays a safe dry-run.
+  if (args.subcommand === 'reactivate' && !args.plan && state.active === true) {
+    deps.log('Refusing to run: session is still active (active:true) — a live pipeline owns this state. Stop it first, or re-run with --plan to preview.');
+    return { code: 1, transition: null };
+  }
   if (exitReason !== RECOVERY_ENTRY_STATE && !args.plan && args.subcommand !== 'reactivate') {
     deps.log(
       `Refusing to run: session exit_reason is '${exitReason ?? '(none)'}', not '${RECOVERY_ENTRY_STATE}'. ` +
