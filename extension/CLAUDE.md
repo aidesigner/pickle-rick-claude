@@ -8,6 +8,58 @@ Compiled TS → JS lives in `extension/services/`, `extension/bin/`, `extension/
 |---|---|---|
 | tsc errors at commit time | `allow_tsc_failed_reason` (manager-only) | `tsc-gate.ts` hook |
 | completion-authority single-source-of-truth (terminal Done/Skipped write outside the 4-file allowlist) | none (invariant, not a skip surface) | `completion-authority-single-source.test.js` |
+| un-terminalize a TERMINAL session (`active: true` / `step:` away from `'completed'`) outside the sanctioned-writer allowlist | none (invariant, not a skip surface) | `audit-un-terminalize-single-path.sh` + `un-terminalize-single-path.test.js` |
+
+## Recovery-transition matrix
+
+This recovery-transition matrix maps the five prior babysitter recipes to one command surface.
+`pickle-recover` (B-RESH W3) is the SINGLE sanctioned command surface for every operator/babysitter
+recovery transition. The five prior babysitter recipes map 1:1 onto its subcommands — there is no
+sanctioned `state.json` hand-edit for any of them. WS2 (ticket 005c63c9) additionally makes the
+**un-terminalize** transition single-path: a write that flips a terminal session
+(`{active:false, step:'completed'}`) back to runnable (`active: true` / `step:` away from
+`'completed'`) is default-DENIED outside the sanctioned-writer allowlist
+(`bin/pickle-recover.ts` primitives + `bin/setup.ts --resume` + WS1's `finalizeIfTrulyComplete` in
+`services/state-manager.ts`, forward-listed because it touches `step`). Enforced by
+`extension/scripts/audit-un-terminalize-single-path.sh` (default-DENY source-grep) and
+`extension/tests/un-terminalize-single-path.test.js` (sanctioned-PASS + rogue-RED).
+
+| Babysitter recipe | `pickle-recover` command surface | What it does |
+|---|---|---|
+| resume-from-todo | `pickle-recover resume-from-todo` | ff-reattach any orphaned commit, then re-queue the lowest runnable Todo; clears `current_ticket` + `exit_reason`. |
+| reattach-orphan | `pickle-recover reattach-orphan` | ff-reattach an orphaned commit via `detectAndRecoverHeadRegression` (no status flip). |
+| reset-ticket | `pickle-recover reset-ticket <id>` | archive the diff + reset the ticket to Todo; clears `current_ticket` if it pointed at the ticket. |
+| salvage | `pickle-recover salvage <id>` | commit+Done / archive+Todo / ff-reattach / no-op per `salvageTicket` disposition. |
+| un-terminalize | `pickle-recover --reactivate` | the ONLY sanctioned terminal→runnable write: set `{active:true, step:'research', exit_reason:null, current_ticket:<lowest runnable Todo>}`; refuses a still-live session (`active:true`) and an all-Done session. `--plan` previews without writing. |
+
+### Refusal CUJs
+
+- **CUJ-RECOVER-EPIC-01 — EPIC finalize refused.** A session was driven to `{active:false,
+  step:'completed'}` (terminal) but real work remains (e.g. a false-completion claim that
+  `finalizeIfTrulyComplete` later refused, or an operator wants to re-open an all-but-done epic).
+  The ONLY sanctioned recourse is to un-terminalize via the single-path command:
+
+  ```
+  pickle-recover --reactivate
+  ```
+
+  This sets `{active:true, step:'research', exit_reason:null, current_ticket:<lowest runnable Todo>}`.
+  Preview first with `pickle-recover --reactivate --plan` (no write). It refuses if the session is
+  still live (`active:true`) or all tickets are Done. **No `state.json` hand-edit is sanctioned.**
+
+- **CUJ-RECOVER-PHASE-01 — phase-graduation refused.** The pipeline halted BETWEEN phases with
+  `exit_reason == 'pipeline_phase_incomplete'` (the session is HALTED, NOT terminal — `step` is not
+  `'completed'`). This is a phase-graduation refusal, not an un-terminalize: the correct recovery is
+  to confirm the pending tickets are runnable, then resume the pipeline. First verify each pending
+  ticket's frontmatter is `status: Todo`, then:
+
+  ```
+  setup.js --resume <SESSION_ROOT>
+  ```
+
+  The resume reactivates the session through the sanctioned `setup.ts --resume` path and continues to
+  the next pending ticket. Do NOT run `pickle-recover --reactivate` here — the session is not terminal.
+  **No `state.json` hand-edit is sanctioned.**
 
 ## R-TSPF
 
