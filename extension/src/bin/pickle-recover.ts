@@ -44,7 +44,8 @@ export type RecoverSubcommand =
   | 'resume-from-todo'
   | 'salvage'
   | 'reattach-orphan'
-  | 'reset-ticket';
+  | 'reset-ticket'
+  | 'reactivate';
 
 export interface ParsedRecoverArgs {
   subcommand: RecoverSubcommand;
@@ -65,9 +66,9 @@ export interface RecoverTransition {
  * coverage test injects fakes (mirrors the salvage-ticket-matrix pattern).
  */
 export interface RecoverDeps {
-  readState: (statePath: string) => { exit_reason?: string | null; working_dir?: string; start_commit?: string; current_ticket?: string | null };
+  readState: (statePath: string) => { exit_reason?: string | null; working_dir?: string; start_commit?: string; current_ticket?: string | null; active?: boolean; step?: string };
   /** Mutate state.json through the sanctioned StateManager path only. */
-  updateState: (statePath: string, mutator: (s: { current_ticket: string | null; exit_reason?: string | null }) => void) => void;
+  updateState: (statePath: string, mutator: (s: { current_ticket: string | null; exit_reason?: string | null; active?: boolean; step?: string }) => void) => void;
   resolveSessionPath: (cwd: string) => string | null;
   collectTickets: typeof collectTickets;
   ticketStatus: typeof getTicketStatus;
@@ -104,7 +105,7 @@ const defaultDeps: RecoverDeps = {
 
 const USAGE =
   'Usage: pickle-recover <--resume-from-todo | --salvage <ticket> | ' +
-  '--reattach-orphan | --reset-ticket <id>> [--plan]';
+  '--reattach-orphan | --reset-ticket <id> | --reactivate> [--plan]';
 
 export class RecoverArgError extends Error {}
 
@@ -127,6 +128,10 @@ export function parseArgs(argv: string[]): ParsedRecoverArgs {
       case '--reattach-orphan':
         if (subcommand) throw new RecoverArgError('only one subcommand may be given');
         subcommand = 'reattach-orphan';
+        break;
+      case '--reactivate':
+        if (subcommand) throw new RecoverArgError('only one subcommand may be given');
+        subcommand = 'reactivate';
         break;
       case '--salvage':
       case '--reset-ticket': {
@@ -212,7 +217,9 @@ function resolveAndGate(args: ParsedRecoverArgs, cwd: string, deps: RecoverDeps)
   }
 
   const exitReason = state.exit_reason ?? null;
-  if (exitReason !== RECOVERY_ENTRY_STATE && !args.plan) {
+  // `reactivate` un-terminalizes a session driven to {active:false, step:'completed'} — its target
+  // is a COMPLETED session, never `recovery_exhausted`, so it is exempt from the entry-state gate.
+  if (exitReason !== RECOVERY_ENTRY_STATE && !args.plan && args.subcommand !== 'reactivate') {
     deps.log(
       `Refusing to run: session exit_reason is '${exitReason ?? '(none)'}', not '${RECOVERY_ENTRY_STATE}'. ` +
       `Re-run with --plan to preview the transition without writing.`,
@@ -238,7 +245,7 @@ export function runRecover(args: ParsedRecoverArgs, cwd: string, deps: RecoverDe
   if ('code' in gated) return gated;
 
   const { sessionDir, statePath, workingDir, startCommit, exitReason } = gated;
-  const ticket = args.ticketArg ?? (args.subcommand === 'resume-from-todo' || args.subcommand === 'reattach-orphan'
+  const ticket = args.ticketArg ?? (args.subcommand === 'resume-from-todo' || args.subcommand === 'reattach-orphan' || args.subcommand === 'reactivate'
     ? selectLowestRunnableTodo(sessionDir, deps)
     : null);
 
@@ -274,6 +281,10 @@ function planDescription(subcommand: RecoverSubcommand, ticket: string | null, e
       return `[plan] would ff-reattach an orphaned commit${ticket ? ` for ${ticket}` : ''} via detectAndRecoverHeadRegression, no write performed.${targetNote}`;
     case 'reset-ticket':
       return `[plan] would archive the diff + reset ${ticket} to Todo, no write performed.${targetNote}`;
+    case 'reactivate':
+      return ticket
+        ? `[plan] would un-terminalize the session: set {active:true, step:'research', exit_reason:null, current_ticket:${ticket}} (lowest runnable Todo), no write performed.${targetNote}`
+        : `[plan] would REFUSE: no runnable Todo ticket remains (all-Done session), no write performed.${targetNote}`;
   }
 }
 
@@ -327,6 +338,18 @@ function executeTransition(subcommand: RecoverSubcommand, ctx: TransitionCtx, de
       const outcome = resetTicketViaSalvage({ sessionDir, workingDir, ticketId: ticket as string }, deps);
       deps.updateState(statePath, (s) => { if (s.current_ticket === ticket) s.current_ticket = null; });
       return outcome.disposition;
+    }
+    case 'reactivate': {
+      // Refuse on an all-Done session: no runnable Todo means nothing to un-terminalize for.
+      if (!ticket) throw new RecoverArgError('reactivate refused: no runnable Todo ticket remains (all-Done session)');
+      // Single sanctioned StateManager write: un-terminalize + point at the lowest runnable Todo.
+      deps.updateState(statePath, (s) => {
+        s.active = true;
+        s.step = 'research';
+        s.exit_reason = null;
+        s.current_ticket = ticket;
+      });
+      return 'reactivated';
     }
   }
 }
