@@ -77,6 +77,22 @@ describe('pickle-recover --reactivate (AC-R-RESH-3)', () => {
     assert.equal(rec.events[0].ticket, 't1');
   });
 
+  it('(a2) selects lowest-order *runnable* Todo, skipping a lower-order Done — filters by status not just order', () => {
+    // t1 (order 10) is Done, t2 (order 20) is Todo. The lowest-ORDER ticket is t1, but the lowest
+    // RUNNABLE Todo is t2. Proves selectLowestRunnableTodo applies the status filter, not a bare
+    // order sort (which would wrongly pick the Done t1).
+    const { deps, rec } = makeDeps({
+      deps: { ticketStatus: (_sd, id) => (id === 't1' ? 'Done' : 'Todo') },
+    });
+    const result = runRecover({ subcommand: 'reactivate', ticketArg: null, plan: false }, '/repo', deps);
+
+    assert.equal(result.code, 0, 'reactivate succeeds with a runnable Todo present');
+    assert.equal(rec.stateWrites.length, 1, 'exactly one StateManager.update');
+    assert.equal(rec.stateWrites[0].after.current_ticket, 't2', 'picks the runnable Todo, not the lower-order Done');
+    assert.equal(rec.events.length, 1);
+    assert.equal(rec.events[0].ticket, 't2');
+  });
+
   it('(b) terminal all-Done session refuses: non-zero exit, no write, no event, clear message', () => {
     const { deps, rec } = makeDeps({ ticketStatus: 'Done' });
     const result = runRecover({ subcommand: 'reactivate', ticketArg: null, plan: false }, '/repo', deps);
