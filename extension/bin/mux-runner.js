@@ -6,7 +6,7 @@ import { spawn, spawnSync, execFileSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, TIER_LIFECYCLE, composeManagerPromptFromSkill, resolveWorkerTestGateTimeoutMs, resolveCommandTemplate, loadPickleSettingsBag, resolveHardeningSettings, resolveCodegraphSettings, resolveRateLimitSettings, DEFAULT_MAX_PARK_MINUTES } from '../services/pickle-utils.js';
 import { findMissingPrefixes, requiredTierArtifactPrefixes } from '../services/artifact-validation.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact } from '../types/index.js';
-import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, finalizeIfTrulyComplete, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, isProcessAlive } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides, sessionStampEnv, LARGE_TIER_DETACH_FORCE_ENV } from '../services/backend-spawn.js';
@@ -1606,6 +1606,27 @@ export function repopulateNoProgressCapFromFrontmatter(statePath, state, log, se
  *   1. sm.update  — sets completion_promise (JSON) + appends activity entry
  *   2. finalizeTerminalState — sets active=false, step='completed', exit_reason='completed'
  */
+/**
+ * B-GROUND2 WS1: the mux-seam ground-truth scan fed to `finalizeIfTrulyComplete`
+ * at every EPIC-terminal finalize. Re-scans frontmatter via `reconcileTicketTruth`
+ * and reduces to `GraduationCounts`. The mux seam has no commit count in hand at
+ * the finalize site, so `commitCount` is 0 — graduation then keys on the
+ * Done/Skipped roster alone (a fully-Done bundle has `pendingCount === 0`).
+ * Fail-closed: an empty roster where tickets were expected returns `null` so the
+ * authority refuses; a genuinely never-decomposed session (0 tickets) returns a
+ * 0-count snapshot that `graduationDecision` graduates via its `ticketCount <= 0`
+ * carve-out.
+ */
+function muxBundleScan(sessionDir, workingDir) {
+    const truth = reconcileTicketTruth({ sessionDir, workingDir });
+    const entries = Object.values(truth.ticketStatuses);
+    const doneCount = entries.filter(st => normalizeTicketStatus(st) === 'done').length;
+    const pendingCount = entries.filter(st => {
+        const n = normalizeTicketStatus(st);
+        return n !== 'done' && n !== 'skipped';
+    }).length;
+    return { doneCount, commitCount: 0, pendingCount, ticketCount: entries.length };
+}
 export function applyAllTicketsDoneCompletion(statePath, sessionDir, iteration, log, workingDir = '') {
     let dirEntries;
     try {
@@ -1662,7 +1683,11 @@ export function applyAllTicketsDoneCompletion(statePath, sessionDir, iteration, 
             s.activity = [];
         s.activity.push({ event: 'epic_completed', kind: PromiseTokens.EPIC_COMPLETED, ts });
     });
-    finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'completed' });
+    // B-GROUND2 WS1: the all-done synthesis routes through the single authority.
+    // The reconcileTicketTruth false-completion guard above already re-scanned, but
+    // routing here makes this the canonical ticket-bundle completion seam (no raw
+    // `exitReason: 'completed'` finalize survives the 4th audit proxy).
+    finalizeIfTrulyComplete(statePath, () => muxBundleScan(sessionDir, workingDir), { step: 'completed', runnerIteration: iteration, exitReason: 'completed' });
     log(`all-tickets-done (${ticketPaths.length}/${ticketPaths.length}): synthesizing ${PromiseTokens.EPIC_COMPLETED} completion`);
     return true;
 }
@@ -8128,7 +8153,10 @@ async function runMuxRunnerMain() {
             }
             log('all tickets terminal (no runnable ticket and no all-Done completion) — clean exit before runIteration.');
             recordExitReason(statePath, 'all_tickets_terminal');
-            finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'completed' });
+            // B-GROUND2 WS1: route the ticket-bundle terminal through the single
+            // ground-truth authority — refuses (re-stamps incomplete) if a residual
+            // pending ticket is found on the re-scan.
+            finalizeIfTrulyComplete(statePath, () => muxBundleScan(sessionDir, state.working_dir || ''), { step: 'completed', runnerIteration: iteration, exitReason: 'completed' });
             exitReason = 'all_tickets_terminal';
             break;
         }
@@ -9693,7 +9721,10 @@ async function runMuxRunnerMain() {
                 continue;
             }
             log('Task completed. Exiting loop.');
-            finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'success' });
+            // B-GROUND2 WS1: the EPIC-success finalize routes through the single
+            // ground-truth authority — a residual pending ticket refuses the
+            // `success` stamp and stamps the incomplete reason instead (fail-closed).
+            finalizeIfTrulyComplete(statePath, () => muxBundleScan(sessionDir, state.working_dir || ''), { step: 'completed', runnerIteration: iteration, exitReason: 'success' });
             exitReason = 'success';
             break;
         }
@@ -9706,7 +9737,10 @@ async function runMuxRunnerMain() {
             catch (err) {
                 const msg = safeErrorMessage(err);
                 log(`ERROR: Cannot read state.json after review_clean: ${msg}. Treating as completed.`);
-                finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'success' });
+                // B-GROUND2 WS1: even on a state-read failure the EPIC-success finalize
+                // routes through the authority; `muxBundleScan` reads frontmatter
+                // independently of state.json, so the pending-scan still fail-closes.
+                finalizeIfTrulyComplete(statePath, () => muxBundleScan(sessionDir, state.working_dir || ''), { step: 'completed', runnerIteration: iteration, exitReason: 'success' });
                 exitReason = 'success';
                 break;
             }
@@ -9719,7 +9753,8 @@ async function runMuxRunnerMain() {
             }
             else {
                 log('Review clean. Exiting loop.');
-                finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'success' });
+                // B-GROUND2 WS1: EPIC-success finalize through the single authority.
+                finalizeIfTrulyComplete(statePath, () => muxBundleScan(sessionDir, curState.working_dir || state.working_dir || ''), { step: 'completed', runnerIteration: iteration, exitReason: 'success' });
                 exitReason = 'success';
                 break;
             }

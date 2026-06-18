@@ -1102,6 +1102,69 @@ export function finalizeTerminalState(statePath, opts = {}) {
     }, () => ({ active: false, step: opts.step ?? 'completed', current_ticket: null }));
 }
 /**
+ * The ONE proportional graduation gate. Keys on REAL progress
+ * (`doneCount + commitCount`), NEVER the bare `pendingCount / ticketCount`
+ * ratio — that ratio skip-dampens (Skipped tickets are excluded from
+ * `pendingCount` but counted in `ticketCount`, so 22-skip/2-todo/0-done would
+ * graduate under any ratio threshold).
+ *
+ * The breaker term is deliberately ABSENT: this predicate is by-invariant on
+ * the counts alone. A breaker-trip / error exit reaches the same gate as a
+ * clean exit — callers MUST run it on ALL exit codes and MUST NOT substitute
+ * `exitCode !== 0` as a breaker proxy.
+ *
+ * Decision:
+ *   - `ticketCount <= 0`  → graduate (never-decomposed / dispatch-only carve-out).
+ *   - `pendingCount === 0`→ graduate (all tickets Done or Skipped — terminal).
+ *   - else, 0 Done + 0 commits → halt `phase_no_progress`.
+ *   - else (partial progress, pending remain) → halt `pipeline_phase_incomplete`.
+ */
+export function graduationDecision(counts) {
+    if (counts.ticketCount <= 0)
+        return { decision: 'graduate' };
+    if (counts.pendingCount === 0)
+        return { decision: 'graduate' };
+    if (counts.doneCount === 0 && counts.commitCount === 0) {
+        return { decision: 'halt', reason: 'phase_no_progress' };
+    }
+    return { decision: 'halt', reason: 'pipeline_phase_incomplete' };
+}
+/**
+ * The SINGLE sanctioned wrapper over `finalizeTerminalState({ step: 'completed' })`
+ * for ticket-bundle finalizes. Re-scans frontmatter ground truth via the injected
+ * `scan` probe (mux seam: `reconcileTicketTruth`-derived counts; pipeline seam:
+ * `collectPicklePhaseProgress`-derived counts) and REFUSES the transition while
+ * real work is pending.
+ *
+ * Fail-CLOSED: if `scan` throws, times out, or returns `null` (an empty/all-zero
+ * roster where a roster was expected), treat the phase as INCOMPLETE — refuse the
+ * transition, stamp `pipeline_phase_incomplete`, and route the caller to recovery.
+ *
+ * Never throws — terminal/forensic paths must not fail on logging.
+ */
+export function finalizeIfTrulyComplete(statePath, scan, opts = {}) {
+    let counts;
+    try {
+        counts = scan();
+    }
+    catch {
+        // Fail-closed: a throwing/timed-out scan is treated as INCOMPLETE.
+        recordExitReason(statePath, 'pipeline_phase_incomplete');
+        return { finalized: false, reason: 'pipeline_phase_incomplete' };
+    }
+    if (counts === null) {
+        recordExitReason(statePath, 'pipeline_phase_incomplete');
+        return { finalized: false, reason: 'pipeline_phase_incomplete' };
+    }
+    const verdict = graduationDecision(counts);
+    if (verdict.decision === 'halt') {
+        recordExitReason(statePath, verdict.reason);
+        return { finalized: false, reason: verdict.reason };
+    }
+    finalizeTerminalState(statePath, opts);
+    return { finalized: true };
+}
+/**
  * Stamp `exit_reason` without touching other fields — for forensic paths
  * (circuit_open, stall, fatal, signal) that must preserve last-known step
  * and current_ticket for postmortem inspection. Never throws.

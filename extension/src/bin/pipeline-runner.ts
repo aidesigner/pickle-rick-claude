@@ -21,7 +21,7 @@ import * as path from 'path';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'child_process';
 import type { Backend, State } from '../types/index.js';
 import { BACKENDS, MICROVERSE_FATAL_REASONS, PipelineRunnerExitCode, isMicroverseFailureExit, type MicroverseExitReason, type MicroverseFatalReason } from '../types/index.js';
-import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, finalizeIfTrulyComplete, graduationDecision, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError, type GraduationCounts } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend, resolveBackend, buildWorkerInvocation } from '../services/backend-spawn.js';
 import {
   getExtensionRoot,
@@ -3143,34 +3143,6 @@ function reportPhaseIncomplete(runtime: PipelineRuntime, phase: PhaseName): void
  * across the 2026-05-18 PM B-SJET-2 attempts (4 consecutive 31m+ runs at
  * exit_reason='completed' with 0 Done, 0 commits).
  */
-/**
- * R-PIPE-2: gate helper extracted from `runPhaseIteration` to keep that
- * function under the cyclomatic-complexity ceiling. Returns a break outcome
- * iff the pickle phase exited clean with 0 Done + 0 commits; otherwise null
- * (caller continues to the existing success path).
- */
-function maybeStampPhaseNoProgress(
-  runtime: PipelineRuntime,
-  rawPhase: PhaseName,
-  exitCode: number,
-  log: (msg: string) => void,
-): PhaseIterationOutcome | null {
-  if (rawPhase !== 'pickle' || exitCode !== 0) return null;
-  const progress = collectPicklePhaseProgress(runtime);
-  // Sessions without tickets (dispatch-only smoke tests, codex-required PRD
-  // bundles that never decompose) have no progress contract to enforce —
-  // preserve the existing clean-exit success path. The gate targets the
-  // "tickets exist but none completed AND no commits landed" class.
-  if (progress.ticketCount === 0) return null;
-  if (progress.doneCount !== 0 || progress.commitCount !== 0) return null;
-  const shortStart = progress.startCommit
-    ? progress.startCommit.slice(0, 8)
-    : 'session start';
-  log(`Phase ${rawPhase} exited with no progress (0 Done of ${progress.ticketCount} tickets, 0 commits since ${shortStart})`);
-  recordExitReason(runtime.statePath, 'phase_no_progress');
-  return { action: 'break', phaseIncomplete: true };
-}
-
 function collectPicklePhaseProgress(runtime: PipelineRuntime): {
   doneCount: number;
   commitCount: number;
@@ -3211,70 +3183,70 @@ function collectPicklePhaseProgress(runtime: PipelineRuntime): {
 }
 
 /**
- * R-PPPA (Finding #59): catch the false phase-advance where pickle's mux-runner
- * exits clean (code 0) with SOME but not all tickets resolved — the codex
- * manager hallucinating `EPIC_COMPLETED` triggers an early clean exit.
- * `maybeStampPhaseNoProgress` only catches the 0-Done/0-commit case; the
- * N-of-M-Done case (2/13, 3/13) sails through. When runnable tickets remain,
- * stamp the transient `phase_incomplete_tickets` exit_reason and break so the
- * pipeline does NOT advance pickle→citadel→anatomy-park on an incomplete bundle.
+ * B-GROUND2 WS1: the pipeline-seam ground-truth scan fed to
+ * `finalizeIfTrulyComplete` at the success finalize. Derives `GraduationCounts`
+ * from the canonical `collectPicklePhaseProgress` reader. Fail-closed: any
+ * unexpected throw collapses to `null` so the authority refuses the transition.
  */
-function maybeStampPhaseIncompleteTickets(
-  runtime: PipelineRuntime,
-  rawPhase: PhaseName,
-  exitCode: number,
-  log: (msg: string) => void,
-): PhaseIterationOutcome | null {
-  if (rawPhase !== 'pickle' || exitCode !== 0) return null;
-  const progress = collectPicklePhaseProgress(runtime);
-  if (progress.ticketCount === 0) return null;
-  if (progress.pendingCount === 0) return null;
-  // R-CMWL-2: a pass that shipped ≥1 Done ticket or ≥1 new commit made forward
-  // progress — return null so the R-CMWL-1 relaunch path continues the phase
-  // rather than treating a progressing-but-incomplete bundle as fatal.
-  // Only stamp the terminal reason when the pass made ZERO progress.
-  if (progress.doneCount > 0 || progress.commitCount > 0) return null;
-  log(`Phase ${rawPhase} exited clean but ${progress.pendingCount}/${progress.ticketCount} tickets remain unresolved (${progress.doneCount} Done) — incomplete bundle, no progress this pass`);
-  recordExitReason(runtime.statePath, 'phase_incomplete_tickets');
-  return { action: 'break', phaseIncomplete: true };
+function pipelineBundleScan(runtime: PipelineRuntime): GraduationCounts | null {
+  try {
+    const p = collectPicklePhaseProgress(runtime);
+    return {
+      doneCount: p.doneCount,
+      commitCount: p.commitCount,
+      pendingCount: p.pendingCount,
+      ticketCount: p.ticketCount,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
- * AC-A1 (WS-A): ground pickle phase-success in the all-tickets-terminal state
- * machine. A clean mux exit-0 is NOT phase success while runnable tickets remain.
- * The earlier gates stamp more specific reasons first:
- *   - `maybeStampPickleIncompleteRobust` — signal-teardown sentinel present.
- *   - `maybeStampPhaseNoProgress` — 0 Done + 0 commits.
- *   - `maybeStampPhaseIncompleteTickets` — ≥1 pending with 0 Done AND 0 commits.
- * The R-CMWL-2 carve-out in `maybeStampPhaseIncompleteTickets` deliberately ADVANCES
- * a within-pass *progressing* pickle (≥1 Done OR ≥1 commit) so the codex-relaunch
- * loop can continue the phase across mux passes. That carve-out, however, must NOT
- * leak into pipeline-PHASE advance: a clean exit-0 means the pickle SUBPROCESS gave
- * up THIS pass, so advancing to citadel/anatomy-park on a partially-Done bundle is
- * the B-XSPA / #113 R-XSPA-2 defect. This catch-all gate (pickle + exit 0 only)
- * fires on the residual `pendingCount > 0` case REGARDLESS of progress, stamping the
- * uniform `pipeline_phase_incomplete` reason via `reportPhaseIncomplete` and breaking
- * so finalize exits PipelineRunnerExitCode.PhaseIncomplete (3) WITHOUT advancing.
+ * B-GROUND2 WS1 (R-DPMC-2 fix): the ONE proportional graduation gate the
+ * pickle phase-exit path delegates to. Collapses the three former guards
+ * (`maybeStampPhaseNoProgress` 0-Done/0-commit, `maybeStampPhaseIncompleteTickets`
+ * N-of-M, `maybeStampPicklePendingTickets` AC-A1 catch-all) into a single
+ * decision routed through `graduationDecision` (state-manager.ts).
  *
- * Pendingness uses the same `done`/`skipped`-exclusion predicate mux uses in
- * `findPendingNonCurrentTickets` (via `collectPicklePhaseProgress.pendingCount`,
- * read from session-dir frontmatter — pipeline-runner has no in-memory roster).
+ * The byte-identical `exitCode !== 0` early-return that opened all three guards
+ * was the literal R-DPMC-2 bypass: a breaker-tripped / error pickle exit reaches
+ * `finalizePhaseSuccess` (because `shouldHaltAfterPhase` returns false on non-fatal
+ * non-zero pickle, R-PHC-6) and every guard early-returned, so a 14/24-Todo bundle
+ * silently graduated. This gate runs on ALL exit codes — the decision is
+ * by-invariant on the frontmatter ground-truth counts, never on the exit code.
  *
- * No new parallel completion guard: reuses `reportPhaseIncomplete` and the existing
- * `{action:'break', phaseIncomplete:true}` outcome. Pickle-only — R-PHC-6
- * continue-by-default for anatomy-park/szechuan-sauce is untouched.
+ * Carve-outs preserved: `rawPhase !== 'pickle'` (R-PHC-6 continue-by-default for
+ * anatomy-park / szechuan-sauce is untouched) and `ticketCount === 0`
+ * (never-decomposed / dispatch-only bundles, handled inside `graduationDecision`).
+ *
+ * The gate keys on REAL progress (`doneCount + commitCount`) for the halt REASON
+ * (`phase_no_progress` vs `pipeline_phase_incomplete`), NEVER the skip-dampened
+ * `pendingCount / ticketCount` ratio for the graduate-vs-halt decision.
  */
-function maybeStampPicklePendingTickets(
+function maybeStampPhaseGraduation(
   runtime: PipelineRuntime,
   rawPhase: PhaseName,
-  exitCode: number,
+  _exitCode: number,
   log: (msg: string) => void,
 ): PhaseIterationOutcome | null {
-  if (rawPhase !== 'pickle' || exitCode !== 0) return null;
+  if (rawPhase !== 'pickle') return null;
   const progress = collectPicklePhaseProgress(runtime);
-  if (progress.ticketCount === 0) return null;
-  if (progress.pendingCount === 0) return null;
-  log(`Phase ${rawPhase} exited clean (exit 0) but ${progress.pendingCount}/${progress.ticketCount} tickets remain pending (${progress.doneCount} Done) — not all-tickets-terminal, marking phase incomplete (not advancing)`);
+  const counts: GraduationCounts = {
+    doneCount: progress.doneCount,
+    commitCount: progress.commitCount,
+    pendingCount: progress.pendingCount,
+    ticketCount: progress.ticketCount,
+  };
+  const verdict = graduationDecision(counts);
+  if (verdict.decision === 'graduate') return null;
+  if (verdict.reason === 'phase_no_progress') {
+    const shortStart = progress.startCommit ? progress.startCommit.slice(0, 8) : 'session start';
+    log(`Phase ${rawPhase} exited with no progress (0 Done of ${progress.ticketCount} tickets, 0 commits since ${shortStart})`);
+    recordExitReason(runtime.statePath, 'phase_no_progress');
+    return { action: 'break', phaseIncomplete: true };
+  }
+  log(`Phase ${rawPhase} exited but ${progress.pendingCount}/${progress.ticketCount} tickets remain pending (${progress.doneCount} Done) — not all-tickets-terminal, marking phase incomplete (not advancing)`);
   reportPhaseIncomplete(runtime, rawPhase);
   return { action: 'break', phaseIncomplete: true };
 }
@@ -3330,12 +3302,21 @@ function finalizePipeline(
     // Preserve the exit_reason already stamped by reportPhaseIncomplete, by a
     // phase runner's manager/closer handoff (R-PRH), or by dispatchHaltAction
     // for a readiness halt (R-PRNF-9); do not overwrite with the generic 'failed'.
+    // This is a deliberate non-success terminal that preserves a prior reason,
+    // NOT a fresh "bundle truly complete" claim — it does NOT route through the
+    // ground-truth authority (which would clobber the preserved reason).
     finalizeTerminalState(runtime.statePath, { step: 'completed' });
+  } else if (pipelineFailed) {
+    finalizeTerminalState(runtime.statePath, { step: 'completed', exitReason: 'failed' });
   } else {
-    finalizeTerminalState(runtime.statePath, {
-      step: 'completed',
-      exitReason: pipelineFailed ? 'failed' : 'completed',
-    });
+    // B-GROUND2 WS1: the success finalize is the one transition that asserts the
+    // ticket bundle is truly complete — route it through the single authority so
+    // a residual pending ticket refuses the `completed` stamp (fail-closed).
+    finalizeIfTrulyComplete(
+      runtime.statePath,
+      () => pipelineBundleScan(runtime),
+      { step: 'completed', exitReason: 'completed' },
+    );
   }
 
   // R-PSSS-3: name each skip disposition (`anatomy-park: empty_scope`) so the
@@ -3645,22 +3626,21 @@ export function classifyMicroverseHaltDecision(exitReason: unknown): MicroverseH
 const PICKLE_INCOMPLETE_SENTINEL = 'pickle_incomplete.json';
 
 /**
- * B-RRH C1: the robustness layer on top of the existing exit-3 /
- * `maybeStampPhaseNoProgress` / `maybeStampPhaseIncompleteTickets` machinery.
+ * B-RRH C1: the robustness layer on top of the exit-3 / proportional
+ * graduation-gate machinery (B-GROUND2 WS1 `maybeStampPhaseGraduation`).
  *
  * The `pickle_incomplete.json` sentinel is written by mux-runner's signal
  * teardown (`writePickleIncompleteSentinelIfRemaining`, C2) ONLY when the mux was
  * killed (SIGTERM/SIGINT/SIGHUP) with ≥1 ticket still remaining. Its presence is
- * the authoritative "abnormal teardown" marker and is the one signal the existing
- * gates cannot see — an externally-killed mux can exit 0, indistinguishable from
- * a clean completion (the B-XSPA bug). When the sentinel is present this gate
- * forces the pickle phase INCOMPLETE regardless of the mux exit code or roster.
+ * the authoritative "abnormal teardown" marker and is the one signal the
+ * count-based gate cannot see — an externally-killed mux can exit 0,
+ * indistinguishable from a clean completion (the B-XSPA bug). When the sentinel
+ * is present this gate forces the pickle phase INCOMPLETE regardless of the mux
+ * exit code or roster.
  *
- * When the sentinel is ABSENT this gate defers ENTIRELY to the existing taxonomy:
- * `maybeStampPhaseNoProgress` (0 Done + 0 commits → halt) and
- * `maybeStampPhaseIncompleteTickets` (R-CMWL-2: ≥1 Done OR ≥1 commit → advance so
- * downstream remediation is not lost — R-PHC-6). Layering a roster-only halt here
- * would contradict that shipped, trap-door-protected partial-progress contract.
+ * When the sentinel is ABSENT this gate defers ENTIRELY to the unified
+ * `maybeStampPhaseGraduation` proportional gate (which runs on all exit codes and
+ * keys on the frontmatter ground-truth counts).
  *
  * Reuses `reportPhaseIncomplete`'s `pipeline_phase_incomplete` exit_reason and the
  * `{action:'break', phaseIncomplete:true}` outcome so the halt path is identical
@@ -3698,14 +3678,11 @@ function finalizePhaseSuccess(
   // B-RRH C1: strict roster+sentinel gate runs FIRST — do not trust exit code 0.
   const robustBreak = maybeStampPickleIncompleteRobust(runtime, rawPhase, log);
   if (robustBreak) return robustBreak;
-  const noProgressBreak = maybeStampPhaseNoProgress(runtime, rawPhase, exitCode, log);
-  if (noProgressBreak) return noProgressBreak;
-  const incompleteBreak = maybeStampPhaseIncompleteTickets(runtime, rawPhase, exitCode, log);
-  if (incompleteBreak) return incompleteBreak;
-  // AC-A1: catch-all — clean exit-0 with ≥1 pending ticket (even with partial
-  // Done/commit progress) is NOT phase success; stamp pipeline_phase_incomplete.
-  const pendingBreak = maybeStampPicklePendingTickets(runtime, rawPhase, exitCode, log);
-  if (pendingBreak) return pendingBreak;
+  // B-GROUND2 WS1: the single proportional graduation gate (R-DPMC-2 fix). Runs
+  // on ALL exit codes — the former three guards' `exitCode !== 0` early-return
+  // let a breaker/error pickle exit silently graduate with pending tickets.
+  const graduationBreak = maybeStampPhaseGraduation(runtime, rawPhase, exitCode, log);
+  if (graduationBreak) return graduationBreak;
   counters.completed++;
   writeRunningStatus(runtime, counters, null);
   if (fs.existsSync(cancelMarker)) {
