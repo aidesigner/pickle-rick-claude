@@ -284,6 +284,12 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'large_tier_worker_spawned',
         'large_tier_worker_poll',
         'large_tier_worker_reaped',
+        // B-GROUND2 WS4 (dcf18b3f): refused-and-recovered recurrence-dashboard
+        // counters. INVERTED semantics — a rising count is the consolidation guard
+        // WORKING (refused an unsafe transition and recovered), NOT a regression.
+        'completion_finalize_refused',
+        'phase_graduation_refused',
+        'gate_parity_divergence',
     ];
     assert.equal(VALID_ACTIVITY_EVENTS.length, expected.length);
     for (const e of expected) {
