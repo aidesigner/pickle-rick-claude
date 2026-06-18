@@ -11,7 +11,9 @@ import { StateManager } from '../services/state-manager.js';
 // Trap-door enforcement for `src/bin/mux-runner.ts` (state-iteration write):
 //   INVARIANT: every iteration_start persists `state.iteration` for the
 //   current manager-loop iteration through `StateManager.update()`.
-//   PATTERN_SHAPE: `state.iteration = iteration`.
+//   PATTERN_SHAPE: `updateMuxLifecycleState(statePath, { iteration` at
+//   iteration_start; the write is `s.iteration = patch.iteration` inside the
+//   helper's `sm.update(statePath, ` callback.
 // This file is the regression guard for that invariant. It does two things:
 //   1. Source-grep (PATTERN_SHAPE check) — asserts the iteration write still
 //      lives in `src/bin/mux-runner.ts`. Cheap, deterministic, and survives
@@ -23,6 +25,23 @@ import { StateManager } from '../services/state-manager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const muxRunnerSrcPath = path.resolve(__dirname, '../src/bin/mux-runner.ts');
+const claudeMdPath = path.resolve(__dirname, '../CLAUDE.md');
+
+// Pulls the backtick-quoted code literals out of the PATTERN_SHAPE field of the
+// `(state-iteration write)` trap-door entry in extension/CLAUDE.md. The trap-door
+// convention requires PATTERN_SHAPE to point at literals that still exist in the
+// referenced source so Citadel/anatomy-park pattern-replay can verify the
+// invariant deterministically. A stale literal (e.g. the pre-refactor
+// `state.iteration = iteration`) defeats that replay silently.
+function statePatternShapeLiterals() {
+  const claude = readFileSync(claudeMdPath, 'utf8');
+  const entry = claude
+    .split('\n')
+    .find(line => line.includes('(state-iteration write)') && line.includes('PATTERN_SHAPE:'));
+  assert.ok(entry, '(state-iteration write) trap-door entry with PATTERN_SHAPE must exist in CLAUDE.md');
+  const shape = entry.slice(entry.indexOf('PATTERN_SHAPE:') + 'PATTERN_SHAPE:'.length);
+  return [...shape.matchAll(/`([^`]+)`/g)].map(m => m[1]);
+}
 
 test('mux-runner-state-iteration: source contains updateMuxLifecycleState writer', () => {
   const src = readFileSync(muxRunnerSrcPath, 'utf8');
@@ -34,11 +53,11 @@ test('mux-runner-state-iteration: source contains updateMuxLifecycleState writer
 
 test('mux-runner-state-iteration: PATTERN_SHAPE iteration write goes through StateManager.update', () => {
   const src = readFileSync(muxRunnerSrcPath, 'utf8');
-  // PATTERN_SHAPE: `state.iteration = iteration` — the canonical CLAUDE.md
-  // shape. The compiled writer abbreviates `state` to `s` inside the
-  // `sm.update(statePath, s => { ... })` callback, so we accept both shapes.
-  // What matters is: the assignment is to `<state>.iteration` from a value
-  // derived from `iteration`/`patch.iteration`, inside an `sm.update(...)` call.
+  // The canonical CLAUDE.md PATTERN_SHAPE is `s.iteration = patch.iteration`
+  // inside `updateMuxLifecycleState`'s `sm.update(statePath, s => { ... })`
+  // callback. This regex accepts both the abbreviated `s.iteration` and a
+  // literal `state.iteration` form. What matters is: the assignment is to
+  // `<state>.iteration` from `iteration`/`patch.iteration`, inside `sm.update(...)`.
   const iterationAssignment = /\b[a-zA-Z_$][\w$]*\.iteration\s*=\s*(?:patch\.)?iteration\b/;
   assert.match(src, iterationAssignment, 'state.iteration assignment must be present');
 
@@ -60,6 +79,23 @@ test('mux-runner-state-iteration: PATTERN_SHAPE iteration write goes through Sta
   );
 });
 
+test('mux-runner-state-iteration: CLAUDE.md PATTERN_SHAPE literals still exist in source', () => {
+  // Regression guard for the trap-door PATTERN_SHAPE drift Citadel pattern-replay
+  // flagged: the documented literal `state.iteration = iteration` no longer
+  // matched mux-runner.ts after the write was centralized into
+  // updateMuxLifecycleState. Every backtick literal in the entry's PATTERN_SHAPE
+  // must appear verbatim in the referenced source.
+  const src = readFileSync(muxRunnerSrcPath, 'utf8');
+  const literals = statePatternShapeLiterals();
+  assert.ok(literals.length > 0, 'PATTERN_SHAPE must declare at least one code literal');
+  for (const literal of literals) {
+    assert.ok(
+      src.includes(literal),
+      `PATTERN_SHAPE literal not found in mux-runner.ts (stale trap door): ${JSON.stringify(literal)}`,
+    );
+  }
+});
+
 test('mux-runner-state-iteration: iteration_start is logged for each iteration', () => {
   const src = readFileSync(muxRunnerSrcPath, 'utf8');
   // The trap-door INVARIANT couples the `iteration_start` activity event with
@@ -73,7 +109,7 @@ test('mux-runner-state-iteration: iteration_start is logged for each iteration',
 test('mux-runner-state-iteration: StateManager.update persists iteration to state.json', () => {
   // Functional regression: simulate the runIteration() startup write by
   // running the same shape `updateMuxLifecycleState` runs — assigning
-  // `state.iteration = iteration` inside `StateManager.update()`. This guards
+  // `s.iteration = <n>` inside `StateManager.update()`. This guards
   // against silent regression where the writer is replaced with an unsynced
   // raw write that loses the iteration counter on resume.
   const tmpDir = mkdtempSync(path.join(tmpdir(), 'pickle-mux-state-iteration-'));

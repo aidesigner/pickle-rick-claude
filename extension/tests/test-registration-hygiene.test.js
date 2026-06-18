@@ -14,7 +14,7 @@ const PKG_PATH = path.resolve(__dirname, '..', 'package.json');
 const REQUIRED_TRAP_DOOR_ENTRY_SUBSTRINGS = [
   '`src/bin/mux-runner.ts` (state-iteration write)',
   'ENFORCE: extension/tests/mux-runner-state-iteration.test.js',
-  'PATTERN_SHAPE: `state.iteration = iteration`',
+  'PATTERN_SHAPE: `updateMuxLifecycleState(statePath, { iteration`',
   '`src/bin/pipeline-runner.ts` (phase-step write)',
   'ENFORCE: extension/tests/integration/pipeline-state-coherence.test.js',
   "PATTERN_SHAPE: `state.step = '<phase>'`",
