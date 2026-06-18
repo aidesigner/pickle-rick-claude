@@ -1,6 +1,6 @@
 You are recovering a Pickle Rick session that halted in `recovery_exhausted` — the single sanctioned, hook-safe operator recovery command.
 
-> **Gate:** `pickle-recover` refuses to run unless the session's `state.exit_reason` is `recovery_exhausted`. Re-run with `--plan` to preview the transition on any session without writing. Each real (non-`--plan`) run performs EXACTLY ONE state transition via a shared primitive — never inline git, never a raw `state.json` write — and emits one `operator_recovery_transition` activity event.
+> **Gate:** every subcommand EXCEPT `--reactivate` refuses to run unless the session's `state.exit_reason` is `recovery_exhausted`. `--reactivate` is the exception: it targets a COMPLETED session (`active:false`, `step:'completed'`), so it is exempt from the `recovery_exhausted` entry-state gate and instead refuses a still-live session (`active:true`). Re-run with `--plan` to preview the transition on any session without writing. Each real (non-`--plan`) run performs EXACTLY ONE state transition via a shared primitive — never inline git, never a raw `state.json` write — and emits one `operator_recovery_transition` activity event.
 
 Pick the subcommand for the situation, then run the recover script from the session's working directory:
 
@@ -22,6 +22,11 @@ node "$HOME/.claude/pickle-rick/extension/bin/pickle-recover.js" --reattach-orph
 **Reset a ticket to Todo** (archives the diff first, then re-queues the ticket):
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/pickle-recover.js" --reset-ticket <id>
+```
+
+**Reactivate a completed session** (un-terminalizes a session driven to `{active:false, step:'completed'}`, re-pointing at the lowest runnable Todo; refuses a live `active:true` session — stop the pipeline first, or use `--plan` to preview):
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/pickle-recover.js" --reactivate
 ```
 
 Append `--plan` to any of the above for a dry-run that prints the would-be transition and writes nothing:
