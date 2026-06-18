@@ -10,7 +10,7 @@ import { isRecord } from '../lib/is-record.js';
 import { formatLocalDateKey, safeErrorMessage, writeStateFile } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/recoverable-json.js';
-import { FORWARD_REF_ANNOTATION_RE, isForwardCreated } from '../services/forward-ref-annotation.js';
+import { FORWARD_REF_ANNOTATION_RE, isForwardCreated, resolveExtensionDir } from '../services/forward-ref-annotation.js';
 const SNAPSHOT_FILE = 'readiness_snapshot.json';
 const READINESS_MAX_RECYCLE_CYCLES = 3;
 const DEFAULT_HISTORY_LIMIT = 10;
@@ -360,10 +360,13 @@ function resolvePathRef(ref, repoRoot, ticket, sessionDir, cache) {
             ? ticket.workingDir
             : path.resolve(repoRoot, ticket.workingDir);
     }
+    // WS3 (#120 R-ATPR): the extension base is derived through the SHARED resolver so this gate
+    // and audit-ticket-bundle resolve an extension-relative ref identically.
+    const extensionBase = resolveExtensionDir(repoRoot) ?? path.join(repoRoot, 'extension');
     const bases = [
         workingDir,
         repoRoot,
-        path.join(repoRoot, 'extension'),
+        extensionBase,
         path.dirname(ticket.file),
         sessionDir,
     ].filter((base) => typeof base === 'string');

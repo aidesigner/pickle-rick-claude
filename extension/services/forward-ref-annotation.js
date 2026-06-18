@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 // R-FRA-6 (88a4cdd6 E3): a single trailing `)` / `,` / `.` / `;` AFTER the
 // annotation's closing paren is tolerated — the regex matches the annotation up
 // to its own `\)` and simply leaves the trailing delimiter unconsumed, so all of
@@ -46,4 +48,40 @@ export function isForwardCreated(ref, declaredPaths) {
             return true;
     }
     return false;
+}
+// WS3 (#120 R-ATPR) gate-parity: the SINGLE extension-relative directory resolver shared by
+// both `check-readiness.ts:resolvePathRef` and `audit-ticket-bundle.ts:loadDispositions`.
+// Walks UP from `startDir` (≤6 hops) to the `extension/` package root: returns `dir` when it
+// IS the extension package (basename `extension` + a `package.json`), else the `extension/`
+// child of `dir` when that child holds a `package.json`, else ascends to the parent; stops at
+// the filesystem root. Returns null when no `extension/` package root is found. This is the
+// lone home for the `fs.existsSync(path.join(dir, 'extension', 'package.json'))`-style walk —
+// neither consumer may re-inline it (enforced by gate-parity-shared-resolver.test.js).
+export function resolveExtensionDir(startDir) {
+    let dir = startDir;
+    for (let i = 0; i < 6; i++) {
+        if (path.basename(dir) === 'extension' && fs.existsSync(path.join(dir, 'package.json'))) {
+            return dir;
+        }
+        if (fs.existsSync(path.join(dir, 'extension', 'package.json'))) {
+            return path.join(dir, 'extension');
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir)
+            break;
+        dir = parent;
+    }
+    return null;
+}
+// WS3 (#120 R-ATPR) gate-parity: the SINGLE resolution outcome both gates consume for an
+// extension-relative path reference. True iff `ref` is an existing absolute path, OR resolves
+// against `repoRoot`, OR resolves against the shared `extension/` package dir under `repoRoot`.
+// A genuine phantom (no such file under any base) returns false so the teeth are preserved.
+export function resolveExtensionRelativePath(ref, repoRoot) {
+    if (path.isAbsolute(ref) && fs.existsSync(ref))
+        return true;
+    if (fs.existsSync(path.resolve(repoRoot, ref)))
+        return true;
+    const extDir = resolveExtensionDir(repoRoot) ?? path.join(repoRoot, 'extension');
+    return fs.existsSync(path.resolve(extDir, ref));
 }

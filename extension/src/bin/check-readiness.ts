@@ -11,7 +11,7 @@ import { formatLocalDateKey, safeErrorMessage, writeStateFile } from '../service
 import { StateManager } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 import type { ReadinessCycleHistoryEntry } from '../types/index.js';
-import { FORWARD_REF_ANNOTATION_RE, isForwardCreated } from '../services/forward-ref-annotation.js';
+import { FORWARD_REF_ANNOTATION_RE, isForwardCreated, resolveExtensionDir } from '../services/forward-ref-annotation.js';
 
 export interface ReadinessArgs {
   sessionDir: string;
@@ -434,10 +434,13 @@ function resolvePathRef(ref: string, repoRoot: string, ticket: TicketInfo, sessi
       ? ticket.workingDir
       : path.resolve(repoRoot, ticket.workingDir);
   }
+  // WS3 (#120 R-ATPR): the extension base is derived through the SHARED resolver so this gate
+  // and audit-ticket-bundle resolve an extension-relative ref identically.
+  const extensionBase = resolveExtensionDir(repoRoot) ?? path.join(repoRoot, 'extension');
   const bases = [
     workingDir,
     repoRoot,
-    path.join(repoRoot, 'extension'),
+    extensionBase,
     path.dirname(ticket.file),
     sessionDir,
   ].filter((base): base is string => typeof base === 'string');

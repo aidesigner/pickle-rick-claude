@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { extractForwardRefAnnotations, isForwardCreated } from '../services/forward-ref-annotation.js';
+import { extractForwardRefAnnotations, isForwardCreated, resolveExtensionDir } from '../services/forward-ref-annotation.js';
 const MANIFEST_SCHEMA_VERSION = 1;
 const TICKET_HASH_RE = /^[0-9a-f]{8}$/;
 const SHA_TOKEN_RE = /\b[0-9a-f]{7,40}\b/g;
@@ -110,24 +110,9 @@ function parseTicket(filePath, sessionDir) {
         dependenciesLine: extractDependenciesLine(split.body),
     };
 }
-function findExtensionDir(scriptDir) {
-    let dir = scriptDir;
-    for (let i = 0; i < 6; i++) {
-        if (path.basename(dir) === 'extension' && fs.existsSync(path.join(dir, 'package.json'))) {
-            return dir;
-        }
-        if (fs.existsSync(path.join(dir, 'extension', 'package.json'))) {
-            return path.join(dir, 'extension');
-        }
-        const parent = path.dirname(dir);
-        if (parent === dir)
-            break;
-        dir = parent;
-    }
-    return null;
-}
 function loadDispositions(scriptDir) {
-    const ext = findExtensionDir(scriptDir);
+    // WS3 (#120 R-ATPR): extension-relative resolution comes ONLY from the shared resolver.
+    const ext = resolveExtensionDir(scriptDir);
     if (ext === null)
         return { table: {}, loaded: false };
     const data1 = readJsonOrNull(path.join(ext, DISPOSITION_FILE_REL));
