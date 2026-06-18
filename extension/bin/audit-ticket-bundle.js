@@ -511,11 +511,18 @@ function checkHallucinatedPremise(t, ctx) {
         return [];
     const findings = [];
     const seen = new Set();
+    // Pre-convert for suffix-match (R-RTRC-4 parity with checkPathDrift); built once, not per token.
+    const gitFilesArr = Array.from(ctx.gitFiles);
     for (const tok of extractBacktickedPaths(t.problemSection)) {
         if (seen.has(tok))
             continue;
         seen.add(tok);
-        if (ctx.gitFiles.has(tok))
+        // Mirror the R-RTRC-4 suffix-symmetric resolution from checkPathDrift:
+        // strip trailing :<line>[,<line>] suffix, then test exact AND suffix-pattern match.
+        const stripped = tok.replace(/:\d[\d,-]*$/, '');
+        const escapedStripped = stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const suffixRe = new RegExp(`(?:^|/)${escapedStripped}$`);
+        if (ctx.gitFiles.has(stripped) || gitFilesArr.some((f) => suffixRe.test(f)))
             continue;
         const ctxLine = lineContext(t.problemSection, tok);
         if (hasForwardRefPathAnnotation(ctxLine, tok))
