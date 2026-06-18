@@ -15,7 +15,7 @@ peer_prds:
     - prds/BUG-REPORT-2026-06-17-large-tier-manager-turn-builds-but-does-not-commit.md  # #121
     - prds/BUG-REPORT-2026-06-17-audit-ticket-bundle-extension-relative-path-false-fatal.md  # #120
   spawns:
-    - prds/p2-bug-fix-bundle-b-decomp-sat-decomposition-satisfiability-2026-06-18.md  # R-DPMC-1/-3 (decomposition layer, D4)
+    # B-DECOMP-SAT (R-DPMC-1/-3, decomposition layer D4) — TO BE AUTHORED, not yet tracked
 ---
 
 # B-GROUND2 — completion-authority + recovery-transition consolidation
@@ -98,3 +98,15 @@ B-RESH (shipped v2.0.0-beta.15) landed the **point-fixes**. B-GROUND2 builds the
 4. **Subtract?** Net removal: every ad-hoc finalize/graduate site → 1 choke point; **2 divergent phase-exit decision paths → 1**; 2 path resolvers → 1; the 5 babysitter recovery recipes → 1 command; the per-gate skip-flag reflex → enforced parity.
 
 **APPROVED — refine into atomic tickets + build via /pickle-pipeline (operator greenlit 2026-06-18).** Build B-DECOMP-SAT (#124 R-DPMC-1/-3) separately — no file overlap with this bundle's runtime seams except the shared `reconcileTicketTruth` read, so ordering between the two is flexible. Lead with collapse-not-gate: prefer unifying duplicate finalize/graduate sites (which dissolves the audit-proxy/lint need) over gating N sites.
+
+## Implementation Task Breakdown
+*(refined: 3-analyst × 3-cycle team + collapse-not-gate operator steer; lean decomposition — wiring skipped (consolidation; WS1 IS the integration), hardening 4→2 (downstream citadel/anatomy/szechuan cover test-quality + cross-ref))*
+
+| Order | ID | Title | Priority | Tier |
+|---|---|---|---|---|
+| 10 | ce5d1cc8 | Route all completion + phase-graduation transitions through one by-invariant ground-truth authority (WS1 keystone) | High | medium |
+| 20 | 005c63c9 | Make pickle-recover --reactivate the only sanctioned un-terminalize path (WS2) | High | small |
+| 30 | 7e6f9259 | Gate-parity: one shared path/symbol resolver for check-readiness + audit-ticket-bundle (WS3) | High | small |
+| 40 | b7cc6081 | Recurrence dashboard: finalize/phase-graduation/gate-parity event counts (WS4) | High | small |
+| 50 | 226f1604 | Harden: code quality review of B-GROUND2 consolidation | High | large |
+| 60 | a1942f72 | Audit: data flow integrity for B-GROUND2 consolidation | High | large |
