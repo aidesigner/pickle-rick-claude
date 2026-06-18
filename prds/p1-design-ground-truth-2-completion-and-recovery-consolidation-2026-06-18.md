@@ -1,6 +1,6 @@
 ---
 title: P1 Design Deepening — B-GROUND2 — completion-authority + recovery-transition single-choke-point consolidation (R-DSAN follow-through)
-status: PLAN ONLY — B-RESH SHIPPED beta.15 (2026-06-18); awaiting operator review + greenlight to refine
+status: APPROVED 2026-06-18 — operator greenlit; refining + building via /pickle-pipeline
 priority: P1
 filed: 2026-06-18
 updated: 2026-06-18 (folded in #124 R-DPMC-2 + by-invariant WS1 reframing)
@@ -20,7 +20,7 @@ peer_prds:
 
 # B-GROUND2 — completion-authority + recovery-transition consolidation
 
-**PLAN ONLY.** R-DSAN follow-through. The findings from B-WPEX-AUTO + the unresumable-pipeline report + the NestJS-decomp deadlock are **not new bugs — they are D2 recurrences of the structural defects R-DSAN named**, because R-DSAN shipped the right primitives but did not wire them to the completion seams, and its build-failing enforcement spine has no proxy for them. This PRD makes the proven W4a single-choke-point + build-failing-audit pattern reach those seams, **defined by invariant rather than by enumerated call-site**, so seam N+1 inherits the behavior for free instead of becoming the next point-fix.
+**APPROVED FOR BUILD (2026-06-18, operator greenlit).** R-DSAN follow-through. The findings from B-WPEX-AUTO + the unresumable-pipeline report + the NestJS-decomp deadlock are **not new bugs — they are D2 recurrences of the structural defects R-DSAN named**, because R-DSAN shipped the right primitives but did not wire them to the completion seams, and its build-failing enforcement spine has no proxy for them. This PRD makes the proven W4a single-choke-point + build-failing-audit pattern reach those seams, **defined by invariant rather than by enumerated call-site**, so seam N+1 inherits the behavior for free instead of becoming the next point-fix.
 
 ## Thesis — R-DSAN was right and incomplete; the regress is now measured 4×
 
@@ -97,4 +97,4 @@ B-RESH (shipped v2.0.0-beta.15) landed the **point-fixes**. B-GROUND2 builds the
 3. **Guards brittle complexity?** WS1 SUBTRACTS the sticky-terminal, silent-graduate, and divergent-phase-exit-path failure modes; WS2 subtracts the no-un-terminalize mode; WS3 collapses two path resolvers to one; none adds a skip-flag. R-PHC-6 is *reconciled* (proportional), not reverted or guarded-around.
 4. **Subtract?** Net removal: every ad-hoc finalize/graduate site → 1 choke point; **2 divergent phase-exit decision paths → 1**; 2 path resolvers → 1; the 5 babysitter recovery recipes → 1 command; the per-gate skip-flag reflex → enforced parity.
 
-**DO NOT IMPLEMENT.** Next action: operator review of this plan; then `/pickle-refine-prd` into atomic tickets and drain via the standard pipeline. Build B-DECOMP-SAT (#124 R-DPMC-1/-3) separately — no file overlap with this bundle's runtime seams except the shared `reconcileTicketTruth` read, so ordering between the two is flexible.
+**APPROVED — refine into atomic tickets + build via /pickle-pipeline (operator greenlit 2026-06-18).** Build B-DECOMP-SAT (#124 R-DPMC-1/-3) separately — no file overlap with this bundle's runtime seams except the shared `reconcileTicketTruth` read, so ordering between the two is flexible. Lead with collapse-not-gate: prefer unifying duplicate finalize/graduate sites (which dissolves the audit-proxy/lint need) over gating N sites.
