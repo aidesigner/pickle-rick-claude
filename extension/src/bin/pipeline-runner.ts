@@ -3240,6 +3240,10 @@ function maybeStampPhaseGraduation(
   };
   const verdict = graduationDecision(counts);
   if (verdict.decision === 'graduate') return null;
+  // WS4 (b7cc6081): the proportional gate refused phase graduation. INVERTED
+  // semantics — a refusal is the gate WORKING (refused-and-recovered), surfaced
+  // as an informational count in /pickle-metrics, NOT a regression budget.
+  emitPhaseGraduationRefused(runtime, counts, _exitCode);
   if (verdict.reason === 'phase_no_progress') {
     const shortStart = progress.startCommit ? progress.startCommit.slice(0, 8) : 'session start';
     log(`Phase ${rawPhase} exited with no progress (0 Done of ${progress.ticketCount} tickets, 0 commits since ${shortStart})`);
@@ -3249,6 +3253,32 @@ function maybeStampPhaseGraduation(
   log(`Phase ${rawPhase} exited but ${progress.pendingCount}/${progress.ticketCount} tickets remain pending (${progress.doneCount} Done) — not all-tickets-terminal, marking phase incomplete (not advancing)`);
   reportPhaseIncomplete(runtime, rawPhase);
   return { action: 'break', phaseIncomplete: true };
+}
+
+/**
+ * WS4 (b7cc6081): emit a `phase_graduation_refused` activity entry when the
+ * proportional gate refuses to graduate the pickle phase. Best-effort
+ * observability — never alters the gate decision or throws.
+ */
+function emitPhaseGraduationRefused(
+  runtime: PipelineRuntime,
+  counts: GraduationCounts,
+  exitCode: number,
+): void {
+  try {
+    logActivity({
+      event: 'phase_graduation_refused',
+      source: 'pickle',
+      ts: new Date().toISOString(),
+      gate_payload: {
+        pending_count: counts.pendingCount,
+        done_count: counts.doneCount,
+        exit_code: exitCode,
+      },
+    });
+  } catch {
+    // best-effort — never block the graduation gate
+  }
 }
 
 /**

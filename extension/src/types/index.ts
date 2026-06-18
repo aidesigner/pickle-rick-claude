@@ -827,6 +827,13 @@ export const VALID_ACTIVITY_EVENTS = [
   'large_tier_worker_spawned',
   'large_tier_worker_poll',
   'large_tier_worker_reaped',
+  // WS4 (b7cc6081): recurrence-dashboard refused-and-recovered counters. INVERTED
+  // semantics vs skip-flag events — a rising count is the consolidation guard WORKING
+  // (refused an unsafe transition and recovered), NOT a regression. The genuine
+  // regress signal is the WS1 4th-audit-proxy BUILD failure, not these runtime counts.
+  'completion_finalize_refused',
+  'phase_graduation_refused',
+  'gate_parity_divergence',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

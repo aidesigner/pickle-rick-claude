@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { logActivity } from './activity-logger.js';
 
 // R-FRA-6 (88a4cdd6 E3): a single trailing `)` / `,` / `.` / `;` AFTER the
 // annotation's closing paren is tolerated — the regex matches the annotation up
@@ -85,6 +86,32 @@ export function resolveExtensionDir(startDir: string): string | null {
 export function resolveExtensionRelativePath(ref: string, repoRoot: string): boolean {
   if (path.isAbsolute(ref) && fs.existsSync(ref)) return true;
   if (fs.existsSync(path.resolve(repoRoot, ref))) return true;
-  const extDir = resolveExtensionDir(repoRoot) ?? path.join(repoRoot, 'extension');
-  return fs.existsSync(path.resolve(extDir, ref));
+  const sharedDir = resolveExtensionDir(repoRoot);
+  const legacyDir = path.join(repoRoot, 'extension');
+  const extDir = sharedDir ?? legacyDir;
+  const result = fs.existsSync(path.resolve(extDir, ref));
+  // WS4 (b7cc6081): the shared resolver and the legacy per-gate fallback would
+  // resolve `ref` against DIFFERENT extension dirs — i.e. the two gates
+  // (check-readiness, audit-ticket-bundle) WOULD have disagreed before WS3
+  // collapsed them onto `resolveExtensionDir`. Surface that as
+  // `gate_parity_divergence` (refused-and-recovered, informational). Emit only
+  // when the dirs actually differ AND that difference flips the resolution
+  // outcome — the genuine "would have disagreed" condition. Best-effort: the
+  // resolver runs inside CLI gates that may have no activity dir, so never throw.
+  if (sharedDir !== null && path.resolve(sharedDir) !== path.resolve(legacyDir)) {
+    const legacyResult = fs.existsSync(path.resolve(legacyDir, ref));
+    if (legacyResult !== result) {
+      try {
+        logActivity({
+          event: 'gate_parity_divergence',
+          source: 'pickle',
+          ts: new Date().toISOString(),
+          gate_payload: { gate_a: sharedDir, gate_b: legacyDir, ref },
+        });
+      } catch {
+        // best-effort observability — never block path resolution
+      }
+    }
+  }
+  return result;
 }

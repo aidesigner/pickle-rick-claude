@@ -12,11 +12,13 @@ import {
   SKIP_FLAG_BUDGETS,
   scanReadinessFalsePositiveEvents,
   buildReadinessFalsePositiveReport,
+  scanRefusedRecoveredCounts,
   MetricsReport,
   MetricsRow,
   MetricsTotals,
   SkipFlagBudgetReport,
   ReadinessFalsePositiveReport,
+  RefusedRecoveredReport,
 } from '../services/metrics-utils.js';
 import {
   printMinimalPanel,
@@ -468,6 +470,26 @@ function printReadinessFalsePositiveTable(report: ReadinessFalsePositiveReport):
   process.stdout.write('\n');
 }
 
+// WS4 (b7cc6081): refused-and-recovered counters. INVERTED semantics — a rising
+// count is the consolidation guard WORKING (refused an unsafe transition and
+// recovered), surfaced as INFORMATIONAL, distinct from the skip-flag budget (NOT
+// a budget, NOT an over-budget / removal-candidate signal). An empty window is
+// `0` labelled "no refusals recorded" (NOT "no recurrence"). Pure stdout — never
+// halts, never exits non-zero. Mirrors printReadinessFalsePositiveTable's shape.
+function printRefusedRecoveredTable(report: RefusedRecoveredReport): void {
+  printMinimalPanel('Refused & recovered (informational)', {
+    'Finalize refused': formatNumber(report.completion_finalize_refused),
+    'Phase graduation refused': formatNumber(report.phase_graduation_refused),
+    'Gate parity divergence': formatNumber(report.gate_parity_divergence),
+  }, 'CYAN', '🛡️');
+
+  if (report.total === 0) {
+    process.stdout.write('  No refusals recorded in window.\n\n');
+    return;
+  }
+  process.stdout.write('  Rising = the consolidation guard working (refused-and-recovered).\n\n');
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -491,12 +513,14 @@ function main(): void {
   const readinessFalsePositiveEvents = scanReadinessFalsePositiveEvents(getActivityDir(), since, until);
   const readinessFalsePositive = buildReadinessFalsePositiveReport(readinessFalsePositiveEvents, since, until);
 
+  const refusedRecovered = scanRefusedRecoveredCounts(getActivityDir(), since, until);
+
   if (args.json) {
-    console.log(JSON.stringify({ ...report, skip_flag_budget: skipFlagBudget, readiness_false_positive: readinessFalsePositive }, null, 2));
+    console.log(JSON.stringify({ ...report, skip_flag_budget: skipFlagBudget, readiness_false_positive: readinessFalsePositive, refused_recovered: refusedRecovered }, null, 2));
     return;
   }
 
-  if (report.rows.length === 0 && skipFlagBudget.total_uses === 0 && readinessFalsePositive.total_events === 0) {
+  if (report.rows.length === 0 && skipFlagBudget.total_uses === 0 && readinessFalsePositive.total_events === 0 && refusedRecovered.total === 0) {
     console.log(`No metrics data found for ${since} to ${until}.`);
     return;
   }
@@ -511,6 +535,7 @@ function main(): void {
 
   printSkipFlagBudgetTable(skipFlagBudget);
   printReadinessFalsePositiveTable(readinessFalsePositive);
+  printRefusedRecoveredTable(refusedRecovered);
 }
 
 if (process.argv[1] && path.basename(process.argv[1]) === 'metrics.js') {

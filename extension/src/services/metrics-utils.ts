@@ -851,3 +851,92 @@ export function buildReadinessFalsePositiveReport(
   const total_suppressed = events.reduce((sum, ev) => sum + ev.suppressed_count, 0);
   return { since, until, total_events: events.length, total_suppressed };
 }
+
+// ---------------------------------------------------------------------------
+// Refused-and-recovered counters (WS4, b7cc6081) — NON-BLOCKING observability
+//
+// INVERTED semantics vs the skip-flag budget above: a rising count is the
+// consolidation guard WORKING (it refused an unsafe transition and recovered),
+// NOT a regression and NOT a budget. There is no over-budget / removal-candidate
+// concept here. An empty window is `0` labelled "no refusals recorded" — NEVER
+// "no recurrence". The genuine regress signal (a NEW unguarded seam) emits
+// NOTHING at runtime; it is caught at BUILD time by WS1's 4th audit proxy.
+// `pickle_phase_incomplete` is a recordExitReason string, NOT an event — absent here.
+// ---------------------------------------------------------------------------
+
+/** The three refused-and-recovered activity events surfaced on the dashboard. */
+export const REFUSED_RECOVERED_EVENT_NAMES = [
+  'completion_finalize_refused',
+  'phase_graduation_refused',
+  'gate_parity_divergence',
+] as const;
+
+export type RefusedRecoveredEventName = typeof REFUSED_RECOVERED_EVENT_NAMES[number];
+
+/** Per-event refused-and-recovered tallies over the dashboard window. */
+export interface RefusedRecoveredReport {
+  since: string;
+  until: string;
+  completion_finalize_refused: number;
+  phase_graduation_refused: number;
+  gate_parity_divergence: number;
+  total: number;
+}
+
+/**
+ * Scan `<activityDir>/*.jsonl` for the three refused-and-recovered events within
+ * the `[since, until]` window (inclusive local-date keys, mirroring
+ * `scanSkipFlagEvents` / `scanReadinessFalsePositiveEvents`). Returns per-event
+ * counts; absent/empty dir yields all-zero (a healthy "no refusals" window).
+ */
+export function scanRefusedRecoveredCounts(activityDir: string, since: string, until: string): RefusedRecoveredReport {
+  const counts: Record<RefusedRecoveredEventName, number> = {
+    completion_finalize_refused: 0,
+    phase_graduation_refused: 0,
+    gate_parity_divergence: 0,
+  };
+  const eventSet = new Set<string>(REFUSED_RECOVERED_EVENT_NAMES);
+
+  let files: string[];
+  try {
+    files = fs.readdirSync(activityDir).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    return { since, until, ...counts, total: 0 };
+  }
+
+  for (const file of files) {
+    const filePath = path.join(activityDir, file);
+    let content: string;
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.size > MAX_ACTIVITY_FILE_BYTES) continue;
+      content = fs.readFileSync(filePath, 'utf-8');
+    } catch (err) {
+      const msg = safeErrorMessage(err);
+      process.stderr.write(`[metrics] refused-recovered scan skipped ${file}: ${msg}\n`);
+      continue;
+    }
+
+    for (const rawLine of content.split('\n')) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const obj = parsed as Record<string, unknown>;
+      const event = typeof obj.event === 'string' ? obj.event : '';
+      if (!eventSet.has(event)) continue;
+      const ts = obj.ts;
+      if (typeof ts !== 'string') continue;
+      const dateKey = formatLocalDateKey(new Date(ts));
+      if (dateKey < since || dateKey > until) continue;
+      counts[event as RefusedRecoveredEventName] += 1;
+    }
+  }
+
+  const total = counts.completion_finalize_refused + counts.phase_graduation_refused + counts.gate_parity_divergence;
+  return { since, until, ...counts, total };
+}

@@ -750,6 +750,57 @@
         }
       }
     },
+    "completion_finalize_refused": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "completion_finalize_refused" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["pending_count", "ticket_count", "seam"],
+          "properties": {
+            "pending_count": { "type": "integer" },
+            "ticket_count": { "type": "integer" },
+            "seam": { "type": "string" }
+          }
+        }
+      }
+    },
+    "phase_graduation_refused": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "phase_graduation_refused" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["pending_count", "done_count", "exit_code"],
+          "properties": {
+            "pending_count": { "type": "integer" },
+            "done_count": { "type": "integer" },
+            "exit_code": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "gate_parity_divergence": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "gate_parity_divergence" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["gate_a", "gate_b", "ref"],
+          "properties": {
+            "gate_a": { "type": "string" },
+            "gate_b": { "type": "string" },
+            "ref": { "type": "string" }
+          }
+        }
+      }
+    },
     "pkgjson_revert_forensic_captured": {
       "type": "object",
       "required": ["event", "ts", "gate_payload"],
@@ -1950,6 +2001,9 @@
     { "$ref": "#/definitions/large_tier_routed" },
     { "$ref": "#/definitions/large_tier_worker_spawned" },
     { "$ref": "#/definitions/large_tier_worker_poll" },
-    { "$ref": "#/definitions/large_tier_worker_reaped" }
+    { "$ref": "#/definitions/large_tier_worker_reaped" },
+    { "$ref": "#/definitions/completion_finalize_refused" },
+    { "$ref": "#/definitions/phase_graduation_refused" },
+    { "$ref": "#/definitions/gate_parity_divergence" }
   ]
 }

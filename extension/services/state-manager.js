@@ -1149,20 +1149,48 @@ export function finalizeIfTrulyComplete(statePath, scan, opts = {}) {
     }
     catch {
         // Fail-closed: a throwing/timed-out scan is treated as INCOMPLETE.
+        emitCompletionFinalizeRefused(statePath, { pending_count: -1, ticket_count: -1, seam: 'scan_threw' });
         recordExitReason(statePath, 'pipeline_phase_incomplete');
         return { finalized: false, reason: 'pipeline_phase_incomplete' };
     }
     if (counts === null) {
+        emitCompletionFinalizeRefused(statePath, { pending_count: -1, ticket_count: -1, seam: 'scan_null' });
         recordExitReason(statePath, 'pipeline_phase_incomplete');
         return { finalized: false, reason: 'pipeline_phase_incomplete' };
     }
     const verdict = graduationDecision(counts);
     if (verdict.decision === 'halt') {
+        emitCompletionFinalizeRefused(statePath, {
+            pending_count: counts.pendingCount,
+            ticket_count: counts.ticketCount,
+            seam: verdict.reason,
+        });
         recordExitReason(statePath, verdict.reason);
         return { finalized: false, reason: verdict.reason };
     }
     finalizeTerminalState(statePath, opts);
     return { finalized: true };
+}
+/**
+ * WS4 (b7cc6081): record a `completion_finalize_refused` activity entry whenever
+ * `finalizeIfTrulyComplete` refuses a finalize. INVERTED semantics — a refusal is
+ * the completion authority WORKING (refused-and-recovered), not a regression.
+ * `seam` discriminates the refusal arm (`scan_threw` / `scan_null` / the
+ * graduation halt reason). Best-effort: terminal/forensic paths must never fail
+ * on logging, so this is wrapped in try/catch and uses the in-module
+ * `writeActivityEntry` primitive (no activity-logger import → no cycle).
+ */
+function emitCompletionFinalizeRefused(statePath, gatePayload) {
+    try {
+        writeActivityEntry(statePath, {
+            event: 'completion_finalize_refused',
+            ts: new Date().toISOString(),
+            gate_payload: gatePayload,
+        });
+    }
+    catch {
+        // best-effort observability — never block the refusal path
+    }
 }
 /**
  * Stamp `exit_reason` without touching other fields — for forensic paths

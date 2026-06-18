@@ -90,6 +90,35 @@ function validate(payload, defName) {
 const TS = new Date().toISOString();
 
 const EVENT_CASES = [
+  // WS4 (b7cc6081): refused-and-recovered counters. The `drop` field proves the
+  // required gate_payload contract fails when a required field is absent.
+  {
+    type: 'completion_finalize_refused',
+    valid: {
+      event: 'completion_finalize_refused',
+      ts: TS,
+      gate_payload: { pending_count: 3, ticket_count: 5, seam: 'graduation_halt' },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    type: 'phase_graduation_refused',
+    valid: {
+      event: 'phase_graduation_refused',
+      ts: TS,
+      gate_payload: { pending_count: 2, done_count: 1, exit_code: 0 },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    type: 'gate_parity_divergence',
+    valid: {
+      event: 'gate_parity_divergence',
+      ts: TS,
+      gate_payload: { gate_a: '/repo/extension', gate_b: '/repo/sub/extension', ref: 'tests/x.ts' },
+    },
+    drop: 'gate_payload',
+  },
   {
     type: 'worker_spawn_backend_resolved',
     valid: { event: 'worker_spawn_backend_resolved', ts: TS, backend: 'claude', source: 'state', pid: 1234 },
@@ -1350,6 +1379,10 @@ test('activity-event-payload: schema defines all registered event type definitio
     'large_tier_worker_spawned',
     'large_tier_worker_poll',
     'large_tier_worker_reaped',
+    // WS4 (b7cc6081): refused-and-recovered counters.
+    'completion_finalize_refused',
+    'phase_graduation_refused',
+    'gate_parity_divergence',
   ];
   // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.

@@ -347,6 +347,13 @@ export const VALID_ACTIVITY_EVENTS = [
     'large_tier_worker_spawned',
     'large_tier_worker_poll',
     'large_tier_worker_reaped',
+    // WS4 (b7cc6081): recurrence-dashboard refused-and-recovered counters. INVERTED
+    // semantics vs skip-flag events — a rising count is the consolidation guard WORKING
+    // (refused an unsafe transition and recovered), NOT a regression. The genuine
+    // regress signal is the WS1 4th-audit-proxy BUILD failure, not these runtime counts.
+    'completion_finalize_refused',
+    'phase_graduation_refused',
+    'gate_parity_divergence',
 ];
 /** Recoverable reasons a ticket can be flipped to Failed by the auto-skip guard (R-WSWA-3). */
 export const FAILURE_REASONS = ['oversized_no_progress'];
