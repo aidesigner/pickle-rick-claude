@@ -3230,7 +3230,7 @@ function maybeStampPhaseGraduation(
   _exitCode: number,
   log: (msg: string) => void,
 ): PhaseIterationOutcome | null {
-  if (rawPhase !== 'pickle') return null;
+  if (rawPhase !== 'pickle') { return null; }
   const progress = collectPicklePhaseProgress(runtime);
   const counts: GraduationCounts = {
     doneCount: progress.doneCount,
@@ -3239,7 +3239,7 @@ function maybeStampPhaseGraduation(
     ticketCount: progress.ticketCount,
   };
   const verdict = graduationDecision(counts);
-  if (verdict.decision === 'graduate') return null;
+  if (verdict.decision === 'graduate') { return null; }
   // WS4 (b7cc6081): the proportional gate refused phase graduation. INVERTED
   // semantics — a refusal is the gate WORKING (refused-and-recovered), surfaced
   // as an informational count in /pickle-metrics, NOT a regression budget.
@@ -3712,7 +3712,7 @@ function finalizePhaseSuccess(
   // on ALL exit codes — the former three guards' `exitCode !== 0` early-return
   // let a breaker/error pickle exit silently graduate with pending tickets.
   const graduationBreak = maybeStampPhaseGraduation(runtime, rawPhase, exitCode, log);
-  if (graduationBreak) return graduationBreak;
+  if (graduationBreak) { return graduationBreak; }
   counters.completed++;
   writeRunningStatus(runtime, counters, null);
   if (fs.existsSync(cancelMarker)) {

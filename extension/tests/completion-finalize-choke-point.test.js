@@ -47,7 +47,7 @@ describe('graduationDecision — proportional gate boundary table', () => {
     it(c.name, () => {
       const out = graduationDecision(c.counts);
       assert.equal(out.decision, c.expect.decision);
-      if (c.expect.decision === 'halt') assert.equal(out.reason, c.expect.reason);
+      if (c.expect.decision === 'halt') { assert.equal(out.reason, c.expect.reason); }
     });
   }
 
@@ -187,8 +187,8 @@ function finalizeCalls(src) {
     let depth = 1;
     while (i < src.length && depth > 0) {
       const c = src[i];
-      if (c === '(') depth += 1;
-      else if (c === ')') depth -= 1;
+      if (c === '(') { depth += 1; }
+      else if (c === ')') { depth -= 1; }
       i += 1;
     }
     out.push(src.slice(m.index, i));

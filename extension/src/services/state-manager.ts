@@ -1221,8 +1221,8 @@ export type GraduationDecision =
  *   - else (partial progress, pending remain) → halt `pipeline_phase_incomplete`.
  */
 export function graduationDecision(counts: GraduationCounts): GraduationDecision {
-  if (counts.ticketCount <= 0) return { decision: 'graduate' };
-  if (counts.pendingCount === 0) return { decision: 'graduate' };
+  if (counts.ticketCount <= 0) { return { decision: 'graduate' }; }
+  if (counts.pendingCount === 0) { return { decision: 'graduate' }; }
   if (counts.doneCount === 0 && counts.commitCount === 0) {
     return { decision: 'halt', reason: 'phase_no_progress' };
   }

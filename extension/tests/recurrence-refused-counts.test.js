@@ -129,7 +129,7 @@ describe('WS4 emit: gate_parity_divergence fires from the WS3 resolver on a flip
     process.env.PICKLE_DATA_ROOT = path.join(tmp, 'data');
   });
   afterEach(() => {
-    if (prevDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+    if (prevDataRoot === undefined) { delete process.env.PICKLE_DATA_ROOT; }
     else process.env.PICKLE_DATA_ROOT = prevDataRoot;
     rmSync(tmp, { recursive: true, force: true });
   });
@@ -145,7 +145,7 @@ describe('WS4 emit: gate_parity_divergence fires from the WS3 resolver on a flip
     const out = [];
     for (const f of files) {
       for (const line of readFileSync(path.join(activityDir, f), 'utf8').split('\n')) {
-        if (line.trim()) out.push(JSON.parse(line));
+        if (line.trim()) { out.push(JSON.parse(line)); }
       }
     }
     return out;

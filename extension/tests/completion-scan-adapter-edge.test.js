@@ -50,7 +50,7 @@ function makeDeps(statuses, opts = {}) {
     dirtyPaths: () => [],
     isDirty: () => false,
     collectTickets: () => {
-      if (opts.throwOnCollect) throw new Error('collectTickets exploded (unreadable session)');
+      if (opts.throwOnCollect) { throw new Error('collectTickets exploded (unreadable session)'); }
       return tickets;
     },
     ticketStatus: (_sessionDir, id) => statuses[id] ?? null,

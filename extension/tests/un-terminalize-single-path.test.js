@@ -29,7 +29,7 @@ const srcRoot = path.join(extensionRoot, 'src');
 
 function runAudit(sourceRoot) {
   const env = { ...process.env };
-  if (sourceRoot !== undefined) env.SOURCE_ROOT = sourceRoot;
+  if (sourceRoot !== undefined) { env.SOURCE_ROOT = sourceRoot; }
   return spawnSync('bash', [auditScript], {
     cwd: extensionRoot,
     env,
