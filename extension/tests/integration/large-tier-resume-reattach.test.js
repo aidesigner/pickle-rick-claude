@@ -7,7 +7,9 @@
  *
  * setup.ts has no spawn path, so "no re-spawn" is proven by the arm surviving the
  * resume identically (same pid/ticket/log) and no `large_tier_worker_spawned`
- * event being added by resume. The breadcrumb stderr line is asserted too.
+ * event being added by resume. The operator breadcrumb stderr line
+ * (noteLiveDetachedWorkerOnResume) is captured via spawnSync and asserted
+ * structurally — pinned to the real pid + ticket id, not a substring match.
  *
  * SERIAL: spawns setup.js as a subprocess (resume), keep at c=1 via the manifest
  * if it ever flakes under load. Live PID = this test process's own pid (alive for
@@ -16,7 +18,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -60,11 +62,14 @@ test('AC-R-WPEXA-6: --resume preserves a LIVE detached_worker arm and never re-s
   };
   const { dataRoot, sessionDir, statePath } = buildResumableSession(liveDetached);
   try {
-    const out = execFileSync(
+    // spawnSync (not execFileSync) so we capture BOTH stdout and stderr as strings —
+    // the operator breadcrumb is written to stderr and must be asserted, not assumed.
+    const res = spawnSync(
       process.execPath,
       [SETUP, '--resume', sessionDir],
       { encoding: 'utf-8', env: { ...process.env, FORCE_COLOR: '0', PICKLE_DATA_ROOT: dataRoot } },
     );
+    assert.equal(res.status, 0, `setup --resume must exit 0 (stderr: ${res.stderr})`);
 
     const after = readState(statePath);
     // Arm preserved IDENTICALLY — not nulled, not mutated.
@@ -78,11 +83,19 @@ test('AC-R-WPEXA-6: --resume preserves a LIVE detached_worker arm and never re-s
     const spawnEvents = (after.activity || []).filter(e => e.event === 'large_tier_worker_spawned');
     assert.equal(spawnEvents.length, 0, 'resume must not re-spawn (no large_tier_worker_spawned event)');
 
-    // Operator breadcrumb surfaces on stderr (best-effort, but the live PID is real).
-    const combined = out + '';
-    // The breadcrumb goes to stderr; execFileSync inherits stderr unless captured —
-    // assert via the state-side guarantees above; the stderr line is observability only.
-    assert.ok(true, combined.length >= 0);
+    // Operator breadcrumb ACTUALLY fires on stderr for a LIVE arm (noteLiveDetachedWorkerOnResume,
+    // setup.ts). Pinned to the real pid + ticket so a substring can't false-positive.
+    const stderr = res.stderr + '';
+    assert.match(
+      stderr,
+      new RegExp(`\\[setup\\] detached worker pid=${process.pid} still live`),
+      'live-arm resume must emit the operator breadcrumb on stderr with the exact pid',
+    );
+    assert.match(
+      stderr,
+      new RegExp(`\\(ticket ${ticketId}\\)`),
+      'breadcrumb must name the detached worker ticket',
+    );
   } finally {
     rmSync(dataRoot, { recursive: true, force: true });
   }

@@ -1022,7 +1022,9 @@ const EVENT_CASES = [
       event: 'large_tier_worker_reaped',
       ts: TS,
       ticket: 'abc12345',
-      gate_payload: { worker_pid: 9999, ticket_id: 'abc12345', outcome: 'success' },
+      // outcome mirrors the real reapTimedOutDetachedWorker emission: a validated-identity
+      // reap is 'reaped' (an identity failure is 'identity_failed_no_kill:<reason>').
+      gate_payload: { worker_pid: 9999, ticket_id: 'abc12345', outcome: 'reaped' },
     },
     drop: 'gate_payload',
   },
