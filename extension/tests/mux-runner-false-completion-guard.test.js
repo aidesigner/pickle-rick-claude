@@ -144,6 +144,27 @@ test('false-completion guard: In Progress ticket blocks applyAllTicketsDoneCompl
   }
 });
 
+test('false-completion guard: Failed ticket blocks applyAllTicketsDoneCompletion', () => {
+  // The terminal predicate is done||skipped. A Failed ticket is the realistic post-error
+  // non-terminal case (distinct from Todo/In Progress) and MUST block finalize — otherwise a
+  // bundle with an unresolved failure could be sealed as completed.
+  const sessionDir = makeTmp();
+  try {
+    const statePath = makeSession(sessionDir);
+    makeTicket(sessionDir, 'aaa', 'Done');
+    makeTicket(sessionDir, 'bbb', 'Failed');
+
+    const fired = applyAllTicketsDoneCompletion(statePath, sessionDir, 1, () => {}, sessionDir);
+
+    assert.equal(fired, false, 'should return false when a ticket is Failed');
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.notEqual(state.step, 'completed', 'step must NOT be completed with a Failed ticket');
+    assert.equal(state.active, true, 'active must remain true');
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
 // --- processTaskCompleted (genuine-EPIC seam) tests ---
 // processCompletionBranch('task_completed', ...) routes to processTaskCompleted, whose
 // genuine-EPIC exit calls ctxFinalize(ctx, 'success'). A pending (non-Done/Skipped) ticket
