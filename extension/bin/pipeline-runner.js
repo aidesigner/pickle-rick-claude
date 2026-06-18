@@ -796,6 +796,47 @@ function isProcessAlive(pid) {
         return false;
     }
 }
+/**
+ * Resolve the freshest child-mux liveness mtime for the wedge timer.
+ *
+ * `state.json` mtime advances only at ticket boundaries, so a single long
+ * substantial ticket freezes it past the stall threshold and the worker is
+ * SIGTERM'd mid-ticket. The per-iteration `tmux_iteration_*.log` is written
+ * continuously and is the truer liveness signal. Take the MAX mtime across
+ * those logs; when none exist yet, fall back to `state.json` mtime.
+ */
+function resolveChildMuxLivenessMtime(sessionDir, statePath, statSyncFn) {
+    let names;
+    try {
+        names = fs.readdirSync(sessionDir);
+    }
+    catch {
+        names = [];
+    }
+    let maxLogMtimeMs = -Infinity;
+    for (const name of names) {
+        if (!name.startsWith('tmux_iteration_') || !name.endsWith('.log'))
+            continue;
+        try {
+            const s = statSyncFn(path.join(sessionDir, name));
+            if (s.mtimeMs > maxLogMtimeMs)
+                maxLogMtimeMs = s.mtimeMs;
+        }
+        catch {
+            // best-effort: a racing log rotation must not crash the heartbeat
+        }
+    }
+    if (maxLogMtimeMs !== -Infinity) {
+        return { mtimeMs: maxLogMtimeMs, mtimeIso: new Date(maxLogMtimeMs).toISOString() };
+    }
+    try {
+        const s = statSyncFn(statePath);
+        return { mtimeMs: s.mtimeMs, mtimeIso: s.mtime.toISOString() };
+    }
+    catch {
+        return null;
+    }
+}
 export function armChildMuxRunnerHeartbeat(opts, deps = {}) {
     if (opts.heartbeatMs <= 0) {
         return { stop: () => { } };
@@ -821,14 +862,10 @@ export function armChildMuxRunnerHeartbeat(opts, deps = {}) {
     const tick = () => {
         if (stopped || opts.child.killed)
             return;
-        let stat;
-        try {
-            stat = statSyncFn(statePath);
-        }
-        catch {
+        const live = resolveChildMuxLivenessMtime(opts.sessionDir, statePath, statSyncFn);
+        if (!live)
             return;
-        }
-        const elapsedSeconds = Math.floor((nowFn() - stat.mtimeMs) / 1000);
+        const elapsedSeconds = Math.floor((nowFn() - live.mtimeMs) / 1000);
         if (elapsedSeconds <= opts.stallSeconds)
             return;
         if (!isAliveFn(childPid)) {
@@ -842,7 +879,7 @@ export function armChildMuxRunnerHeartbeat(opts, deps = {}) {
                 session: path.basename(opts.sessionDir),
                 gate_payload: {
                     child_pid: childPid,
-                    last_state_mtime_iso: stat.mtime.toISOString(),
+                    last_state_mtime_iso: live.mtimeIso,
                     elapsed_seconds: elapsedSeconds,
                 },
             });
