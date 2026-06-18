@@ -2679,9 +2679,12 @@ export function largeTierDetachedEnabled(env = process.env) {
  * Spawn a large-tier spawn-morty worker DETACHED + unref'd (T3 detached lifecycle),
  * shared by the main-loop seam and the recovery re-execution seam (AC-R-WPEXA-2c/14).
  *
- * The worker leads its own process group (`detached:true`, `LARGE_TIER_DETACH_FORCE_ENV`)
- * so its log survives past the 600s Bash-tool ceiling (R-WPEX #108 autonomy gap), and
- * the orchestrator — NEVER the worker (R-WSRC) — persists `state.detached_worker` and
+ * The spawn-morty WRAPPER is spawned `detached:true` (below) so it leads its own
+ * process group and its log survives past the 600s Bash-tool ceiling (R-WPEX #108
+ * autonomy gap). `LARGE_TIER_DETACH_FORCE_ENV` is the orthogonal lever: it makes the
+ * large-tier claude GRANDCHILD `detached:false` (INHERIT the wrapper's group, NOT lead
+ * its own — H2 fix aee2767b) so the orchestrator's single `-spawn_morty_pid` reap reaches
+ * the whole subtree. The orchestrator — NEVER the worker (R-WSRC) — persists `state.detached_worker` and
  * emits `large_tier_worker_spawned`. Returns `{ spawned:false }` when `spawn` yields no
  * pid (binary missing / permissions) so each caller owns its own fallback control flow.
  * It does NOT `continue`/`return` — callers decide (main loop continues; recovery seam
@@ -2704,9 +2707,12 @@ export function spawnDetachedLargeTierWorker(input) {
         ...sessionStampEnv(path.basename(sessionDir), workingDir),
         PICKLE_STATE_FILE: statePath,
         PYTHONUNBUFFERED: '1',
-        // AC-R-WPEXA-16: force spawn-morty to `detached:true` regardless of the
-        // PICKLE_RECOVERY_CONSOLIDATION kill-switch so the worker leads its own
-        // process group and the orchestrator session-group reap can reach it.
+        // AC-R-WPEXA-16 (post-H2 aee2767b): mark this worker as the large-tier-detached
+        // lifecycle worker. spawn-morty's consumer (`shouldForceDetachForLargeTier`) reads
+        // this to keep the claude GRANDCHILD in spawn-morty's OWN (already session-scoped)
+        // process group — `detached:false`, INHERITING the group, NOT leading its own — so
+        // the orchestrator's single `process.kill(-spawn_morty_pid)` reap reaches the whole
+        // subtree (a grandchild leading its own group would ESCAPE the reap and orphan #108).
         [LARGE_TIER_DETACH_FORCE_ENV]: '1',
     };
     delete workerEnv['CLAUDECODE'];
