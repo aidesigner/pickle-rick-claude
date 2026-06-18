@@ -103,3 +103,27 @@ test('HP-SUFFIX-02: Problem cites genuinely fabricated path — hallucinated-pre
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('HP-SUFFIX-03: suffix is anchored to the full cited path, not bare basename — still fatal', () => {
+  // basename `salvage-ticket.ts` IS tracked (at extension/src/lib/salvage-ticket.ts), but the
+  // 2-segment suffix `nonexistent-dir/salvage-ticket.ts` is NOT. The anchored regex
+  // (?:^|/)nonexistent-dir/salvage-ticket\.ts$ must NOT match — proving the resolver keys on the
+  // full multi-segment ref, not a loose basename match (which would false-suppress this finding).
+  const tmpDir = makeSessionDir('The `nonexistent-dir/salvage-ticket.ts` function has a bug.');
+  try {
+    const result = auditSession(tmpDir, SCRIPT_DIR);
+    const hallucinatedFindings = result.findings.filter((f) => f.defect_class === 'hallucinated-premise');
+    assert.equal(
+      hallucinatedFindings.length,
+      1,
+      `Expected 1 hallucinated-premise for a non-anchored multi-segment path, got: ${JSON.stringify(hallucinatedFindings)}`,
+    );
+    assert.ok(
+      hallucinatedFindings[0].evidence.includes('nonexistent-dir/salvage-ticket.ts'),
+      `Expected evidence to cite the non-anchored path, got: ${hallucinatedFindings[0].evidence}`,
+    );
+    assert.equal(hallucinatedFindings[0].severity, 'fatal');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
