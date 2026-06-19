@@ -1,6 +1,6 @@
 ---
 title: P2 Simplification Pass — B-GSUB — guard-inventory subtraction (data-driven, low-risk)
-status: PLAN ONLY — awaiting operator greenlight
+status: APPROVED
 priority: P2
 filed: 2026-06-18
 r_code_prefix: R-GSUB
