@@ -144,15 +144,30 @@ function warnBadBackend(sourceLabel, value) {
     _warnedBackends.add(key);
     process.stderr.write(`[pickle-rick] unrecognized backend ${JSON.stringify(value)} from ${sourceLabel} — falling back to 'claude' (valid: ${BACKENDS.join(', ')})\n`);
 }
+/**
+ * Refinement-lock carve-out. PRD refinement is planning, not implementation:
+ * the lock reserves codex (and every other implementation backend) for the
+ * implement loop and forces `claude` for planning. `droid` is the ONE
+ * exception — in the cloud Claude is absent, so droid (glm-5.2) carries
+ * refinement. Returns `droid` only when the candidate is `droid`; forces
+ * `claude` for every other backend (codex/deepseek/grok/kimi/gemini/hermes or
+ * unrecognized) so planning never runs on an implementation runtime.
+ */
+function refinementLockCarveOut(candidate) {
+    return candidate === 'droid' ? 'droid' : 'claude';
+}
 export function resolveBackend(source) {
     // Refinement lock sentinel: PRD refinement is planning, not implementation.
     // Codex is reserved for implementation. This sentinel is set by
     // spawn-refinement-team and propagates to every grandchild via env
     // inheritance, so any downstream caller that reads state.json (e.g.
     // loadBackendFromSession) cannot leak codex back into the refinement phase.
+    // The droid backend is the exception: Claude is absent in the cloud, so
+    // refinement proceeds on droid (glm-5.2) — see `refinementLockCarveOut`.
     // Silent force — no warning, no log.
-    if (process.env.PICKLE_REFINEMENT_LOCK === '1')
-        return 'claude';
+    if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
+        return refinementLockCarveOut(resolveManagerBackendValue(source));
+    }
     // Past the refinement-lock carve-out, backend resolution is identical to the
     // manager-backend path (state.backend → PICKLE_BACKEND env → 'claude', warning
     // on unrecognized values), so delegate instead of duplicating the precedence.
@@ -173,11 +188,12 @@ function resolveManagerBackendValue(source) {
 }
 export function resolveWorkerBackendFromState(source) {
     if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
+        const managerBackend = resolveManagerBackendValue(source);
         return {
-            backend: 'claude',
+            backend: refinementLockCarveOut(managerBackend),
             source: 'env_lock',
             workerBackend: null,
-            managerBackend: resolveManagerBackendValue(source),
+            managerBackend,
         };
     }
     const managerBackend = resolveManagerBackendValue(source);
@@ -201,11 +217,33 @@ export function resolveWorkerBackendFromState(source) {
     };
 }
 export function resolveBackendFromStateFileWithSource(statePath, cliBackend) {
-    // Refinement lock is non-overridable: short-circuits on the lock variable
-    // before disk-I/O so a stale/hostile state.json cannot recover codex for a
-    // locked-in planning run.
+    // Refinement lock carve-out. The lock is non-overridable for codex (and
+    // every other implementation backend) — short-circuits to 'claude' so a
+    // stale/hostile state.json cannot recover codex for a locked-in planning
+    // run. `droid` is the exception: Claude is absent in the cloud, so a session
+    // that opted into droid (via state, env, or an explicit CLI override) keeps
+    // droid for refinement. An explicit `cliBackend === 'droid'` wins without
+    // disk I/O; otherwise the candidate is resolved the same way the non-lock
+    // path would, and only droid passes — everything else forces claude.
     if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
-        return { backend: 'claude', source: 'refinement-lock' };
+        let candidate = 'claude';
+        if (cliBackend !== undefined) {
+            candidate = cliBackend;
+        }
+        else {
+            try {
+                const parsed = _sm.read(statePath);
+                if (isBackend(parsed?.backend))
+                    candidate = parsed.backend;
+                else if (isBackend(process.env.PICKLE_BACKEND))
+                    candidate = process.env.PICKLE_BACKEND;
+            }
+            catch {
+                if (isBackend(process.env.PICKLE_BACKEND))
+                    candidate = process.env.PICKLE_BACKEND;
+            }
+        }
+        return { backend: refinementLockCarveOut(candidate), source: 'refinement-lock' };
     }
     // Explicit CLI override must beat persisted state/env because spawn-site
     // callers already validated the value and are intentionally overriding the

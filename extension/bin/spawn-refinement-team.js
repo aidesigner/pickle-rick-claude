@@ -4,16 +4,33 @@ import * as path from 'path';
 import { execFileSync, spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, classifyTicketTier, loadPickleSettingsBag, VALID_TICKET_COMPLEXITY_TIERS, } from '../services/pickle-utils.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
-import { buildWorkerInvocation, isBackend } from '../services/backend-spawn.js';
+import { buildWorkerInvocation } from '../services/backend-spawn.js';
 import { PromiseTokens, hasToken, Defaults, VALID_ACTIVITY_EVENTS, PipelineRunnerExitCode } from '../types/index.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { runAcPhaseGate } from '../services/ac-phase-gate.js';
 import { recoveryConsolidationEnabled } from './mux-runner.js';
-// PRD refinement is planning, not implementation. Codex is reserved for
-// implementation loops only — if the parent session opted into codex, we
-// still force claude here so analysis stays on the Claude model family.
+/**
+ * The backend refinement runs on when the session did NOT opt into `droid`.
+ * PRD refinement is planning, not implementation — codex (and every other
+ * implementation backend) is reserved for the implement loop, so refinement
+ * forces the Claude model family. The `droid` backend is the exception: in the
+ * cloud Claude is absent, so a session with `state.backend === 'droid'` runs
+ * refinement on droid (glm-5.2). See `resolveRefinementBackend`.
+ */
 const REFINEMENT_BACKEND = 'claude';
 const sm = new StateManager();
+/**
+ * Resolve the backend a refinement worker runs on. `droid` is the only
+ * non-claude backend permitted for refinement (Claude is absent in the cloud;
+ * droid carries refinement on glm-5.2). Every other session backend falls
+ * back to `claude` so planning never runs on an implementation runtime
+ * (codex/grok/kimi/gemini/hermes/deepseek).
+ *
+ * Exported for tests.
+ */
+export function resolveRefinementBackend(stateBackend) {
+    return stateBackend === 'droid' ? 'droid' : REFINEMENT_BACKEND;
+}
 // Emit the codex-override warning at most once per process.
 let _codexOverrideWarned = false;
 export function __resetRefinementBackendWarning() {
@@ -35,47 +52,76 @@ export function warnIfCodexRequested(stateBackend, envBackend) {
     }
 }
 /**
- * Build the spawn invocation for a single refinement worker. Hardcoded to
- * claude — NEVER resolveBackend — because refinement is planning, not
- * implementation.
+ * Build the spawn invocation for a single refinement worker.
+ *
+ * Defaults to claude (refinement is planning, not implementation). When
+ * `opts.backend === 'droid'` is passed (resolved from `state.backend` by the
+ * spawn site), the worker runs on `droid exec --auto medium -m glm-5.2` with
+ * the prompt delivered via stdin — NO claude subprocess. The per-session
+ * `state.droid_model` override is honored via `opts.model`.
+ *
+ * The `--max-turns` flag is claude-CLI-specific (it splices before the
+ * `-p <prompt>` trailer). droid has no `-p` and no `--max-turns` flag, so the
+ * splice is skipped for the droid backend — droid worker bounding is the
+ * external timeout/hang-guard in `spawnWorker`.
  *
  * Exported for tests.
  */
 export function buildRefinementWorkerInvocation(opts) {
-    const invocation = buildWorkerInvocation(opts.backend ?? REFINEMENT_BACKEND, {
+    const backend = opts.backend ?? REFINEMENT_BACKEND;
+    const invocation = buildWorkerInvocation(backend, {
         prompt: opts.prompt,
         addDirs: opts.addDirs,
+        model: opts.model,
         settingsBag: opts.settingsBag,
     });
     // buildWorkerInvocation doesn't take max-turns for workers; splice it in
     // before the `-p <prompt>` trailer so the flag applies to the claude CLI.
+    // Only claude-family invocations carry a `-p` positional prompt; droid
+    // delivers its prompt via stdin and has no --max-turns flag, so the splice
+    // is naturally skipped when there is no `-p` to anchor it against.
     if (opts.maxTurns > 0) {
         const promptIdx = invocation.args.lastIndexOf('-p');
-        const insertAt = promptIdx === -1 ? invocation.args.length : promptIdx;
-        invocation.args.splice(insertAt, 0, '--max-turns', String(opts.maxTurns));
+        if (promptIdx !== -1) {
+            invocation.args.splice(promptIdx, 0, '--max-turns', String(opts.maxTurns));
+        }
     }
     return invocation;
 }
 /**
- * Build the child-process env for a refinement worker. Explicitly sets
- * PICKLE_BACKEND=claude so any grandchild spawn also stays on claude even if
- * the parent session opted into codex. Do NOT spread backendEnvOverrides —
- * this helper is the single source of truth for the refinement env.
+ * Build the child-process env for a refinement worker.
+ *
+ * For the claude path (default), explicitly sets `PICKLE_BACKEND=claude` and
+ * the `PICKLE_REFINEMENT_LOCK=1` sentinel so any grandchild spawn also stays
+ * on claude even if the parent session opted into codex — the lock
+ * short-circuits `resolveBackend`/`resolveBackendFromStateFile` in every
+ * grandchild. Do NOT spread backendEnvOverrides — this helper is the single
+ * source of truth for the refinement env.
+ *
+ * For the `droid` path (`backend === 'droid'`), sets `PICKLE_BACKEND=droid`
+ * and OMITS `PICKLE_REFINEMENT_LOCK` so grandchildren resolve to droid
+ * (glm-5.2), not claude — Claude is absent in the cloud and must not be
+ * spawned during refinement.
  *
  * Exported for tests.
  */
-export function buildRefinementEnv(base = process.env) {
+export function buildRefinementEnv(base = process.env, backend) {
+    const resolvedBackend = backend ?? REFINEMENT_BACKEND;
     const env = {
         ...base,
-        PICKLE_BACKEND: REFINEMENT_BACKEND,
+        PICKLE_BACKEND: resolvedBackend,
+        PICKLE_ROLE: 'refinement-worker',
+        PYTHONUNBUFFERED: '1',
+    };
+    if (resolvedBackend !== 'droid') {
         // Sentinel lock: short-circuits resolveBackend / resolveBackendFromStateFile
         // in every grandchild to 'claude', even if state.json says codex. Prevents
         // a downstream loadBackendFromSession(sessionDir) read from bypassing the
         // env lock. See services/backend-spawn.ts resolveBackend() for details.
-        PICKLE_REFINEMENT_LOCK: '1',
-        PICKLE_ROLE: 'refinement-worker',
-        PYTHONUNBUFFERED: '1',
-    };
+        // OMITTED for droid: droid is an allowed refinement backend and the lock
+        // would force grandchildren back to claude.
+        env.PICKLE_REFINEMENT_LOCK = '1';
+    }
     delete env['CLAUDECODE'];
     return env;
 }
@@ -508,7 +554,7 @@ ${prdContent}
 
 ${outputInstructions}`;
 }
-function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, workingDir, maxTurns, cycle, onComplete, sessionDir) {
+function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, workingDir, maxTurns, cycle, onComplete, sessionDir, refinementBackend = REFINEMENT_BACKEND, droidModel) {
     const logPath = path.join(refinementDir, `worker_${roleId}_c${cycle}.log`);
     const logStream = fs.createWriteStream(logPath, { flags: 'w' });
     logStream.on('error', (err) => {
@@ -522,15 +568,11 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
         includes.push(sessionDir);
     const statePath = sessionDir ? path.join(sessionDir, 'state.json') : null;
     if (statePath) {
-        let managerBackend = REFINEMENT_BACKEND;
-        try {
-            const state = sm.read(statePath);
-            if (isBackend(state?.backend))
-                managerBackend = state.backend;
-        }
-        catch {
-            /* keep claude fallback */
-        }
+        // The activity log records the backend this refinement worker actually
+        // runs on (droid when the session opted in, claude otherwise) — NOT the
+        // raw state.backend, so a codex session still truthfully logs that
+        // refinement downgraded to claude.
+        const managerBackend = refinementBackend;
         try {
             writeActivityEntry(statePath, {
                 event: 'worker_backend_resolved',
@@ -548,16 +590,33 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
         prompt,
         addDirs: includes,
         maxTurns,
-        backend: REFINEMENT_BACKEND,
+        backend: refinementBackend,
+        model: droidModel,
         settingsBag: loadPickleSettingsBag() ?? undefined,
     });
-    const env = buildRefinementEnv(process.env);
+    const env = buildRefinementEnv(process.env, refinementBackend);
+    // droid delivers its prompt via stdin (invocation.stdinPrompt); claude uses
+    // a `-p <prompt>` positional. When stdinPrompt is set, open the child's
+    // stdin, write the prompt, and end() it — otherwise the child receives no
+    // prompt and produces no work. claude keeps the legacy stdin-ignored spawn.
+    const usesStdinPrompt = typeof invocation.stdinPrompt === 'string' && invocation.stdinPrompt.length > 0;
     const proc = spawn(invocation.cmd, invocation.args, {
         cwd: workingDir,
         env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: usesStdinPrompt ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
     });
     activeWorkerProcs.add(proc);
+    if (usesStdinPrompt) {
+        // Write the full prompt and close stdin so the child sees EOF and proceeds.
+        proc.stdin?.on('error', () => { });
+        try {
+            proc.stdin?.write(invocation.stdinPrompt ?? '');
+            proc.stdin?.end();
+        }
+        catch {
+            /* child already gone; ignore */
+        }
+    }
     // Use { end: false } so that when stdout ends first it doesn't call
     // logStream.end(), which would discard any stderr data still in-flight.
     // logStream.end() is called explicitly in the 'close' and 'error' handlers.
@@ -726,6 +785,7 @@ function resolveRuntime(args, settings) {
     let timeout = args.timeout ?? settings.defaultWorkerTimeout;
     let workingDir = process.cwd();
     let stateBackend = undefined;
+    let droidModel;
     let sessionEffort;
     const statePath = path.join(args.sessionDir, 'state.json');
     if (fs.existsSync(statePath)) {
@@ -734,6 +794,8 @@ function resolveRuntime(args, settings) {
             stateBackend = state.backend;
             if (typeof state.working_dir === 'string' && state.working_dir.trim())
                 workingDir = state.working_dir;
+            if (typeof state.droid_model === 'string' && state.droid_model.trim())
+                droidModel = state.droid_model.trim();
             if (state.effort === 'low' || state.effort === 'medium' || state.effort === 'high')
                 sessionEffort = state.effort;
             if (args.timeout === undefined) {
@@ -748,12 +810,22 @@ function resolveRuntime(args, settings) {
         }
     }
     warnIfCodexRequested(stateBackend, process.env.PICKLE_BACKEND);
+    // Resolve the backend refinement runs on: droid when the session opted in
+    // (Claude is absent in the cloud; droid carries refinement on glm-5.2),
+    // otherwise claude (planning never runs on an implementation runtime).
+    const refinementBackend = resolveRefinementBackend(stateBackend);
+    if (refinementBackend === 'droid') {
+        const modelLabel = droidModel ?? 'glm-5.2';
+        console.log(`${Style.CYAN}🤖 Refinement running on droid backend (model: ${modelLabel}) — no Claude.${Style.RESET}`);
+    }
     return {
         cycles: args.cycles ?? settings.defaultCycles,
         maxTurns: args.maxTurns ?? settings.defaultMaxTurns,
         timeout,
         workingDir,
         sessionEffort,
+        refinementBackend,
+        droidModel,
     };
 }
 function clampTimeoutToSession(timeout, state) {
@@ -853,7 +925,7 @@ async function runCycle(opts) {
                 statuses.set(id, result.success ? '✅' : '❌');
                 if (result.exitCode !== null && result.exitCode !== 0)
                     killSiblingWorkers(result);
-            }, opts.sessionDir);
+            }, opts.sessionDir, opts.refinementBackend, opts.droidModel);
         });
         return await Promise.all(workerPromises);
     }
@@ -923,6 +995,8 @@ export async function orchestrateCycles(args, settings, prd) {
             previousAnalyses: loadPreviousAnalyses(refinementDir, cycle),
             portalContext,
             sessionDir: args.sessionDir,
+            refinementBackend: runtime.refinementBackend,
+            droidModel: runtime.droidModel,
         });
         archiveCycleResults(refinementDir, runtime.cycles, cycle);
         allCycleResults.push(results);
