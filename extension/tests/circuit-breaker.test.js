@@ -378,6 +378,35 @@ test('detectProgress: clean git repo with same head returns no progress', () => 
     }
 });
 
+test('R-DEFCHURN #127: an EMPTY commit (HEAD changed, tree unchanged) is NOT progress', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const head = initGitRepo(tmpDir);
+        // Worker's "deferred conformance" no-op: a new commit SHA, zero tree change.
+        spawnSync('git', ['commit', '--allow-empty', '-m', 'chore: record deferred conformance'], { cwd: tmpDir });
+        const head2 = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: tmpDir, encoding: 'utf-8' }).stdout.trim();
+        assert.notEqual(head2, head, 'sanity: the empty commit advanced HEAD');
+        const result = detectProgress(tmpDir, head, 'implement', 'implement', null, null);
+        assert.equal(result.hasProgress, false, 'empty commit must not count as progress (else the no-progress breaker never trips)');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('R-DEFCHURN #127: a REAL commit (HEAD + tree changed) is still progress', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const head = initGitRepo(tmpDir);
+        fs.writeFileSync(path.join(tmpDir, 'new.txt'), 'real work');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', 'feat: real change'], { cwd: tmpDir });
+        const result = detectProgress(tmpDir, head, 'implement', 'implement', null, null);
+        assert.equal(result.hasProgress, true, 'a tree-changing commit must still count as progress');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // extractErrorSignature
 // ---------------------------------------------------------------------------

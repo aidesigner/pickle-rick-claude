@@ -164,7 +164,23 @@ export function detectProgress(workingDir, lastKnownHead, prevStep, currentStep,
     const hasUncommittedChanges = diffOutput.length > 0;
     const stagedOutput = runCmd(['git', 'diff', '--stat', '--cached'], { cwd: workingDir, check: false });
     const hasStagedChanges = stagedOutput.length > 0;
-    const headChanged = currentHead !== lastKnownHead;
+    let headChanged = currentHead !== lastKnownHead;
+    // R-DEFCHURN (#127): an EMPTY commit (e.g. a worker's repeated "deferred
+    // conformance" no-op when an AC is unsatisfiable from its allowed file set)
+    // advances the commit SHA but leaves the TREE unchanged. A pure SHA comparison
+    // then reports false progress and resets the no-progress circuit breaker every
+    // iteration, so a churn of empty commits burns the whole per-ticket budget
+    // (live incident 2026-06-19 session 2b1e2707, ticket 26cd29db: ~12 deferral
+    // commits, 9 of them empty) instead of tripping the breaker. Only count a head
+    // change as progress when the committed TREE actually changed; on rev-parse
+    // failure fall back to the SHA-based result (no behavior change).
+    if (headChanged && lastKnownHead) {
+        const currentTree = runCmd(['git', 'rev-parse', `${currentHead}^{tree}`], { cwd: workingDir, check: false });
+        const lastTree = runCmd(['git', 'rev-parse', `${lastKnownHead}^{tree}`], { cwd: workingDir, check: false });
+        if (currentTree && lastTree && currentTree === lastTree) {
+            headChanged = false;
+        }
+    }
     return {
         hasProgress: hasUncommittedChanges || hasStagedChanges || headChanged || stepChanged || ticketChanged,
         currentHead,
