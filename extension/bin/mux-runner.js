@@ -10,7 +10,7 @@ import { StateManager, safeDeactivate, finalizeTerminalState, finalizeIfTrulyCom
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides, sessionStampEnv, LARGE_TIER_DETACH_FORCE_ENV } from '../services/backend-spawn.js';
-import { resolveCodexModel } from './spawn-morty.js';
+import { resolveCodexModel, resolveDroidModel } from './spawn-morty.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream, CODEX_DELIMITER_RE } from '../services/classifier-utils.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
@@ -2894,10 +2894,13 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
     // doesn't strip away the configured `-m`. Quality-pass-template Claude
     // overrides (meeseeks/szechuan) remain claude-only above.
     const codexManagerModel = backend === 'codex' ? resolveCodexModel(extensionRoot, state) : undefined;
+    // droid manager model: resolve `state.droid_model` so per-session overrides
+    // reach `buildDroidManagerInvocation`; undefined falls back to glm-5.2 there.
+    const droidManagerModel = backend === 'droid' ? resolveDroidModel(state) : undefined;
     const invocation = buildManagerInvocation(backend, {
         prompt: managerPrompt,
         addDirs: [extensionRoot, getDataRoot(), sessionDir],
-        model: backend === 'hermes' ? state.hermes_model : (backend === 'codex' ? codexManagerModel : iterationModel),
+        model: backend === 'hermes' ? state.hermes_model : (backend === 'codex' ? codexManagerModel : (backend === 'droid' ? droidManagerModel : iterationModel)),
         maxTurns: backend === 'hermes' ? positiveIntegerOrNull(state.hermes_max_turns) ?? maxTurns : maxTurns,
         streamJson: true,
         noSessionPersistence: true,
@@ -2952,11 +2955,20 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
         let timeoutStdoutClosed = false;
         let timeoutStderrClosed = false;
         let timeoutEarliestFinishAt = 0;
+        // droid (and any backend setting `invocation.stdinPrompt`) takes its prompt
+        // via stdin: open a pipe, write the prompt, close it. Other backends keep
+        // the legacy `inherit` stdin. stdout/stderr stay pipes either way so the
+        // stall/heartbeat watchers and log drain work unchanged.
+        const usesStdinPrompt = typeof invocation.stdinPrompt === 'string' && invocation.stdinPrompt.length > 0;
         const proc = spawn(invocation.cmd, invocation.args, {
             cwd: state.working_dir || process.cwd(),
             env,
-            stdio: ['inherit', 'pipe', 'pipe'],
+            stdio: usesStdinPrompt ? ['pipe', 'pipe', 'pipe'] : ['inherit', 'pipe', 'pipe'],
         });
+        if (usesStdinPrompt) {
+            proc.stdin?.write(invocation.stdinPrompt);
+            proc.stdin?.end();
+        }
         currentChildProc = proc;
         const spawnedPid = proc.pid;
         if (spawnedPid != null) {
@@ -4547,6 +4559,12 @@ export function attemptRecoveryBeforeTerminal(input) {
                             env: { ...process.env, ...backendEnvOverrides(backend), ...(invocation.env ?? {}), PICKLE_STATE_FILE: opts.statePath },
                             encoding: 'utf-8',
                             timeout: CONVERGED_PLAN_VERIFY_TIMEOUT_MS,
+                            // droid takes its prompt via stdin; `input` writes to the child
+                            // stdin and closes it (spawnSync stdin defaults to 'pipe' when
+                            // `input` is set). Non-stdin backends leave this unset.
+                            ...(typeof invocation.stdinPrompt === 'string' && invocation.stdinPrompt.length > 0
+                                ? { input: invocation.stdinPrompt }
+                                : {}),
                         });
                         if (r.error && r.error.code === 'ETIMEDOUT') {
                             return { ok: false, timedOut: true };

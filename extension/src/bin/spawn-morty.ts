@@ -1894,6 +1894,18 @@ function resolveGeminiModel(state: State | null): string | undefined {
   return resolveBackendModel(state, 'gemini_model');
 }
 
+/**
+ * Resolve the droid model override from `state.droid_model`. Returns undefined
+ * when unset so `buildDroidWorkerInvocation` can apply its compiled `glm-5.2`
+ * default. Named per-backend adapter over the shared `resolveBackendModel`
+ * resolver, mirroring `resolveGrokModel`/`resolveKimiModel`/`resolveGeminiModel`.
+ */
+export function resolveDroidModel(state: State | null): string | undefined {
+  const m = (state as (State & Record<string, unknown>) | null)?.droid_model;
+  if (typeof m === 'string' && m.trim().length > 0) return m.trim();
+  return undefined;
+}
+
 function resolveWorkerModel(
   backend: Backend,
   extensionRoot: string,
@@ -1905,6 +1917,7 @@ function resolveWorkerModel(
   if (backend === 'grok') return resolveGrokModel(state);
   if (backend === 'kimi') return resolveKimiModel(state);
   if (backend === 'gemini') return resolveGeminiModel(state);
+  if (backend === 'droid') return resolveDroidModel(state);
   if (backend !== 'claude') return undefined;
   let enableComplexityTiers = true;
   try {
@@ -2083,7 +2096,17 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
   // `proc.kill()` (spawn-morty.ts:killProcessTree). Cross-session isolation is preserved
   // because spawn-morty's group is itself session-scoped.
   const detachWorker = shouldForceDetachForLargeTier() ? false : shouldIsolateSessionGroup();
-  const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: ['inherit', 'pipe', 'pipe'], detached: detachWorker });
+  // droid (and any backend setting `invocation.stdinPrompt`) takes its prompt via
+  // stdin, so the child stdin MUST be a pipe we write to + close. Other backends
+  // keep the legacy `inherit` stdin (workers may read the terminal). The stdout/
+  // stderr pipes are unchanged so session logging + stall detection work as before.
+  const usesStdinPrompt = typeof invocation.stdinPrompt === 'string' && invocation.stdinPrompt.length > 0;
+  const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: usesStdinPrompt ? ['pipe', 'pipe', 'pipe'] : ['inherit', 'pipe', 'pipe'], detached: detachWorker });
+  if (usesStdinPrompt) {
+    // Write the full prompt and close stdin so the child receives EOF and proceeds.
+    proc.stdin?.write(invocation.stdinPrompt!);
+    proc.stdin?.end();
+  }
   proc.stdout?.pipe(sessionLog, { end: false });
   proc.stderr?.pipe(sessionLog, { end: false });
   attachCompletionCommitAckListener(proc, ticketId, path.join(sessionRoot, 'state.json'));

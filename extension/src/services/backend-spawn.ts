@@ -104,6 +104,17 @@ export interface SpawnInvocation {
   args: string[];
   backend: Backend;
   env?: Record<string, string>;
+  /**
+   * Optional prompt delivered to the child subprocess via its stdin stream.
+   * Set by backends that take the prompt via stdin (e.g. `droid exec`) instead
+   * of a positional/`-p` argument. Spawn sites MUST, when this field is a
+   * non-empty string, open the child's stdin (`stdio: ['pipe','pipe','pipe']`),
+   * `proc.stdin.write(stdinPrompt)`, then `.end()` — otherwise the child
+   * receives no prompt and produces no work. Backends that do not set this
+   * field keep the legacy `stdio: ['inherit','pipe','pipe']` (or equivalent)
+   * spawn behaviour.
+   */
+  stdinPrompt?: string;
 }
 
 export function isBackend(value: unknown): value is Backend {
@@ -511,6 +522,7 @@ export function buildWorkerInvocation(backend: Backend, opts: WorkerInvocationOp
   if (backend === 'grok') return buildGrokWorkerInvocation(opts);
   if (backend === 'kimi') return buildKimiWorkerInvocation(opts);
   if (backend === 'gemini') return buildGeminiWorkerInvocation(opts);
+  if (backend === 'droid') return buildDroidWorkerInvocation(opts);
   return buildClaudeWorkerInvocation(opts);
 }
 
@@ -521,6 +533,7 @@ export function buildManagerInvocation(backend: Backend, opts: ManagerInvocation
   if (backend === 'grok') return buildGrokWorkerInvocation(opts);
   if (backend === 'kimi') return buildKimiWorkerInvocation(opts);
   if (backend === 'gemini') return buildGeminiWorkerInvocation(opts);
+  if (backend === 'droid') return buildDroidManagerInvocation(opts);
   return buildClaudeManagerInvocation(opts);
 }
 
@@ -676,6 +689,74 @@ function buildHermesWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvoca
   if (opts.provider?.trim()) args.push('--provider', opts.provider.trim());
   if (opts.model?.trim()) args.push('-m', opts.model.trim());
   return { cmd: 'hermes', args, backend: 'hermes' };
+}
+
+/**
+ * Default droid model used by `buildDroidWorkerInvocation` /
+ * `buildDroidManagerInvocation` when no per-session `state.droid_model` override
+ * is supplied. Factory.ai `glm-5.2` is the mission-confirmed headless model
+ * (verified during readiness: edits + commits via `--auto medium`, no OAuth).
+ */
+const DEFAULT_DROID_MODEL = 'glm-5.2';
+
+/**
+ * Resolve the droid output format. Workers/managers drive the pickle-rick loop
+ * via completion-token detection in `classifier-utils.ts`, which parses droid's
+ * structured envelopes — so the default is `stream-json` (one JSON object per
+ * line) rather than the unparseable `text` format. A caller-supplied non-text
+ * `outputFormat` wins.
+ */
+function resolveDroidOutputFormat(outputFormat?: string): string {
+  if (outputFormat && outputFormat !== 'text') return outputFormat;
+  return 'stream-json';
+}
+
+/**
+ * Build a `droid exec` worker invocation (commit-capable).
+ *
+ * Workers MUST run at `--auto medium` (or higher) so they can edit files AND
+ * make local git commits — the pickle-rick completion contract requires a
+ * commit before `<promise>I AM DONE</promise>`. The read-only default autonomy
+ * would silently break that contract, so `--auto medium` is hardcoded here.
+ *
+ * The prompt is delivered via STDIN (preferred for droid), not a positional
+ * arg. The returned `stdinPrompt` field signals spawn sites to open the child's
+ * stdin, write the prompt, and `.end()` it.
+ *
+ * droid has no `--add-dir` equivalent; out-of-tree dirs are reached via the
+ * spawn site's `cwd` (process working dir) and absolute paths in the prompt.
+ * `addDirs` is therefore intentionally ignored here.
+ *
+ * Model is configurable via `opts.model` (resolved from `state.droid_model` by
+ * the spawn site); defaults to `glm-5.2` when unset.
+ */
+function buildDroidWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvocation {
+  const model = opts.model?.trim() || DEFAULT_DROID_MODEL;
+  const args: string[] = [
+    'exec',
+    '--output-format', resolveDroidOutputFormat(opts.outputFormat),
+    '--auto', 'medium',
+    '-m', model,
+  ];
+  return { cmd: 'droid', args, backend: 'droid', stdinPrompt: opts.prompt };
+}
+
+/**
+ * Build a `droid exec` manager invocation. Mirrors the worker builder — the
+ * manager also needs `--auto medium` (commit-capable) and delivers its prompt
+ * via stdin. Output format defaults to `stream-json` so mux-runner's
+ * completion-token classifier can parse the assistant `.text` envelopes.
+ */
+function buildDroidManagerInvocation(opts: ManagerInvocationOptions): SpawnInvocation {
+  const model = opts.model?.trim() || DEFAULT_DROID_MODEL;
+  const outputFormat = opts.streamJson ? 'stream-json' : resolveDroidOutputFormat();
+  const args: string[] = [
+    'exec',
+    '--output-format', outputFormat,
+    '--auto', 'medium',
+    '-m', model,
+  ];
+  return { cmd: 'droid', args, backend: 'droid', stdinPrompt: opts.prompt };
 }
 
 /**
