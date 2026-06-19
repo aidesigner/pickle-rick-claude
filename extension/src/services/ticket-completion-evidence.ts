@@ -67,6 +67,13 @@ export interface EvidenceCtx {
   startCommit?: string | null;
   /** R-CXOR-2: pinned SHA at session bootstrap — rejected as completion evidence. */
   pinnedSha?: string | null;
+  /**
+   * State flags, e.g. { allow_inferred_completion_commit: true }. When
+   * `allow_inferred_completion_commit` is true and no ticket-ID-matching commit
+   * is found, scanGitLog falls back to the most recent commit beyond the session
+   * start (droid managers do direct commits without the ticket ID in the message).
+   */
+  flags?: Record<string, unknown> | null;
 }
 
 /** Options for persistEvidence. */
@@ -191,6 +198,10 @@ function scanGitLog(args: {
   startTimeEpoch?: number | null;
   ticketPath?: string | null;
   rCode?: string | null;
+  /** When allow_inferred_completion_commit is true, fall back to any new commit beyond session start. */
+  allowAnyNewCommit?: boolean;
+  /** Baseline SHAs excluded from the any-new-commit fallback (R-CXOR-2). */
+  baselineShas?: string[];
 }): { sha: string } | null {
   const matchers = [
     ...(args.ticketId ? [args.ticketId.toLowerCase()] : []),
@@ -203,15 +214,28 @@ function scanGitLog(args: {
     const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`\\b${escaped}\\b`);
   })();
-  if (matchers.length === 0 && !rCodeRe) return null;
+  const allowAnyNewCommit = args.allowAnyNewCommit === true;
+  if (matchers.length === 0 && !rCodeRe && !allowAnyNewCommit) return null;
 
   const startEpoch = Number(args.startTimeEpoch);
+  const baselineSet = new Set((args.baselineShas ?? []).filter(Boolean).map(s => s.toLowerCase()));
   const checkEntry = (e: GitLogEntry): { sha: string } | null => {
     if (Number.isFinite(startEpoch) && startEpoch > 0 && e.epoch < startEpoch) return null;
     const lower = e.message.toLowerCase();
     if (matchers.some(t => lower.includes(t))) return { sha: e.sha };
     if (rCodeRe && rCodeRe.test(lower)) return { sha: e.sha };
     return null;
+  };
+  // Droid-direct-commit fallback: when the manager does work directly (no
+  // spawn-morty worker to stamp completion_commit / include the ticket ID in
+  // the commit message), accept the most recent commit beyond session start as
+  // inferred evidence. Gated on allow_inferred_completion_commit so the
+  // ticket-ID attribution contract is preserved for all other paths.
+  const fallbackEntry = (e: GitLogEntry): { sha: string } | null => {
+    if (!allowAnyNewCommit) return null;
+    if (Number.isFinite(startEpoch) && startEpoch > 0 && e.epoch < startEpoch) return null;
+    if (baselineSet.has(e.sha.toLowerCase())) return null;
+    return { sha: e.sha };
   };
 
   const commands: string[][] = [];
@@ -223,8 +247,15 @@ function scanGitLog(args: {
   for (const gitArgs of commands) {
     try {
       const raw = execFileSync('git', gitArgs, { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-      for (const entry of parseGitLog(raw)) {
+      const entries = parseGitLog(raw);
+      // First pass: ticket-ID / R-code attribution (strongest signal).
+      for (const entry of entries) {
         const matched = checkEntry(entry);
+        if (matched) return matched;
+      }
+      // Second pass: droid-direct-commit fallback (any new commit beyond start).
+      for (const entry of entries) {
+        const matched = fallbackEntry(entry);
         if (matched) return matched;
       }
     } catch {
@@ -288,6 +319,11 @@ export function readEvidence(ctx: EvidenceCtx): EvidenceResult {
   }
 
   // --- Git log scan ---
+  const allowAnyNewCommit = (ctx.flags ?? {})['allow_inferred_completion_commit'] === true;
+  const baselineShas = [
+    ...(ctx.startCommit ? [ctx.startCommit] : []),
+    ...(ctx.pinnedSha ? [ctx.pinnedSha] : []),
+  ];
   const scan = scanGitLog({
     workingDir: ctx.workingDir,
     ticketId: readFrontmatterField(content, 'id') ?? ctx.ticketId ?? null,
@@ -295,6 +331,8 @@ export function readEvidence(ctx: EvidenceCtx): EvidenceResult {
     startTimeEpoch: ctx.startTimeEpoch,
     ticketPath: tPath,
     rCode: readFrontmatterField(content, 'r_code'),
+    allowAnyNewCommit,
+    baselineShas,
   });
   if (scan) return { kind: 'inferred-fresh', sha: scan.sha };
 

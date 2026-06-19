@@ -323,7 +323,7 @@ export function parseBackendOverrideArg(argv) {
         return null;
     const value = requireFlagValue(argv, idx);
     if (!isBackend(value)) {
-        die(`Error: --backend must be one of claude, codex, hermes, grok, kimi, gemini (got ${JSON.stringify(value)}).`);
+        die(`Error: --backend must be one of ${BACKENDS.join(', ')} (got ${JSON.stringify(value)}).`);
     }
     return value;
 }

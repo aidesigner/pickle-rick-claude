@@ -1082,7 +1082,16 @@ function promoteInferredToExplicit(content, sha) {
  */
 function batchLoopPhantomDoneKind(input, ticketId, workingDir) {
     // R-AFCC-DEEP-4A: migrated from hasCompletionCommit to gateForPhantomDoneRevert.
-    const ctx = { sessionDir: input.sessionDir, ticketId, workingDir, fallbackDir: input.workingDir };
+    // Pass flags + session start info into the ctx so readEvidence's droid-direct-
+    // commit fallback (allow_inferred_completion_commit) can attribute a manager
+    // direct commit that lacks the ticket ID in its message.
+    const ctx = {
+        sessionDir: input.sessionDir,
+        ticketId,
+        workingDir,
+        fallbackDir: input.workingDir,
+        flags: input.flags ?? null,
+    };
     const decision = gateForPhantomDoneRevert(ctx, { flags: input.flags });
     if (decision.action === 'persist-inferred') {
         // D1 (84c209ae) promote-once: write EXPLICIT completion_commit and DELETE the
@@ -2246,6 +2255,9 @@ export function applyAutoTicketCompletionValidation(input) {
             ticketId: input.ticketId,
             workingDir: input.workingDir,
             flags: { ...(input.flags ?? {}), allow_inferred_completion_commit: true },
+            startCommit: input.startCommit ?? null,
+            startTimeEpoch: input.startTimeEpoch ?? null,
+            pinnedSha: input.pinnedSha ?? null,
         });
         if (!guard.ok) {
             const msg = `[fatal] ${new Date().toISOString()} ${guard.reason}`;
@@ -3902,6 +3914,10 @@ export function guardCompletionCommitBeforeDone(args) {
         sessionDir: args.sessionDir,
         ticketId: args.ticketId,
         workingDir: args.workingDir,
+        flags: args.flags ?? null,
+        startCommit: args.startCommit ?? null,
+        startTimeEpoch: args.startTimeEpoch ?? null,
+        pinnedSha: args.pinnedSha ?? null,
     };
     // R-AFCC-DEEP-4A: use readEvidence (replaces hasCompletionCommit).
     const evidenceAccepted = (r) => (r.kind === 'explicit' && !!r.sha) || (allowInferred && !!r.sha);
@@ -5926,11 +5942,23 @@ function processTaskCompleted(state, ctx) {
         return { kind: 'break', reason: closerDecision.reason };
     }
     if (curState.current_ticket) {
+        // Droid managers do work directly (no spawn-morty worker to stamp
+        // completion_commit / include the ticket ID in the commit message), so the
+        // commit-evidence gate must accept an inferred commit. Enable the bypass for
+        // the droid backend so the success-by-token contract is not mis-classified
+        // as done_without_commit_evidence on a genuinely-complete direct commit.
+        const guardFlags = curState.flags ?? null;
+        const effectiveFlags = curState.backend === 'droid'
+            ? { ...(guardFlags ?? {}), allow_inferred_completion_commit: true }
+            : guardFlags;
         const guard = guardCompletionCommitBeforeDone({
             sessionDir: ctx.sessionDir,
             ticketId: curState.current_ticket,
             workingDir: curState.working_dir || state.working_dir || process.cwd(),
-            flags: curState.flags ?? null,
+            flags: effectiveFlags,
+            startCommit: curState.start_commit ?? null,
+            startTimeEpoch: curState.start_time_epoch ?? null,
+            pinnedSha: curState.pinned_sha ?? null,
         });
         if (!guard.ok) {
             const msg = `[fatal] ${new Date().toISOString()} ${guard.reason}`;

@@ -1312,7 +1312,12 @@ function createInitialState(config, sessionPath, taskStr) {
         tickets_version: 0,
         last_course_correction: null,
         phase_personas_active: false,
-        flags: {},
+        // Droid managers do work directly (no spawn-morty worker to stamp
+        // completion_commit / include the ticket ID in the commit message), so the
+        // commit-evidence gate must accept an inferred commit. Enable the bypass for
+        // droid sessions so the success-by-token contract is not mis-classified as
+        // done_without_commit_evidence on a genuinely-complete direct commit.
+        flags: config.backend === 'droid' ? { allow_inferred_completion_commit: true } : {},
         readiness: { cycle_history: [] },
         codex_version_seen: codexVersionSeen,
         orphans_detected: [],
