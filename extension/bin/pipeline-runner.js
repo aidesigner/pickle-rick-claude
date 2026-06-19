@@ -1905,18 +1905,16 @@ export async function executeCitadelPhase(runtime) {
     const mechanicalEnabled = !skipReason && !mechanicalKilled;
     if (skipReason) {
         // Emit ONCE per phase invocation (not per cycle). Kill-switch reverts silently.
+        // MUST go to the activity-dir jsonl sink via logActivity, NOT state.json.activity:
+        // the W5c skip-flag budget scanner (scanSkipFlagEvents) reads only
+        // getDataRoot()/activity/<day>.jsonl, so a state.json.activity write would leave the
+        // purpose-built citadel-mechanical::skip_quality_gates budget stuck at 0 forever.
         try {
-            sm.update(runtime.statePath, s => {
-                const activity = Array.isArray(s.activity) ? s.activity : [];
-                s.activity = [
-                    ...activity,
-                    {
-                        event: 'gate_skipped',
-                        ts: new Date().toISOString(),
-                        source: 'citadel-mechanical',
-                        gate_payload: { reason: 'skip_quality_gates', detail: skipReason },
-                    },
-                ];
+            logActivity({
+                event: 'gate_skipped',
+                source: 'citadel-mechanical',
+                ts: new Date().toISOString(),
+                gate_payload: { reason: 'skip_quality_gates', detail: skipReason },
             });
         }
         catch (err) {
@@ -2677,8 +2675,9 @@ function pipelineBundleScan(runtime) {
  * `pendingCount / ticketCount` ratio for the graduate-vs-halt decision.
  */
 function maybeStampPhaseGraduation(runtime, rawPhase, _exitCode, log) {
-    if (rawPhase !== 'pickle')
+    if (rawPhase !== 'pickle') {
         return null;
+    }
     const progress = collectPicklePhaseProgress(runtime);
     const counts = {
         doneCount: progress.doneCount,
@@ -2687,8 +2686,9 @@ function maybeStampPhaseGraduation(runtime, rawPhase, _exitCode, log) {
         ticketCount: progress.ticketCount,
     };
     const verdict = graduationDecision(counts);
-    if (verdict.decision === 'graduate')
+    if (verdict.decision === 'graduate') {
         return null;
+    }
     // WS4 (b7cc6081): the proportional gate refused phase graduation. INVERTED
     // semantics — a refusal is the gate WORKING (refused-and-recovered), surfaced
     // as an informational count in /pickle-metrics, NOT a regression budget.
@@ -3093,8 +3093,9 @@ function finalizePhaseSuccess(runtime, counters, cancelMarker, rawPhase, exitCod
     // on ALL exit codes — the former three guards' `exitCode !== 0` early-return
     // let a breaker/error pickle exit silently graduate with pending tickets.
     const graduationBreak = maybeStampPhaseGraduation(runtime, rawPhase, exitCode, log);
-    if (graduationBreak)
+    if (graduationBreak) {
         return graduationBreak;
+    }
     counters.completed++;
     writeRunningStatus(runtime, counters, null);
     if (fs.existsSync(cancelMarker)) {

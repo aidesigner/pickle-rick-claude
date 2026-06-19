@@ -8,13 +8,33 @@ import {
   executeCitadelPhase,
   __setCitadelRemediationDepsForTests,
 } from '../bin/pipeline-runner.js';
+import {
+  scanSkipFlagEvents,
+  buildSkipFlagBudgetReport,
+  SKIP_FLAG_BUDGETS,
+} from '../services/metrics-utils.js';
 
 const TMP_DIRS = new Set();
+const PRIOR_DATA_ROOT = process.env.PICKLE_DATA_ROOT;
 
 function tmpDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-mech-skip-'));
   TMP_DIRS.add(dir);
   return dir;
+}
+
+// logActivity writes to getDataRoot()/activity/<day>.jsonl — sandbox the data root
+// so the gate_skipped emission lands in tmp, not the real ~/.local/share tree.
+function withDataRoot() {
+  const root = tmpDir();
+  process.env.PICKLE_DATA_ROOT = root;
+  return path.join(root, 'activity');
+}
+
+function todayKey() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function writeCitadelState(statePath, flags) {
@@ -104,6 +124,8 @@ afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
   TMP_DIRS.clear();
+  if (PRIOR_DATA_ROOT === undefined) delete process.env.PICKLE_DATA_ROOT;
+  else process.env.PICKLE_DATA_ROOT = PRIOR_DATA_ROOT;
 });
 
 describe('B-CSOR T40 — skip_quality_gates_reason bypass (AC-5)', () => {
@@ -127,7 +149,8 @@ describe('B-CSOR T40 — skip_quality_gates_reason bypass (AC-5)', () => {
     );
   });
 
-  test('emits exactly one gate_skipped (source citadel-mechanical, reason skip_quality_gates)', async () => {
+  test('emits exactly one gate_skipped to the activity-dir jsonl sink the W5c budget scanner reads', async () => {
+    const activityDir = withDataRoot();
     const dir = tmpDir();
     const statePath = path.join(dir, 'state.json');
     writeCitadelState(statePath, { skip_quality_gates_reason: 'operator bypass test' });
@@ -141,14 +164,42 @@ describe('B-CSOR T40 — skip_quality_gates_reason bypass (AC-5)', () => {
 
     await executeCitadelPhase(makeRuntime(dir));
 
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    const skips = (state.activity || []).filter((e) => e.event === 'gate_skipped' && e.source === 'citadel-mechanical');
+    // The event MUST land in the activity-dir jsonl, NOT state.json.activity — that is
+    // the sink scanSkipFlagEvents reads. A regression would write to state.activity and
+    // leave the dir empty (the original bug: budget stuck at 0 forever).
+    const jsonlPath = path.join(activityDir, `${todayKey()}.jsonl`);
+    assert.ok(fs.existsSync(jsonlPath), 'gate_skipped must be written to the activity-dir jsonl');
+    const lines = fs.readFileSync(jsonlPath, 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
+    const skips = lines.filter((e) => e.event === 'gate_skipped' && e.source === 'citadel-mechanical');
     assert.equal(skips.length, 1, 'exactly one gate_skipped per phase invocation');
     assert.equal(skips[0].gate_payload.reason, 'skip_quality_gates');
     assert.equal(skips[0].gate_payload.detail, 'operator bypass test');
+    assert.equal(typeof skips[0].ts, 'string', 'ts stamped for date-window filtering');
+
+    // The state.json sink MUST stay empty — proves the producer is no longer mis-routed.
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    const stateSkips = (state.activity || []).filter((e) => e.event === 'gate_skipped');
+    assert.equal(stateSkips.length, 0, 'gate_skipped must NOT be written to state.json.activity');
+
+    // End-to-end: the real consumer (scanner → budget report) must now SEE the use,
+    // crediting the purpose-built citadel-mechanical::skip_quality_gates budget.
+    const day = todayKey();
+    const uses = scanSkipFlagEvents(activityDir, day, day);
+    const budgetKeyUses = uses.filter(
+      (u) => u.source === 'citadel-mechanical' && u.reason === 'skip_quality_gates',
+    );
+    assert.equal(budgetKeyUses.length, 1, 'scanner credits the citadel-mechanical::skip_quality_gates budget');
+    const report = buildSkipFlagBudgetReport(uses, SKIP_FLAG_BUDGETS, day, day);
+    const entry = report.entries.find(
+      (e) => e.source === 'citadel-mechanical' && e.reason === 'skip_quality_gates',
+    );
+    assert.ok(entry, 'budget report includes the citadel-mechanical::skip_quality_gates entry');
+    assert.equal(entry.uses, 1, 'budget report uses is non-zero (the disarmed-budget bug is fixed)');
+    assert.equal(entry.budget, SKIP_FLAG_BUDGETS['citadel-mechanical::skip_quality_gates'], 'purpose-built budget honored');
   });
 
   test('no skip reason → mechanical finding IS remediated and NO gate_skipped emitted', async () => {
+    const activityDir = withDataRoot();
     const dir = tmpDir();
     const statePath = path.join(dir, 'state.json');
     writeCitadelState(statePath, null);
@@ -166,8 +217,11 @@ describe('B-CSOR T40 — skip_quality_gates_reason bypass (AC-5)', () => {
       captured.includes('banned-construct:brace-free-if:foo.ts:10'),
       'baseline: mechanical finding reaches remediation when bypass absent',
     );
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    const skips = (state.activity || []).filter((e) => e.event === 'gate_skipped' && e.source === 'citadel-mechanical');
+    const jsonlPath = path.join(activityDir, `${todayKey()}.jsonl`);
+    const skips = fs.existsSync(jsonlPath)
+      ? fs.readFileSync(jsonlPath, 'utf-8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
+        .filter((e) => e.event === 'gate_skipped' && e.source === 'citadel-mechanical')
+      : [];
     assert.equal(skips.length, 0, 'no gate_skipped when bypass absent');
   });
 });

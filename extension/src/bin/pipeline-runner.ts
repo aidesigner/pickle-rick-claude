@@ -2369,18 +2369,16 @@ export async function executeCitadelPhase(runtime: PipelineRuntime): Promise<{ e
   const mechanicalEnabled = !skipReason && !mechanicalKilled;
   if (skipReason) {
     // Emit ONCE per phase invocation (not per cycle). Kill-switch reverts silently.
+    // MUST go to the activity-dir jsonl sink via logActivity, NOT state.json.activity:
+    // the W5c skip-flag budget scanner (scanSkipFlagEvents) reads only
+    // getDataRoot()/activity/<day>.jsonl, so a state.json.activity write would leave the
+    // purpose-built citadel-mechanical::skip_quality_gates budget stuck at 0 forever.
     try {
-      sm.update(runtime.statePath, s => {
-        const activity = Array.isArray(s.activity) ? s.activity : [];
-        s.activity = [
-          ...activity,
-          {
-            event: 'gate_skipped',
-            ts: new Date().toISOString(),
-            source: 'citadel-mechanical',
-            gate_payload: { reason: 'skip_quality_gates', detail: skipReason },
-          },
-        ];
+      logActivity({
+        event: 'gate_skipped',
+        source: 'citadel-mechanical',
+        ts: new Date().toISOString(),
+        gate_payload: { reason: 'skip_quality_gates', detail: skipReason },
       });
     } catch (err) {
       runtime.log(`citadel: gate_skipped activity write failed: ${safeErrorMessage(err)}`);

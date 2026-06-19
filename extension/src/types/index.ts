@@ -837,7 +837,7 @@ export const VALID_ACTIVITY_EVENTS = [
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
-export type ActivityEventSource = 'pickle' | 'hook' | 'persona' | 'force_flag' | BackendResolutionSource | WorkerBackendResolutionSource;
+export type ActivityEventSource = 'pickle' | 'hook' | 'persona' | 'force_flag' | 'citadel-mechanical' | BackendResolutionSource | WorkerBackendResolutionSource;
 
 /** Recoverable reasons a ticket can be flipped to Failed by the auto-skip guard (R-WSWA-3). */
 export const FAILURE_REASONS = ['oversized_no_progress'] as const;
