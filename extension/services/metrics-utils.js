@@ -730,8 +730,9 @@ export function scanRefusedRecoveredCounts(activityDir, since, until) {
         let content;
         try {
             const stat = fs.statSync(filePath);
-            if (stat.size > MAX_ACTIVITY_FILE_BYTES)
+            if (stat.size > MAX_ACTIVITY_FILE_BYTES) {
                 continue;
+            }
             content = fs.readFileSync(filePath, 'utf-8');
         }
         catch (err) {
@@ -741,8 +742,9 @@ export function scanRefusedRecoveredCounts(activityDir, since, until) {
         }
         for (const rawLine of content.split('\n')) {
             const line = rawLine.trim();
-            if (!line)
+            if (!line) {
                 continue;
+            }
             let parsed;
             try {
                 parsed = JSON.parse(line);
@@ -752,14 +754,17 @@ export function scanRefusedRecoveredCounts(activityDir, since, until) {
             }
             const obj = parsed;
             const event = typeof obj.event === 'string' ? obj.event : '';
-            if (!eventSet.has(event))
+            if (!eventSet.has(event)) {
                 continue;
+            }
             const ts = obj.ts;
-            if (typeof ts !== 'string')
+            if (typeof ts !== 'string') {
                 continue;
+            }
             const dateKey = formatLocalDateKey(new Date(ts));
-            if (dateKey < since || dateKey > until)
+            if (dateKey < since || dateKey > until) {
                 continue;
+            }
             counts[event] += 1;
         }
     }

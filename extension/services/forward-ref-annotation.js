@@ -68,8 +68,9 @@ export function resolveExtensionDir(startDir) {
             return path.join(dir, 'extension');
         }
         const parent = path.dirname(dir);
-        if (parent === dir)
+        if (parent === dir) {
             break;
+        }
         dir = parent;
     }
     return null;
@@ -79,10 +80,12 @@ export function resolveExtensionDir(startDir) {
 // against `repoRoot`, OR resolves against the shared `extension/` package dir under `repoRoot`.
 // A genuine phantom (no such file under any base) returns false so the teeth are preserved.
 export function resolveExtensionRelativePath(ref, repoRoot) {
-    if (path.isAbsolute(ref) && fs.existsSync(ref))
+    if (path.isAbsolute(ref) && fs.existsSync(ref)) {
         return true;
-    if (fs.existsSync(path.resolve(repoRoot, ref)))
+    }
+    if (fs.existsSync(path.resolve(repoRoot, ref))) {
         return true;
+    }
     const sharedDir = resolveExtensionDir(repoRoot);
     const legacyDir = path.join(repoRoot, 'extension');
     const extDir = sharedDir ?? legacyDir;
