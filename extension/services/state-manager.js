@@ -1120,10 +1120,12 @@ export function finalizeTerminalState(statePath, opts = {}) {
  *   - else (partial progress, pending remain) → halt `pipeline_phase_incomplete`.
  */
 export function graduationDecision(counts) {
-    if (counts.ticketCount <= 0)
+    if (counts.ticketCount <= 0) {
         return { decision: 'graduate' };
-    if (counts.pendingCount === 0)
+    }
+    if (counts.pendingCount === 0) {
         return { decision: 'graduate' };
+    }
     if (counts.doneCount === 0 && counts.commitCount === 0) {
         return { decision: 'halt', reason: 'phase_no_progress' };
     }
@@ -1149,18 +1151,18 @@ export function finalizeIfTrulyComplete(statePath, scan, opts = {}) {
     }
     catch {
         // Fail-closed: a throwing/timed-out scan is treated as INCOMPLETE.
-        emitCompletionFinalizeRefused(statePath, { pending_count: -1, ticket_count: -1, seam: 'scan_threw' });
+        emitCompletionFinalizeRefused({ pending_count: -1, ticket_count: -1, seam: 'scan_threw' });
         recordExitReason(statePath, 'pipeline_phase_incomplete');
         return { finalized: false, reason: 'pipeline_phase_incomplete' };
     }
     if (counts === null) {
-        emitCompletionFinalizeRefused(statePath, { pending_count: -1, ticket_count: -1, seam: 'scan_null' });
+        emitCompletionFinalizeRefused({ pending_count: -1, ticket_count: -1, seam: 'scan_null' });
         recordExitReason(statePath, 'pipeline_phase_incomplete');
         return { finalized: false, reason: 'pipeline_phase_incomplete' };
     }
     const verdict = graduationDecision(counts);
     if (verdict.decision === 'halt') {
-        emitCompletionFinalizeRefused(statePath, {
+        emitCompletionFinalizeRefused({
             pending_count: counts.pendingCount,
             ticket_count: counts.ticketCount,
             seam: verdict.reason,
@@ -1176,17 +1178,28 @@ export function finalizeIfTrulyComplete(statePath, scan, opts = {}) {
  * `finalizeIfTrulyComplete` refuses a finalize. INVERTED semantics — a refusal is
  * the completion authority WORKING (refused-and-recovered), not a regression.
  * `seam` discriminates the refusal arm (`scan_threw` / `scan_null` / the
- * graduation halt reason). Best-effort: terminal/forensic paths must never fail
- * on logging, so this is wrapped in try/catch and uses the in-module
- * `writeActivityEntry` primitive (no activity-logger import → no cycle).
+ * graduation halt reason).
+ *
+ * Writes a JSONL line to the activity dir (`getDataRoot()/activity/<day>.jsonl`),
+ * the SAME sink `scanRefusedRecoveredCounts` reads. It MUST NOT use
+ * `writeActivityEntry`, which appends to `state.json.activity` — a sink the
+ * recurrence dashboard scanner never reads, so the `Finalize refused` count
+ * would always read 0. Inlined (no activity-logger import) to avoid the
+ * backend-spawn import cycle, mirroring `emitSchemaVersionViolationActivity`.
+ * Best-effort: terminal/forensic paths must never fail on logging.
  */
-function emitCompletionFinalizeRefused(statePath, gatePayload) {
+function emitCompletionFinalizeRefused(gatePayload) {
     try {
-        writeActivityEntry(statePath, {
+        const ts = new Date();
+        const activityDir = path.join(getDataRoot(), 'activity');
+        fs.mkdirSync(activityDir, { recursive: true });
+        const event = {
+            ts: ts.toISOString(),
             event: 'completion_finalize_refused',
-            ts: new Date().toISOString(),
+            source: 'pickle',
             gate_payload: gatePayload,
-        });
+        };
+        fs.appendFileSync(path.join(activityDir, `${formatLocalDateKey(ts)}.jsonl`), `${JSON.stringify(event)}\n`, { mode: 0o600 });
     }
     catch {
         // best-effort observability — never block the refusal path

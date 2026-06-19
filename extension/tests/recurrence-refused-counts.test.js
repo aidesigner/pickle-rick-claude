@@ -18,6 +18,7 @@ import {
   scanRefusedRecoveredCounts,
 } from '../services/metrics-utils.js';
 import { resolveExtensionRelativePath } from '../services/forward-ref-annotation.js';
+import { finalizeIfTrulyComplete } from '../services/state-manager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -186,5 +187,45 @@ describe('WS4 emit: gate_parity_divergence fires from the WS3 resolver on a flip
     resolveExtensionRelativePath('marker.ts', repoRoot);
     const events = readActivityLines().filter((e) => e.event === 'gate_parity_divergence');
     assert.equal(events.length, 0, 'no divergence event when both gates agree');
+  });
+});
+
+describe('WS4 emit: completion_finalize_refused fires to the activity-dir sink the scanner reads', () => {
+  let tmp;
+  let prevDataRoot;
+  beforeEach(() => {
+    tmp = mkdtempSync(path.join(os.tmpdir(), 'ws4-cfr-'));
+    prevDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = path.join(tmp, 'data');
+  });
+  afterEach(() => {
+    if (prevDataRoot === undefined) { delete process.env.PICKLE_DATA_ROOT; }
+    else process.env.PICKLE_DATA_ROOT = prevDataRoot;
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  // Regression: the emitter previously called writeActivityEntry (state.json.activity
+  // sink), but scanRefusedRecoveredCounts reads getActivityDir()/*.jsonl. The two
+  // sinks never met, so the dashboard "Finalize refused" row was permanently 0.
+  // This test drives the REAL emit→scan path (not a synthetic jsonl), so it fails
+  // if the emitter ever regresses back to the state.json sink.
+  it('a refused finalize is counted by scanRefusedRecoveredCounts end-to-end', () => {
+    const statePath = path.join(tmp, 'state.json');
+    writeFileSync(statePath, JSON.stringify({ active: true, schema_version: 5 }));
+
+    // scan returns null → the scan_null refusal arm → emitCompletionFinalizeRefused.
+    const result = finalizeIfTrulyComplete(statePath, () => null);
+    assert.equal(result.finalized, false);
+
+    const activityDir = path.join(tmp, 'data', 'activity');
+    const files = readdirSync(activityDir).filter((f) => f.endsWith('.jsonl'));
+    assert.ok(files.length >= 1, 'emitter must write to the activity-dir jsonl sink');
+
+    // The dashboard scanner over the same dir must see the refusal.
+    const today = new Date();
+    const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const report = scanRefusedRecoveredCounts(activityDir, key, key);
+    assert.equal(report.completion_finalize_refused, 1, 'scanner must count the refused finalize');
+    assert.equal(report.total, 1);
   });
 });
