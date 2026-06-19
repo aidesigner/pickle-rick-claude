@@ -287,11 +287,11 @@ export interface CodegraphSettings {
  */
 export const FALSE_EPIC_THRESHOLD = 3;
 
-export type Backend = 'claude' | 'codex' | 'hermes' | 'deepseek' | 'grok' | 'kimi' | 'gemini';
+export type Backend = 'claude' | 'codex' | 'hermes' | 'deepseek' | 'grok' | 'kimi' | 'gemini' | 'droid';
 export type BackendResolutionSource = 'state' | 'env' | 'settings' | 'default' | 'refinement-lock' | 'cli-flag-override';
 export type WorkerBackendResolutionSource = 'worker_backend' | 'backend' | 'env_lock';
 
-export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'hermes', 'deepseek', 'grok', 'kimi', 'gemini'] as const;
+export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'hermes', 'deepseek', 'grok', 'kimi', 'gemini', 'droid'] as const;
 
 export interface ProjectContext {
   project_context_path: string;
