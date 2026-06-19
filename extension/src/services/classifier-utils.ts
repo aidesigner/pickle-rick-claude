@@ -58,6 +58,73 @@ function collectAssistantContent(parts: string[], content: unknown): void {
   }
 }
 
+/**
+ * True when the line parses as a JSON object shaped like a droid stream-json
+ * envelope. droid's stream-json is structurally distinct from Claude's:
+ * assistant content rides on a FLAT `{"type":"message","role":"assistant","text":...}`
+ * line (NOT Claude's nested `{"type":"assistant","message":{"content":[...]}}`),
+ * and the terminal event is `{"type":"completion","finalText":...}`. Either is
+ * an unambiguous droid signal. A bare `{"type":"result",...}` is NOT treated as
+ * a droid signal here (Claude's stream-json shares that terminal shape); the
+ * json-mode `.result` is still extracted via the plain-text fallback's
+ * `extractStreamJsonContent` arm, and the droid extractor below handles it too.
+ */
+function isDroidEnvelopeLine(line: string): boolean {
+  if (!line.trim()) return false;
+  try {
+    const parsed = JSON.parse(line);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    const obj = parsed as Record<string, unknown>;
+    if (obj.type === 'message' && typeof obj.role === 'string') return true;
+    if (obj.type === 'completion' && typeof obj.finalText === 'string') return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extracts assistant-role content from droid's structured output envelopes.
+ * Promise tokens (`<promise>I AM DONE</promise>`, `EPIC_COMPLETED`, etc.) are
+ * detected ONLY in assistant content, so user/system/init lines are dropped.
+ *
+ * Three envelope shapes are mapped:
+ *  (a) stream-json flat `.text` on `{type:"message",role:"assistant"}` — the
+ *      per-turn assistant text. NOT Claude's nested `message.content[].text`.
+ *  (b) the terminal `{type:"completion","finalText":...}` `.finalText` — the
+ *      final assistant text of the stream-json run.
+ *  (c) json mode terminal `{type:"result","result":...}` `.result` — the final
+ *      assistant text of a `--output-format json` run.
+ */
+function extractDroidAssistantContent(lines: string[]): string[] {
+  const parts: string[] = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+      const obj = parsed as Record<string, unknown>;
+      if (obj.type === 'message' && obj.role === 'assistant' && typeof obj.text === 'string') {
+        parts.push(obj.text);
+        continue;
+      }
+      if (obj.type === 'completion' && typeof obj.finalText === 'string') {
+        parts.push(obj.finalText);
+        continue;
+      }
+      if (obj.type === 'result' && typeof obj.result === 'string') {
+        parts.push(obj.result);
+        continue;
+      }
+      // user / system / init / tool_result lines are intentionally ignored:
+      // a promise token appearing only there must NOT trigger completion.
+    } catch {
+      // skip non-JSON lines in droid stream-json mode
+    }
+  }
+  return parts;
+}
+
 function extractCodexBlockContent(lines: string[]): string[] {
   const parts: string[] = [];
   let inCodexBlock = false;
@@ -169,19 +236,25 @@ export function observeCodexToolCallStream(
   }
 }
 
-/** Infers output format from raw codex output text (stream-json › codex-block › plain-text). */
-export function detectOutputFormat(output: string): 'stream-json' | 'codex-block' | 'plain-text' {
+/** Infers output format from raw codex output text (stream-json › codex-block › droid › plain-text). */
+export function detectOutputFormat(output: string): 'stream-json' | 'codex-block' | 'plain-text' | 'droid' {
   const lines = output.split('\n');
   if (lines.some(isAssistantJsonLine)) return 'stream-json';
   if (lines.some(line => CODEX_DELIMITER_RE.test(line))) return 'codex-block';
+  // droid stream-json: flat {type:"message",role:...} / {type:"completion",finalText:...}.
+  // Checked AFTER Claude stream-json (type:"assistant") and codex-block
+  // delimiters so droid detection cannot over-fire on Claude/codex output.
+  if (lines.some(isDroidEnvelopeLine)) return 'droid';
   return 'plain-text';
 }
 
-/** Extracts assistant-role text from codex output, handling stream-json, codex-block, and plain-text modes. */
+/** Extracts assistant-role text from codex output, handling stream-json, codex-block, droid, and plain-text modes. */
 export function extractAssistantContent(output: string): string {
   switch (detectOutputFormat(output)) {
     case 'stream-json':
       return extractStreamJsonContent(output.split('\n')).join('\n');
+    case 'droid':
+      return extractDroidAssistantContent(output.split('\n')).join('\n');
     case 'codex-block':
       return extractCodexBlockContent(output.split('\n')).join('\n');
     default: {

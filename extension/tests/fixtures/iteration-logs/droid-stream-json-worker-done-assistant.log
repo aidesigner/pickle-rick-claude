@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-droid-7","model":"glm-5.2","tools":["Bash","Read","Edit","Write","Glob","Grep"]}
+{"type":"message","role":"user","text":"You are Morty. Complete the current ticket. After committing, emit <promise>I AM DONE</promise>.","session_id":"sess-droid-7"}
+{"type":"message","role":"assistant","text":"I have implemented the change and committed it.\n\n<promise>I AM DONE</promise>","session_id":"sess-droid-7"}
+{"type":"completion","finalText":"I have implemented the change and committed it.\n\n<promise>I AM DONE</promise>","numTurns":2,"usage":{"input_tokens":500,"output_tokens":200},"session_id":"sess-droid-7"}

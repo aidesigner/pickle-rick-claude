@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess-droid-8","model":"glm-5.2","tools":["Bash","Read","Edit","Write","Glob","Grep"]}
+{"type":"message","role":"user","text":"You are Morty. Complete the current ticket. After committing, emit <promise>I AM DONE</promise>. The signal is <promise>I AM DONE</promise>.","session_id":"sess-droid-8"}
+{"type":"message","role":"assistant","text":"I am still working on the change and have not yet committed it.","session_id":"sess-droid-8"}
+{"type":"completion","finalText":"I am still working on the change and have not yet committed it.","numTurns":2,"usage":{"input_tokens":500,"output_tokens":200},"session_id":"sess-droid-8"}

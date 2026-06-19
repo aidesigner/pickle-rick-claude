@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"sess-droid-1","model":"glm-5.2","tools":["Bash","Read","Edit","Write","Glob","Grep"]}
+{"type":"message","role":"user","text":"Complete all pending tickets. Output <promise>EPIC_COMPLETED</promise> when the epic is done.","session_id":"sess-droid-1"}
+{"type":"message","role":"assistant","text":"I'll start by reading the current state of the codebase to understand what needs to be implemented.","session_id":"sess-droid-1"}
+{"type":"message","role":"user","text":"Tool result: file contents read.","session_id":"sess-droid-1"}
+{"type":"message","role":"assistant","text":"All tickets are complete. I have committed the change and verified the build is clean.\n\n<promise>EPIC_COMPLETED</promise>","session_id":"sess-droid-1"}
+{"type":"completion","finalText":"All tickets are complete. I have committed the change and verified the build is clean.\n\n<promise>EPIC_COMPLETED</promise>","numTurns":4,"usage":{"input_tokens":1234,"output_tokens":567},"session_id":"sess-droid-1"}
