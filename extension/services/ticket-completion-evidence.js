@@ -108,11 +108,9 @@ function scanGitLog(args) {
         const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         return new RegExp(`\\b${escaped}\\b`);
     })();
-    const allowAnyNewCommit = args.allowAnyNewCommit === true;
-    if (matchers.length === 0 && !rCodeRe && !allowAnyNewCommit)
+    if (matchers.length === 0 && !rCodeRe)
         return null;
     const startEpoch = Number(args.startTimeEpoch);
-    const baselineSet = new Set((args.baselineShas ?? []).filter(Boolean).map(s => s.toLowerCase()));
     const checkEntry = (e) => {
         if (Number.isFinite(startEpoch) && startEpoch > 0 && e.epoch < startEpoch)
             return null;
@@ -123,20 +121,6 @@ function scanGitLog(args) {
             return { sha: e.sha };
         return null;
     };
-    // Droid-direct-commit fallback: when the manager does work directly (no
-    // spawn-morty worker to stamp completion_commit / include the ticket ID in
-    // the commit message), accept the most recent commit beyond session start as
-    // inferred evidence. Gated on allow_inferred_completion_commit so the
-    // ticket-ID attribution contract is preserved for all other paths.
-    const fallbackEntry = (e) => {
-        if (!allowAnyNewCommit)
-            return null;
-        if (Number.isFinite(startEpoch) && startEpoch > 0 && e.epoch < startEpoch)
-            return null;
-        if (baselineSet.has(e.sha.toLowerCase()))
-            return null;
-        return { sha: e.sha };
-    };
     const commands = [];
     if (args.ticketPath) {
         commands.push(['-C', args.workingDir, 'log', '-n', '20', '--format=%H%n%ct%n%B%n---pickle-commit-boundary---', '--', args.ticketPath]);
@@ -145,16 +129,8 @@ function scanGitLog(args) {
     for (const gitArgs of commands) {
         try {
             const raw = execFileSync('git', gitArgs, { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-            const entries = parseGitLog(raw);
-            // First pass: ticket-ID / R-code attribution (strongest signal).
-            for (const entry of entries) {
+            for (const entry of parseGitLog(raw)) {
                 const matched = checkEntry(entry);
-                if (matched)
-                    return matched;
-            }
-            // Second pass: droid-direct-commit fallback (any new commit beyond start).
-            for (const entry of entries) {
-                const matched = fallbackEntry(entry);
                 if (matched)
                     return matched;
             }
@@ -215,11 +191,6 @@ export function readEvidence(ctx) {
         return { kind: 'inferred-stale', sha: inferredField };
     }
     // --- Git log scan ---
-    const allowAnyNewCommit = (ctx.flags ?? {})['allow_inferred_completion_commit'] === true;
-    const baselineShas = [
-        ...(ctx.startCommit ? [ctx.startCommit] : []),
-        ...(ctx.pinnedSha ? [ctx.pinnedSha] : []),
-    ];
     const scan = scanGitLog({
         workingDir: ctx.workingDir,
         ticketId: readFrontmatterField(content, 'id') ?? ctx.ticketId ?? null,
@@ -227,8 +198,6 @@ export function readEvidence(ctx) {
         startTimeEpoch: ctx.startTimeEpoch,
         ticketPath: tPath,
         rCode: readFrontmatterField(content, 'r_code'),
-        allowAnyNewCommit,
-        baselineShas,
     });
     if (scan)
         return { kind: 'inferred-fresh', sha: scan.sha };

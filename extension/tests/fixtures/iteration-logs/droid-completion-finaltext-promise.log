@@ -1,4 +1,0 @@
-{"type":"system","subtype":"init","session_id":"sess-droid-4","model":"glm-5.2","tools":["Bash","Read","Edit","Write","Glob","Grep"]}
-{"type":"message","role":"user","text":"Complete all pending tickets. Output <promise>EPIC_COMPLETED</promise> when the epic is done.","session_id":"sess-droid-4"}
-{"type":"message","role":"assistant","text":"Working on the implementation now.","session_id":"sess-droid-4"}
-{"type":"completion","finalText":"The work is complete and committed. Final summary: all acceptance criteria satisfied.\n\n<promise>EPIC_COMPLETED</promise>","numTurns":3,"usage":{"input_tokens":900,"output_tokens":400},"session_id":"sess-droid-4"}

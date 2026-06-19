@@ -10,7 +10,7 @@ import { StateManager, safeDeactivate, finalizeTerminalState, finalizeIfTrulyCom
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides, sessionStampEnv, LARGE_TIER_DETACH_FORCE_ENV } from '../services/backend-spawn.js';
-import { resolveCodexModel, resolveDroidModel } from './spawn-morty.js';
+import { resolveCodexModel } from './spawn-morty.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent, detectOutputFormat, observeCodexToolCallStream, CODEX_DELIMITER_RE } from '../services/classifier-utils.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
@@ -1082,16 +1082,7 @@ function promoteInferredToExplicit(content, sha) {
  */
 function batchLoopPhantomDoneKind(input, ticketId, workingDir) {
     // R-AFCC-DEEP-4A: migrated from hasCompletionCommit to gateForPhantomDoneRevert.
-    // Pass flags + session start info into the ctx so readEvidence's droid-direct-
-    // commit fallback (allow_inferred_completion_commit) can attribute a manager
-    // direct commit that lacks the ticket ID in its message.
-    const ctx = {
-        sessionDir: input.sessionDir,
-        ticketId,
-        workingDir,
-        fallbackDir: input.workingDir,
-        flags: input.flags ?? null,
-    };
+    const ctx = { sessionDir: input.sessionDir, ticketId, workingDir, fallbackDir: input.workingDir };
     const decision = gateForPhantomDoneRevert(ctx, { flags: input.flags });
     if (decision.action === 'persist-inferred') {
         // D1 (84c209ae) promote-once: write EXPLICIT completion_commit and DELETE the
@@ -2255,9 +2246,6 @@ export function applyAutoTicketCompletionValidation(input) {
             ticketId: input.ticketId,
             workingDir: input.workingDir,
             flags: { ...(input.flags ?? {}), allow_inferred_completion_commit: true },
-            startCommit: input.startCommit ?? null,
-            startTimeEpoch: input.startTimeEpoch ?? null,
-            pinnedSha: input.pinnedSha ?? null,
         });
         if (!guard.ok) {
             const msg = `[fatal] ${new Date().toISOString()} ${guard.reason}`;
@@ -2906,13 +2894,10 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
     // doesn't strip away the configured `-m`. Quality-pass-template Claude
     // overrides (meeseeks/szechuan) remain claude-only above.
     const codexManagerModel = backend === 'codex' ? resolveCodexModel(extensionRoot, state) : undefined;
-    // droid manager model: resolve `state.droid_model` so per-session overrides
-    // reach `buildDroidManagerInvocation`; undefined falls back to glm-5.2 there.
-    const droidManagerModel = backend === 'droid' ? resolveDroidModel(state) : undefined;
     const invocation = buildManagerInvocation(backend, {
         prompt: managerPrompt,
         addDirs: [extensionRoot, getDataRoot(), sessionDir],
-        model: backend === 'hermes' ? state.hermes_model : (backend === 'codex' ? codexManagerModel : (backend === 'droid' ? droidManagerModel : iterationModel)),
+        model: backend === 'hermes' ? state.hermes_model : (backend === 'codex' ? codexManagerModel : iterationModel),
         maxTurns: backend === 'hermes' ? positiveIntegerOrNull(state.hermes_max_turns) ?? maxTurns : maxTurns,
         streamJson: true,
         noSessionPersistence: true,
@@ -2967,20 +2952,11 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
         let timeoutStdoutClosed = false;
         let timeoutStderrClosed = false;
         let timeoutEarliestFinishAt = 0;
-        // droid (and any backend setting `invocation.stdinPrompt`) takes its prompt
-        // via stdin: open a pipe, write the prompt, close it. Other backends keep
-        // the legacy `inherit` stdin. stdout/stderr stay pipes either way so the
-        // stall/heartbeat watchers and log drain work unchanged.
-        const usesStdinPrompt = typeof invocation.stdinPrompt === 'string' && invocation.stdinPrompt.length > 0;
         const proc = spawn(invocation.cmd, invocation.args, {
             cwd: state.working_dir || process.cwd(),
             env,
-            stdio: usesStdinPrompt ? ['pipe', 'pipe', 'pipe'] : ['inherit', 'pipe', 'pipe'],
+            stdio: ['inherit', 'pipe', 'pipe'],
         });
-        if (usesStdinPrompt) {
-            proc.stdin?.write(invocation.stdinPrompt);
-            proc.stdin?.end();
-        }
         currentChildProc = proc;
         const spawnedPid = proc.pid;
         if (spawnedPid != null) {
@@ -3914,10 +3890,6 @@ export function guardCompletionCommitBeforeDone(args) {
         sessionDir: args.sessionDir,
         ticketId: args.ticketId,
         workingDir: args.workingDir,
-        flags: args.flags ?? null,
-        startCommit: args.startCommit ?? null,
-        startTimeEpoch: args.startTimeEpoch ?? null,
-        pinnedSha: args.pinnedSha ?? null,
     };
     // R-AFCC-DEEP-4A: use readEvidence (replaces hasCompletionCommit).
     const evidenceAccepted = (r) => (r.kind === 'explicit' && !!r.sha) || (allowInferred && !!r.sha);
@@ -4641,12 +4613,6 @@ export function attemptRecoveryBeforeTerminal(input) {
                             env: { ...process.env, ...backendEnvOverrides(backend), ...(invocation.env ?? {}), PICKLE_STATE_FILE: opts.statePath },
                             encoding: 'utf-8',
                             timeout: CONVERGED_PLAN_VERIFY_TIMEOUT_MS,
-                            // droid takes its prompt via stdin; `input` writes to the child
-                            // stdin and closes it (spawnSync stdin defaults to 'pipe' when
-                            // `input` is set). Non-stdin backends leave this unset.
-                            ...(typeof invocation.stdinPrompt === 'string' && invocation.stdinPrompt.length > 0
-                                ? { input: invocation.stdinPrompt }
-                                : {}),
                         });
                         if (r.error && r.error.code === 'ETIMEDOUT') {
                             return { ok: false, timedOut: true };
@@ -5942,23 +5908,11 @@ function processTaskCompleted(state, ctx) {
         return { kind: 'break', reason: closerDecision.reason };
     }
     if (curState.current_ticket) {
-        // Droid managers do work directly (no spawn-morty worker to stamp
-        // completion_commit / include the ticket ID in the commit message), so the
-        // commit-evidence gate must accept an inferred commit. Enable the bypass for
-        // the droid backend so the success-by-token contract is not mis-classified
-        // as done_without_commit_evidence on a genuinely-complete direct commit.
-        const guardFlags = curState.flags ?? null;
-        const effectiveFlags = curState.backend === 'droid'
-            ? { ...(guardFlags ?? {}), allow_inferred_completion_commit: true }
-            : guardFlags;
         const guard = guardCompletionCommitBeforeDone({
             sessionDir: ctx.sessionDir,
             ticketId: curState.current_ticket,
             workingDir: curState.working_dir || state.working_dir || process.cwd(),
-            flags: effectiveFlags,
-            startCommit: curState.start_commit ?? null,
-            startTimeEpoch: curState.start_time_epoch ?? null,
-            pinnedSha: curState.pinned_sha ?? null,
+            flags: curState.flags ?? null,
         });
         if (!guard.ok) {
             const msg = `[fatal] ${new Date().toISOString()} ${guard.reason}`;

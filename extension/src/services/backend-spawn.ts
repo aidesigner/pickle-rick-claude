@@ -104,17 +104,6 @@ export interface SpawnInvocation {
   args: string[];
   backend: Backend;
   env?: Record<string, string>;
-  /**
-   * Optional prompt delivered to the child subprocess via its stdin stream.
-   * Set by backends that take the prompt via stdin (e.g. `droid exec`) instead
-   * of a positional/`-p` argument. Spawn sites MUST, when this field is a
-   * non-empty string, open the child's stdin (`stdio: ['pipe','pipe','pipe']`),
-   * `proc.stdin.write(stdinPrompt)`, then `.end()` — otherwise the child
-   * receives no prompt and produces no work. Backends that do not set this
-   * field keep the legacy `stdio: ['inherit','pipe','pipe']` (or equivalent)
-   * spawn behaviour.
-   */
-  stdinPrompt?: string;
 }
 
 export function isBackend(value: unknown): value is Backend {
@@ -227,31 +216,14 @@ function warnBadBackend(sourceLabel: string, value: string): void {
   );
 }
 
-/**
- * Refinement-lock carve-out. PRD refinement is planning, not implementation:
- * the lock reserves codex (and every other implementation backend) for the
- * implement loop and forces `claude` for planning. `droid` is the ONE
- * exception — in the cloud Claude is absent, so droid (glm-5.2) carries
- * refinement. Returns `droid` only when the candidate is `droid`; forces
- * `claude` for every other backend (codex/deepseek/grok/kimi/gemini/hermes or
- * unrecognized) so planning never runs on an implementation runtime.
- */
-function refinementLockCarveOut(candidate: Backend): Backend {
-  return candidate === 'droid' ? 'droid' : 'claude';
-}
-
 export function resolveBackend(source: State | { backend?: unknown } | null | undefined): Backend {
   // Refinement lock sentinel: PRD refinement is planning, not implementation.
   // Codex is reserved for implementation. This sentinel is set by
   // spawn-refinement-team and propagates to every grandchild via env
   // inheritance, so any downstream caller that reads state.json (e.g.
   // loadBackendFromSession) cannot leak codex back into the refinement phase.
-  // The droid backend is the exception: Claude is absent in the cloud, so
-  // refinement proceeds on droid (glm-5.2) — see `refinementLockCarveOut`.
   // Silent force — no warning, no log.
-  if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
-    return refinementLockCarveOut(resolveManagerBackendValue(source));
-  }
+  if (process.env.PICKLE_REFINEMENT_LOCK === '1') return 'claude';
   // Past the refinement-lock carve-out, backend resolution is identical to the
   // manager-backend path (state.backend → PICKLE_BACKEND env → 'claude', warning
   // on unrecognized values), so delegate instead of duplicating the precedence.
@@ -272,12 +244,11 @@ export function resolveWorkerBackendFromState(
   source: State | { backend?: unknown; worker_backend?: unknown } | null | undefined,
 ): WorkerBackendResolution {
   if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
-    const managerBackend = resolveManagerBackendValue(source);
     return {
-      backend: refinementLockCarveOut(managerBackend),
+      backend: 'claude',
       source: 'env_lock',
       workerBackend: null,
-      managerBackend,
+      managerBackend: resolveManagerBackendValue(source),
     };
   }
 
@@ -307,28 +278,11 @@ export function resolveBackendFromStateFileWithSource(
   statePath: string,
   cliBackend?: Backend,
 ): { backend: Backend; source: BackendResolutionSource } {
-  // Refinement lock carve-out. The lock is non-overridable for codex (and
-  // every other implementation backend) — short-circuits to 'claude' so a
-  // stale/hostile state.json cannot recover codex for a locked-in planning
-  // run. `droid` is the exception: Claude is absent in the cloud, so a session
-  // that opted into droid (via state, env, or an explicit CLI override) keeps
-  // droid for refinement. An explicit `cliBackend === 'droid'` wins without
-  // disk I/O; otherwise the candidate is resolved the same way the non-lock
-  // path would, and only droid passes — everything else forces claude.
+  // Refinement lock is non-overridable: short-circuits on the lock variable
+  // before disk-I/O so a stale/hostile state.json cannot recover codex for a
+  // locked-in planning run.
   if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
-    let candidate: Backend = 'claude';
-    if (cliBackend !== undefined) {
-      candidate = cliBackend;
-    } else {
-      try {
-        const parsed = _sm.read(statePath) as { backend?: unknown } | null;
-        if (isBackend(parsed?.backend)) candidate = parsed.backend;
-        else if (isBackend(process.env.PICKLE_BACKEND)) candidate = process.env.PICKLE_BACKEND;
-      } catch {
-        if (isBackend(process.env.PICKLE_BACKEND)) candidate = process.env.PICKLE_BACKEND;
-      }
-    }
-    return { backend: refinementLockCarveOut(candidate), source: 'refinement-lock' };
+    return { backend: 'claude', source: 'refinement-lock' };
   }
 
   // Explicit CLI override must beat persisted state/env because spawn-site
@@ -557,7 +511,6 @@ export function buildWorkerInvocation(backend: Backend, opts: WorkerInvocationOp
   if (backend === 'grok') return buildGrokWorkerInvocation(opts);
   if (backend === 'kimi') return buildKimiWorkerInvocation(opts);
   if (backend === 'gemini') return buildGeminiWorkerInvocation(opts);
-  if (backend === 'droid') return buildDroidWorkerInvocation(opts);
   return buildClaudeWorkerInvocation(opts);
 }
 
@@ -568,7 +521,6 @@ export function buildManagerInvocation(backend: Backend, opts: ManagerInvocation
   if (backend === 'grok') return buildGrokWorkerInvocation(opts);
   if (backend === 'kimi') return buildKimiWorkerInvocation(opts);
   if (backend === 'gemini') return buildGeminiWorkerInvocation(opts);
-  if (backend === 'droid') return buildDroidManagerInvocation(opts);
   return buildClaudeManagerInvocation(opts);
 }
 
@@ -724,74 +676,6 @@ function buildHermesWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvoca
   if (opts.provider?.trim()) args.push('--provider', opts.provider.trim());
   if (opts.model?.trim()) args.push('-m', opts.model.trim());
   return { cmd: 'hermes', args, backend: 'hermes' };
-}
-
-/**
- * Default droid model used by `buildDroidWorkerInvocation` /
- * `buildDroidManagerInvocation` when no per-session `state.droid_model` override
- * is supplied. Factory.ai `glm-5.2` is the mission-confirmed headless model
- * (verified during readiness: edits + commits via `--auto medium`, no OAuth).
- */
-const DEFAULT_DROID_MODEL = 'glm-5.2';
-
-/**
- * Resolve the droid output format. Workers/managers drive the pickle-rick loop
- * via completion-token detection in `classifier-utils.ts`, which parses droid's
- * structured envelopes — so the default is `stream-json` (one JSON object per
- * line) rather than the unparseable `text` format. A caller-supplied non-text
- * `outputFormat` wins.
- */
-function resolveDroidOutputFormat(outputFormat?: string): string {
-  if (outputFormat && outputFormat !== 'text') return outputFormat;
-  return 'stream-json';
-}
-
-/**
- * Build a `droid exec` worker invocation (commit-capable).
- *
- * Workers MUST run at `--auto medium` (or higher) so they can edit files AND
- * make local git commits — the pickle-rick completion contract requires a
- * commit before `<promise>I AM DONE</promise>`. The read-only default autonomy
- * would silently break that contract, so `--auto medium` is hardcoded here.
- *
- * The prompt is delivered via STDIN (preferred for droid), not a positional
- * arg. The returned `stdinPrompt` field signals spawn sites to open the child's
- * stdin, write the prompt, and `.end()` it.
- *
- * droid has no `--add-dir` equivalent; out-of-tree dirs are reached via the
- * spawn site's `cwd` (process working dir) and absolute paths in the prompt.
- * `addDirs` is therefore intentionally ignored here.
- *
- * Model is configurable via `opts.model` (resolved from `state.droid_model` by
- * the spawn site); defaults to `glm-5.2` when unset.
- */
-function buildDroidWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvocation {
-  const model = opts.model?.trim() || DEFAULT_DROID_MODEL;
-  const args: string[] = [
-    'exec',
-    '--output-format', resolveDroidOutputFormat(opts.outputFormat),
-    '--auto', 'medium',
-    '-m', model,
-  ];
-  return { cmd: 'droid', args, backend: 'droid', stdinPrompt: opts.prompt };
-}
-
-/**
- * Build a `droid exec` manager invocation. Mirrors the worker builder — the
- * manager also needs `--auto medium` (commit-capable) and delivers its prompt
- * via stdin. Output format defaults to `stream-json` so mux-runner's
- * completion-token classifier can parse the assistant `.text` envelopes.
- */
-function buildDroidManagerInvocation(opts: ManagerInvocationOptions): SpawnInvocation {
-  const model = opts.model?.trim() || DEFAULT_DROID_MODEL;
-  const outputFormat = opts.streamJson ? 'stream-json' : resolveDroidOutputFormat();
-  const args: string[] = [
-    'exec',
-    '--output-format', outputFormat,
-    '--auto', 'medium',
-    '-m', model,
-  ];
-  return { cmd: 'droid', args, backend: 'droid', stdinPrompt: opts.prompt };
 }
 
 /**

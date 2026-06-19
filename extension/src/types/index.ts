@@ -89,14 +89,6 @@ export interface State {
   /** Optional gemini model override (e.g. `gemini-2.5-pro`). Resolution: `state.gemini_model` → undefined (gemini CLI default). */
   gemini_model?: string;
   /**
-   * Optional droid model override (e.g. `glm-5.2`). Resolution precedence
-   * (see `resolveDroidModel` in `bin/spawn-morty.ts`):
-   *   1. `state.droid_model` (trimmed, non-empty) — per-session override.
-   *   2. undefined — `buildDroidWorkerInvocation`/`buildDroidManagerInvocation`
-   *      fall back to the compiled default `glm-5.2`.
-   */
-  droid_model?: string;
-  /**
    * Optional codex model override (e.g. `gpt-5.3-codex-spark`).
    * Resolution precedence (see `resolveCodexModel` in `bin/spawn-morty.ts`):
    *   1. `state.codex_model` (trimmed, non-empty) — per-session override.
@@ -295,11 +287,11 @@ export interface CodegraphSettings {
  */
 export const FALSE_EPIC_THRESHOLD = 3;
 
-export type Backend = 'claude' | 'codex' | 'hermes' | 'deepseek' | 'grok' | 'kimi' | 'gemini' | 'droid';
+export type Backend = 'claude' | 'codex' | 'hermes' | 'deepseek' | 'grok' | 'kimi' | 'gemini';
 export type BackendResolutionSource = 'state' | 'env' | 'settings' | 'default' | 'refinement-lock' | 'cli-flag-override';
 export type WorkerBackendResolutionSource = 'worker_backend' | 'backend' | 'env_lock';
 
-export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'hermes', 'deepseek', 'grok', 'kimi', 'gemini', 'droid'] as const;
+export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'hermes', 'deepseek', 'grok', 'kimi', 'gemini'] as const;
 
 export interface ProjectContext {
   project_context_path: string;

@@ -1,6 +1,0 @@
-{"type":"system","subtype":"init","session_id":"sess-droid-2","model":"glm-5.2","tools":["Bash","Read","Edit","Write","Glob","Grep"]}
-{"type":"message","role":"user","text":"Complete all pending tickets. Output <promise>EPIC_COMPLETED</promise> when the epic is done.","session_id":"sess-droid-2"}
-{"type":"message","role":"assistant","text":"I'll start by reading the current state of the codebase to understand what needs to be implemented.","session_id":"sess-droid-2"}
-{"type":"message","role":"user","text":"Tool result: file contents read.","session_id":"sess-droid-2"}
-{"type":"message","role":"assistant","text":"I have made progress on the first ticket but there is more work to do. Continuing.","session_id":"sess-droid-2"}
-{"type":"completion","finalText":"I have made progress on the first ticket but there is more work to do. Continuing.","numTurns":4,"usage":{"input_tokens":1234,"output_tokens":567},"session_id":"sess-droid-2"}

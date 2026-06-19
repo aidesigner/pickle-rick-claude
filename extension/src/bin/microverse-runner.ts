@@ -350,12 +350,6 @@ export async function runRemediatorForIteration(
       timeout: remediatorTimeoutS * 1000,
       stdio: 'pipe',
       env: { ...process.env, ...runtimeOverrides.workerEnvOverrides, ...backendEnvOverrides(execBackend), ...(invocation.env ?? {}) },
-      // droid takes its prompt via stdin; `input` writes to the child stdin and
-      // closes it (execFileSync stdin defaults to 'pipe' when `input` is set).
-      // Non-stdin backends leave this unset (no stdinPrompt on the invocation).
-      ...(typeof invocation.stdinPrompt === 'string' && invocation.stdinPrompt.length > 0
-        ? { input: invocation.stdinPrompt }
-        : {}),
     });
   } catch (err) {
     const msg = safeErrorMessage(err);
