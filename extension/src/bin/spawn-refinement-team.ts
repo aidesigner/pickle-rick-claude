@@ -521,6 +521,24 @@ export function checkAnalystOutputPaths(
   return warnings;
 }
 
+// R-DPMC-1 registration co-location: one general coupling rule (NOT a per-framework
+// enumeration) that stops decomposition from cutting an unsatisfiable ticket — one
+// that forward-creates a registerable symbol its same-ticket consumer needs, but omits
+// the owning registry file the scope fence then (correctly) blocks. The decidable
+// predicate keeps two analysts classifying the same ticket identically.
+export const DECOMPOSITION_COLOCATION_PROMPT_SECTION = `## Registration co-location (decomposition coupling rule)
+
+When a ticket forward-creates a **registerable symbol** AND a **same-ticket** file consumes it, the ticket's file allowlist MUST include the **registration site**. This is ONE general coupling rule — not a per-framework list.
+
+**Decidable predicate** — a symbol is "registerable" when it is imported or instantiated by a same-ticket file whose usability requires enrollment in a separate container/registry file. If that registry file is omitted, the per-file scope fence will (correctly) block the registration edit and the ticket becomes unsatisfiable — a deadlock with zero commits.
+
+**Worked examples of the one rule** (illustrative, not exhaustive):
+- A NestJS \`@Injectable()\` provider consumed by a same-ticket controller → co-scope the owning \`*.module.ts\` (its \`providers\` array).
+- A Drizzle schema table whose relations a same-ticket query needs → co-scope the \`relations.ts\` entry.
+- A route handler a same-ticket file mounts → co-scope the router registration.
+
+Do NOT defer the registration edit to a later "wiring" ticket — that strands every intermediate per-symbol ticket behind the scope fence. Do NOT loosen the fence; co-scope at decomposition time instead.`;
+
 /**
  * Assemble the shared analyst prompt-guidance sections in their canonical order.
  * Extracted from buildWorkerPrompt to keep that function under the line ceiling;
@@ -531,6 +549,7 @@ function buildPromptGuidanceSections(): string {
     buildTierClassificationSection(),
     AC_SHAPE_PROMPT_SECTION,
     PATH_VERIFICATION_PROMPT_SECTION,
+    DECOMPOSITION_COLOCATION_PROMPT_SECTION,
     BUNDLE_OF_BUNDLES_FANOUT_SECTION,
   ].join('\n');
 }

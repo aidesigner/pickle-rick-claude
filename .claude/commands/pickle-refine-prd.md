@@ -195,9 +195,10 @@ Before writing each ticket body, verify none of these defect classes are present
 | **cross-doc-naming** | Dir is `ab1234cd/` but frontmatter `id: ef567890`; or title omits the `mapped_requirements` value |
 | **hallucinated-premise** | `## Problem` cites `` `src/services/ghost.ts` `` as real when it doesn't exist in the repo |
 | **literal-value-drift** | Ticket says "bump to `1.70.0`" but `package.json` is already at `1.71.0` |
+| **registration-co-location** | A ticket forward-creates a **registerable symbol** (one whose usability requires enrollment in a separate container/registry file — a NestJS `@Injectable()` provider, a Drizzle schema table needing a `relations.ts` entry, a router-mounted route handler) consumed by a **same-ticket** file, but omits the owning registry file from its allowlist → the per-file scope fence (correctly) blocks the registration edit and the ticket is unsatisfiable. Fix: co-scope the registration site in the same ticket; do NOT defer it to a wiring ticket and do NOT loosen the fence. One general coupling rule, not a per-framework list. |
 
 After completing each ticket body, append this single-line audit comment as the last item in `## Conformance Check`:
-`<!-- audit: 7-class checked YYYY-MM-DD -->` (replace `YYYY-MM-DD` with today's date).
+`<!-- audit: 7-class checked YYYY-MM-DD -->` (replace `YYYY-MM-DD` with today's date). The `7-class` token is a **frozen opaque tag** (regex-pinned by `AUDIT_COMMENT_RE` in `audit-ticket-bundle.ts` + ~30 fixtures) — adding checklist rows above does NOT renumber it; keep the tag literally `7-class` regardless of how many rows the checklist grows to.
 
 ### 7b: Create Parent
 `${SESSION_ROOT}/linear_ticket_parent.md` — epic title, link to refined PRD.

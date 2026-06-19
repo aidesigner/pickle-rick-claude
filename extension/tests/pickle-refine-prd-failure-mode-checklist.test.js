@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_PATH = path.resolve(__dirname, '..', '..', '.claude', 'commands', 'pickle-refine-prd.md');
+const SPAWN_REFINEMENT_TS = path.resolve(__dirname, '..', 'src', 'bin', 'spawn-refinement-team.ts');
 const { checkMissingAuditComment } = await import('../bin/audit-ticket-bundle.js');
 
 test('AC-TAQ-04: pickle-refine-prd.md contains "Failure-mode checklist"', () => {
@@ -50,6 +51,44 @@ for (const tag of SEVEN_CLASS_TAGS) {
     assert.ok(content.includes(tag), `tag ${tag} missing from skill`);
   });
 }
+
+// R-DPMC-1: registration co-location rule must appear in BOTH the skill checklist
+// and the analyst prompt, and the 7-class audit literal must stay frozen (no renumber).
+test('AC-R-DPMC-1: skill failure-mode checklist enumerates "registration-co-location"', () => {
+  const content = fs.readFileSync(SKILL_PATH, 'utf-8');
+  assert.ok(content.includes('registration-co-location'), 'registration-co-location row missing from skill checklist');
+});
+
+test('AC-R-DPMC-1: registration co-location rule carries the decidable "registerable symbol" predicate', () => {
+  const content = fs.readFileSync(SKILL_PATH, 'utf-8');
+  assert.ok(content.includes('registerable symbol'), 'decidable predicate ("registerable symbol") missing from skill rule');
+  assert.ok(
+    /one general coupling rule|not a per-framework/i.test(content),
+    'rule must state it is one general coupling rule, not a per-framework list',
+  );
+});
+
+test('AC-R-DPMC-1: 7-class audit literal stays frozen — no 8-class renumber', () => {
+  const content = fs.readFileSync(SKILL_PATH, 'utf-8');
+  assert.ok(
+    content.includes('<!-- audit: 7-class checked YYYY-MM-DD -->'),
+    'frozen 7-class audit literal must remain verbatim',
+  );
+  assert.ok(!content.includes('8-class'), 'must NOT renumber 7-class to 8-class (regex-pinned by AUDIT_COMMENT_RE)');
+});
+
+test('AC-R-DPMC-1: analyst prompt source carries the registration co-location rule', () => {
+  const content = fs.readFileSync(SPAWN_REFINEMENT_TS, 'utf-8');
+  assert.ok(
+    content.includes('Registration co-location'),
+    'spawn-refinement-team.ts must include the Registration co-location prompt section',
+  );
+  assert.ok(content.includes('registerable symbol'), 'analyst prompt must carry the decidable "registerable symbol" predicate');
+  assert.ok(
+    content.includes('DECOMPOSITION_COLOCATION_PROMPT_SECTION'),
+    'the co-location section const must be wired into the analyst guidance',
+  );
+});
 
 function makeTicket(body) {
   return {
