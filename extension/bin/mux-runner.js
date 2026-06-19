@@ -3829,6 +3829,67 @@ function mapEvidenceKindToLegacySource(kind) {
         return 'inferred';
     return 'absent';
 }
+/**
+ * R-CCEM (#126): the most-recent worker-announced completion SHA for a ticket,
+ * read from `state.activity` (`worker_completion_commit_announced`, emitted by
+ * spawn-morty when the worker echoes `COMPLETION_COMMIT_RECORDED: <sha>`).
+ * Consulted ONLY by guardCompletionCommitBeforeDone's absent-evidence recovery —
+ * it is the worker's OWN declaration of the commit it made, not a guess across
+ * HEAD commits, so it cannot mis-attribute (no #94 R-CXOR false-Done risk).
+ * Returns null when no valid announcement exists.
+ */
+export function readAnnouncedCompletionSha(sessionDir, ticketId) {
+    try {
+        const statePath = path.join(sessionDir, 'state.json');
+        const state = readRecoverableJsonObject(statePath);
+        const activity = Array.isArray(state?.activity) ? state.activity : [];
+        let latest = null;
+        for (const e of activity) {
+            if (e && typeof e === 'object' &&
+                e.event === 'worker_completion_commit_announced' &&
+                e.ticket_id === ticketId) {
+                const sha = e.sha;
+                if (typeof sha === 'string' && /^[0-9a-f]{7,40}$/i.test(sha))
+                    latest = sha;
+            }
+        }
+        return latest;
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * R-CCEM (#126): when Done-flip evidence is `absent` but the worker announced a
+ * commit SHA (state.activity), persist that self-declared SHA as
+ * `completion_commit_inferred` and re-probe so the inferred-fresh auto-promote
+ * can attribute the ticket — instead of FATAL-halting the whole pickle phase on
+ * a codex commit whose message omitted the ticket id. Runs ONLY on the Done-flip
+ * guard path (never the worker-gate failed-flip-suppression). `readEvidence`
+ * still gates on commitExists + baseline rejection, so a non-existent or baseline
+ * SHA stays absent (no #94 R-CXOR false-Done risk). Best-effort; never overwrites
+ * an explicit `completion_commit`.
+ */
+function recoverInferredFromAnnouncement(args, probe, current) {
+    if (current.kind !== 'absent')
+        return current;
+    const announced = readAnnouncedCompletionSha(args.sessionDir, args.ticketId);
+    if (!announced)
+        return current;
+    try {
+        const fp = ticketFilePath(args.sessionDir, args.ticketId);
+        const raw = fs.readFileSync(fp, 'utf8');
+        if (!readFrontmatterField(raw, 'completion_commit')) {
+            const upd = upsertFrontmatterField(raw, 'completion_commit_inferred', announced);
+            if (upd) {
+                fs.writeFileSync(fp, upd);
+                return readEvidence(probe);
+            }
+        }
+    }
+    catch { /* best-effort — fall through to existing classification */ }
+    return current;
+}
 export function guardCompletionCommitBeforeDone(args) {
     // R-WSRC-4 parity: PICKLE_TEST_MODE=1 bypasses for sandboxed test fixtures
     // whose workingDir is a synthetic temp dir without a real git repo.
@@ -3853,6 +3914,11 @@ export function guardCompletionCommitBeforeDone(args) {
         sleepSyncMs(args.rereadBackoffMs ?? guardRereadBackoffMs());
         evidenceR = readEvidence(probe);
     }
+    // R-CCEM (#126): absent evidence + a worker-announced commit SHA → recover the
+    // worker's OWN declared SHA as inferred evidence so the inferred-fresh
+    // auto-promote below can attribute the ticket (extracted to keep the guard
+    // under the complexity ceiling).
+    evidenceR = recoverInferredFromAnnouncement(args, probe, evidenceR);
     // R-WUWC SOFT-variant: inferred-fresh — auto-promote to explicit by writing
     // the SHA into ticket frontmatter via persistEvidence, then re-probe.
     // This is the runtime equivalent of the operator workaround:

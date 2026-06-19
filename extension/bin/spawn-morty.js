@@ -695,7 +695,8 @@ export function buildWorkerPrompt(opts) {
 
 **Codex-specific contract additions:**
 - You MUST run \`git add <files>\` and \`git commit -m "<msg>"\` before emitting \`<promise>${PromiseTokens.WORKER_DONE}</promise>\`. The orchestrator does NOT commit for you.
-- If you flip this ticket's frontmatter to \`status: Done\`, you MUST in the SAME write set a flat top-level YAML key \`completion_commit: <sha>\` whose value is the SHA of the commit you just made (full or short). The commit message must reference the ticket id (\`${ticket.ticketId}\`). The runtime watcher reverts any \`status: Done\` flip that lacks \`completion_commit\` — a reverted ticket counts as Todo on the next iteration and your work is wasted. NEVER flip \`status: Done\` before the commit exists.
+- Your commit message MUST embed this ticket id as a conventional-commit scope so the runtime can attribute the commit to the ticket. Use exactly this shape: \`git commit -m "fix(${ticket.ticketId}): <short subject>"\` (or \`feat(${ticket.ticketId}): …\`). A commit that omits \`${ticket.ticketId}\` is NOT attributable and will be treated as if no commit landed.
+- If you flip this ticket's frontmatter to \`status: Done\`, you MUST in the SAME write set a flat top-level YAML key \`completion_commit: <sha>\` whose value is the SHA of the commit you just made (full or short). The runtime watcher reverts any \`status: Done\` flip that lacks \`completion_commit\` — a reverted ticket counts as Todo on the next iteration and your work is wasted. NEVER flip \`status: Done\` before the commit exists.
 - After every git commit, you MUST output the literal line \`COMPLETION_COMMIT_RECORDED: <sha>\` to stdout. The runner watches for this token and will retry if it's missing.
 - If an acceptance criterion contradicts reality (e.g. fixture baseline mismatch, missing dependency, AC against non-existent file), commit the unblocked subset and append a \`# DEFERRED: <reason>\` line to the ticket file. DO NOT loop indefinitely trying to satisfy a contradicted AC. Do NOT flip \`status: Done\` for a deferred ticket.
 - DO NOT explore harness internals (\`pickle.md\`, \`setup.js\`, \`send-to-morty.md\`, \`mux-runner.js\`). Those are orchestrator-level. Your scope is exclusively the files listed in the ticket's "Files to modify" / "Files to create" sections.`;
@@ -1717,6 +1718,13 @@ function bestEffortFdatasync(logPath) {
 }
 function attachCompletionCommitAckListener(proc, ticketId, workerActivityStatePath) {
     // R-CCC-1: Detect COMPLETION_COMMIT_RECORDED: <sha> token in worker stdout.
+    // The announced SHA is recorded as a `worker_completion_commit_announced`
+    // activity event; the manager's Done-flip guard (mux-runner
+    // `guardCompletionCommitBeforeDone`) consults it on the absent-evidence path
+    // (R-CCEM #126). NOTE: attribution is done MANAGER-side (only on the legitimate
+    // Done-flip path), NOT here — persisting evidence at announce-time would also
+    // feed the worker-gate failed-flip-suppression and wrongly preserve a
+    // gate-failing ticket's commit.
     let ackLineBuf = '';
     proc.stdout?.on('data', (chunk) => {
         ackLineBuf += chunk.toString('utf8');
