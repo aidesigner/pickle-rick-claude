@@ -19,6 +19,7 @@ import * as path from 'node:path';
 const {
     buildRefinementWorkerInvocation,
     buildRefinementEnv,
+    buildWorkerPrompt,
 } = await import('../bin/spawn-refinement-team.js');
 const {
     resolveBackend,
@@ -26,6 +27,8 @@ const {
     resolveBackendFromStateFileWithSource,
     __resetBackendWarnings,
 } = await import('../services/backend-spawn.js');
+const { extractAssistantContent } = await import('../services/classifier-utils.js');
+const { hasToken, PromiseTokens } = await import('../types/index.js');
 
 function mkTmp(prefix = 'spawn-refine-droid-') {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -226,4 +229,51 @@ test('resolveBackendFromStateFileWithSource: lock=1 + cli override droid -> droi
 test('warn state reset is callable', () => {
     __resetBackendWarnings();
     assert.ok(true);
+});
+
+// ---------------------------------------------------------------------------
+// buildWorkerPrompt: droid runtime note (direct workers to file-write tools)
+// ---------------------------------------------------------------------------
+
+test('buildWorkerPrompt: backend=droid injects the droid runtime note (use file-write tool, not Execute/bash)', () => {
+    const prompt = buildWorkerPrompt('requirements', '# PRD\nbody', '/tmp/out/analysis_requirements.md', '/tmp/repo', 1, undefined, undefined, 'droid');
+    assert.ok(prompt.includes('Runtime note (droid)'), 'droid runtime note must be present');
+    assert.ok(prompt.includes('Do NOT use the Execute/bash/shell tool'), 'must forbid the Execute/bash tool');
+    assert.ok(prompt.includes('output directory already exists'), 'must tell the worker the output dir already exists');
+});
+
+test('buildWorkerPrompt: no backend arg omits the droid runtime note (regression)', () => {
+    const prompt = buildWorkerPrompt('requirements', '# PRD\nbody', '/tmp/out/analysis_requirements.md', '/tmp/repo', 1, undefined, undefined, 'claude');
+    assert.equal(prompt.includes('Runtime note (droid)'), false, 'claude path must NOT get the droid note');
+});
+
+// ---------------------------------------------------------------------------
+// Completion detection: droid must not false-positive on the echoed prompt
+// ---------------------------------------------------------------------------
+
+test('refine completion: droid log with ANALYSIS_DONE only in the echoed user prompt is NOT complete', () => {
+    // droid stream-json echoes the user prompt (which contains the token name)
+    // on a role:user line. The whole-log search would false-positive; the
+    // droid path extracts assistant content only, so this must NOT match.
+    const log = [
+        '{"type":"system","subtype":"init","model":"glm-5.2"}',
+        '{"type":"message","role":"user","text":"After writing the file, output: <promise>ANALYSIS_DONE</promise>"}',
+        '{"type":"tool_result","isError":true,"error":{"message":"insufficient permission"}}',
+        '{"type":"error","source":"cli","message":"Exec ended early"}',
+    ].join('\n');
+    const haystack = extractAssistantContent(log);
+    assert.equal(hasToken(haystack, PromiseTokens.ANALYSIS_DONE), false,
+        'token only in user/error content must NOT trigger refine completion');
+});
+
+test('refine completion: droid log with ANALYSIS_DONE in assistant .text IS complete', () => {
+    const log = [
+        '{"type":"system","subtype":"init","model":"glm-5.2"}',
+        '{"type":"message","role":"user","text":"output: <promise>ANALYSIS_DONE</promise>"}',
+        '{"type":"message","role":"assistant","text":"Wrote the analysis. <promise>ANALYSIS_DONE</promise>"}',
+        '{"type":"completion","finalText":"Wrote the analysis. <promise>ANALYSIS_DONE</promise>"}',
+    ].join('\n');
+    const haystack = extractAssistantContent(log);
+    assert.equal(hasToken(haystack, PromiseTokens.ANALYSIS_DONE), true,
+        'token in assistant .text/.finalText must trigger refine completion');
 });

@@ -9,6 +9,7 @@ import { PromiseTokens, hasToken, Defaults, VALID_ACTIVITY_EVENTS, PipelineRunne
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { runAcPhaseGate } from '../services/ac-phase-gate.js';
 import { recoveryConsolidationEnabled } from './mux-runner.js';
+import { extractAssistantContent } from '../services/classifier-utils.js';
 /**
  * The backend refinement runs on when the session did NOT opt into `droid`.
  * PRD refinement is planning, not implementation — codex (and every other
@@ -414,7 +415,7 @@ function buildPromptGuidanceSections() {
         BUNDLE_OF_BUNDLES_FANOUT_SECTION,
     ].join('\n');
 }
-export function buildWorkerPrompt(roleId, prdContent, outputFile, workingDir, cycle, previousAnalyses, portalContext) {
+export function buildWorkerPrompt(roleId, prdContent, outputFile, workingDir, cycle, previousAnalyses, portalContext, backend) {
     const persona = `You are Pickle Rick — hyper-competent, arrogant, ruthlessly thorough.
 *Belch.* You are FORBIDDEN from being a Jerry. Jerries write vague analysis. You write SPECIFIC, ACTIONABLE findings with evidence.
 CRITICAL RULE: You MUST output a text explanation ("brain dump") before every single tool call.`;
@@ -497,12 +498,22 @@ ${content}
     const cycleNote = cycle > 1
         ? `\n**THIS IS CYCLE ${cycle}** — you are deepening a previous analysis. Your output should be MORE SPECIFIC, MORE EVIDENCE-BACKED, and CROSS-REFERENCED with other analysts' findings.\n`
         : '';
+    // droid runs at `--auto medium`: file-writing tools (Create/Edit/ApplyPatch)
+    // and local git commits are permitted, but the Execute/bash/shell tool is
+    // NOT (it requires `--auto high`, which is push-capable and cloud-only). The
+    // refinement output directory is pre-created by the orchestrator, so the
+    // worker only needs to write the analysis file — direct it to use the
+    // file-writing tools and to NOT shell out (a bash `mkdir`/`cat >` attempt
+    // would be rejected mid-turn and abort the analysis without writing output).
+    const droidOutputNote = backend === 'droid'
+        ? `\n**Runtime note (droid):** The output directory already exists — do NOT create it. Write the analysis file with your file-writing tool (Create/Edit/ApplyPatch) using the absolute path above. Do NOT use the Execute/bash/shell tool for file I/O (it is not available at this worker's autonomy level and will abort your turn).`
+        : '';
     const outputInstructions = `${buildPromptGuidanceSections()}
 
 ## Your Output
 
 Write ALL findings to this file: ${outputFile}
-${cycleNote}
+${cycleNote}${droidOutputNote}
 Use this EXACT structure:
 
 \`\`\`markdown
@@ -686,7 +697,17 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
                     logContent = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
                 }
                 catch { /* */ }
-                const success = !workerTimedOut && hasToken(logContent, PromiseTokens.ANALYSIS_DONE);
+                // droid stream-json echoes the user prompt (which contains the
+                // ANALYSIS_DONE token name) on `{type:"message",role:"user"}` lines.
+                // A whole-log substring search would false-positive on the echoed
+                // prompt and report success even when the worker never wrote its
+                // analysis. For the droid backend, detect the promise token ONLY in
+                // assistant content (flat `.text` / `.finalText` / `.result`) via the
+                // shared classifier; claude/codex keep the legacy whole-log search.
+                const tokenHaystack = refinementBackend === 'droid'
+                    ? extractAssistantContent(logContent)
+                    : logContent;
+                const success = !workerTimedOut && hasToken(tokenHaystack, PromiseTokens.ANALYSIS_DONE);
                 settleWith({ roleId, success, logPath, cycle, exitCode: workerExitCode });
             }
         });
@@ -920,7 +941,7 @@ async function runCycle(opts) {
     try {
         const workerPromises = WORKER_ROLES.map(({ id }) => {
             const outputFile = path.join(opts.refinementDir, `analysis_${id}.md`);
-            const prompt = buildWorkerPrompt(id, opts.prd, outputFile, opts.workingDir, opts.cycle, opts.previousAnalyses, opts.portalContext);
+            const prompt = buildWorkerPrompt(id, opts.prd, outputFile, opts.workingDir, opts.cycle, opts.previousAnalyses, opts.portalContext, opts.refinementBackend);
             return spawnWorker(id, prompt, opts.refinementDir, opts.extensionRoot, opts.timeout, opts.workingDir, opts.maxTurns, opts.cycle, (result) => {
                 statuses.set(id, result.success ? '✅' : '❌');
                 if (result.exitCode !== null && result.exitCode !== 0)
